@@ -7,32 +7,26 @@ import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
-from data.dataset import DepthTileDataset
+from data.dataset import SurfaceTempPatchDataset
 
 
 class DepthTileDataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        config_path: str = "configs/data_config.yaml",
-        val_fraction: float = 0.2,
-        rebuild_index: bool = False,
-    ) -> None:
+    def __init__(self, config_path: str = "configs/data_config.yaml") -> None:
         super().__init__()
         self.config_path = config_path
-        self.rebuild_index = rebuild_index
         self._cfg = self._load_config(config_path)
 
-        ds_cfg = self._cfg["dataset"]
         dl_cfg = self._cfg["dataloader"]
+        split_cfg = self._cfg.get("split", {})
+        ds_cfg = self._cfg["dataset"]
 
         self.batch_size = int(dl_cfg.get("batch_size", 16))
         self.num_workers = int(dl_cfg.get("num_workers", 4))
         self.pin_memory = bool(dl_cfg.get("pin_memory", True))
         self.shuffle = bool(dl_cfg.get("shuffle", True))
 
-        # Reuse dataset seed so split is reproducible across runs.
+        self.val_fraction = float(split_cfg.get("val_fraction", 0.2))
         self.seed = int(ds_cfg.get("random_seed", 7))
-        self.val_fraction = float(val_fraction)
 
         self.dataset: Dataset | None = None
         self.train_dataset: Subset | None = None
@@ -45,19 +39,15 @@ class DepthTileDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         if self.dataset is None:
-            self.dataset = DepthTileDataset(
-                config_path=self.config_path,
-                rebuild_index=self.rebuild_index,
-            )
+            self.dataset = SurfaceTempPatchDataset.from_config(self.config_path)
 
         if self.train_dataset is not None and self.val_dataset is not None:
             return
 
         total_len = len(self.dataset)
         if total_len == 0:
-            raise RuntimeError("DepthTileDataset is empty; cannot create train/val split.")
+            raise RuntimeError("Dataset is empty; cannot create train/val split.")
 
-        # 20% validation split, clamped so both splits are non-empty when possible.
         val_len = int(round(total_len * self.val_fraction))
         if total_len > 1:
             val_len = min(max(val_len, 1), total_len - 1)
@@ -98,12 +88,17 @@ class DepthTileDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    # Example usage
-    data_module = DepthTileDataModule(config_path="configs/data_config.yaml")
-    data_module.setup()
+    dm = DepthTileDataModule()
+    dm.setup()
+    train_loader = dm.train_dataloader()
+    val_loader = dm.val_dataloader()
 
-    train_loader = data_module.train_dataloader()
-    val_loader = data_module.val_dataloader()
+    for batch in train_loader:
+        print(batch)
+        break
 
-    print(f"Number of training batches: {len(train_loader)}")
-    print(f"Number of validation batches: {len(val_loader)}")
+    for batch in val_loader:
+        print(batch)
+        break
+    
+    batch["info"].keys()

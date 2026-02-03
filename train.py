@@ -43,10 +43,7 @@ def main(
     trainer_cfg = model_cfg.get("trainer", {})
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
 
-    datamodule = DepthTileDataModule(
-        config_path=data_config_path,
-        val_fraction=0.2,
-    )
+    datamodule = DepthTileDataModule(config_path=data_config_path)
 
     if model_type == "cond_px_dif":
         model = PixelDiffusionConditional.from_config(

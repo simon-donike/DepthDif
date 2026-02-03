@@ -10,3 +10,7 @@ Current Status:
 
 ## Model
 As a first prototype, a conditional pixel-space Diffuser is modeled after [DiffusionFF](https://github.com/mikonvergence/DiffusionFastForward)
+
+## ToDos
+- [ ] Implement masked loss for train/val for land pixels  
+- [ ] more sophisticated way to feed masks to model  

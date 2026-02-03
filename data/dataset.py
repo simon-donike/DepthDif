@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -10,479 +10,308 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 from tqdm import tqdm
+from utils.normalizations import temperature_standardize
 
 
-class DepthTileDataset(Dataset):
+class SurfaceTempPatchDataset(Dataset):
+    """
+    Surface temperature patch dataset from thetao at time=0 and shallowest depth.
+    Returns dict with masked input `x`, target `y`, and metadata `info`.
+    """
+
     def __init__(
         self,
-        config_path: str = "configs/data_config.yaml",
-        max_nodata_fraction: float | None = None,
-        enforce_tile_validity: bool | None = None,
-        rebuild_index: bool = False,
+        *,
+        root_dir: str | Path,
+        index_path: str | Path,
+        edge_size: int,
+        enforce_validity: bool,
+        max_nodata_fraction: float,
+        nan_fill_value: float,
+        mask_fraction: float,
+        x_return_mode: str,
+        rebuild_index: bool,
     ) -> None:
-        # Load dataset behavior from YAML once so every setting is centralized in config.
-        cfg = self._load_config(config_path)
-        ds_cfg = cfg["dataset"]
+        self.root_dir = Path(root_dir)
+        self.index_path = Path(index_path)
+        self.edge_size = int(edge_size)
+        # Always tile with non-overlapping patches.
+        self.stride = int(edge_size)
+        self.enforce_validity = bool(enforce_validity)
+        self.max_nodata_fraction = float(max_nodata_fraction)
+        self.nan_fill_value = float(nan_fill_value)
+        self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
+        self.x_return_mode = str(x_return_mode)
+        valid_x_modes = {"raw_plus_mask", "masked_plus_mask"}
+        if self.x_return_mode not in valid_x_modes:
+            raise ValueError(
+                f"Invalid x_return_mode '{self.x_return_mode}'. "
+                f"Choose one of: {sorted(valid_x_modes)}"
+            )
 
-        # Core tiling settings (where data lives and how big each returned sample should be).
-        self.root_dir = Path(ds_cfg["root_dir"])
-        self.patch_size = int(ds_cfg["patch_size"])
-        self.grid_size_deg = float(ds_cfg["grid_size_deg"])
-        self.interpolation = str(ds_cfg.get("interpolation", "linear"))
-        self.nan_fill_value = float(ds_cfg.get("nan_fill_value", 0.0))
-        self.mask_fraction = float(ds_cfg.get("mask_fraction", 0.0))
-        self.random_seed = int(ds_cfg.get("random_seed", 7))
-
-        # Prefer config-driven validity behavior, but still allow runtime override via constructor.
-        config_enforce_validity = bool(ds_cfg.get("enforce_tile_validity", True))
-        config_max_nodata = float(ds_cfg.get("max_nodata_fraction", 0.2))
-        self.enforce_tile_validity = (
-            config_enforce_validity
-            if enforce_tile_validity is None
-            else bool(enforce_tile_validity)
-        )
-        self.max_nodata_fraction = (
-            config_max_nodata
-            if max_nodata_fraction is None
-            else float(max_nodata_fraction)
-        )
-
-        # Resolve the shared parquet path. Relative paths are anchored at repository root.
-        index_path_cfg = Path(ds_cfg["index_path"])
-        if index_path_cfg.is_absolute():
-            self.index_path = index_path_cfg
-        else:
-            self.index_path = Path.cwd() / index_path_cfg
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Build the shared index on first run (or when explicitly requested).
         if rebuild_index or not self.index_path.exists():
-            self._build_shared_parquet()
+            index_df = self._build_index()
+            self._write_index(index_df, self.index_path)
 
-        # Load every tile entry sequentially from parquet metadata.
-        self.tiles = pd.read_parquet(self.index_path)
-
-        # Rebuild legacy indices that do not contain global temperature normalization stats.
-        if not self._index_has_temperature_stats(self.tiles):
-            self._build_shared_parquet()
+        if self.index_path.suffix.lower() == ".parquet":
             self.tiles = pd.read_parquet(self.index_path)
+        else:
+            self.tiles = pd.read_csv(self.index_path)
 
-        # If enforcement is enabled but index was created in fast mode (no nodata stats), rebuild now.
-        if self.enforce_tile_validity and not self._index_has_validity_stats(self.tiles):
-            self._build_shared_parquet()
-            self.tiles = pd.read_parquet(self.index_path)
-
-        # Optional validity filter:
-        # - enabled: keep only tiles with <= max_nodata_fraction no-data.
-        # - disabled: keep all tiles (skip percentage validity filtering).
-        if self.enforce_tile_validity:
+        if (
+            self.enforce_validity
+            and "nodata_fraction" in self.tiles.columns
+            and self.tiles["nodata_fraction"].notna().any()
+        ):
             self.tiles = self.tiles[
                 self.tiles["nodata_fraction"] <= self.max_nodata_fraction
             ].reset_index(drop=True)
         else:
             self.tiles = self.tiles.reset_index(drop=True)
 
-        self.temp_global_min = float(self.tiles["temp_global_min"].iloc[0])
-        self.temp_global_max = float(self.tiles["temp_global_max"].iloc[0])
+        if len(self.tiles) == 0:
+            raise RuntimeError("Dataset contains no patches after indexing/filtering.")
 
-    def __len__(self) -> int:
-        return len(self.tiles)
-
-    def __getitem__(self, idx: int) -> Any:
-        # Read one tile entry and either decode precomputed bytes or lazily load from source netCDF.
-        row = self.tiles.iloc[idx]
-        arr = self._load_tile_array(row)
-        y = torch.from_numpy(arr.copy()).unsqueeze(0).float()
-
-        # Build masked input x by randomly zeroing mask_fraction of pixels.
-        mask_fraction = float(np.clip(self.mask_fraction, 0.0, 1.0))
-        if mask_fraction > 0.0:
-            mask = torch.rand_like(y) < mask_fraction
-            x = y.clone()
-            x[mask] = 0.0
-        else:
-            x = y.clone()
-
-        return {
-            "x": x,
-            "y": y,
-            "info": self._row_to_info(row, idx),
-        }
+    @classmethod
+    def from_config(cls, config_path: str = "configs/data_config.yaml") -> "SurfaceTempPatchDataset":
+        cfg = cls._load_config(config_path)
+        ds_cfg = cfg["dataset"]
+        return cls(
+            root_dir=ds_cfg["root_dir"],
+            index_path=ds_cfg["index_path"],
+            edge_size=int(ds_cfg["edge_size"]),
+            enforce_validity=bool(ds_cfg.get("enforce_validity", True)),
+            max_nodata_fraction=float(ds_cfg.get("max_nodata_fraction", 0.2)),
+            nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
+            mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
+            x_return_mode=str(ds_cfg.get("x_return_mode", "masked_plus_mask")),
+            rebuild_index=bool(ds_cfg.get("rebuild_index", False)),
+        )
 
     @staticmethod
     def _load_config(config_path: str) -> dict[str, Any]:
         with Path(config_path).open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
-    @staticmethod
-    def _index_has_validity_stats(index_df: pd.DataFrame) -> bool:
-        if "nodata_fraction" not in index_df.columns:
-            return False
-        return bool(index_df["nodata_fraction"].notna().any())
+    def __len__(self) -> int:
+        return len(self.tiles)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        row = self.tiles.iloc[int(idx)]
+        nc_path = self.root_dir / str(row["source_file"])
+
+        y0 = int(row["y0"])
+        x0 = int(row["x0"])
+        e = int(row["edge_size"])
+
+        with xr.open_dataset(nc_path) as ds:
+            da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
+            patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
+            arr = patch.values.astype(np.float32, copy=False)
+            nodata_fraction = float(row["nodata_fraction"]) if "nodata_fraction" in row else np.nan
+
+            # v: validity mask from data itself (1=valid ocean, 0=invalid/land/no-data).
+            v_np = self._validity_mask(arr, da2d).astype(np.float32, copy=False)
+
+        arr = np.nan_to_num(arr, nan=self.nan_fill_value, posinf=self.nan_fill_value, neginf=self.nan_fill_value)
+        y = torch.from_numpy(arr).unsqueeze(0)
+        v = torch.from_numpy(v_np).unsqueeze(0)
+
+        # Apply the same random geometric augmentation to y and masks.
+        k_rot, flip_h, flip_v = self._sample_aug_params()
+        y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
+        v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
+        y = temperature_standardize(mode="norm", tensor=y)
+
+        # m: inpainting keep-mask (1=known, 0=hide), sampled only inside valid ocean.
+        m = torch.ones_like(v, dtype=y.dtype)
+        if self.mask_fraction > 0.0:
+            hide_inside_valid = (torch.rand_like(v) < self.mask_fraction) & (v > 0.5)
+            m[hide_inside_valid] = 0.0
+
+        # k: known pixels = valid ocean pixels kept by inpainting mask.
+        k = (v * m).to(dtype=y.dtype)
+        masked = y * k  # unknown ocean + all land/invalid become 0.0
+
+        # x return mode variants (only 2 supported).
+        if self.x_return_mode == "raw_plus_mask":
+            x = torch.cat([y, k], dim=0)
+        else:
+            x = torch.cat([masked, k], dim=0)
+
+        info = {k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()}
+        info["nodata_fraction_effective"] = nodata_fraction
+
+        return {"x": x, "y": y, "info": info}
 
     @staticmethod
-    def _index_has_temperature_stats(index_df: pd.DataFrame) -> bool:
-        required = {"temp_global_min", "temp_global_max"}
-        if not required.issubset(index_df.columns):
-            return False
-        if index_df.empty:
-            return False
-        return np.isfinite(index_df["temp_global_min"].iloc[0]) and np.isfinite(
-            index_df["temp_global_max"].iloc[0]
-        )
+    def _sample_aug_params() -> Tuple[int, bool, bool]:
+        k_rot = int(torch.randint(0, 4, (1,)).item())
+        flip_h = bool(torch.randint(0, 2, (1,)).item())
+        flip_v = bool(torch.randint(0, 2, (1,)).item())
+        return k_rot, flip_h, flip_v
 
-    def _build_shared_parquet(self) -> None:
-        # Discover all netCDF files once and tile them into a single shared parquet index.
+    @staticmethod
+    def _apply_geometric_augment(t: torch.Tensor, k_rot: int, flip_h: bool, flip_v: bool) -> torch.Tensor:
+        t = torch.rot90(t, k=k_rot, dims=(-2, -1))
+        if flip_h:
+            t = torch.flip(t, dims=(-1,))
+        if flip_v:
+            t = torch.flip(t, dims=(-2,))
+        return t
+
+    def _build_index(self) -> pd.DataFrame:
         nc_files = sorted(self.root_dir.glob("*.nc"))
         if not nc_files:
             raise FileNotFoundError(f"No .nc files found under {self.root_dir}")
 
-        # Compute dataset-wide temperature min/max on deepest level once for normalization.
-        temp_global_min, temp_global_max = self._compute_temperature_global_minmax(nc_files)
-
-        records: list[dict[str, Any]] = []
-        tile_id = 0
-
-        # In fast mode we only write tile metadata (no per-tile extraction); in enforcement mode
-        # we also open every tile to compute nodata fraction and cache bytes for fast reads.
-        for file_idx, nc_path in enumerate(nc_files):
+        records: List[Dict[str, Any]] = []
+        for nc_path in tqdm(nc_files, desc="Indexing files", unit="file"):
             with xr.open_dataset(nc_path) as ds:
-                # Use deepest available temperature (thetao) slice, similar to:
-                # thetao_deep = ds["thetao"].isel(depth=-1); thetao_deep_2d = thetao_deep.squeeze("time", drop=True)
-                da, lat_name, lon_name = self._get_temperature_2d(ds)
+                da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
+                h = int(da2d.sizes[lat_name])
+                w = int(da2d.sizes[lon_name])
 
-                lats = da[lat_name].values
-                lons = da[lon_name].values
-
-                lat_min, lat_max = float(np.nanmin(lats)), float(np.nanmax(lats))
-                lon_min, lon_max = float(np.nanmin(lons)), float(np.nanmax(lons))
-
-                lat_edges = np.arange(
-                    np.floor(lat_min), np.ceil(lat_max), self.grid_size_deg
-                )
-                lon_edges = np.arange(
-                    np.floor(lon_min), np.ceil(lon_max), self.grid_size_deg
-                )
-
-                # Handle coordinates whether they are ascending or descending in the file.
-                lat_desc = bool(lats[0] > lats[-1])
-                lon_desc = bool(lons[0] > lons[-1])
-
-                # Capture optional no-data markers for validity checks and replacement.
-                fill_values = []
-                if "_FillValue" in da.attrs:
-                    fill_values.append(float(da.attrs["_FillValue"]))
-                if "missing_value" in da.attrs:
-                    fill_values.append(float(da.attrs["missing_value"]))
-
-                lat_iter = lat_edges
-                if self.enforce_tile_validity:
-                    lat_iter = tqdm(
-                        lat_edges,
-                        desc=f"Tiling file {file_idx + 1}/{len(nc_files)}: {nc_path.name}",
-                    )
-
-                for lat0 in lat_iter:
-                    lat1 = lat0 + self.grid_size_deg
-
-                    for lon0 in lon_edges:
-                        lon1 = lon0 + self.grid_size_deg
-
-                        record = {
-                            "tile_id": tile_id,
-                            "source_file": nc_path.name,
-                            "variable": "thetao",
-                            "lat_name": lat_name,
-                            "lon_name": lon_name,
-                            "lat_desc": lat_desc,
-                            "lon_desc": lon_desc,
-                            "lat_min": float(lat0),
-                            "lat_max": float(lat1),
-                            "lon_min": float(lon0),
-                            "lon_max": float(lon1),
-                            "height": int(self.patch_size),
-                            "width": int(self.patch_size),
-                            "tile_dtype": "float32",
-                            "nodata_fraction": np.nan,
-                            "temp_global_min": temp_global_min,
-                            "temp_global_max": temp_global_max,
-                            "tile_bytes": b"",
-                            "has_precomputed_tile": False,
-                        }
-
-                        if self.enforce_tile_validity:
-                            arr, nodata_fraction = self._extract_tile_array(
-                                da=da,
-                                lat_name=lat_name,
-                                lon_name=lon_name,
-                                lat0=float(lat0),
-                                lat1=float(lat1),
-                                lon0=float(lon0),
-                                lon1=float(lon1),
-                                lat_desc=lat_desc,
-                                lon_desc=lon_desc,
-                                fill_values=fill_values,
-                                temp_global_min=temp_global_min,
-                                temp_global_max=temp_global_max,
-                            )
-
-                            # Skip empty/non-usable tiles while running strict validity mode.
-                            if arr is None:
-                                continue
-
-                            record["nodata_fraction"] = nodata_fraction
-                            record["tile_bytes"] = arr.tobytes()
-                            record["has_precomputed_tile"] = True
-
-                        records.append(record)
-                        tile_id += 1
-
-        if not records:
-            raise RuntimeError("No valid tiles were generated from the provided .nc files.")
-
-        # Write one shared parquet file so dataset access is fast and deterministic.
-        pd.DataFrame.from_records(records).to_parquet(self.index_path, index=False)
-
-    def _load_tile_array(self, row: pd.Series) -> np.ndarray:
-        has_precomputed = bool(row.get("has_precomputed_tile", False))
-        tile_bytes = row.get("tile_bytes", b"")
-
-        # Fast path: decode cached bytes from parquet (used when enforcement mode built tiles).
-        if has_precomputed and isinstance(tile_bytes, (bytes, bytearray)) and len(tile_bytes) > 0:
-            return np.frombuffer(
-                tile_bytes,
-                dtype=np.dtype(row["tile_dtype"]),
-            ).reshape((int(row["height"]), int(row["width"])))
-
-        # Lazy path: in fast index mode, compute this tile now by opening only the required source file.
-        nc_path = self.root_dir / str(row["source_file"])
-        with xr.open_dataset(nc_path) as ds:
-            variable = str(row.get("variable", ""))
-            lat_name = str(row.get("lat_name", ""))
-            lon_name = str(row.get("lon_name", ""))
-
-            if variable not in ds.data_vars or lat_name not in ds.coords or lon_name not in ds.coords:
-                variable, lat_name, lon_name = self._pick_var_and_coords(ds)
-
-            da = self._reduce_to_2d(ds[variable], lat_name, lon_name)
-
-            fill_values = []
-            if "_FillValue" in da.attrs:
-                fill_values.append(float(da.attrs["_FillValue"]))
-            if "missing_value" in da.attrs:
-                fill_values.append(float(da.attrs["missing_value"]))
-
-            arr, _ = self._extract_tile_array(
-                da=da,
-                lat_name=lat_name,
-                lon_name=lon_name,
-                lat0=float(row["lat_min"]),
-                lat1=float(row["lat_max"]),
-                lon0=float(row["lon_min"]),
-                lon1=float(row["lon_max"]),
-                lat_desc=bool(row.get("lat_desc", False)),
-                lon_desc=bool(row.get("lon_desc", False)),
-                fill_values=fill_values,
-                temp_global_min=float(row["temp_global_min"]),
-                temp_global_max=float(row["temp_global_max"]),
-            )
-
-        if arr is None:
-            # Rare edge case for empty bins near domain boundaries: return fill-only tile shape.
-            return np.full((self.patch_size, self.patch_size), self.nan_fill_value, dtype=np.float32)
-
-        return arr
-
-    def _extract_tile_array(
-        self,
-        da: xr.DataArray,
-        lat_name: str,
-        lon_name: str,
-        lat0: float,
-        lat1: float,
-        lon0: float,
-        lon1: float,
-        lat_desc: bool,
-        lon_desc: bool,
-        fill_values: list[float],
-        temp_global_min: float,
-        temp_global_max: float,
-    ) -> tuple[np.ndarray | None, float]:
-        lat_slice = slice(lat1, lat0) if lat_desc else slice(lat0, lat1)
-        lon_slice = slice(lon1, lon0) if lon_desc else slice(lon0, lon1)
-
-        tile = da.sel({lat_name: lat_slice, lon_name: lon_slice})
-        if tile.sizes.get(lat_name, 0) < 2 or tile.sizes.get(lon_name, 0) < 2:
-            return None, 1.0
-
-        # Normalize every degree tile to a fixed pixel grid for model input.
-        lat_target = np.linspace(lat0, lat1, self.patch_size)
-        lon_target = np.linspace(lon0, lon1, self.patch_size)
-        tile = tile.interp(
-            {lat_name: lat_target, lon_name: lon_target},
-            method=self.interpolation,
-        )
-
-        arr = tile.values.astype(np.float32, copy=False)
-        if arr.ndim != 2:
-            return None, 1.0
-
-        # Compute no-data fraction once; callers can decide whether to enforce filtering.
-        nodata_mask = np.isnan(arr)
-        for fv in fill_values:
-            nodata_mask |= np.isclose(arr, fv)
-        nodata_fraction = float(nodata_mask.mean())
-
-        # Normalize valid temperatures to [0, 1] using global deepest-temperature min/max.
-        arr_norm = np.empty_like(arr, dtype=np.float32)
-        arr_norm[:] = np.nan
-        valid_mask = ~nodata_mask
-        denom = max(float(temp_global_max - temp_global_min), 1e-12)
-        arr_norm[valid_mask] = (arr[valid_mask] - float(temp_global_min)) / denom
-        arr_norm = np.clip(arr_norm, 0.0, 1.0)
-
-        # Replace no-data pixels after normalization with configured fill value.
-        arr = np.where(np.isnan(arr_norm), self.nan_fill_value, arr_norm).astype(
-            np.float32, copy=False
-        )
-        return arr, nodata_fraction
-
-    def _compute_temperature_global_minmax(self, nc_files: list[Path]) -> tuple[float, float]:
-        global_min = np.inf
-        global_max = -np.inf
-
-        for nc_path in nc_files:
-            with xr.open_dataset(nc_path) as ds:
-                da, _, _ = self._get_temperature_2d(ds)
-                arr = da.values.astype(np.float32, copy=False)
-
-                nodata_mask = np.isnan(arr)
-                if "_FillValue" in da.attrs:
-                    nodata_mask |= np.isclose(arr, float(da.attrs["_FillValue"]))
-                if "missing_value" in da.attrs:
-                    nodata_mask |= np.isclose(arr, float(da.attrs["missing_value"]))
-
-                valid = arr[~nodata_mask]
-                if valid.size == 0:
+                e = self.edge_size
+                s = self.stride
+                if h < e or w < e:
                     continue
 
-                global_min = min(global_min, float(np.min(valid)))
-                global_max = max(global_max, float(np.max(valid)))
+                lats = ds[lat_name].values
+                lons = ds[lon_name].values
 
-        if not np.isfinite(global_min) or not np.isfinite(global_max):
-            raise RuntimeError("Could not compute valid global min/max for thetao.")
-        if global_max <= global_min:
-            raise RuntimeError("Invalid global min/max for thetao: max must be > min.")
-        return float(global_min), float(global_max)
+                for y0 in range(0, h - e + 1, s):
+                    for x0 in range(0, w - e + 1, s):
+                        rec = {
+                            "source_file": nc_path.name,
+                            "y0": int(y0),
+                            "x0": int(x0),
+                            "edge_size": int(e),
+                            "lat0": float(lats[y0]),
+                            "lat1": float(lats[y0 + e - 1]),
+                            "lon0": float(lons[x0]),
+                            "lon1": float(lons[x0 + e - 1]),
+                            "nodata_fraction": np.nan,
+                        }
+                        if self.enforce_validity:
+                            patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
+                            arr = patch.values.astype(np.float32, copy=False)
+                            rec["nodata_fraction"] = self._nodata_fraction(arr, da2d)
+                        records.append(rec)
 
-    def _get_temperature_2d(self, ds: xr.Dataset) -> tuple[xr.DataArray, str, str]:
+        if not records:
+            raise RuntimeError("No patches indexed. Check edge_size/stride and data dimensions.")
+
+        df = pd.DataFrame.from_records(records)
+        if self.enforce_validity:
+            df = df[df["nodata_fraction"] <= self.max_nodata_fraction].reset_index(drop=True)
+        return df
+
+    @staticmethod
+    def _write_index(df: pd.DataFrame, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix.lower() == ".parquet":
+            df.to_parquet(path, index=False)
+        elif path.suffix.lower() == ".csv":
+            df.to_csv(path, index=False)
+        else:
+            raise ValueError("index_path must end with .parquet or .csv")
+
+    def _surface_thetao_2d(self, ds: xr.Dataset) -> Tuple[xr.DataArray, str, str]:
         if "thetao" not in ds.data_vars:
-            raise RuntimeError("Expected temperature variable 'thetao' in dataset.")
+            raise RuntimeError("Expected 'thetao' in dataset.")
 
         da = ds["thetao"]
+        lat_name = self._pick_name(ds, da.dims, ("latitude", "lat"))
+        lon_name = self._pick_name(ds, da.dims, ("longitude", "lon"))
+        depth_dim = self._pick_name(ds, da.dims, ("depth",))
+        time_dim = self._pick_name(ds, da.dims, ("time",))
 
-        depth_dim = self._pick_dim_name(da.dims, ("depth",))
-        if depth_dim is not None:
-            # Use the smallest depth value (closest to the surface).
-            depth_coord = da[depth_dim]
-            depth_index = int(depth_coord.argmin().item())
-            da = da.isel({depth_dim: depth_index})
-
-        time_dim = self._pick_dim_name(da.dims, ("time",))
         if time_dim is not None:
-            if int(da.sizes[time_dim]) == 1:
-                da = da.squeeze(time_dim, drop=True)
-            else:
-                da = da.isel({time_dim: 0})
+            da = da.isel({time_dim: 0})
 
-        lat_name = self._pick_dim_name(da.dims, ("lat", "latitude"))
-        lon_name = self._pick_dim_name(da.dims, ("lon", "longitude"))
-        if lat_name is None or lon_name is None:
-            # Fallback to coordinate-based inference when dim names are uncommon.
-            lat_name = self._pick_coord_name(ds, ("lat", "latitude"))
-            lon_name = self._pick_coord_name(ds, ("lon", "longitude"))
+        if depth_dim is not None:
+            depth_coord = ds[depth_dim] if depth_dim in ds.coords else da[depth_dim]
+            k0 = int(depth_coord.argmin().item())
+            da = da.isel({depth_dim: k0})
 
-        da = self._reduce_to_2d(da, lat_name, lon_name)
+        da = da.squeeze(drop=True)
+        if da.dims != (lat_name, lon_name):
+            da = da.transpose(lat_name, lon_name)
         return da, lat_name, lon_name
 
     @staticmethod
-    def _pick_dim_name(dims: tuple[str, ...], candidates: tuple[str, ...]) -> str | None:
-        dim_map = {d.lower(): d for d in dims}
-        for candidate in candidates:
-            if candidate in dim_map:
-                return dim_map[candidate]
-        for dim in dims:
-            dim_l = dim.lower()
-            if any(candidate in dim_l for candidate in candidates):
-                return dim
+    def _pick_name(ds: xr.Dataset, dims: Tuple[str, ...], candidates: Tuple[str, ...]) -> Optional[str]:
+        low = {d.lower(): d for d in dims}
+        for c in candidates:
+            if c in low:
+                return low[c]
+        for d in dims:
+            dl = d.lower()
+            if any(c in dl for c in candidates):
+                return d
+        lowc = {c.lower(): c for c in ds.coords}
+        for c in candidates:
+            if c in lowc:
+                return lowc[c]
+        for c in ds.coords:
+            cl = c.lower()
+            if any(k in cl for k in candidates):
+                return c
         return None
 
     @staticmethod
-    def _row_to_info(row: pd.Series, idx: int) -> dict[str, Any]:
-        # Keep all parquet metadata except raw tile bytes to avoid large payloads per sample.
-        info: dict[str, Any] = {"dataset_index": int(idx)}
-        for key, value in row.items():
-            if key == "tile_bytes":
-                continue
-            if isinstance(value, np.generic):
-                info[key] = value.item()
-            else:
-                info[key] = value
-        return info
+    def _nodata_fraction(arr: np.ndarray, da2d: xr.DataArray) -> float:
+        mask = ~np.isfinite(arr)
+        fill_values = []
+        if "_FillValue" in da2d.attrs:
+            fill_values.append(float(da2d.attrs["_FillValue"]))
+        if "missing_value" in da2d.attrs:
+            fill_values.append(float(da2d.attrs["missing_value"]))
+        for fv in fill_values:
+            mask |= np.isclose(arr, fv)
+        return float(mask.mean())
 
     @staticmethod
-    def _reduce_to_2d(da: xr.DataArray, lat_name: str, lon_name: str) -> xr.DataArray:
-        # If a variable has extra dimensions (time/depth/etc.), select the first slice.
-        extra_dims = [d for d in da.dims if d not in (lat_name, lon_name)]
-        if extra_dims:
-            da = da.isel({d: 0 for d in extra_dims})
-        da = da.squeeze(drop=True)
-
-        # Ensure dimension order is always (lat, lon) for consistent downstream slicing.
-        if da.dims != (lat_name, lon_name):
-            da = da.transpose(lat_name, lon_name)
-        return da
-
-    @staticmethod
-    def _pick_var_and_coords(ds: xr.Dataset) -> tuple[str, str, str]:
-        # Robustly infer coordinate names across common netCDF naming conventions.
-        lat_name = DepthTileDataset._pick_coord_name(ds, ("lat", "latitude"))
-        lon_name = DepthTileDataset._pick_coord_name(ds, ("lon", "longitude"))
-
-        for name in ds.data_vars:
-            dims = ds[name].dims
-            if lat_name in dims and lon_name in dims:
-                return name, lat_name, lon_name
-        raise RuntimeError(
-            "Could not find a data variable containing both lat/lon dimensions."
-        )
-
-    @staticmethod
-    def _pick_coord_name(ds: xr.Dataset, candidates: tuple[str, ...]) -> str:
-        lower_map = {name.lower(): name for name in ds.coords}
-        for key in candidates:
-            if key in lower_map:
-                return lower_map[key]
-        for coord in ds.coords:
-            c = coord.lower()
-            if any(k in c for k in candidates):
-                return coord
-        raise RuntimeError(f"Could not infer coordinate name from candidates: {candidates}")
+    def _validity_mask(arr: np.ndarray, da2d: xr.DataArray) -> np.ndarray:
+        valid = np.isfinite(arr)
+        fill_values = []
+        if "_FillValue" in da2d.attrs:
+            fill_values.append(float(da2d.attrs["_FillValue"]))
+        if "missing_value" in da2d.attrs:
+            fill_values.append(float(da2d.attrs["missing_value"]))
+        for fv in fill_values:
+            valid &= ~np.isclose(arr, fv)
+        return valid
     
     def _plot_example_image(self) -> None:
         try:
             import matplotlib.pyplot as plt
-            rand_n = np.random.RandomState(self.random_seed)
+            rand_n = np.random.RandomState(42)
             idx = rand_n.randint(0, len(self))
             sample = self.__getitem__(idx)
-            x = sample["x"].squeeze().numpy()
-            y = sample["y"].squeeze().numpy()
+            x_t = sample["x"]
+            y_t = sample["y"]
+
+            # Plot the first band when channels are present.
+            if x_t.ndim == 3:
+                x = x_t[0].numpy()
+            else:
+                x = x_t.numpy()
+
+            if y_t.ndim == 3:
+                y = y_t[0].numpy()
+            else:
+                y = y_t.numpy()
+            
             # clean up tensor - remove nan, inf etc
             x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
             # minmax normalization for better visualization
-            x = (x - np.nanmin(x)) / (np.nanmax(x) - np.nanmin(x))
-            y = (y - np.nanmin(y)) / (np.nanmax(y) - np.nanmin(y))
+            x_den = np.nanmax(x) - np.nanmin(x)
+            y_den = np.nanmax(y) - np.nanmin(y)
+            x = (x - np.nanmin(x)) / x_den if x_den > 0 else np.zeros_like(x)
+            y = (y - np.nanmin(y)) / y_den if y_den > 0 else np.zeros_like(y)
 
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
             axes[0].imshow(x, cmap="viridis")
@@ -494,15 +323,53 @@ class DepthTileDataset(Dataset):
             plt.close()
         except Exception as e:
             print(f"Could not plot example image: {e}")
+            
+    def _get_stats(self):
+        y_min_overall = float("inf")
+        y_max_overall = float("-inf")
+
+        # running stats
+        count = 0
+        mean = 0.0
+        M2 = 0.0  # sum of squares of differences from the current mean
+
+        for i in tqdm(range(len(self))):
+            sample = self[i]
+            y = sample["y"]  # (1, H, W)
+
+            # flatten valid values
+            vals = y.reshape(-1)
+
+            # min / max
+            y_min = torch.min(vals)
+            y_max = torch.max(vals)
+            y_min_overall = min(y_min_overall, y_min.item())
+            y_max_overall = max(y_max_overall, y_max.item())
+
+            # streaming mean / variance (Welford)
+            vals = vals.double()  # improve numerical stability
+            for v in vals:
+                count += 1
+                delta = v.item() - mean
+                mean += delta / count
+                delta2 = v.item() - mean
+                M2 += delta * delta2
+
+        variance = M2 / (count - 1)
+        std = variance**0.5
+
+        print(f"Overall y min: {y_min_overall}")
+        print(f"Overall y max: {y_max_overall}")
+        print(f"Mean: {mean}")
+        print(f"Std:  {std}")
 
 
 if __name__ == "__main__":
-    # Quick test: build dataset and print some stats.
-    dataset = DepthTileDataset(config_path="configs/data_config.yaml")
-    dataset._plot_example_image() # plot random example image to temp folder
+    dataset = SurfaceTempPatchDataset.from_config("configs/data_config.yaml")
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
-    x,y = sample["x"], sample["y"]
-    print(f"x shape: {sample['x'].shape}")
-    print(f"y shape: {sample['y'].shape}")
-    print(f"info keys: {list(sample['info'].keys())}")
+    dataset._plot_example_image()
+    #dataset._get_stats()
+    
+    print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
+    print(f"Info: {sample['info']}")

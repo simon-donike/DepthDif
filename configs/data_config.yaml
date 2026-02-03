@@ -1,17 +1,17 @@
 dataset:
   root_dir: "/work/data/depth/"
-  patch_size: 256
-  grid_size_deg: 0.0625 # ~7km at equator, 1/16 degree
   index_path: "data/patch_index.parquet"
-  enforce_tile_validity: false # reopen all images once, check for valid images only
-  max_nodata_fraction: 0.9999
-  interpolation: "linear"
-  random_seed: 7
-  nan_fill_value: 0.0
-  mask_fraction: 0.0
+  edge_size: 128
+  max_nodata_fraction: 0.2 # max nodata faction to be considered valid
+  nan_fill_value: 0.0 # what to fill land pixels with
+  mask_fraction: 0.80 # faction of masked pixels
+  x_return_mode: "masked_plus_mask" # raw_plus_mask | masked_plus_mask
+  rebuild_index: false # whether to rebuild the index file (opening and checking all images)
+  enforce_validity: true # wether to drop patches with too much nodata - rebuild index after changing
 
-raster:
-  image_size: 256
+
+split:
+  val_fraction: 0.2
 
 dataloader:
   batch_size: 16
