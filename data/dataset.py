@@ -62,6 +62,11 @@ class DepthTileDataset(Dataset):
         # Load every tile entry sequentially from parquet metadata.
         self.tiles = pd.read_parquet(self.index_path)
 
+        # Rebuild legacy indices that do not contain global temperature normalization stats.
+        if not self._index_has_temperature_stats(self.tiles):
+            self._build_shared_parquet()
+            self.tiles = pd.read_parquet(self.index_path)
+
         # If enforcement is enabled but index was created in fast mode (no nodata stats), rebuild now.
         if self.enforce_tile_validity and not self._index_has_validity_stats(self.tiles):
             self._build_shared_parquet()
@@ -76,6 +81,9 @@ class DepthTileDataset(Dataset):
             ].reset_index(drop=True)
         else:
             self.tiles = self.tiles.reset_index(drop=True)
+
+        self.temp_global_min = float(self.tiles["temp_global_min"].iloc[0])
+        self.temp_global_max = float(self.tiles["temp_global_max"].iloc[0])
 
     def __len__(self) -> int:
         return len(self.tiles)
@@ -112,11 +120,25 @@ class DepthTileDataset(Dataset):
             return False
         return bool(index_df["nodata_fraction"].notna().any())
 
+    @staticmethod
+    def _index_has_temperature_stats(index_df: pd.DataFrame) -> bool:
+        required = {"temp_global_min", "temp_global_max"}
+        if not required.issubset(index_df.columns):
+            return False
+        if index_df.empty:
+            return False
+        return np.isfinite(index_df["temp_global_min"].iloc[0]) and np.isfinite(
+            index_df["temp_global_max"].iloc[0]
+        )
+
     def _build_shared_parquet(self) -> None:
         # Discover all netCDF files once and tile them into a single shared parquet index.
         nc_files = sorted(self.root_dir.glob("*.nc"))
         if not nc_files:
             raise FileNotFoundError(f"No .nc files found under {self.root_dir}")
+
+        # Compute dataset-wide temperature min/max on deepest level once for normalization.
+        temp_global_min, temp_global_max = self._compute_temperature_global_minmax(nc_files)
 
         records: list[dict[str, Any]] = []
         tile_id = 0
@@ -125,10 +147,9 @@ class DepthTileDataset(Dataset):
         # we also open every tile to compute nodata fraction and cache bytes for fast reads.
         for file_idx, nc_path in enumerate(nc_files):
             with xr.open_dataset(nc_path) as ds:
-                # Pick the geospatial variable that has both latitude and longitude dimensions.
-                data_var_name, lat_name, lon_name = self._pick_var_and_coords(ds)
-                da = ds[data_var_name]
-                da = self._reduce_to_2d(da, lat_name, lon_name)
+                # Use deepest available temperature (thetao) slice, similar to:
+                # thetao_deep = ds["thetao"].isel(depth=-1); thetao_deep_2d = thetao_deep.squeeze("time", drop=True)
+                da, lat_name, lon_name = self._get_temperature_2d(ds)
 
                 lats = da[lat_name].values
                 lons = da[lon_name].values
@@ -170,7 +191,7 @@ class DepthTileDataset(Dataset):
                         record = {
                             "tile_id": tile_id,
                             "source_file": nc_path.name,
-                            "variable": data_var_name,
+                            "variable": "thetao",
                             "lat_name": lat_name,
                             "lon_name": lon_name,
                             "lat_desc": lat_desc,
@@ -183,6 +204,8 @@ class DepthTileDataset(Dataset):
                             "width": int(self.patch_size),
                             "tile_dtype": "float32",
                             "nodata_fraction": np.nan,
+                            "temp_global_min": temp_global_min,
+                            "temp_global_max": temp_global_max,
                             "tile_bytes": b"",
                             "has_precomputed_tile": False,
                         }
@@ -199,6 +222,8 @@ class DepthTileDataset(Dataset):
                                 lat_desc=lat_desc,
                                 lon_desc=lon_desc,
                                 fill_values=fill_values,
+                                temp_global_min=temp_global_min,
+                                temp_global_max=temp_global_max,
                             )
 
                             # Skip empty/non-usable tiles while running strict validity mode.
@@ -258,6 +283,8 @@ class DepthTileDataset(Dataset):
                 lat_desc=bool(row.get("lat_desc", False)),
                 lon_desc=bool(row.get("lon_desc", False)),
                 fill_values=fill_values,
+                temp_global_min=float(row["temp_global_min"]),
+                temp_global_max=float(row["temp_global_max"]),
             )
 
         if arr is None:
@@ -278,6 +305,8 @@ class DepthTileDataset(Dataset):
         lat_desc: bool,
         lon_desc: bool,
         fill_values: list[float],
+        temp_global_min: float,
+        temp_global_max: float,
     ) -> tuple[np.ndarray | None, float]:
         lat_slice = slice(lat1, lat0) if lat_desc else slice(lat0, lat1)
         lon_slice = slice(lon1, lon0) if lon_desc else slice(lon0, lon1)
@@ -304,9 +333,89 @@ class DepthTileDataset(Dataset):
             nodata_mask |= np.isclose(arr, fv)
         nodata_fraction = float(nodata_mask.mean())
 
-        # Replace all no-data pixels with configured fill value before returning.
-        arr = np.where(nodata_mask, self.nan_fill_value, arr).astype(np.float32, copy=False)
+        # Normalize valid temperatures to [0, 1] using global deepest-temperature min/max.
+        arr_norm = np.empty_like(arr, dtype=np.float32)
+        arr_norm[:] = np.nan
+        valid_mask = ~nodata_mask
+        denom = max(float(temp_global_max - temp_global_min), 1e-12)
+        arr_norm[valid_mask] = (arr[valid_mask] - float(temp_global_min)) / denom
+        arr_norm = np.clip(arr_norm, 0.0, 1.0)
+
+        # Replace no-data pixels after normalization with configured fill value.
+        arr = np.where(np.isnan(arr_norm), self.nan_fill_value, arr_norm).astype(
+            np.float32, copy=False
+        )
         return arr, nodata_fraction
+
+    def _compute_temperature_global_minmax(self, nc_files: list[Path]) -> tuple[float, float]:
+        global_min = np.inf
+        global_max = -np.inf
+
+        for nc_path in nc_files:
+            with xr.open_dataset(nc_path) as ds:
+                da, _, _ = self._get_temperature_2d(ds)
+                arr = da.values.astype(np.float32, copy=False)
+
+                nodata_mask = np.isnan(arr)
+                if "_FillValue" in da.attrs:
+                    nodata_mask |= np.isclose(arr, float(da.attrs["_FillValue"]))
+                if "missing_value" in da.attrs:
+                    nodata_mask |= np.isclose(arr, float(da.attrs["missing_value"]))
+
+                valid = arr[~nodata_mask]
+                if valid.size == 0:
+                    continue
+
+                global_min = min(global_min, float(np.min(valid)))
+                global_max = max(global_max, float(np.max(valid)))
+
+        if not np.isfinite(global_min) or not np.isfinite(global_max):
+            raise RuntimeError("Could not compute valid global min/max for thetao.")
+        if global_max <= global_min:
+            raise RuntimeError("Invalid global min/max for thetao: max must be > min.")
+        return float(global_min), float(global_max)
+
+    def _get_temperature_2d(self, ds: xr.Dataset) -> tuple[xr.DataArray, str, str]:
+        if "thetao" not in ds.data_vars:
+            raise RuntimeError("Expected temperature variable 'thetao' in dataset.")
+
+        da = ds["thetao"]
+
+        depth_dim = self._pick_dim_name(da.dims, ("depth",))
+        if depth_dim is not None:
+            # Use the smallest depth value (closest to the surface).
+            depth_coord = da[depth_dim]
+            depth_index = int(depth_coord.argmin().item())
+            da = da.isel({depth_dim: depth_index})
+
+        time_dim = self._pick_dim_name(da.dims, ("time",))
+        if time_dim is not None:
+            if int(da.sizes[time_dim]) == 1:
+                da = da.squeeze(time_dim, drop=True)
+            else:
+                da = da.isel({time_dim: 0})
+
+        lat_name = self._pick_dim_name(da.dims, ("lat", "latitude"))
+        lon_name = self._pick_dim_name(da.dims, ("lon", "longitude"))
+        if lat_name is None or lon_name is None:
+            # Fallback to coordinate-based inference when dim names are uncommon.
+            lat_name = self._pick_coord_name(ds, ("lat", "latitude"))
+            lon_name = self._pick_coord_name(ds, ("lon", "longitude"))
+
+        da = self._reduce_to_2d(da, lat_name, lon_name)
+        return da, lat_name, lon_name
+
+    @staticmethod
+    def _pick_dim_name(dims: tuple[str, ...], candidates: tuple[str, ...]) -> str | None:
+        dim_map = {d.lower(): d for d in dims}
+        for candidate in candidates:
+            if candidate in dim_map:
+                return dim_map[candidate]
+        for dim in dims:
+            dim_l = dim.lower()
+            if any(candidate in dim_l for candidate in candidates):
+                return dim
+        return None
 
     @staticmethod
     def _row_to_info(row: pd.Series, idx: int) -> dict[str, Any]:
@@ -359,11 +468,38 @@ class DepthTileDataset(Dataset):
             if any(k in c for k in candidates):
                 return coord
         raise RuntimeError(f"Could not infer coordinate name from candidates: {candidates}")
+    
+    def _plot_example_image(self) -> None:
+        try:
+            import matplotlib.pyplot as plt
+            rand_n = np.random.RandomState(self.random_seed)
+            idx = rand_n.randint(0, len(self))
+            sample = self.__getitem__(idx)
+            x = sample["x"].squeeze().numpy()
+            y = sample["y"].squeeze().numpy()
+            # clean up tensor - remove nan, inf etc
+            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+            y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            # minmax normalization for better visualization
+            x = (x - np.nanmin(x)) / (np.nanmax(x) - np.nanmin(x))
+            y = (y - np.nanmin(y)) / (np.nanmax(y) - np.nanmin(y))
+
+            fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+            axes[0].imshow(x, cmap="viridis")
+            axes[0].set_title("Input x (masked)")
+            axes[1].imshow(y, cmap="viridis")
+            axes[1].set_title("Target y (ground truth)")
+            plt.tight_layout()
+            plt.savefig("temp/example_depth_tile.png")
+            plt.close()
+        except Exception as e:
+            print(f"Could not plot example image: {e}")
 
 
 if __name__ == "__main__":
     # Quick test: build dataset and print some stats.
     dataset = DepthTileDataset(config_path="configs/data_config.yaml")
+    dataset._plot_example_image() # plot random example image to temp folder
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     x,y = sample["x"], sample["y"]

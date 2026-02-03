@@ -1,10 +1,10 @@
 dataset:
   root_dir: "/work/data/depth/"
   patch_size: 256
-  grid_size_deg: 1.0
+  grid_size_deg: 0.0625 # ~7km at equator, 1/16 degree
   index_path: "data/patch_index.parquet"
-  enforce_tile_validity: true
-  max_nodata_fraction: 0.2
+  enforce_tile_validity: false # reopen all images once, check for valid images only
+  max_nodata_fraction: 0.9999
   interpolation: "linear"
   random_seed: 7
   nan_fill_value: 0.0

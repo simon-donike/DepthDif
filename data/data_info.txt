@@ -1,0 +1,196 @@
+=== DATASET SUMMARY ===
+<xarray.Dataset> Size: 15GB
+Dimensions:    (time: 1, latitude: 2041, longitude: 4320, depth: 50)
+Coordinates:
+  * time       (time) datetime64[ns] 8B 2024-03-16T12:00:00
+  * latitude   (latitude) float32 8kB -80.0 -79.92 -79.83 ... 89.83 89.92 90.0
+  * longitude  (longitude) float32 17kB -180.0 -179.9 -179.8 ... 179.8 179.9
+  * depth      (depth) float32 200B 0.494 1.541 2.646 ... 5.275e+03 5.728e+03
+Data variables:
+    mlotst     (time, latitude, longitude) float64 71MB ...
+    zos        (time, latitude, longitude) float64 71MB ...
+    bottomT    (time, latitude, longitude) float64 71MB ...
+    sithick    (time, latitude, longitude) float64 71MB ...
+    siconc     (time, latitude, longitude) float64 71MB ...
+    usi        (time, latitude, longitude) float64 71MB ...
+    vsi        (time, latitude, longitude) float64 71MB ...
+    thetao     (time, depth, latitude, longitude) float64 4GB ...
+    so         (time, depth, latitude, longitude) float64 4GB ...
+    uo         (time, depth, latitude, longitude) float64 4GB ...
+    vo         (time, depth, latitude, longitude) float64 4GB ...
+Attributes: (12/14)
+    title:                         Monthly mean fields for product GLOBAL_REA...
+    references:                    http://marine.copernicus.eu
+    credit:                        E.U. Copernicus Marine Service Information...
+    licence:                       http://marine.copernicus.eu/services-portf...
+    contact:                       servicedesk.cmems@mercator-ocean.eu
+    producer:                      CMEMS - Global Monitoring and Forecasting ...
+    ...                            ...
+    area:                          GLOBAL
+    product:                       GLOBAL_REANALYSIS_001_030
+    dataset:                       global-reanalysis-001-030-monthly
+    source:                        MERCATOR GLORYS12V1
+    product_user_manual:           http://marine.copernicus.eu/documents/PUM/...
+    quality_information_document:  http://marine.copernicus.eu/documents/QUID...
+
+=== GLOBAL ATTRIBUTES (TAGS) ===
+- title: Monthly mean fields for product GLOBAL_REANALYSIS_PHY_001_030
+- references: http://marine.copernicus.eu
+- credit: E.U. Copernicus Marine Service Information (CMEMS)
+- licence: http://marine.copernicus.eu/services-portfolio/service-commitments-and-licence/
+- contact: servicedesk.cmems@mercator-ocean.eu
+- producer: CMEMS - Global Monitoring and Forecasting Centre
+- institution: Mercator Ocean
+- Conventions: CF-1.6
+- area: GLOBAL
+- product: GLOBAL_REANALYSIS_001_030
+- dataset: global-reanalysis-001-030-monthly
+- source: MERCATOR GLORYS12V1
+- product_user_manual: http://marine.copernicus.eu/documents/PUM/CMEMS-GLO-PUM-001-030.pdf
+- quality_information_document: http://marine.copernicus.eu/documents/QUID/CMEMS-GLO-QUID-001-030.pdf
+
+=== DIMENSIONS ===
+<stdin>:13: FutureWarning: The return type of `Dataset.dims` will be changed to return a set of dimension names in future, in order to be more consistent with `DataArray.dims`. To access a mapping from dimension names to lengths, please use `Dataset.sizes`.
+<frozen _collections_abc>:894: FutureWarning: The return type of `Dataset.dims` will be changed to return a set of dimension names in future, in order to be more consistent with `DataArray.dims`. To access a mapping from dimension names to lengths, please use `Dataset.sizes`.
+- time: 1
+- latitude: 2041
+- longitude: 4320
+- depth: 50
+
+=== COORDINATES ===
+- longitude: dims=('longitude',), shape=(4320,), dtype=float32
+  attrs:
+    - valid_min: -180.0
+    - valid_max: 179.9166717529297
+    - step: 0.0833282470703125
+    - units: degrees_east
+    - unit_long: Degrees East
+    - long_name: Longitude
+    - standard_name: longitude
+    - axis: X
+- latitude: dims=('latitude',), shape=(2041,), dtype=float32
+  attrs:
+    - valid_min: -80.0
+    - valid_max: 90.0
+    - step: 0.08333587646484375
+    - units: degrees_north
+    - unit_long: Degrees North
+    - long_name: Latitude
+    - standard_name: latitude
+    - axis: Y
+- depth: dims=('depth',), shape=(50,), dtype=float32
+  attrs:
+    - valid_min: 0.49402499198913574
+    - valid_max: 5727.9169921875
+    - units: m
+    - positive: down
+    - unit_long: Meters
+    - long_name: Depth
+    - standard_name: depth
+    - axis: Z
+- time: dims=('time',), shape=(1,), dtype=datetime64[ns]
+  attrs:
+    - axis: T
+    - long_name: Time (hours since 1950-01-01)
+    - standard_name: time
+
+=== DATA VARIABLES ===
+- mlotst: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Density ocean mixed layer thickness
+    - standard_name: ocean_mixed_layer_thickness_defined_by_sigma_theta
+    - units: m
+    - unit_long: Meters
+    - valid_min: 1
+    - valid_max: 23400
+    - cell_methods: area: mean
+- zos: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea surface height
+    - standard_name: sea_surface_height_above_geoid
+    - units: m
+    - unit_long: Meters
+    - valid_min: -7000
+    - valid_max: 6100
+    - cell_methods: area: mean
+- bottomT: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea floor potential temperature
+    - standard_name: sea_water_potential_temperature_at_sea_floor
+    - units: degrees_C
+    - unit_long: Degrees Celsius
+    - valid_min: -32767
+    - valid_max: 22600
+    - cell_methods: area: mean
+- sithick: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea ice thickness
+    - standard_name: sea_ice_thickness
+    - units: m
+    - unit_long: Meters
+    - valid_min: 1
+    - valid_max: 10700
+    - cell_methods: area: mean where sea_ice
+- siconc: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Ice concentration
+    - standard_name: sea_ice_area_fraction
+    - units: 1
+    - unit_long: Fraction
+    - valid_min: 1
+    - valid_max: 28700
+    - cell_methods: area: mean where sea_ice
+- usi: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea ice eastward velocity
+    - standard_name: eastward_sea_ice_velocity
+    - units: m s-1
+    - unit_long: Meters per second
+    - valid_min: -32767
+    - valid_max: 32760
+    - cell_methods: area: mean where sea_ice
+- vsi: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea ice northward velocity
+    - standard_name: northward_sea_ice_velocity
+    - units: m s-1
+    - unit_long: Meters per second
+    - valid_min: -32767
+    - valid_max: 32760
+    - cell_methods: area: mean where sea_ice
+- thetao: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Temperature
+    - standard_name: sea_water_potential_temperature
+    - units: degrees_C
+    - unit_long: Degrees Celsius
+    - valid_min: -32767
+    - valid_max: 22600
+    - cell_methods: area: mean
+- so: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Salinity
+    - standard_name: sea_water_salinity
+    - units: 1e-3
+    - unit_long: Practical Salinity Unit
+    - valid_min: 1
+    - valid_max: 31700
+    - cell_methods: area: mean
+- uo: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Eastward velocity
+    - standard_name: eastward_sea_water_velocity
+    - units: m s-1
+    - unit_long: Meters per second
+    - valid_min: -3800
+    - valid_max: 4700
+    - cell_methods: area: mean
+- vo: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Northward velocity
+    - standard_name: northward_sea_water_velocity
+    - units: m s-1
+    - unit_long: Meters per second
+    - valid_min: -4900
+    - valid_max: 4300
+    - cell_methods: area: mean
