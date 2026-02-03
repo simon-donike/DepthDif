@@ -1,0 +1,19 @@
+dataset:
+  root_dir: "/work/data/depth/"
+  patch_size: 256
+  grid_size_deg: 1.0
+  index_path: "data/patch_index.parquet"
+  interpolation: "linear"
+  samples_per_epoch: 4096
+  random_seed: 7
+  nan_fill_value: 0.0
+  mask_fraction: 0.0
+
+raster:
+  image_size: 256
+
+dataloader:
+  batch_size: 16
+  num_workers: 4
+  shuffle: true
+  pin_memory: true
