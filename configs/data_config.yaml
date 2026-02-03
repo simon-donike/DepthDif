@@ -3,7 +3,7 @@ dataset:
   patch_size: 256
   grid_size_deg: 1.0
   index_path: "data/patch_index.parquet"
-  enforce_tile_validity: false
+  enforce_tile_validity: true
   max_nodata_fraction: 0.2
   interpolation: "linear"
   random_seed: 7

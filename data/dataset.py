@@ -366,6 +366,7 @@ if __name__ == "__main__":
     dataset = DepthTileDataset(config_path="configs/data_config.yaml")
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
+    x,y = sample["x"], sample["y"]
     print(f"x shape: {sample['x'].shape}")
     print(f"y shape: {sample['y'].shape}")
     print(f"info keys: {list(sample['info'].keys())}")

@@ -1,4 +1,36 @@
 # Settings for instanciating the Model
 model:
   model_type: "cond_px_dif"
-  bands: 3
+  generated_channels: 1
+  condition_channels: 1
+  num_timesteps: 1000
+  bands: 1
+
+training:
+  lr: 1.0e-4
+  batch_size: 16
+
+wandb:
+  project: "DepthDif"
+  entity: null
+  run_name: null
+  log_model: "all"
+  verbose: true
+  watch_log: "all"
+  watch_log_freq: 25
+  watch_log_graph: true
+  log_stats_every_n_steps: 100
+  log_images_every_n_steps: 100
+
+trainer:
+  max_epochs: 100
+  accelerator: "auto"
+  devices: "auto"
+  num_gpus: 2
+  strategy: "auto"
+  precision: "16-true"
+  log_every_n_steps: 1
+  limit_val_batches: 10
+  enable_model_summary: false
+  gradient_clip_val: 0.0
+  rebuild_index: false
