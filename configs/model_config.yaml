@@ -1,0 +1,4 @@
+# Settings for instanciating the Model
+model:
+  model_type: "cond_px_dif"
+  bands: 3
