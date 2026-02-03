@@ -21,6 +21,7 @@ class DepthTileDataModule(pl.LightningDataModule):
         ds_cfg = self._cfg["dataset"]
 
         self.batch_size = int(dl_cfg.get("batch_size", 16))
+        self.val_batch_size = int(dl_cfg.get("val_batch_size", self.batch_size))
         self.num_workers = int(dl_cfg.get("num_workers", 4))
         self.pin_memory = bool(dl_cfg.get("pin_memory", True))
         self.shuffle = bool(dl_cfg.get("shuffle", True))
@@ -79,7 +80,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             self.setup("fit")
         return DataLoader(
             self.val_dataset,
-            batch_size=self.batch_size,
+            batch_size=self.val_batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
@@ -100,5 +101,3 @@ if __name__ == "__main__":
     for batch in val_loader:
         print(batch)
         break
-    
-    batch["info"].keys()

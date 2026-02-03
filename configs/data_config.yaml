@@ -1,20 +1,22 @@
 dataset:
-  root_dir: "/work/data/depth/"
-  index_path: "data/patch_index.parquet"
-  edge_size: 128
-  max_nodata_fraction: 0.2 # max nodata faction to be considered valid
-  nan_fill_value: 0.0 # what to fill land pixels with
-  mask_fraction: 0.80 # faction of masked pixels
-  x_return_mode: "masked_plus_mask" # raw_plus_mask | masked_plus_mask
-  rebuild_index: false # whether to rebuild the index file (opening and checking all images)
-  enforce_validity: true # wether to drop patches with too much nodata - rebuild index after changing
+  root_dir: "/work/data/depth/confirmed" # Directory containing source .nc files.
+  index_path: "data/patch_index.parquet" # Cached tile index path (.parquet or .csv).
+  edge_size: 128 # Patch size (pixels) for each tile, also used as stride (non-overlapping tiles).
+  max_nodata_fraction: 0.2 # Max invalid/nodata ratio allowed per tile when enforce_validity=true.
+  nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.
+  mask_fraction: 0.50 # Fraction of valid ocean pixels hidden to create sparse conditioning input.
+  x_return_mode: "masked_plus_mask" # "raw_plus_mask" or "masked_plus_mask".
+  rebuild_index: true # Rebuild tile index from raw files on startup.
+  enforce_validity: true # Drop indexed tiles with too much nodata based on max_nodata_fraction.
 
 
 split:
-  val_fraction: 0.2
+  val_fraction: 0.2 # Fraction of dataset reserved for validation.
+
 
 dataloader:
-  batch_size: 16
-  num_workers: 4
-  shuffle: true
-  pin_memory: true
+  batch_size: 24 # Training batch size.
+  val_batch_size: 2 # Validation batch size (falls back to batch_size if omitted).
+  num_workers: 4 # Number of DataLoader worker processes.
+  shuffle: true # Shuffle training data each epoch.
+  pin_memory: true # Pin host memory for faster host->GPU transfer.

@@ -1,36 +1,48 @@
-# Settings for instanciating the Model
+# Settings for instantiating the model and trainer.
 model:
-  model_type: "cond_px_dif"
-  generated_channels: 1
-  condition_channels: 1
-  num_timesteps: 1000
-  bands: 1
+  model_type: "cond_px_dif" # "cond_px_dif" for conditional diffusion, "px_dif" for unconditional.
+  generated_channels: 1 # Number of channels the model predicts (target y channels).
+  condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
+  condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
+  num_timesteps: 1000 # Diffusion steps (T); higher is slower but can improve quality.
+  bands: 1 # Legacy fallback for channel count if generated/condition channels are not explicitly set.
+
+  unet: # Denoiser backbone (ConvNeXt U-Net) settings.
+    dim: 64 # Base channel width of U-Net.
+    dim_mults: [1, 2, 4, 8] # Per-stage width multipliers; length controls U-Net depth.
+    with_time_emb: true # Enable timestep embeddings in the denoiser.
+    output_mean_scale: false # Optional output mean correction used by some diffusion variants.
+    residual: false # If true, predicts a residual added to input.
 
 training:
-  lr: 1.0e-4
-  batch_size: 16
+  lr: 1.0e-4 # Optimizer learning rate.
+  batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
 
 wandb:
-  project: "DepthDif"
-  entity: null
-  run_name: null
-  log_model: "all"
-  verbose: true
-  watch_log: "all"
-  watch_log_freq: 25
-  watch_log_graph: true
-  log_stats_every_n_steps: 100
-  log_images_every_n_steps: 100
+  project: "DepthDif" # W&B project name.
+  entity: null # W&B team/user; null uses your default account.
+  run_name: null # Explicit run name; null lets W&B auto-name.
+  log_model: "all" # W&B model artifact logging policy ("all", "false", etc.).
+  verbose: true # Enable extra metric/image logging from the LightningModule.
+  watch_log: "all" # W&B gradient/parameter watch mode.
+  watch_log_freq: 25 # How often (steps) to log watched gradients/params.
+  watch_log_graph: false # Whether to log the computational graph.
+  log_stats_every_n_steps: 50 # Step interval for lightweight scalar debug stats.
+  log_images_every_n_steps: 100 # Step interval for validation preview images.
 
 trainer:
-  max_epochs: 100
-  accelerator: "auto"
-  devices: "auto"
-  num_gpus: 2
-  strategy: "auto"
-  precision: "16-true"
-  log_every_n_steps: 1
-  limit_val_batches: 10
-  enable_model_summary: false
-  gradient_clip_val: 0.0
-  rebuild_index: false
+  max_epochs: 1000 # Maximum number of training epochs.
+  accelerator: "auto" # Accelerator backend ("auto", "gpu", "cpu", ...).
+  devices: "auto" # Devices to use ("auto", int, list).
+  num_gpus: 2 # Legacy override: if set, trainer uses this many GPUs directly.
+  strategy: "auto" # Distributed strategy ("auto", "ddp", ...).
+  precision: "16-mixed" # Mixed precision mode; "16-mixed" is typical for RTX 30xx.
+  matmul_precision: "high" # torch.set_float32_matmul_precision value: "highest" | "high" | "medium".
+  suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
+  suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
+  ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
+  log_every_n_steps: 1 # Trainer logging interval (steps).
+  limit_val_batches: 4 # Number/fraction of validation batches per epoch.
+  enable_model_summary: true # Show Lightning model summary at startup.
+  gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
+  rebuild_index: false # Unused by trainer; kept for compatibility (dataset config owns index rebuild).

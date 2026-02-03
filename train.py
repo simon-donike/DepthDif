@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime
+import os
 from pathlib import Path
 from typing import Any
+import shutil
+import warnings
 
 import pytorch_lightning as pl
+import torch
 import yaml
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
@@ -39,9 +45,38 @@ def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
 ) -> None:
+    global_rank = int(os.environ.get("RANK", "0"))
+    is_global_zero = global_rank == 0
+
+    run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = Path("logs") / run_stamp
+    if is_global_zero:
+        suffix = 1
+        while run_dir.exists():
+            run_dir = Path("logs") / f"{run_stamp}_{suffix:02d}"
+            suffix += 1
+        run_dir.mkdir(parents=True)
+
+        shutil.copy2(model_config_path, run_dir / Path(model_config_path).name)
+        shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
+
     model_cfg = load_yaml(model_config_path)
     trainer_cfg = model_cfg.get("trainer", {})
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+
+    # Use Tensor Cores efficiently for fp16/bf16 mixed precision.
+    torch.set_float32_matmul_precision(str(trainer_cfg.get("matmul_precision", "high")))
+
+    # Reduce noisy framework warnings that are not actionable for this training loop.
+    if bool(trainer_cfg.get("suppress_accumulate_grad_stream_mismatch_warning", True)):
+        torch.autograd.graph.set_warn_on_accumulate_grad_stream_mismatch(False)
+    if bool(trainer_cfg.get("suppress_lightning_pytree_warning", True)):
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*LeafSpec.*deprecated.*",
+            module=r"pytorch_lightning\.utilities\._pytree",
+            category=Warning,
+        )
 
     datamodule = DepthTileDataModule(config_path=data_config_path)
 
@@ -61,6 +96,14 @@ def main(
         raise ValueError(f"Unsupported model_type: {model_type}")
 
     logger = build_wandb_logger(model_cfg, model)
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=str(run_dir),
+        filename="best",
+        monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss_ckpt")),
+        mode="min",
+        save_top_k=1,
+        save_last=False,
+    )
 
     num_gpus = trainer_cfg.get("num_gpus", None)
     if num_gpus is not None:
@@ -78,6 +121,7 @@ def main(
         strategy=trainer_cfg.get("strategy", "auto"),
         precision=trainer_cfg.get("precision", "32-true"),
         logger=logger,
+        callbacks=[checkpoint_callback],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         limit_val_batches=trainer_cfg.get("limit_val_batches", 1.0),
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
