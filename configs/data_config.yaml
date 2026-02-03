@@ -3,8 +3,9 @@ dataset:
   patch_size: 256
   grid_size_deg: 1.0
   index_path: "data/patch_index.parquet"
+  enforce_tile_validity: false
+  max_nodata_fraction: 0.2
   interpolation: "linear"
-  samples_per_epoch: 4096
   random_seed: 7
   nan_fill_value: 0.0
   mask_fraction: 0.0

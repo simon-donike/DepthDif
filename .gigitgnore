@@ -1,3 +1,17 @@
+# manual
+temp
+temp/*
+logs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.ckp
+patch_index.parquet
+*.parquet
+
+
+# auto
 .DS_Store
 .huskyrc.json
 out
