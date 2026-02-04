@@ -17,11 +17,13 @@ from data.datamodule import DepthTileDataModule
 from models.difFF import PixelDiffusion, PixelDiffusionConditional
 
 
+# Centralized YAML loader for model/data config files.
 def load_yaml(path: str) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
+# Resolve an optional resume checkpoint path and validate it early.
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
     if resume_cfg is False or resume_cfg is None:
@@ -37,6 +39,22 @@ def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     return str(ckpt_path)
 
 
+# Build process rank defensively across common launchers.
+# Preference order avoids local-rank-only false positives in multi-node jobs.
+def resolve_global_rank() -> int:
+    rank_env_keys = ("RANK", "SLURM_PROCID", "OMPI_COMM_WORLD_RANK", "LOCAL_RANK")
+    for key in rank_env_keys:
+        value = os.environ.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except ValueError:
+            continue
+    return 0
+
+
+# Configure W&B logging and optional model watching.
 def build_wandb_logger(model_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
     wandb_cfg = model_cfg.get("wandb", {})
     logger = WandbLogger(
@@ -51,7 +69,7 @@ def build_wandb_logger(model_cfg: dict[str, Any], model: pl.LightningModule) -> 
         model,
         log=wandb_cfg.get("watch_log", "all"),
         log_freq=int(wandb_cfg.get("watch_log_freq", 25)),
-        log_graph=bool(wandb_cfg.get("watch_log_graph", True)),
+        log_graph=bool(wandb_cfg.get("watch_log_graph", False)),
     )
     return logger
 
@@ -60,9 +78,11 @@ def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
 ) -> None:
-    global_rank = int(os.environ.get("RANK", "0"))
+    # Determine rank before creating any run-scoped folders/files.
+    global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
+    # Use one timestamped run directory; only global rank 0 creates it.
     run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_dir = Path("logs") / run_stamp
     if is_global_zero:
@@ -70,11 +90,13 @@ def main(
         while run_dir.exists():
             run_dir = Path("logs") / f"{run_stamp}_{suffix:02d}"
             suffix += 1
-        run_dir.mkdir(parents=True)
+        run_dir.mkdir(parents=True, exist_ok=False)
 
+        # Snapshot the exact configs used for reproducibility.
         shutil.copy2(model_config_path, run_dir / Path(model_config_path).name)
         shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
 
+    # Load configuration and choose model family.
     model_cfg = load_yaml(model_config_path)
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = model_cfg.get("trainer", {})
@@ -94,8 +116,10 @@ def main(
             category=Warning,
         )
 
+    # Data module encapsulates train/val dataset construction and loaders.
     datamodule = DepthTileDataModule(config_path=data_config_path)
 
+    # Instanciate appropriate model class from config.
     if model_type == "cond_px_dif":
         model = PixelDiffusionConditional.from_config(
             model_config_path=model_config_path,
@@ -111,6 +135,7 @@ def main(
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
+    # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(model_cfg, model)
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
@@ -121,6 +146,7 @@ def main(
         save_last=False,
     )
 
+    # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
     if num_gpus is not None:
         num_gpus = int(num_gpus)
@@ -130,6 +156,7 @@ def main(
         accelerator = trainer_cfg.get("accelerator", "auto")
         devices = trainer_cfg.get("devices", "auto")
 
+    # Trainer configuration is fully driven from model_config.yaml.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
         accelerator=accelerator,
@@ -144,6 +171,7 @@ def main(
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
     )
 
+    # Start (or resume) training.
     trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
 
 
