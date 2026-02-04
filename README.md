@@ -20,7 +20,7 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 
 
 ## ToDos
-- [ ] Include Deps file
+- [x] Include Deps file
 - [x] DDIM Sampling
 - [ ] Implement masked loss for train/val for land pixels  
 - [ ] Implement two masks: known land pixels and  missing pixels
