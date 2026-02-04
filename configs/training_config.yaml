@@ -36,10 +36,11 @@ wandb: # Logging Settings
   run_name: null # Explicit run name; null lets W&B auto-name.
   log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
   verbose: true # Enable extra metric/image logging from the LightningModule.
-  watch_log: "all" # W&B gradient/parameter watch mode.
-  watch_log_freq: 25 # How often (steps) to log watched gradients/params.
+  watch_gradients: false # Log gradient histories via wandb.watch.
+  watch_parameters: false # Log parameter histories via wandb.watch (both false disables watch).
+  watch_log_freq: 100 # How often (steps) to log watched gradients/params.
   watch_log_graph: false # Whether to log the computational graph.
-  log_stats_every_n_steps: 50 # Step interval for lightweight scalar debug stats.
+  log_stats_every_n_steps: 100 # Step interval for lightweight scalar debug stats.
   log_images_every_n_steps: 100 # Step interval for validation preview images.
 
 dataloader: # DataLoader Settings

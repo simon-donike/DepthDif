@@ -47,6 +47,9 @@ class PixelDiffusion(pl.LightningModule):
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
 
+        # Core diffusion object:
+        # - forward process q(x_t | x_0) adds Gaussian noise over timesteps
+        # - learned reverse process p_theta(x_{t-1} | x_t) removes it.
         self.model = DenoisingDiffusionProcess(
             generated_channels=generated_channels,
             num_timesteps=num_timesteps,
@@ -127,6 +130,7 @@ class PixelDiffusion(pl.LightningModule):
 
     @torch.no_grad()
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        # Inference runs reverse diffusion and then maps back to data range [0, 1].
         return self.output_T(self.model(*args, **kwargs))
 
     def input_T(self, value: torch.Tensor) -> torch.Tensor:
@@ -150,6 +154,8 @@ class PixelDiffusion(pl.LightningModule):
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         target = self._extract_unconditional_target(batch)
+        # Diffusion training objective (p_loss):
+        # sample random timestep t, noise x_0 -> x_t, and train UNet to predict injected noise.
         loss = self.model.p_loss(self.input_T(target))
 
         self.log(
@@ -168,6 +174,7 @@ class PixelDiffusion(pl.LightningModule):
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         target = self._extract_unconditional_target(batch)
+        # Use the same denoising objective at validation time to track optimization progress.
         loss = self.model.p_loss(self.input_T(target))
 
         self.log(
@@ -226,6 +233,7 @@ class PixelDiffusion(pl.LightningModule):
             return
 
         image = output[0].detach().float().cpu().squeeze(0)
+        # Quick qualitative sanity check (ground-truth sample, not reconstructed output).
         experiment.log({f"{prefix}/y_preview": wandb.Image(image.numpy())})
 
     @staticmethod
@@ -310,6 +318,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
 
+        # Conditional diffusion predicts y while conditioned on x (and optional mask channels).
         self.model = DenoisingDiffusionConditionalProcess(
             generated_channels=generated_channels,
             condition_channels=condition_channels,
@@ -388,6 +397,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         return tensor.min(), tensor.mean(), tensor.std(unbiased=False)
 
     def _build_validation_sampler(self, train_betas: torch.Tensor) -> DDIM_Sampler | None:
+        # Validation can use either:
+        # - DDPM (full stochastic chain, faithful to training dynamics)
+        # - DDIM (fewer deterministic/stochastic steps, faster previews).
         if self.val_inference_sampler == "ddpm":
             return None
         if self.val_inference_sampler == "ddim":
@@ -417,9 +429,11 @@ class PixelDiffusionConditional(PixelDiffusion):
 
     def _prepare_condition_for_model(self, x: torch.Tensor) -> torch.Tensor:
         data, mask = self._split_condition_data_and_mask(x)
+        # Keep conditioning data in the same normalized range as diffusion targets.
         data_t = self.input_T(data)
         if mask is None:
             return data_t
+        # Mask channels remain as-is; they are semantic conditioning signals, not diffused targets.
         return torch.cat([data_t, mask], dim=1)
 
     def _masked_fraction(self, x: torch.Tensor) -> torch.Tensor:
@@ -460,6 +474,7 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         x, y = self._cached_val_example
         model_condition = self._prepare_condition_for_model(x)
+        # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
         y_hat = self(model_condition, sampler=self.val_sampler)
         recon_mse = torch.mean((y_hat - y) ** 2)
 
@@ -476,7 +491,14 @@ class PixelDiffusionConditional(PixelDiffusion):
         self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
         self._log_common_batch_stats(y_hat, prefix="val_pred", batch_size=1)
         self._log_common_batch_stats(y, prefix="val_target", batch_size=1)
-        self._maybe_log_wandb_images_conditional(x=x, y_hat=y_hat, y_target=y, prefix="val")
+        # This is the one expensive full reconstruction for the epoch; always log it.
+        self._maybe_log_wandb_images_conditional(
+            x=x,
+            y_hat=y_hat,
+            y_target=y,
+            prefix="val",
+            force=True,
+        )
 
     def on_validation_epoch_end(self) -> None:
         # Run the one-image reconstruction after cheap validation metrics are accumulated.
@@ -487,6 +509,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
+        # Conditional p_loss uses x as context while learning to denoise y across random t.
         loss = self.model.p_loss(self.input_T(y), model_condition)
 
         self.log(
@@ -511,6 +534,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
+        # Same training objective for validation; full reverse-chain recon is logged at epoch end.
         loss = self.model.p_loss(self.input_T(y), model_condition)
 
         self.log(
@@ -551,12 +575,15 @@ class PixelDiffusionConditional(PixelDiffusion):
         y_hat: torch.Tensor,
         y_target: torch.Tensor,
         prefix: str,
+        force: bool = False,
     ) -> None:
         if not self.wandb_verbose:
             return
         if self.trainer is not None and not self.trainer.is_global_zero:
             return
-        if self.global_step % self.log_images_every_n_steps != 0:
+        # `force=True` is used by epoch-end full reconstruction logging so it is not
+        # dropped by the regular step-based preview cadence.
+        if not force and self.global_step % self.log_images_every_n_steps != 0:
             return
         if not hasattr(self.logger, "experiment"):
             return
@@ -594,7 +621,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             axes[i, 2].set_title("Target")
 
         fig.tight_layout()
-        experiment.log({f"{prefix}/x_y_batch_preview": wandb.Image(fig)})
+        # Keep full reconstruction logs separate from periodic batch previews.
+        image_key = f"{prefix}/x_y_full_reconstruction" if force else f"{prefix}/x_y_batch_preview"
+        experiment.log({image_key: wandb.Image(fig)})
         plt.close(fig)
 
     def configure_optimizers(self):

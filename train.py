@@ -55,6 +55,35 @@ def resolve_global_rank() -> int:
 
 
 # Configure W&B logging and optional model watching.
+def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
+    # Map explicit booleans to wandb.watch(log=...):
+    # - gradients + parameters -> "all"
+    # - gradients only -> "gradients"
+    # - parameters only -> "parameters"
+    # - neither -> disable watch by returning None.
+    # Explicit toggles take precedence when provided.
+    has_explicit_toggles = "watch_gradients" in wandb_cfg or "watch_parameters" in wandb_cfg
+    if has_explicit_toggles:
+        watch_gradients = bool(wandb_cfg.get("watch_gradients", True))
+        watch_parameters = bool(wandb_cfg.get("watch_parameters", True))
+        if watch_gradients and watch_parameters:
+            return "all"
+        if watch_gradients:
+            return "gradients"
+        if watch_parameters:
+            return "parameters"
+        return None
+
+    # Backward-compatible fallback for older configs using watch_log directly.
+    watch_mode = wandb_cfg.get("watch_log", "all")
+    if watch_mode is None or watch_mode is False:
+        return None
+    normalized = str(watch_mode).strip().lower()
+    if normalized in {"none", "false", "off"}:
+        return None
+    return str(watch_mode)
+
+
 def build_wandb_logger(training_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
@@ -64,13 +93,16 @@ def build_wandb_logger(training_cfg: dict[str, Any], model: pl.LightningModule) 
         log_model=wandb_cfg.get("log_model", "all"),
     )
 
-    # Verbose tracking: gradients, parameters, and graph snapshots.
-    logger.watch(
-        model,
-        log=wandb_cfg.get("watch_log", "all"),
-        log_freq=int(wandb_cfg.get("watch_log_freq", 25)),
-        log_graph=bool(wandb_cfg.get("watch_log_graph", False)),
-    )
+    # Only attach wandb.watch when watch_mode resolves to a valid mode.
+    # Returning None from resolve_wandb_watch_mode disables watch entirely.
+    watch_mode = resolve_wandb_watch_mode(wandb_cfg)
+    if watch_mode is not None:
+        logger.watch(
+            model,
+            log=watch_mode,
+            log_freq=int(wandb_cfg.get("watch_log_freq", 25)),
+            log_graph=bool(wandb_cfg.get("watch_log_graph", False)),
+        )
     return logger
 
 
