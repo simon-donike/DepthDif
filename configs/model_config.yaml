@@ -20,7 +20,7 @@ training:
   batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
   noise:
     num_timesteps: 1000 # Number of diffusion steps (T).
-    schedule: "linear" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
+    schedule: "sigmoid" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
     beta_start: 1.0e-4 # Noise level at first timestep (must be > 0 and < beta_end).
     beta_end: 2.0e-2 # Noise level at last timestep (must be < 1 and > beta_start).
 
@@ -28,7 +28,7 @@ wandb:
   project: "DepthDif" # W&B project name.
   entity: null # W&B team/user; null uses your default account.
   run_name: null # Explicit run name; null lets W&B auto-name.
-  log_model: "all" # W&B model artifact logging policy ("all", "false", etc.).
+  log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
   verbose: true # Enable extra metric/image logging from the LightningModule.
   watch_log: "all" # W&B gradient/parameter watch mode.
   watch_log_freq: 25 # How often (steps) to log watched gradients/params.

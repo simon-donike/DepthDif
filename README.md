@@ -2,7 +2,7 @@
 This implementation is a first test, checking the feasability of densifying sparse ocean measurements.
 
 ## Data
-Currently, all 2024 tiles from the [Global Ocean Physics Reanalysis dataset](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F) have been downloaded and are manually masked to simulate real sparse observations.
+Currently, all 2024 tiles from the [Global Ocean Physics Reanalysis dataset](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F) have been downloaded and are manually masked to simulate real sparse observations. Download the data by installing the `copernicusmarine` package, then use the DLI like so `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m  --filter "*2021/*"`
 
 Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)  
@@ -20,6 +20,12 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 
 
 ## ToDos
+- [ ] Include Deps file
+- [x] DDIM Sampling
 - [ ] Implement masked loss for train/val for land pixels  
-- [ ] More sophisticated way to feed masks to model  
 - [ ] Implement two masks: known land pixels and  missing pixels
+
+# RoadMap
+- [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources
+- [ ] More sophisticated way to feed masks to model, how to do it? masks * img?   
+- [ ] Aux data: coords, other priors, etc: How to to include them?
