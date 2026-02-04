@@ -6,7 +6,7 @@ dataset:
   nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.
   mask_fraction: 0.50 # Fraction of valid ocean pixels hidden to create sparse conditioning input.
   x_return_mode: "masked_plus_mask" # "raw_plus_mask" or "masked_plus_mask".
-  rebuild_index: true # Rebuild tile index from raw files on startup.
+  rebuild_index: false # Rebuild tile index from raw files on startup.
   enforce_validity: true # Drop indexed tiles with too much nodata based on max_nodata_fraction.
 
 

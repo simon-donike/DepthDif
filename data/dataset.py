@@ -104,7 +104,8 @@ class SurfaceTempPatchDataset(Dataset):
         x0 = int(row["x0"])
         e = int(row["edge_size"])
 
-        with xr.open_dataset(nc_path,engine="netcdf4", cache=False) as ds:
+        # netCDF4 is not installed in this env; use h5netcdf (declared in requirements).
+        with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
             da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
             patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
             arr = patch.values.astype(np.float32, copy=False)
@@ -167,7 +168,7 @@ class SurfaceTempPatchDataset(Dataset):
 
         records: List[Dict[str, Any]] = []
         for nc_path in tqdm(nc_files, desc="Indexing files", unit="file"):
-            with xr.open_dataset(nc_path) as ds:
+            with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
                 da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
                 h = int(da2d.sizes[lat_name])
                 w = int(da2d.sizes[lon_name])
