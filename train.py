@@ -62,7 +62,9 @@ def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
     # - parameters only -> "parameters"
     # - neither -> disable watch by returning None.
     # Explicit toggles take precedence when provided.
-    has_explicit_toggles = "watch_gradients" in wandb_cfg or "watch_parameters" in wandb_cfg
+    has_explicit_toggles = (
+        "watch_gradients" in wandb_cfg or "watch_parameters" in wandb_cfg
+    )
     if has_explicit_toggles:
         watch_gradients = bool(wandb_cfg.get("watch_gradients", True))
         watch_parameters = bool(wandb_cfg.get("watch_parameters", True))
@@ -84,7 +86,9 @@ def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
     return str(watch_mode)
 
 
-def build_wandb_logger(training_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
+def build_wandb_logger(
+    training_cfg: dict[str, Any], model: pl.LightningModule
+) -> WandbLogger:
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
         project=wandb_cfg.get("project", "DepthDif"),

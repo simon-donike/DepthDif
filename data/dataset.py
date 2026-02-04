@@ -10,7 +10,11 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from utils.normalizations import PLOT_CMAP, temperature_standardize, temperature_to_plot_unit
+from utils.normalizations import (
+    PLOT_CMAP,
+    temperature_standardize,
+    temperature_to_plot_unit,
+)
 
 
 class SurfaceTempPatchDataset(Dataset):
@@ -73,7 +77,9 @@ class SurfaceTempPatchDataset(Dataset):
             raise RuntimeError("Dataset contains no patches after indexing/filtering.")
 
     @classmethod
-    def from_config(cls, config_path: str = "configs/data_config.yaml") -> "SurfaceTempPatchDataset":
+    def from_config(
+        cls, config_path: str = "configs/data_config.yaml"
+    ) -> "SurfaceTempPatchDataset":
         cfg = cls._load_config(config_path)
         ds_cfg = cfg["dataset"]
         return cls(
@@ -107,14 +113,23 @@ class SurfaceTempPatchDataset(Dataset):
         # netCDF4 is not installed in this env; use h5netcdf (declared in requirements).
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
             da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
-            patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
+            patch = da2d.isel(
+                {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
+            )
             arr = patch.values.astype(np.float32, copy=False)
-            nodata_fraction = float(row["nodata_fraction"]) if "nodata_fraction" in row else np.nan
+            nodata_fraction = (
+                float(row["nodata_fraction"]) if "nodata_fraction" in row else np.nan
+            )
 
             # v: validity mask from data itself (1=valid ocean, 0=invalid/land/no-data).
             v_np = self._validity_mask(arr, da2d).astype(np.float32, copy=False)
 
-        arr = np.nan_to_num(arr, nan=self.nan_fill_value, posinf=self.nan_fill_value, neginf=self.nan_fill_value)
+        arr = np.nan_to_num(
+            arr,
+            nan=self.nan_fill_value,
+            posinf=self.nan_fill_value,
+            neginf=self.nan_fill_value,
+        )
         y = torch.from_numpy(arr).unsqueeze(0)
         v = torch.from_numpy(v_np).unsqueeze(0)
 
@@ -140,7 +155,9 @@ class SurfaceTempPatchDataset(Dataset):
         else:
             x = torch.cat([masked, k], dim=0)
 
-        info = {k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()}
+        info = {
+            k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()
+        }
         info["nodata_fraction_effective"] = nodata_fraction
 
         return {"x": x, "y": y, "info": info}
@@ -153,7 +170,9 @@ class SurfaceTempPatchDataset(Dataset):
         return k_rot, flip_h, flip_v
 
     @staticmethod
-    def _apply_geometric_augment(t: torch.Tensor, k_rot: int, flip_h: bool, flip_v: bool) -> torch.Tensor:
+    def _apply_geometric_augment(
+        t: torch.Tensor, k_rot: int, flip_h: bool, flip_v: bool
+    ) -> torch.Tensor:
         t = torch.rot90(t, k=k_rot, dims=(-2, -1))
         if flip_h:
             t = torch.flip(t, dims=(-1,))
@@ -195,17 +214,26 @@ class SurfaceTempPatchDataset(Dataset):
                             "nodata_fraction": np.nan,
                         }
                         if self.enforce_validity:
-                            patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
+                            patch = da2d.isel(
+                                {
+                                    lat_name: slice(y0, y0 + e),
+                                    lon_name: slice(x0, x0 + e),
+                                }
+                            )
                             arr = patch.values.astype(np.float32, copy=False)
                             rec["nodata_fraction"] = self._nodata_fraction(arr, da2d)
                         records.append(rec)
 
         if not records:
-            raise RuntimeError("No patches indexed. Check edge_size/stride and data dimensions.")
+            raise RuntimeError(
+                "No patches indexed. Check edge_size/stride and data dimensions."
+            )
 
         df = pd.DataFrame.from_records(records)
         if self.enforce_validity:
-            df = df[df["nodata_fraction"] <= self.max_nodata_fraction].reset_index(drop=True)
+            df = df[df["nodata_fraction"] <= self.max_nodata_fraction].reset_index(
+                drop=True
+            )
         return df
 
     @staticmethod
@@ -242,7 +270,9 @@ class SurfaceTempPatchDataset(Dataset):
         return da, lat_name, lon_name
 
     @staticmethod
-    def _pick_name(ds: xr.Dataset, dims: Tuple[str, ...], candidates: Tuple[str, ...]) -> Optional[str]:
+    def _pick_name(
+        ds: xr.Dataset, dims: Tuple[str, ...], candidates: Tuple[str, ...]
+    ) -> Optional[str]:
         low = {d.lower(): d for d in dims}
         for c in candidates:
             if c in low:
@@ -284,10 +314,11 @@ class SurfaceTempPatchDataset(Dataset):
         for fv in fill_values:
             valid &= ~np.isclose(arr, fv)
         return valid
-    
+
     def _plot_example_image(self) -> None:
         try:
             import matplotlib.pyplot as plt
+
             rand_n = np.random.RandomState(42)
             idx = rand_n.randint(0, len(self))
             sample = self.__getitem__(idx)
@@ -304,12 +335,16 @@ class SurfaceTempPatchDataset(Dataset):
                 y = y_t[0].numpy()
             else:
                 y = y_t.numpy()
-            
+
             # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
             x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-            x = temperature_to_plot_unit(torch.from_numpy(x), tensor_is_standardized=True).numpy()
-            y = temperature_to_plot_unit(torch.from_numpy(y), tensor_is_standardized=True).numpy()
+            x = temperature_to_plot_unit(
+                torch.from_numpy(x), tensor_is_standardized=True
+            ).numpy()
+            y = temperature_to_plot_unit(
+                torch.from_numpy(y), tensor_is_standardized=True
+            ).numpy()
 
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
             axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
@@ -321,7 +356,7 @@ class SurfaceTempPatchDataset(Dataset):
             plt.close()
         except Exception as e:
             print(f"Could not plot example image: {e}")
-            
+
     def _get_stats(self):
         y_min_overall = float("inf")
         y_max_overall = float("-inf")
@@ -367,7 +402,7 @@ if __name__ == "__main__":
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     dataset._plot_example_image()
-    #dataset._get_stats()
-    
+    # dataset._get_stats()
+
     print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
     print(f"Info: {sample['info']}")

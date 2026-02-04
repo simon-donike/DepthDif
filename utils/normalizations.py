@@ -36,7 +36,11 @@ def temperature_to_plot_unit(
     Convert temperature data to [0, 1] for plotting using fixed dataset-level
     stretch limits from this module.
     """
-    temp = temperature_standardize(mode="denorm", tensor=tensor) if tensor_is_standardized else tensor
+    temp = (
+        temperature_standardize(mode="denorm", tensor=tensor)
+        if tensor_is_standardized
+        else tensor
+    )
     t_min = torch.as_tensor(PLOT_TEMP_MIN, dtype=temp.dtype, device=temp.device)
     t_max = torch.as_tensor(PLOT_TEMP_MAX, dtype=temp.dtype, device=temp.device)
     denom = torch.clamp(t_max - t_min, min=torch.finfo(temp.dtype).eps)

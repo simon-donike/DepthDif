@@ -85,10 +85,18 @@ class PixelDiffusion(pl.LightningModule):
         return cls(
             datamodule=datamodule,
             generated_channels=int(m.get("generated_channels", m.get("bands", 1))),
-            num_timesteps=int(noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))),
-            noise_schedule=str(noise_cfg.get("schedule", m.get("noise_schedule", "linear"))),
-            noise_beta_start=float(noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))),
-            noise_beta_end=float(noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))),
+            num_timesteps=int(
+                noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
+            ),
+            noise_schedule=str(
+                noise_cfg.get("schedule", m.get("noise_schedule", "linear"))
+            ),
+            noise_beta_start=float(
+                noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))
+            ),
+            noise_beta_end=float(
+                noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))
+            ),
             **unet_kwargs,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
@@ -122,7 +130,9 @@ class PixelDiffusion(pl.LightningModule):
         unet = model_section.get("unet", {})
         return {
             "unet_dim": int(unet.get("dim", 64)),
-            "unet_dim_mults": cls._parse_unet_dim_mults(unet.get("dim_mults", [1, 2, 4, 8])),
+            "unet_dim_mults": cls._parse_unet_dim_mults(
+                unet.get("dim_mults", [1, 2, 4, 8])
+            ),
             "unet_with_time_emb": bool(unet.get("with_time_emb", True)),
             "unet_output_mean_scale": bool(unet.get("output_mean_scale", False)),
             "unet_residual": bool(unet.get("residual", False)),
@@ -157,7 +167,9 @@ class PixelDiffusion(pl.LightningModule):
         target = self._extract_unconditional_target(batch)
         target_t = self.input_T(target)
         # Log effective diffusion-space stats right before noising starts.
-        self._log_pre_diffusion_stats(target_t, prefix="train_target", batch_size=int(target.size(0)))
+        self._log_pre_diffusion_stats(
+            target_t, prefix="train_target", batch_size=int(target.size(0))
+        )
         # Diffusion training objective (p_loss):
         # sample random timestep t, noise x_0 -> x_t, and train UNet to predict injected noise.
         loss = self.model.p_loss(target_t)
@@ -172,7 +184,9 @@ class PixelDiffusion(pl.LightningModule):
             sync_dist=True,
             batch_size=target.size(0),
         )
-        self._log_common_batch_stats(target, prefix="train", batch_size=int(target.size(0)))
+        self._log_common_batch_stats(
+            target, prefix="train", batch_size=int(target.size(0))
+        )
         self._maybe_log_wandb_images(batch=batch, output=target, prefix="train")
         return loss
 
@@ -180,7 +194,9 @@ class PixelDiffusion(pl.LightningModule):
         target = self._extract_unconditional_target(batch)
         target_t = self.input_T(target)
         # Log effective diffusion-space stats right before noising starts.
-        self._log_pre_diffusion_stats(target_t, prefix="val_target", batch_size=int(target.size(0)))
+        self._log_pre_diffusion_stats(
+            target_t, prefix="val_target", batch_size=int(target.size(0))
+        )
         # Use the same denoising objective at validation time to track optimization progress.
         loss = self.model.p_loss(target_t)
 
@@ -205,22 +221,56 @@ class PixelDiffusion(pl.LightningModule):
             sync_dist=True,
             batch_size=target.size(0),
         )
-        self._log_common_batch_stats(target, prefix="val", batch_size=int(target.size(0)))
+        self._log_common_batch_stats(
+            target, prefix="val", batch_size=int(target.size(0))
+        )
         self._maybe_log_wandb_images(batch=batch, output=target, prefix="val")
         return loss
 
-    def _log_common_batch_stats(self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None) -> None:
+    def _log_common_batch_stats(
+        self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
+    ) -> None:
         if not self.wandb_verbose:
             return
         if self.global_step % self.log_stats_every_n_steps != 0:
             return
 
-        self.log(f"stats/{prefix}_batch_mean", tensor.mean(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
-        self.log(f"stats/{prefix}_batch_std", tensor.std(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
-        self.log(f"stats/{prefix}_batch_min", tensor.min(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
-        self.log(f"stats/{prefix}_batch_max", tensor.max(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
+        self.log(
+            f"stats/{prefix}_batch_mean",
+            tensor.mean(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_std",
+            tensor.std(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_min",
+            tensor.min(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_max",
+            tensor.max(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            batch_size=batch_size,
+        )
 
-    def _log_pre_diffusion_stats(self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None) -> None:
+    def _log_pre_diffusion_stats(
+        self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
+    ) -> None:
         if not self.wandb_verbose:
             return
         if self.global_step % self.log_stats_every_n_steps != 0:
@@ -246,7 +296,9 @@ class PixelDiffusion(pl.LightningModule):
             batch_size=batch_size,
         )
 
-    def _maybe_log_wandb_images(self, batch: Any, output: torch.Tensor, prefix: str) -> None:
+    def _maybe_log_wandb_images(
+        self, batch: Any, output: torch.Tensor, prefix: str
+    ) -> None:
         if not self.wandb_verbose:
             return
         if self.trainer is not None and not self.trainer.is_global_zero:
@@ -400,10 +452,18 @@ class PixelDiffusionConditional(PixelDiffusion):
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
-            num_timesteps=int(noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))),
-            noise_schedule=str(noise_cfg.get("schedule", m.get("noise_schedule", "linear"))),
-            noise_beta_start=float(noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))),
-            noise_beta_end=float(noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))),
+            num_timesteps=int(
+                noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
+            ),
+            noise_schedule=str(
+                noise_cfg.get("schedule", m.get("noise_schedule", "linear"))
+            ),
+            noise_beta_start=float(
+                noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))
+            ),
+            noise_beta_end=float(
+                noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))
+            ),
             **unet_kwargs,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
@@ -426,10 +486,14 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
 
     @staticmethod
-    def _tensor_stats(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _tensor_stats(
+        tensor: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return tensor.min(), tensor.mean(), tensor.std(unbiased=False)
 
-    def _build_validation_sampler(self, train_betas: torch.Tensor) -> DDIM_Sampler | None:
+    def _build_validation_sampler(
+        self, train_betas: torch.Tensor
+    ) -> DDIM_Sampler | None:
         # Validation can use either:
         # - DDPM (full stochastic chain, faithful to training dynamics)
         # - DDIM (fewer deterministic/stochastic steps, faster previews).
@@ -437,7 +501,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             return None
         if self.val_inference_sampler == "ddim":
             return DDIM_Sampler(
-                num_timesteps=min(self.val_ddim_num_timesteps, int(train_betas.numel())),
+                num_timesteps=min(
+                    self.val_ddim_num_timesteps, int(train_betas.numel())
+                ),
                 train_timesteps=int(train_betas.numel()),
                 betas=train_betas,
                 # Keep sampler in standardized-space domain; do not clamp to [-1, 1].
@@ -449,7 +515,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             f"(got '{self.val_inference_sampler}')."
         )
 
-    def _split_condition_data_and_mask(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def _split_condition_data_and_mask(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         channels = int(x.size(1))
         if channels <= 1:
             return x, None
@@ -477,22 +545,96 @@ class PixelDiffusionConditional(PixelDiffusion):
             return (x == 0).float().mean()
         return (mask < 0.5).float().mean()
 
-    def _log_validation_triplet_stats(self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor) -> None:
+    def _log_validation_triplet_stats(
+        self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
+    ) -> None:
         x_data, _ = self._split_condition_data_and_mask(x)
         x_min, x_mean, x_std = self._tensor_stats(x_data)
         y_min, y_mean, y_std = self._tensor_stats(y)
         y_hat_min, y_hat_mean, y_hat_std = self._tensor_stats(y_hat)
         sync_dist = self._should_sync_dist()
 
-        self.log("val_triplet/min_x", x_min, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/min_y", y_min, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/min_y_hat", y_hat_min, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/mean_x", x_mean, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/mean_y", y_mean, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/mean_y_hat", y_hat_mean, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/std_x", x_std, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/std_y", y_std, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
-        self.log("val_triplet/std_y_hat", y_hat_std, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
+        self.log(
+            "val_triplet/min_x",
+            x_min,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/min_y",
+            y_min,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/min_y_hat",
+            y_hat_min,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/mean_x",
+            x_mean,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/mean_y",
+            y_mean,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/mean_y_hat",
+            y_hat_mean,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/std_x",
+            x_std,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/std_y",
+            y_std,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_triplet/std_y_hat",
+            y_hat_std,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=y.size(0),
+        )
 
     def on_validation_epoch_start(self) -> None:
         # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
@@ -546,8 +688,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         model_condition = self._prepare_condition_for_model(x)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
-        self._log_pre_diffusion_stats(y_t, prefix="train_target", batch_size=int(y.size(0)))
-        self._log_pre_diffusion_stats(model_condition, prefix="train_condition", batch_size=int(y.size(0)))
+        self._log_pre_diffusion_stats(
+            y_t, prefix="train_target", batch_size=int(y.size(0))
+        )
+        self._log_pre_diffusion_stats(
+            model_condition, prefix="train_condition", batch_size=int(y.size(0))
+        )
         # Conditional p_loss uses x as context while learning to denoise y across random t.
         loss = self.model.p_loss(y_t, model_condition)
 
@@ -564,7 +710,14 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
             masked_fraction = self._masked_fraction(x)
-            self.log("train/masked_fraction", masked_fraction, on_step=True, on_epoch=False, logger=True, batch_size=y.size(0))
+            self.log(
+                "train/masked_fraction",
+                masked_fraction,
+                on_step=True,
+                on_epoch=False,
+                logger=True,
+                batch_size=y.size(0),
+            )
 
         self._log_common_batch_stats(y, prefix="train", batch_size=int(y.size(0)))
         return loss
@@ -575,8 +728,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         model_condition = self._prepare_condition_for_model(x)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
-        self._log_pre_diffusion_stats(y_t, prefix="val_target", batch_size=int(y.size(0)))
-        self._log_pre_diffusion_stats(model_condition, prefix="val_condition", batch_size=int(y.size(0)))
+        self._log_pre_diffusion_stats(
+            y_t, prefix="val_target", batch_size=int(y.size(0))
+        )
+        self._log_pre_diffusion_stats(
+            model_condition, prefix="val_condition", batch_size=int(y.size(0))
+        )
         # Same training objective for validation; full reverse-chain recon is logged at epoch end.
         loss = self.model.p_loss(y_t, model_condition)
 
@@ -604,7 +761,15 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
             masked_fraction = self._masked_fraction(x)
-            self.log("val/masked_fraction", masked_fraction, on_step=False, on_epoch=True, logger=True, sync_dist=True, batch_size=y.size(0))
+            self.log(
+                "val/masked_fraction",
+                masked_fraction,
+                on_step=False,
+                on_epoch=True,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
 
         if batch_idx == 0 and self._cached_val_example is None:
             # Store exactly one validation sample for epoch-end full reconstruction.
@@ -644,7 +809,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         if num_to_plot <= 0:
             return
 
-        fig, axes = plt.subplots(num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False)
+        fig, axes = plt.subplots(
+            num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
+        )
         x_data, _ = self._split_condition_data_and_mask(x)
 
         for i in range(num_to_plot):
@@ -665,7 +832,11 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         fig.tight_layout()
         # Keep full reconstruction logs separate from periodic batch previews.
-        image_key = f"{prefix}/x_y_full_reconstruction" if force else f"{prefix}/x_y_batch_preview"
+        image_key = (
+            f"{prefix}/x_y_full_reconstruction"
+            if force
+            else f"{prefix}/x_y_batch_preview"
+        )
         experiment.log({image_key: wandb.Image(fig)})
         plt.close(fig)
 

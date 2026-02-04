@@ -9,6 +9,7 @@ import yaml
 import torch
 import random
 
+
 def load_yaml(path: str) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -27,7 +28,7 @@ def load_random_temperature_window(
     nc_path: Path,
     *,
     window_size: int = 128,
-    depth_index: int = -1,   # -1 = deepest model level
+    depth_index: int = -1,  # -1 = deepest model level
     variable: str = "thetao",
 ) -> torch.Tensor:
     """
@@ -58,7 +59,6 @@ def load_random_temperature_window(
         return tensor
 
 
-
 def print_nc_info(nc_path: Path) -> None:
     lines: list[str] = [f"Opening: {nc_path}"]
     with xr.open_dataset(nc_path) as ds:
@@ -78,7 +78,9 @@ def print_nc_info(nc_path: Path) -> None:
 
         lines.append("\n=== COORDINATES ===")
         for name, coord in ds.coords.items():
-            lines.append(f"- {name}: dims={coord.dims}, shape={coord.shape}, dtype={coord.dtype}")
+            lines.append(
+                f"- {name}: dims={coord.dims}, shape={coord.shape}, dtype={coord.dtype}"
+            )
             if coord.attrs:
                 lines.append("  attrs:")
                 for k, v in coord.attrs.items():
@@ -86,7 +88,9 @@ def print_nc_info(nc_path: Path) -> None:
 
         lines.append("\n=== DATA VARIABLES ===")
         for name, var in ds.data_vars.items():
-            lines.append(f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}")
+            lines.append(
+                f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}"
+            )
             if var.attrs:
                 lines.append("  attrs:")
                 for k, v in var.attrs.items():
@@ -123,7 +127,7 @@ def main() -> None:
 
     nc_path = Path(args.nc_path) if args.nc_path else find_default_nc(args.data_config)
     print_nc_info(nc_path)
-    
+
 
 if __name__ == "__main__":
     main()
