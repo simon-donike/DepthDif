@@ -22,6 +22,21 @@ def load_yaml(path: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
+    resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
+    if resume_cfg is False or resume_cfg is None:
+        return None
+    if not isinstance(resume_cfg, str):
+        raise ValueError(
+            "model.resume_checkpoint must be false/null or a checkpoint path string."
+        )
+
+    ckpt_path = Path(resume_cfg).expanduser()
+    if not ckpt_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+    return str(ckpt_path)
+
+
 def build_wandb_logger(model_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
     wandb_cfg = model_cfg.get("wandb", {})
     logger = WandbLogger(
@@ -61,6 +76,7 @@ def main(
         shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
 
     model_cfg = load_yaml(model_config_path)
+    resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = model_cfg.get("trainer", {})
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
 
@@ -128,7 +144,7 @@ def main(
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
     )
 
-    trainer.fit(model=model, datamodule=datamodule)
+    trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
 
 
 if __name__ == "__main__":

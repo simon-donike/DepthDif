@@ -10,7 +10,7 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from utils.normalizations import temperature_standardize
+from utils.normalizations import PLOT_CMAP, temperature_standardize, temperature_to_plot_unit
 
 
 class SurfaceTempPatchDataset(Dataset):
@@ -104,7 +104,7 @@ class SurfaceTempPatchDataset(Dataset):
         x0 = int(row["x0"])
         e = int(row["edge_size"])
 
-        with xr.open_dataset(nc_path) as ds:
+        with xr.open_dataset(nc_path,engine="netcdf4", cache=False) as ds:
             da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
             patch = da2d.isel({lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)})
             arr = patch.values.astype(np.float32, copy=False)
@@ -304,19 +304,16 @@ class SurfaceTempPatchDataset(Dataset):
             else:
                 y = y_t.numpy()
             
-            # clean up tensor - remove nan, inf etc
+            # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
             x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-            # minmax normalization for better visualization
-            x_den = np.nanmax(x) - np.nanmin(x)
-            y_den = np.nanmax(y) - np.nanmin(y)
-            x = (x - np.nanmin(x)) / x_den if x_den > 0 else np.zeros_like(x)
-            y = (y - np.nanmin(y)) / y_den if y_den > 0 else np.zeros_like(y)
+            x = temperature_to_plot_unit(torch.from_numpy(x), tensor_is_standardized=True).numpy()
+            y = temperature_to_plot_unit(torch.from_numpy(y), tensor_is_standardized=True).numpy()
 
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-            axes[0].imshow(x, cmap="viridis")
+            axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[0].set_title("Input x (masked)")
-            axes[1].imshow(y, cmap="viridis")
+            axes[1].imshow(y, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[1].set_title("Target y (ground truth)")
             plt.tight_layout()
             plt.savefig("temp/example_depth_tile.png")

@@ -13,6 +13,7 @@ from .DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
     DenoisingDiffusionProcess,
 )
+from utils.normalizations import PLOT_CMAP, temperature_to_plot_unit
 
 
 class PixelDiffusion(pl.LightningModule):
@@ -216,12 +217,8 @@ class PixelDiffusion(pl.LightningModule):
 
     @staticmethod
     def _minmax_stretch(image: torch.Tensor) -> np.ndarray:
-        arr = image.detach().float().cpu().numpy()
-        arr_min = float(np.min(arr))
-        arr_max = float(np.max(arr))
-        if arr_max <= arr_min:
-            return np.zeros_like(arr, dtype=np.float32)
-        return ((arr - arr_min) / (arr_max - arr_min)).astype(np.float32)
+        arr = temperature_to_plot_unit(image, tensor_is_standardized=True)
+        return arr.detach().float().cpu().numpy().astype(np.float32)
 
     def train_dataloader(self):
         if self.datamodule is None:
@@ -256,6 +253,16 @@ class PixelDiffusionConditional(PixelDiffusion):
         unet_residual: bool = False,
         batch_size: int = 1,
         lr: float = 1e-3,
+        lr_scheduler_enabled: bool = False,
+        lr_scheduler_monitor: str = "val/loss_ckpt",
+        lr_scheduler_mode: str = "min",
+        lr_scheduler_factor: float = 0.5,
+        lr_scheduler_patience: int = 10,
+        lr_scheduler_threshold: float = 1e-4,
+        lr_scheduler_threshold_mode: str = "rel",
+        lr_scheduler_cooldown: int = 0,
+        lr_scheduler_min_lr: float = 0.0,
+        lr_scheduler_eps: float = 1e-8,
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
@@ -266,6 +273,16 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.datamodule = datamodule
         self.lr = lr
         self.batch_size = batch_size
+        self.lr_scheduler_enabled = bool(lr_scheduler_enabled)
+        self.lr_scheduler_monitor = str(lr_scheduler_monitor)
+        self.lr_scheduler_mode = str(lr_scheduler_mode)
+        self.lr_scheduler_factor = float(lr_scheduler_factor)
+        self.lr_scheduler_patience = int(lr_scheduler_patience)
+        self.lr_scheduler_threshold = float(lr_scheduler_threshold)
+        self.lr_scheduler_threshold_mode = str(lr_scheduler_threshold_mode)
+        self.lr_scheduler_cooldown = int(lr_scheduler_cooldown)
+        self.lr_scheduler_min_lr = float(lr_scheduler_min_lr)
+        self.lr_scheduler_eps = float(lr_scheduler_eps)
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
@@ -296,6 +313,11 @@ class PixelDiffusionConditional(PixelDiffusion):
         t = model_cfg.get("training", {})
         w = model_cfg.get("wandb", {})
         d = data_cfg.get("dataloader", {})
+        scheduler_cfg = data_cfg.get("scheduler", {})
+        plateau_cfg = scheduler_cfg.get(
+            "reduce_on_plateau",
+            scheduler_cfg.get("reduce_lr_on_plateau", {}),
+        )
         unet_kwargs = cls._parse_unet_config(m)
 
         return cls(
@@ -307,6 +329,16 @@ class PixelDiffusionConditional(PixelDiffusion):
             **unet_kwargs,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
+            lr_scheduler_enabled=bool(plateau_cfg.get("enabled", False)),
+            lr_scheduler_monitor=str(plateau_cfg.get("monitor", "val/loss_ckpt")),
+            lr_scheduler_mode=str(plateau_cfg.get("mode", "min")),
+            lr_scheduler_factor=float(plateau_cfg.get("factor", 0.5)),
+            lr_scheduler_patience=int(plateau_cfg.get("patience", 10)),
+            lr_scheduler_threshold=float(plateau_cfg.get("threshold", 1e-4)),
+            lr_scheduler_threshold_mode=str(plateau_cfg.get("threshold_mode", "rel")),
+            lr_scheduler_cooldown=int(plateau_cfg.get("cooldown", 0)),
+            lr_scheduler_min_lr=float(plateau_cfg.get("min_lr", 0.0)),
+            lr_scheduler_eps=float(plateau_cfg.get("eps", 1e-8)),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
@@ -472,11 +504,11 @@ class PixelDiffusionConditional(PixelDiffusion):
             y_hat_img = self._minmax_stretch(y_hat[i, 0])
             y_target_img = self._minmax_stretch(y_target[i, 0])
 
-            axes[i, 0].imshow(x_img, cmap="viridis")
+            axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[i, 0].set_axis_off()
-            axes[i, 1].imshow(y_hat_img, cmap="viridis")
+            axes[i, 1].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[i, 1].set_axis_off()
-            axes[i, 2].imshow(y_target_img, cmap="viridis")
+            axes[i, 2].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[i, 2].set_axis_off()
 
             axes[i, 0].set_title("Input")
@@ -486,3 +518,29 @@ class PixelDiffusionConditional(PixelDiffusion):
         fig.tight_layout()
         experiment.log({f"{prefix}/x_y_batch_preview": wandb.Image(fig)})
         plt.close(fig)
+
+    def configure_optimizers(self):
+        optimizer = super().configure_optimizers()
+        if not self.lr_scheduler_enabled:
+            return optimizer
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=self.lr_scheduler_mode,
+            factor=self.lr_scheduler_factor,
+            patience=self.lr_scheduler_patience,
+            threshold=self.lr_scheduler_threshold,
+            threshold_mode=self.lr_scheduler_threshold_mode,
+            cooldown=self.lr_scheduler_cooldown,
+            min_lr=self.lr_scheduler_min_lr,
+            eps=self.lr_scheduler_eps,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": self.lr_scheduler_monitor,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
