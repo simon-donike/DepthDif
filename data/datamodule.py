@@ -11,14 +11,20 @@ from data.dataset import SurfaceTempPatchDataset
 
 
 class DepthTileDataModule(pl.LightningDataModule):
-    def __init__(self, config_path: str = "configs/data_config.yaml") -> None:
+    def __init__(
+        self,
+        config_path: str = "configs/data_config.yaml",
+        training_config_path: str = "configs/training_config.yaml",
+    ) -> None:
         super().__init__()
         self.config_path = config_path
-        self._cfg = self._load_config(config_path)
+        self.training_config_path = training_config_path
+        self._cfg_data = self._load_config(config_path)
+        self._cfg_training = self._load_config(training_config_path)
 
-        dl_cfg = self._cfg["dataloader"]
-        split_cfg = self._cfg.get("split", {})
-        ds_cfg = self._cfg["dataset"]
+        dl_cfg = self._cfg_training.get("dataloader", {})
+        split_cfg = self._cfg_data.get("split", {})
+        ds_cfg = self._cfg_data["dataset"]
 
         self.batch_size = int(dl_cfg.get("batch_size", 16))
         self.val_batch_size = int(dl_cfg.get("val_batch_size", self.batch_size))

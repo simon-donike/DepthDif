@@ -12,25 +12,3 @@ dataset:
 
 split:
   val_fraction: 0.2 # Fraction of dataset reserved for validation.
-
-
-dataloader:
-  batch_size: 24 # Training batch size.
-  val_batch_size: 8 # Validation batch size (falls back to batch_size if omitted).
-  num_workers: 5 # Number of DataLoader worker processes.
-  shuffle: true # Shuffle training data each epoch.
-  pin_memory: true # Pin host memory for faster host->GPU transfer.
-
-
-scheduler:
-  reduce_on_plateau:
-    enabled: false # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
-    monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.
-    mode: "min" # "min" lowers LR when metric stops decreasing; "max" for increasing metrics.
-    factor: 0.5 # Multiplicative LR decay applied when plateau is detected.
-    patience: 10 # Number of validation epochs with no improvement before decaying LR.
-    threshold: 1.0e-4 # Minimum significant metric change to qualify as an improvement.
-    threshold_mode: "rel" # "rel" for relative thresholding, "abs" for absolute thresholding.
-    cooldown: 0 # Epochs to wait after an LR drop before resuming plateau checks.
-    min_lr: 0.0 # Lower bound for learning rate.
-    eps: 1.0e-8 # Minimum LR change to apply; smaller updates are ignored.

@@ -17,7 +17,7 @@ from data.datamodule import DepthTileDataModule
 from models.difFF import PixelDiffusion, PixelDiffusionConditional
 
 
-# Centralized YAML loader for model/data config files.
+# Centralized YAML loader for config files.
 def load_yaml(path: str) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -55,8 +55,8 @@ def resolve_global_rank() -> int:
 
 
 # Configure W&B logging and optional model watching.
-def build_wandb_logger(model_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
-    wandb_cfg = model_cfg.get("wandb", {})
+def build_wandb_logger(training_cfg: dict[str, Any], model: pl.LightningModule) -> WandbLogger:
+    wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
         project=wandb_cfg.get("project", "DepthDif"),
         entity=wandb_cfg.get("entity"),
@@ -89,6 +89,7 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
 def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
+    training_config_path: str = "configs/training_config.yaml",
 ) -> None:
     # Determine rank before creating any run-scoped folders/files.
     global_rank = resolve_global_rank()
@@ -107,11 +108,13 @@ def main(
         # Snapshot the exact configs used for reproducibility.
         shutil.copy2(model_config_path, run_dir / Path(model_config_path).name)
         shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
+        shutil.copy2(training_config_path, run_dir / Path(training_config_path).name)
 
     # Load configuration and choose model family.
     model_cfg = load_yaml(model_config_path)
+    training_cfg = load_yaml(training_config_path)
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
-    trainer_cfg = model_cfg.get("trainer", {})
+    trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
 
     # Use Tensor Cores efficiently for fp16/bf16 mixed precision.
@@ -129,28 +132,36 @@ def main(
         )
 
     # Data module encapsulates train/val dataset construction and loaders.
-    datamodule = DepthTileDataModule(config_path=data_config_path)
+    datamodule = DepthTileDataModule(
+        config_path=data_config_path,
+        training_config_path=training_config_path,
+    )
 
     # Instanciate appropriate model class from config.
     if model_type == "cond_px_dif":
         model = PixelDiffusionConditional.from_config(
             model_config_path=model_config_path,
             data_config_path=data_config_path,
+            training_config_path=training_config_path,
             datamodule=datamodule,
         )
     elif model_type == "px_dif":
         model = PixelDiffusion.from_config(
             model_config_path=model_config_path,
             data_config_path=data_config_path,
+            training_config_path=training_config_path,
             datamodule=datamodule,
         )
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
     # Set up experiment tracking and best-checkpoint saving.
-    logger = build_wandb_logger(model_cfg, model)
+    logger = build_wandb_logger(training_cfg, model)
     if is_global_zero:
-        upload_configs_to_wandb(logger, [model_config_path, data_config_path])
+        upload_configs_to_wandb(
+            logger,
+            [model_config_path, data_config_path, training_config_path],
+        )
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best",
@@ -173,13 +184,15 @@ def main(
         accelerator = trainer_cfg.get("accelerator", "auto")
         devices = trainer_cfg.get("devices", "auto")
 
-    # Trainer configuration is fully driven from model_config.yaml.
+    # Trainer configuration is fully driven from training_config.yaml.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
         accelerator=accelerator,
         devices=devices,
         strategy=trainer_cfg.get("strategy", "auto"),
         precision=trainer_cfg.get("precision", "32-true"),
+        # Keep sanity checks enabled by default, but model-side logic keeps them lightweight.
+        num_sanity_val_steps=int(trainer_cfg.get("num_sanity_val_steps", 2)),
         logger=logger,
         callbacks=[checkpoint_callback, lr_monitor_callback],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),

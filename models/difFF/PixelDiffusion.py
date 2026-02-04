@@ -65,16 +65,18 @@ class PixelDiffusion(pl.LightningModule):
         cls,
         model_config_path: str = "configs/model_config.yaml",
         data_config_path: str = "configs/data_config.yaml",
+        training_config_path: str = "configs/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusion":
         model_cfg = cls._load_yaml(model_config_path)
         data_cfg = cls._load_yaml(data_config_path)
+        training_cfg = cls._load_yaml(training_config_path)
 
         m = model_cfg.get("model", {})
-        t = model_cfg.get("training", {})
+        t = training_cfg.get("training", model_cfg.get("training", {}))
         noise_cfg = t.get("noise", {})
-        w = model_cfg.get("wandb", {})
-        d = data_cfg.get("dataloader", {})
+        w = training_cfg.get("wandb", model_cfg.get("wandb", {}))
+        d = training_cfg.get("dataloader", data_cfg.get("dataloader", {}))
         unet_kwargs = cls._parse_unet_config(m)
 
         return cls(
@@ -323,23 +325,27 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
+        # Single (x, y) validation example cached per epoch for one expensive reconstruction.
+        self._cached_val_example: tuple[torch.Tensor, torch.Tensor] | None = None
 
     @classmethod
     def from_config(
         cls,
         model_config_path: str = "configs/model_config.yaml",
         data_config_path: str = "configs/data_config.yaml",
+        training_config_path: str = "configs/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
         model_cfg = cls._load_yaml(model_config_path)
         data_cfg = cls._load_yaml(data_config_path)
+        training_cfg = cls._load_yaml(training_config_path)
 
         m = model_cfg.get("model", {})
-        t = model_cfg.get("training", {})
+        t = training_cfg.get("training", model_cfg.get("training", {}))
         noise_cfg = t.get("noise", {})
-        w = model_cfg.get("wandb", {})
-        d = data_cfg.get("dataloader", {})
-        scheduler_cfg = data_cfg.get("scheduler", {})
+        w = training_cfg.get("wandb", model_cfg.get("wandb", {}))
+        d = training_cfg.get("dataloader", data_cfg.get("dataloader", {}))
+        scheduler_cfg = training_cfg.get("scheduler", data_cfg.get("scheduler", {}))
         plateau_cfg = scheduler_cfg.get(
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
@@ -439,6 +445,44 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.log("val_triplet/std_y", y_std, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
         self.log("val_triplet/std_y_hat", y_hat_std, on_step=False, on_epoch=True, logger=True, sync_dist=sync_dist, batch_size=y.size(0))
 
+    def on_validation_epoch_start(self) -> None:
+        # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
+        self._cached_val_example = None
+
+    @torch.no_grad()
+    def _run_single_image_full_reconstruction_and_log(self) -> None:
+        # Expensive diagnostic path: run full reverse diffusion only once on one image.
+        if self._cached_val_example is None:
+            return
+        # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
+        if self.trainer is not None and self.trainer.sanity_checking:
+            return
+
+        x, y = self._cached_val_example
+        model_condition = self._prepare_condition_for_model(x)
+        y_hat = self(model_condition, sampler=self.val_sampler)
+        recon_mse = torch.mean((y_hat - y) ** 2)
+
+        self.log(
+            "val/recon_mse_1img",
+            recon_mse,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=False,
+            batch_size=1,
+        )
+        self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
+        self._log_common_batch_stats(y_hat, prefix="val_pred", batch_size=1)
+        self._log_common_batch_stats(y, prefix="val_target", batch_size=1)
+        self._maybe_log_wandb_images_conditional(x=x, y_hat=y_hat, y_target=y, prefix="val")
+
+    def on_validation_epoch_end(self) -> None:
+        # Run the one-image reconstruction after cheap validation metrics are accumulated.
+        self._run_single_image_full_reconstruction_and_log()
+        self._cached_val_example = None
+
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         y = batch["y"]
@@ -467,10 +511,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
-        # Run a full reverse diffusion pass on x during validation to assess real inference quality.
-        y_hat = self(model_condition, sampler=self.val_sampler)
         loss = self.model.p_loss(self.input_T(y), model_condition)
-        recon_mse = torch.mean((y_hat - y) ** 2)
 
         self.log(
             "val/loss",
@@ -493,26 +534,15 @@ class PixelDiffusionConditional(PixelDiffusion):
             sync_dist=True,
             batch_size=y.size(0),
         )
-        self.log(
-            "val/recon_mse",
-            recon_mse,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=y.size(0),
-        )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
             masked_fraction = self._masked_fraction(x)
             self.log("val/masked_fraction", masked_fraction, on_step=False, on_epoch=True, logger=True, sync_dist=True, batch_size=y.size(0))
 
-        self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
-        self._log_common_batch_stats(y_hat, prefix="val_pred", batch_size=int(y.size(0)))
-        self._log_common_batch_stats(y, prefix="val_target", batch_size=int(y.size(0)))
+        if batch_idx == 0 and self._cached_val_example is None:
+            # Store exactly one validation sample for epoch-end full reconstruction.
+            self._cached_val_example = (x[:1].detach(), y[:1].detach())
 
-        self._maybe_log_wandb_images_conditional(x=x, y_hat=y_hat, y_target=y, prefix="val")
         return loss
 
     def _maybe_log_wandb_images_conditional(
