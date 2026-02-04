@@ -1,21 +1,23 @@
+Opening: /work/data/depth/confirmed/mercatorglorys12v1_gl12_mean_202301.nc
+
 === DATASET SUMMARY ===
 <xarray.Dataset> Size: 15GB
 Dimensions:    (time: 1, latitude: 2041, longitude: 4320, depth: 50)
 Coordinates:
-  * time       (time) datetime64[ns] 8B 2024-03-16T12:00:00
+  * time       (time) datetime64[ns] 8B 2023-01-16T12:00:00
   * latitude   (latitude) float32 8kB -80.0 -79.92 -79.83 ... 89.83 89.92 90.0
   * longitude  (longitude) float32 17kB -180.0 -179.9 -179.8 ... 179.8 179.9
   * depth      (depth) float32 200B 0.494 1.541 2.646 ... 5.275e+03 5.728e+03
 Data variables:
+    bottomT    (time, latitude, longitude) float64 71MB ...
     mlotst     (time, latitude, longitude) float64 71MB ...
     zos        (time, latitude, longitude) float64 71MB ...
-    bottomT    (time, latitude, longitude) float64 71MB ...
     sithick    (time, latitude, longitude) float64 71MB ...
     siconc     (time, latitude, longitude) float64 71MB ...
     usi        (time, latitude, longitude) float64 71MB ...
     vsi        (time, latitude, longitude) float64 71MB ...
-    thetao     (time, depth, latitude, longitude) float64 4GB ...
     so         (time, depth, latitude, longitude) float64 4GB ...
+    thetao     (time, depth, latitude, longitude) float64 4GB ...
     uo         (time, depth, latitude, longitude) float64 4GB ...
     vo         (time, depth, latitude, longitude) float64 4GB ...
 Attributes: (12/14)
@@ -50,8 +52,6 @@ Attributes: (12/14)
 - quality_information_document: http://marine.copernicus.eu/documents/QUID/CMEMS-GLO-QUID-001-030.pdf
 
 === DIMENSIONS ===
-<stdin>:13: FutureWarning: The return type of `Dataset.dims` will be changed to return a set of dimension names in future, in order to be more consistent with `DataArray.dims`. To access a mapping from dimension names to lengths, please use `Dataset.sizes`.
-<frozen _collections_abc>:894: FutureWarning: The return type of `Dataset.dims` will be changed to return a set of dimension names in future, in order to be more consistent with `DataArray.dims`. To access a mapping from dimension names to lengths, please use `Dataset.sizes`.
 - time: 1
 - latitude: 2041
 - longitude: 4320
@@ -95,6 +95,15 @@ Attributes: (12/14)
     - standard_name: time
 
 === DATA VARIABLES ===
+- bottomT: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Sea floor potential temperature
+    - standard_name: sea_water_potential_temperature_at_sea_floor
+    - units: degrees_C
+    - unit_long: Degrees Celsius
+    - valid_min: -32767
+    - valid_max: 22600
+    - cell_methods: area: mean
 - mlotst: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
   attrs:
     - long_name: Density ocean mixed layer thickness
@@ -112,15 +121,6 @@ Attributes: (12/14)
     - unit_long: Meters
     - valid_min: -7000
     - valid_max: 6100
-    - cell_methods: area: mean
-- bottomT: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
-  attrs:
-    - long_name: Sea floor potential temperature
-    - standard_name: sea_water_potential_temperature_at_sea_floor
-    - units: degrees_C
-    - unit_long: Degrees Celsius
-    - valid_min: -32767
-    - valid_max: 22600
     - cell_methods: area: mean
 - sithick: dims=('time', 'latitude', 'longitude'), shape=(1, 2041, 4320), dtype=float64
   attrs:
@@ -158,15 +158,6 @@ Attributes: (12/14)
     - valid_min: -32767
     - valid_max: 32760
     - cell_methods: area: mean where sea_ice
-- thetao: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
-  attrs:
-    - long_name: Temperature
-    - standard_name: sea_water_potential_temperature
-    - units: degrees_C
-    - unit_long: Degrees Celsius
-    - valid_min: -32767
-    - valid_max: 22600
-    - cell_methods: area: mean
 - so: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
   attrs:
     - long_name: Salinity
@@ -175,6 +166,15 @@ Attributes: (12/14)
     - unit_long: Practical Salinity Unit
     - valid_min: 1
     - valid_max: 31700
+    - cell_methods: area: mean
+- thetao: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
+  attrs:
+    - long_name: Temperature
+    - standard_name: sea_water_potential_temperature
+    - units: degrees_C
+    - unit_long: Degrees Celsius
+    - valid_min: -32767
+    - valid_max: 22600
     - cell_methods: area: mean
 - uo: dims=('time', 'depth', 'latitude', 'longitude'), shape=(1, 50, 2041, 4320), dtype=float64
   attrs:
@@ -194,3 +194,55 @@ Attributes: (12/14)
     - valid_min: -4900
     - valid_max: 4300
     - cell_methods: area: mean
+
+=== DEPTH LEVELS (METERS) ===
+- level 0: 0.494 m
+- level 1: 1.541 m
+- level 2: 2.646 m
+- level 3: 3.819 m
+- level 4: 5.078 m
+- level 5: 6.441 m
+- level 6: 7.930 m
+- level 7: 9.573 m
+- level 8: 11.405 m
+- level 9: 13.467 m
+- level 10: 15.810 m
+- level 11: 18.496 m
+- level 12: 21.599 m
+- level 13: 25.211 m
+- level 14: 29.445 m
+- level 15: 34.434 m
+- level 16: 40.344 m
+- level 17: 47.374 m
+- level 18: 55.764 m
+- level 19: 65.807 m
+- level 20: 77.854 m
+- level 21: 92.326 m
+- level 22: 109.729 m
+- level 23: 130.666 m
+- level 24: 155.851 m
+- level 25: 186.126 m
+- level 26: 222.475 m
+- level 27: 266.040 m
+- level 28: 318.127 m
+- level 29: 380.213 m
+- level 30: 453.938 m
+- level 31: 541.089 m
+- level 32: 643.567 m
+- level 33: 763.333 m
+- level 34: 902.339 m
+- level 35: 1062.440 m
+- level 36: 1245.291 m
+- level 37: 1452.251 m
+- level 38: 1684.284 m
+- level 39: 1941.893 m
+- level 40: 2225.078 m
+- level 41: 2533.336 m
+- level 42: 2865.703 m
+- level 43: 3220.820 m
+- level 44: 3597.032 m
+- level 45: 3992.484 m
+- level 46: 4405.224 m
+- level 47: 4833.291 m
+- level 48: 5274.784 m
+- level 49: 5727.917 m

@@ -60,37 +60,49 @@ def load_random_temperature_window(
 
 
 def print_nc_info(nc_path: Path) -> None:
-    print(f"Opening: {nc_path}")
+    lines: list[str] = [f"Opening: {nc_path}"]
     with xr.open_dataset(nc_path) as ds:
-        print("\n=== DATASET SUMMARY ===")
-        print(ds)
+        lines.append("\n=== DATASET SUMMARY ===")
+        lines.append(str(ds))
 
-        print("\n=== GLOBAL ATTRIBUTES (TAGS) ===")
+        lines.append("\n=== GLOBAL ATTRIBUTES (TAGS) ===")
         if ds.attrs:
             for k, v in ds.attrs.items():
-                print(f"- {k}: {v}")
+                lines.append(f"- {k}: {v}")
         else:
-            print("(none)")
+            lines.append("(none)")
 
-        print("\n=== DIMENSIONS ===")
+        lines.append("\n=== DIMENSIONS ===")
         for dim, size in ds.dims.items():
-            print(f"- {dim}: {size}")
+            lines.append(f"- {dim}: {size}")
 
-        print("\n=== COORDINATES ===")
+        lines.append("\n=== COORDINATES ===")
         for name, coord in ds.coords.items():
-            print(f"- {name}: dims={coord.dims}, shape={coord.shape}, dtype={coord.dtype}")
+            lines.append(f"- {name}: dims={coord.dims}, shape={coord.shape}, dtype={coord.dtype}")
             if coord.attrs:
-                print("  attrs:")
+                lines.append("  attrs:")
                 for k, v in coord.attrs.items():
-                    print(f"    - {k}: {v}")
+                    lines.append(f"    - {k}: {v}")
 
-        print("\n=== DATA VARIABLES ===")
+        lines.append("\n=== DATA VARIABLES ===")
         for name, var in ds.data_vars.items():
-            print(f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}")
+            lines.append(f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}")
             if var.attrs:
-                print("  attrs:")
+                lines.append("  attrs:")
                 for k, v in var.attrs.items():
-                    print(f"    - {k}: {v}")
+                    lines.append(f"    - {k}: {v}")
+
+        lines.append("\n=== DEPTH LEVELS (METERS) ===")
+        if "depth" in ds.coords:
+            depth_values = ds["depth"].values
+            for i, depth_m in enumerate(depth_values):
+                lines.append(f"- level {i}: {float(depth_m):.3f} m")
+        else:
+            lines.append("No 'depth' coordinate found in this dataset.")
+
+    output_path = Path("data/data_info.txt")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -114,10 +126,4 @@ def main() -> None:
     
 
 if __name__ == "__main__":
-    #main()
-    temp = load_random_temperature_window(
-        nc_path="/work/data/depth/mercatorglorys12v1_gl12_mean_202403.nc",
-        window_size=128,
-        depth_index=1,  # deepest depth
-    )
-
+    main()

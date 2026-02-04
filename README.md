@@ -26,6 +26,12 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 - [ ] Implement two masks: known land pixels and  missing pixels
 
 # RoadMap
-- [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources
+#### Tier 1
+- [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
+- [ ] Aux data: coords, other priors, etc: How to to include them?  
+
+#### Tier 2
+- [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources. 
 - [ ] More sophisticated way to feed masks to model, how to do it? masks * img?   
-- [ ] Aux data: coords, other priors, etc: How to to include them?
+- [ ] Larger, more sophisticated backbone?   
+
