@@ -29,6 +29,7 @@ class DepthTileDataModule(pl.LightningDataModule):
         self.batch_size = int(dl_cfg.get("batch_size", 16))
         self.val_batch_size = int(dl_cfg.get("val_batch_size", self.batch_size))
         self.num_workers = int(dl_cfg.get("num_workers", 4))
+        self.val_num_workers = int(dl_cfg.get("val_num_workers", self.num_workers))
         self.pin_memory = bool(dl_cfg.get("pin_memory", True))
         self.shuffle = bool(dl_cfg.get("shuffle", True))
 
@@ -84,13 +85,18 @@ class DepthTileDataModule(pl.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         if self.val_dataset is None:
             self.setup("fit")
+        num_workers = self.val_num_workers
+        # HDF5-backed NetCDF reads can deadlock in multi-worker validation on some setups.
+        # Sanity checking only needs a couple of batches, so force single-process loading there.
+        if self.trainer is not None and self.trainer.sanity_checking:
+            num_workers = 0
         return DataLoader(
             self.val_dataset,
             batch_size=self.val_batch_size,
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=num_workers,
             pin_memory=self.pin_memory,
-            persistent_workers=self.num_workers > 0,
+            persistent_workers=num_workers > 0,
         )
 
 

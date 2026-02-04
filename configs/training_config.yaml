@@ -46,6 +46,7 @@ dataloader: # DataLoader Settings
   batch_size: 24 # Training batch size.
   val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
   num_workers: 5 # Number of DataLoader worker processes.
+  val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
   shuffle: true # Shuffle training data each epoch.
   pin_memory: true # Pin host memory for faster host->GPU transfer.
 

@@ -22,7 +22,7 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 # Comments
 
 ## Notes
-Currently num_workers=0 and pin_mermory=False due to previous PID datalader death. This way, GPUs arent saturated. Find this error and put up again for effective training.
+Currently num_workers=0 and pin_mermory=False due to previous PID datalader death. This way, GPUs arent saturated. Find this error and put up again for effective training. ✅ - reduced val workers to 0, increased num_workers and pin_memory=True, bac to good saturation.
 
 
 ## ToDos
