@@ -10,7 +10,7 @@ import warnings
 import pytorch_lightning as pl
 import torch
 import yaml
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
@@ -159,6 +159,9 @@ def main(
         save_top_k=1,
         save_last=False,
     )
+    lr_monitor_callback = LearningRateMonitor(
+        logging_interval=str(trainer_cfg.get("lr_logging_interval", "step"))
+    )
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
@@ -178,7 +181,7 @@ def main(
         strategy=trainer_cfg.get("strategy", "auto"),
         precision=trainer_cfg.get("precision", "32-true"),
         logger=logger,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, lr_monitor_callback],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         limit_val_batches=trainer_cfg.get("limit_val_batches", 1.0),
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),

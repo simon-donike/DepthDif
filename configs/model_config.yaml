@@ -51,6 +51,7 @@ trainer:
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
   ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
+  lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
