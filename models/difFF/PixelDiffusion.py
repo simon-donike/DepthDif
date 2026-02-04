@@ -130,16 +130,17 @@ class PixelDiffusion(pl.LightningModule):
 
     @torch.no_grad()
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
-        # Inference runs reverse diffusion and then maps back to data range [0, 1].
+        # Inference runs reverse diffusion and returns outputs in dataset-standardized space.
         return self.output_T(self.model(*args, **kwargs))
 
     def input_T(self, value: torch.Tensor) -> torch.Tensor:
-        # Let the model consume [0, 1] range and internally map to [-1, 1].
-        return (value.clamp(0, 1) * 2.0) - 1.0
+        # Dataset already provides standardized temperatures (z-score), so keep identity here.
+        # This avoids a second normalization pass and preserves the training target distribution.
+        return value
 
     def output_T(self, value: torch.Tensor) -> torch.Tensor:
-        # Inverse transform of model output from [-1, 1] to [0, 1].
-        return (value + 1.0) / 2.0
+        # Return samples in the same standardized space used by the dataset.
+        return value
 
     def _extract_unconditional_target(self, batch: Any) -> torch.Tensor:
         if isinstance(batch, dict):
@@ -154,9 +155,12 @@ class PixelDiffusion(pl.LightningModule):
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         target = self._extract_unconditional_target(batch)
+        target_t = self.input_T(target)
+        # Log effective diffusion-space stats right before noising starts.
+        self._log_pre_diffusion_stats(target_t, prefix="train_target", batch_size=int(target.size(0)))
         # Diffusion training objective (p_loss):
         # sample random timestep t, noise x_0 -> x_t, and train UNet to predict injected noise.
-        loss = self.model.p_loss(self.input_T(target))
+        loss = self.model.p_loss(target_t)
 
         self.log(
             "train/loss",
@@ -174,8 +178,11 @@ class PixelDiffusion(pl.LightningModule):
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         target = self._extract_unconditional_target(batch)
+        target_t = self.input_T(target)
+        # Log effective diffusion-space stats right before noising starts.
+        self._log_pre_diffusion_stats(target_t, prefix="val_target", batch_size=int(target.size(0)))
         # Use the same denoising objective at validation time to track optimization progress.
-        loss = self.model.p_loss(self.input_T(target))
+        loss = self.model.p_loss(target_t)
 
         self.log(
             "val/loss",
@@ -212,6 +219,32 @@ class PixelDiffusion(pl.LightningModule):
         self.log(f"stats/{prefix}_batch_std", tensor.std(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
         self.log(f"stats/{prefix}_batch_min", tensor.min(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
         self.log(f"stats/{prefix}_batch_max", tensor.max(), on_step=True, on_epoch=False, logger=True, batch_size=batch_size)
+
+    def _log_pre_diffusion_stats(self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None) -> None:
+        if not self.wandb_verbose:
+            return
+        if self.global_step % self.log_stats_every_n_steps != 0:
+            return
+        sync_dist = self._should_sync_dist()
+
+        self.log(
+            f"pre_diffusion/{prefix}_mean",
+            tensor.mean(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"pre_diffusion/{prefix}_std",
+            tensor.std(unbiased=False),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
 
     def _maybe_log_wandb_images(self, batch: Any, output: torch.Tensor, prefix: str) -> None:
         if not self.wandb_verbose:
@@ -407,6 +440,8 @@ class PixelDiffusionConditional(PixelDiffusion):
                 num_timesteps=min(self.val_ddim_num_timesteps, int(train_betas.numel())),
                 train_timesteps=int(train_betas.numel()),
                 betas=train_betas,
+                # Keep sampler in standardized-space domain; do not clamp to [-1, 1].
+                clip_sample=False,
                 eta=self.val_ddim_eta,
             )
         raise ValueError(
@@ -509,8 +544,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
+        y_t = self.input_T(y)
+        # Log target and condition stats in the exact space seen by diffusion.
+        self._log_pre_diffusion_stats(y_t, prefix="train_target", batch_size=int(y.size(0)))
+        self._log_pre_diffusion_stats(model_condition, prefix="train_condition", batch_size=int(y.size(0)))
         # Conditional p_loss uses x as context while learning to denoise y across random t.
-        loss = self.model.p_loss(self.input_T(y), model_condition)
+        loss = self.model.p_loss(y_t, model_condition)
 
         self.log(
             "train/loss",
@@ -534,8 +573,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
+        y_t = self.input_T(y)
+        # Log target and condition stats in the exact space seen by diffusion.
+        self._log_pre_diffusion_stats(y_t, prefix="val_target", batch_size=int(y.size(0)))
+        self._log_pre_diffusion_stats(model_condition, prefix="val_condition", batch_size=int(y.size(0)))
         # Same training objective for validation; full reverse-chain recon is logged at epoch end.
-        loss = self.model.p_loss(self.input_T(y), model_condition)
+        loss = self.model.p_loss(y_t, model_condition)
 
         self.log(
             "val/loss",

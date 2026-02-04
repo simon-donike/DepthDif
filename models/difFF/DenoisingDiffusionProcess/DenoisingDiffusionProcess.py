@@ -93,7 +93,8 @@ class DenoisingDiffusionProcess(nn.Module):
         
     def p_loss(self,output):
         """
-            Assumes output is in [-1,+1] range
+            Computes denoising objective in whatever normalized space the caller uses.
+            (In this project, caller feeds standardized temperature targets.)
         """        
         
         b,c,h,w=output.shape
@@ -197,7 +198,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         
     def p_loss(self,output,condition):
         """
-            Assumes output and input are in [-1,+1] range
+            Computes conditional denoising objective in caller-provided normalized space.
+            (In this project, output/condition data channels are standardized temperatures.)
         """        
         
         b,c,h,w=output.shape
