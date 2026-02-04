@@ -1,5 +1,5 @@
 # Settings for instantiating the model and trainer.
-model:
+model: # Model Settings
   model_type: "cond_px_dif" # "cond_px_dif" for conditional diffusion, "px_dif" for unconditional.
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
   generated_channels: 1 # Number of channels the model predicts (target y channels).
@@ -15,7 +15,7 @@ model:
     output_mean_scale: false # Optional output mean correction used by some diffusion variants.
     residual: false # If true, predicts a residual added to input.
 
-training:
+training: # Internal Model Training Settings
   lr: 1.0e-4 # Optimizer learning rate.
   batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
   noise:
@@ -28,19 +28,7 @@ training:
     ddim_num_timesteps: 200 # Used only when sampler="ddim"; fewer steps = faster, potentially less accurate.
     ddim_eta: 0.0 # Used only when sampler="ddim"; 0.0 is deterministic DDIM.
 
-wandb:
-  project: "DepthDif_Simon" # W&B project name.
-  entity: esa-phi-lab # W&B team/user; null uses your default account.
-  run_name: null # Explicit run name; null lets W&B auto-name.
-  log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
-  verbose: true # Enable extra metric/image logging from the LightningModule.
-  watch_log: "all" # W&B gradient/parameter watch mode.
-  watch_log_freq: 25 # How often (steps) to log watched gradients/params.
-  watch_log_graph: false # Whether to log the computational graph.
-  log_stats_every_n_steps: 50 # Step interval for lightweight scalar debug stats.
-  log_images_every_n_steps: 100 # Step interval for validation preview images.
-
-trainer:
+trainer: # PL Trainer Settings
   max_epochs: 1000 # Maximum number of training epochs.
   accelerator: "auto" # Accelerator backend ("auto", "gpu", "cpu", ...).
   devices: "auto" # Devices to use ("auto", int, list).
@@ -51,9 +39,21 @@ trainer:
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
   ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
-  lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
+  lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
   gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
   rebuild_index: false # Unused by trainer; kept for compatibility (dataset config owns index rebuild).
+
+wandb: # Logging Settings
+  project: "DepthDif_Simon" # W&B project name.
+  entity: esa-phi-lab # W&B team/user; null uses your default account.
+  run_name: null # Explicit run name; null lets W&B auto-name.
+  log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
+  verbose: true # Enable extra metric/image logging from the LightningModule.
+  watch_log: "all" # W&B gradient/parameter watch mode.
+  watch_log_freq: 25 # How often (steps) to log watched gradients/params.
+  watch_log_graph: false # Whether to log the computational graph.
+  log_stats_every_n_steps: 50 # Step interval for lightweight scalar debug stats.
+  log_images_every_n_steps: 100 # Step interval for validation preview images.
