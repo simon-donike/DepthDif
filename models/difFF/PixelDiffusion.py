@@ -10,6 +10,7 @@ import torch
 import yaml
 
 from .DenoisingDiffusionProcess import (
+    DDIM_Sampler,
     DenoisingDiffusionConditionalProcess,
     DenoisingDiffusionProcess,
 )
@@ -22,6 +23,9 @@ class PixelDiffusion(pl.LightningModule):
         datamodule: pl.LightningDataModule | None = None,
         generated_channels: int = 1,
         num_timesteps: int = 1000,
+        noise_schedule: str = "linear",
+        noise_beta_start: float = 1e-4,
+        noise_beta_end: float = 2e-2,
         unet_dim: int = 64,
         unet_dim_mults: tuple[int, ...] = (1, 2, 4, 8),
         unet_with_time_emb: bool = True,
@@ -46,6 +50,9 @@ class PixelDiffusion(pl.LightningModule):
         self.model = DenoisingDiffusionProcess(
             generated_channels=generated_channels,
             num_timesteps=num_timesteps,
+            schedule=noise_schedule,
+            beta_start=noise_beta_start,
+            beta_end=noise_beta_end,
             unet_dim=unet_dim,
             unet_dim_mults=unet_dim_mults,
             unet_with_time_emb=unet_with_time_emb,
@@ -65,6 +72,7 @@ class PixelDiffusion(pl.LightningModule):
 
         m = model_cfg.get("model", {})
         t = model_cfg.get("training", {})
+        noise_cfg = t.get("noise", {})
         w = model_cfg.get("wandb", {})
         d = data_cfg.get("dataloader", {})
         unet_kwargs = cls._parse_unet_config(m)
@@ -72,7 +80,10 @@ class PixelDiffusion(pl.LightningModule):
         return cls(
             datamodule=datamodule,
             generated_channels=int(m.get("generated_channels", m.get("bands", 1))),
-            num_timesteps=int(m.get("num_timesteps", 1000)),
+            num_timesteps=int(noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))),
+            noise_schedule=str(noise_cfg.get("schedule", m.get("noise_schedule", "linear"))),
+            noise_beta_start=float(noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))),
+            noise_beta_end=float(noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))),
             **unet_kwargs,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
@@ -246,6 +257,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         condition_channels: int = 1,
         condition_mask_channels: int = 1,
         num_timesteps: int = 1000,
+        noise_schedule: str = "linear",
+        noise_beta_start: float = 1e-4,
+        noise_beta_end: float = 2e-2,
         unet_dim: int = 64,
         unet_dim_mults: tuple[int, ...] = (1, 2, 4, 8),
         unet_with_time_emb: bool = True,
@@ -292,11 +306,22 @@ class PixelDiffusionConditional(PixelDiffusion):
             generated_channels=generated_channels,
             condition_channels=condition_channels,
             num_timesteps=num_timesteps,
+            schedule=noise_schedule,
+            beta_start=noise_beta_start,
+            beta_end=noise_beta_end,
             unet_dim=unet_dim,
             unet_dim_mults=unet_dim_mults,
             unet_with_time_emb=unet_with_time_emb,
             unet_output_mean_scale=unet_output_mean_scale,
             unet_residual=unet_residual,
+        )
+        train_betas = self.model.forward_process.betas.detach().clone()
+        # Faster deterministic validation sampling than full DDPM rollout.
+        self.val_sampler = DDIM_Sampler(
+            num_timesteps=200,
+            train_timesteps=int(train_betas.numel()),
+            betas=train_betas,
+            eta=0.0,
         )
 
     @classmethod
@@ -311,6 +336,7 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         m = model_cfg.get("model", {})
         t = model_cfg.get("training", {})
+        noise_cfg = t.get("noise", {})
         w = model_cfg.get("wandb", {})
         d = data_cfg.get("dataloader", {})
         scheduler_cfg = data_cfg.get("scheduler", {})
@@ -325,7 +351,10 @@ class PixelDiffusionConditional(PixelDiffusion):
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
-            num_timesteps=int(m.get("num_timesteps", 1000)),
+            num_timesteps=int(noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))),
+            noise_schedule=str(noise_cfg.get("schedule", m.get("noise_schedule", "linear"))),
+            noise_beta_start=float(noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))),
+            noise_beta_end=float(noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))),
             **unet_kwargs,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
@@ -420,7 +449,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         y = batch["y"]
         model_condition = self._prepare_condition_for_model(x)
         # Run a full reverse diffusion pass on x during validation to assess real inference quality.
-        y_hat = self(model_condition)
+        y_hat = self(model_condition, sampler=self.val_sampler)
         loss = self.model.p_loss(self.input_T(y), model_condition)
         recon_mse = torch.mean((y_hat - y) ** 2)
 

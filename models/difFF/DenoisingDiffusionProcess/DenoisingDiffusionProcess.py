@@ -18,6 +18,8 @@ class DenoisingDiffusionProcess(nn.Module):
                  generated_channels=3,              
                  loss_fn=F.mse_loss,
                  schedule='linear',
+                 beta_start=0.0001,
+                 beta_end=0.02,
                  num_timesteps=1000,
                  unet_dim=64,
                  unet_dim_mults=(1, 2, 4, 8),
@@ -35,7 +37,9 @@ class DenoisingDiffusionProcess(nn.Module):
         
         # Forward Process Used for Training
         self.forward_process=GaussianForwardProcess(num_timesteps=self.num_timesteps,
-                                                    schedule=schedule)
+                                                    schedule=schedule,
+                                                    beta_start=beta_start,
+                                                    beta_end=beta_end)
         self.model=UnetConvNextBlock(dim=unet_dim,
                                      dim_mults=unet_dim_mults,
                                      channels=self.generated_channels,
@@ -46,7 +50,10 @@ class DenoisingDiffusionProcess(nn.Module):
                
         
         # defaults to a DDPM sampler if None is provided
-        self.sampler=DDPM_Sampler(num_timesteps=self.num_timesteps) if sampler is None else sampler
+        self.sampler=DDPM_Sampler(num_timesteps=self.num_timesteps,
+                                  schedule=schedule,
+                                  beta_start=beta_start,
+                                  beta_end=beta_end) if sampler is None else sampler
         
     @torch.no_grad()
     def forward(self,
@@ -112,6 +119,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                  condition_channels=3,
                  loss_fn=F.mse_loss,
                  schedule='linear',
+                 beta_start=0.0001,
+                 beta_end=0.02,
                  num_timesteps=1000,
                  unet_dim=64,
                  unet_dim_mults=(1, 2, 4, 8),
@@ -130,7 +139,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         
         # Forward Process
         self.forward_process=GaussianForwardProcess(num_timesteps=self.num_timesteps,
-                                                    schedule=schedule)
+                                                    schedule=schedule,
+                                                    beta_start=beta_start,
+                                                    beta_end=beta_end)
         
         # Neural Network Backbone
         self.model=UnetConvNextBlock(dim=unet_dim,
@@ -142,7 +153,10 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                                      residual=unet_residual)
         
         # defaults to a DDPM sampler if None is provided
-        self.sampler=DDPM_Sampler(num_timesteps=self.num_timesteps) if sampler is None else sampler
+        self.sampler=DDPM_Sampler(num_timesteps=self.num_timesteps,
+                                  schedule=schedule,
+                                  beta_start=beta_start,
+                                  beta_end=beta_end) if sampler is None else sampler
         
     @torch.no_grad()
     def forward(self,

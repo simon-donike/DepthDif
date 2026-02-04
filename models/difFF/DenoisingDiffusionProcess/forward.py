@@ -48,7 +48,9 @@ class GaussianForwardProcess(ForwardModel):
     
     def __init__(self,
                  num_timesteps=1000,
-                 schedule='linear'
+                 schedule='linear',
+                 beta_start=0.0001,
+                 beta_end=0.02,
                 ):
         
         super().__init__(num_timesteps=num_timesteps,
@@ -56,7 +58,15 @@ class GaussianForwardProcess(ForwardModel):
                         )
         
         # get process parameters
-        self.register_buffer('betas',get_beta_schedule(self.schedule,self.num_timesteps))
+        self.register_buffer(
+            'betas',
+            get_beta_schedule(
+                self.schedule,
+                self.num_timesteps,
+                beta_start=beta_start,
+                beta_end=beta_end,
+            ),
+        )
         self.register_buffer('betas_sqrt',self.betas.sqrt())
         self.register_buffer('alphas',1-self.betas)
         self.register_buffer('alphas_cumprod',torch.cumprod(self.alphas,0))

@@ -5,7 +5,7 @@ model:
   generated_channels: 1 # Number of channels the model predicts (target y channels).
   condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
-  num_timesteps: 1000 # Diffusion steps (T); higher is slower but can improve quality.
+  num_timesteps: 1000 # Legacy fallback for diffusion steps if training.noise.num_timesteps is not set.
   bands: 1 # Legacy fallback for channel count if generated/condition channels are not explicitly set.
 
   unet: # Denoiser backbone (ConvNeXt U-Net) settings.
@@ -18,6 +18,11 @@ model:
 training:
   lr: 1.0e-4 # Optimizer learning rate.
   batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
+  noise:
+    num_timesteps: 1000 # Number of diffusion steps (T).
+    schedule: "linear" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
+    beta_start: 1.0e-4 # Noise level at first timestep (must be > 0 and < beta_end).
+    beta_end: 2.0e-2 # Noise level at last timestep (must be < 1 and > beta_start).
 
 wandb:
   project: "DepthDif" # W&B project name.
@@ -37,7 +42,7 @@ trainer:
   devices: "auto" # Devices to use ("auto", int, list).
   num_gpus: 2 # Legacy override: if set, trainer uses this many GPUs directly.
   strategy: "auto" # Distributed strategy ("auto", "ddp", ...).
-  precision: "16-mixed" # Mixed precision mode; "16-mixed" is typical for RTX 30xx.
+  precision: "16-mixed" # Mixed precision mode; "16-mixed" is best for RTX 3090.
   matmul_precision: "high" # torch.set_float32_matmul_precision value: "highest" | "high" | "medium".
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
