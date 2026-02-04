@@ -191,7 +191,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             model_input=torch.cat([x_t,condition],1).to(device)
             z_t=self.model(model_input,t) # prediction of noise            
-            x_t=self.sampler(x_t,t,z_t) # prediction of next state
+            x_t=sampler(x_t,t,z_t) # prediction of next state
             
         return x_t
         

@@ -19,6 +19,12 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 ![img](assets/prelim_results.png)  
 
 
+# Comments
+
+## Notes
+Currently num_workers=0 and pin_mermory=False due to previous PID datalader death. This way, GPUs arent saturated. Find this error and put up again for effective training.
+
+
 ## ToDos
 - [x] Include Deps file
 - [x] DDIM Sampling
@@ -26,7 +32,7 @@ Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train tim
 - [ ] Implement masked loss for train/val for land pixels  
 - [ ] Implement two masks: known land pixels and  missing pixels
 
-# RoadMap
+## RoadMap
 #### Tier 1
 - [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
 - [ ] Aux data: coords, other priors, etc: How to to include them?  

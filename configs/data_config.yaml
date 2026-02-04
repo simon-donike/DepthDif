@@ -16,8 +16,8 @@ split:
 
 dataloader:
   batch_size: 24 # Training batch size.
-  val_batch_size: 2 # Validation batch size (falls back to batch_size if omitted).
-  num_workers: 0 # Number of DataLoader worker processes.
+  val_batch_size: 8 # Validation batch size (falls back to batch_size if omitted).
+  num_workers: 5 # Number of DataLoader worker processes.
   shuffle: true # Shuffle training data each epoch.
   pin_memory: true # Pin host memory for faster host->GPU transfer.
 

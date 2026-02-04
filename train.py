@@ -74,6 +74,18 @@ def build_wandb_logger(model_cfg: dict[str, Any], model: pl.LightningModule) -> 
     return logger
 
 
+def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> None:
+    experiment = getattr(logger, "experiment", None)
+    if experiment is None:
+        return
+
+    for cfg_path in config_paths:
+        path = Path(cfg_path)
+        if path.is_file():
+            # Store configs as run files for reproducibility and easy download from UI.
+            experiment.save(str(path.resolve()), policy="now")
+
+
 def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
@@ -137,6 +149,8 @@ def main(
 
     # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(model_cfg, model)
+    if is_global_zero:
+        upload_configs_to_wandb(logger, [model_config_path, data_config_path])
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best",

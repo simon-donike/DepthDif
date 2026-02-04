@@ -277,6 +277,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         lr_scheduler_cooldown: int = 0,
         lr_scheduler_min_lr: float = 0.0,
         lr_scheduler_eps: float = 1e-8,
+        val_inference_sampler: str = "ddpm",
+        val_ddim_num_timesteps: int = 200,
+        val_ddim_eta: float = 0.0,
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
@@ -297,6 +300,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.lr_scheduler_cooldown = int(lr_scheduler_cooldown)
         self.lr_scheduler_min_lr = float(lr_scheduler_min_lr)
         self.lr_scheduler_eps = float(lr_scheduler_eps)
+        self.val_inference_sampler = str(val_inference_sampler).strip().lower()
+        self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
+        self.val_ddim_eta = float(val_ddim_eta)
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
@@ -316,13 +322,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             unet_residual=unet_residual,
         )
         train_betas = self.model.forward_process.betas.detach().clone()
-        # Faster deterministic validation sampling than full DDPM rollout.
-        self.val_sampler = DDIM_Sampler(
-            num_timesteps=200,
-            train_timesteps=int(train_betas.numel()),
-            betas=train_betas,
-            eta=0.0,
-        )
+        self.val_sampler = self._build_validation_sampler(train_betas)
 
     @classmethod
     def from_config(
@@ -344,6 +344,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
+        val_sampling_cfg = t.get("validation_sampling", {})
         unet_kwargs = cls._parse_unet_config(m)
 
         return cls(
@@ -368,6 +369,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             lr_scheduler_cooldown=int(plateau_cfg.get("cooldown", 0)),
             lr_scheduler_min_lr=float(plateau_cfg.get("min_lr", 0.0)),
             lr_scheduler_eps=float(plateau_cfg.get("eps", 1e-8)),
+            val_inference_sampler=str(val_sampling_cfg.get("sampler", "ddpm")),
+            val_ddim_num_timesteps=int(val_sampling_cfg.get("ddim_num_timesteps", 200)),
+            val_ddim_eta=float(val_sampling_cfg.get("ddim_eta", 0.0)),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
@@ -376,6 +380,21 @@ class PixelDiffusionConditional(PixelDiffusion):
     @staticmethod
     def _tensor_stats(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return tensor.min(), tensor.mean(), tensor.std(unbiased=False)
+
+    def _build_validation_sampler(self, train_betas: torch.Tensor) -> DDIM_Sampler | None:
+        if self.val_inference_sampler == "ddpm":
+            return None
+        if self.val_inference_sampler == "ddim":
+            return DDIM_Sampler(
+                num_timesteps=min(self.val_ddim_num_timesteps, int(train_betas.numel())),
+                train_timesteps=int(train_betas.numel()),
+                betas=train_betas,
+                eta=self.val_ddim_eta,
+            )
+        raise ValueError(
+            "training.validation_sampling.sampler must be one of {'ddpm', 'ddim'} "
+            f"(got '{self.val_inference_sampler}')."
+        )
 
     def _split_condition_data_and_mask(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
         channels = int(x.size(1))
