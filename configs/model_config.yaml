@@ -5,8 +5,6 @@ model: # Model Settings
   generated_channels: 1 # Number of channels the model predicts (target y channels).
   condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
-  num_timesteps: 1000 # Legacy fallback for diffusion steps if training.noise.num_timesteps is not set.
-  bands: 1 # Legacy fallback for channel count if generated/condition channels are not explicitly set.
 
   unet: # Denoiser backbone (ConvNeXt U-Net) settings.
     dim: 64 # Base channel width of U-Net.

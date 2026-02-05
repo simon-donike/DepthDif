@@ -30,6 +30,12 @@ class DepthTileDataModule(pl.LightningDataModule):
         self.val_batch_size = int(dl_cfg.get("val_batch_size", self.batch_size))
         self.num_workers = int(dl_cfg.get("num_workers", 4))
         self.val_num_workers = int(dl_cfg.get("val_num_workers", self.num_workers))
+        prefetch_factor_cfg = dl_cfg.get("prefetch_factor", 2)
+        self.prefetch_factor = (
+            None if prefetch_factor_cfg is None else int(prefetch_factor_cfg)
+        )
+        if self.prefetch_factor is not None and self.prefetch_factor < 1:
+            raise ValueError("dataloader.prefetch_factor must be >= 1 or null.")
         self.pin_memory = bool(dl_cfg.get("pin_memory", True))
         self.shuffle = bool(dl_cfg.get("shuffle", True))
 
@@ -73,13 +79,18 @@ class DepthTileDataModule(pl.LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             self.setup("fit")
-        return DataLoader(
-            self.train_dataset,
+        kwargs = dict(
+            dataset=self.train_dataset,
             batch_size=self.batch_size,
             shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=self.num_workers > 0,
+        )
+        if self.num_workers > 0 and self.prefetch_factor is not None:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return DataLoader(
+            **kwargs,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -90,14 +101,17 @@ class DepthTileDataModule(pl.LightningDataModule):
         # Sanity checking only needs a couple of batches, so force single-process loading there.
         if self.trainer is not None and self.trainer.sanity_checking:
             num_workers = 0
-        return DataLoader(
-            self.val_dataset,
+        kwargs = dict(
+            dataset=self.val_dataset,
             batch_size=self.val_batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=num_workers > 0,
         )
+        if num_workers > 0 and self.prefetch_factor is not None:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return DataLoader(**kwargs)
 
 
 if __name__ == "__main__":

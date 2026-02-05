@@ -14,7 +14,7 @@ from .DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
     DenoisingDiffusionProcess,
 )
-from utils.normalizations import PLOT_CMAP, temperature_to_plot_unit
+from utils.normalizations import PLOT_CMAP
 
 
 class PixelDiffusion(pl.LightningModule):
@@ -322,9 +322,19 @@ class PixelDiffusion(pl.LightningModule):
         experiment.log({f"{prefix}/y_preview": wandb.Image(image.numpy())})
 
     @staticmethod
-    def _minmax_stretch(image: torch.Tensor) -> np.ndarray:
-        arr = temperature_to_plot_unit(image, tensor_is_standardized=True)
-        return arr.detach().float().cpu().numpy().astype(np.float32)
+    def _minmax_stretch(
+        image: torch.Tensor,
+        min_value: torch.Tensor | None = None,
+        max_value: torch.Tensor | None = None,
+    ) -> np.ndarray:
+        image = image.detach().float()
+        if min_value is None:
+            min_value = image.min()
+        if max_value is None:
+            max_value = image.max()
+        denom = torch.clamp(max_value - min_value, min=torch.finfo(image.dtype).eps)
+        arr = ((image - min_value) / denom).clamp(0.0, 1.0)
+        return arr.cpu().numpy().astype(np.float32)
 
     def train_dataloader(self):
         if self.datamodule is None:
@@ -815,9 +825,21 @@ class PixelDiffusionConditional(PixelDiffusion):
         x_data, _ = self._split_condition_data_and_mask(x)
 
         for i in range(num_to_plot):
-            x_img = self._minmax_stretch(x_data[i, 0])
-            y_hat_img = self._minmax_stretch(y_hat[i, 0])
-            y_target_img = self._minmax_stretch(y_target[i, 0])
+            x_image = x_data[i, 0]
+            y_hat_image = y_hat[i, 0]
+            y_target_image = y_target[i, 0]
+            shared_min = torch.min(
+                torch.stack([x_image.min(), y_hat_image.min(), y_target_image.min()])
+            )
+            shared_max = torch.max(
+                torch.stack([x_image.max(), y_hat_image.max(), y_target_image.max()])
+            )
+
+            x_img = self._minmax_stretch(x_image, shared_min, shared_max)
+            y_hat_img = self._minmax_stretch(y_hat_image, shared_min, shared_max)
+            y_target_img = self._minmax_stretch(
+                y_target_image, shared_min, shared_max
+            )
 
             axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[i, 0].set_axis_off()

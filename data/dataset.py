@@ -33,6 +33,7 @@ class SurfaceTempPatchDataset(Dataset):
         max_nodata_fraction: float,
         nan_fill_value: float,
         mask_fraction: float,
+        enable_transform: bool,
         x_return_mode: str,
         rebuild_index: bool,
     ) -> None:
@@ -45,8 +46,9 @@ class SurfaceTempPatchDataset(Dataset):
         self.max_nodata_fraction = float(max_nodata_fraction)
         self.nan_fill_value = float(nan_fill_value)
         self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
+        self.enable_transform = bool(enable_transform)
         self.x_return_mode = str(x_return_mode)
-        valid_x_modes = {"raw_plus_mask", "masked_plus_mask"}
+        valid_x_modes = {"corrputed", "currupted_plus_mask"}
         if self.x_return_mode not in valid_x_modes:
             raise ValueError(
                 f"Invalid x_return_mode '{self.x_return_mode}'. "
@@ -90,7 +92,8 @@ class SurfaceTempPatchDataset(Dataset):
             max_nodata_fraction=float(ds_cfg.get("max_nodata_fraction", 0.2)),
             nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
             mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
-            x_return_mode=str(ds_cfg.get("x_return_mode", "masked_plus_mask")),
+            enable_transform=bool(ds_cfg.get("enable_transform", True)),
+            x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             rebuild_index=bool(ds_cfg.get("rebuild_index", False)),
         )
 
@@ -110,7 +113,7 @@ class SurfaceTempPatchDataset(Dataset):
         x0 = int(row["x0"])
         e = int(row["edge_size"])
 
-        # netCDF4 is not installed in this env; use h5netcdf (declared in requirements).
+        # use h5netcdf (declared in requirements).
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
             da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
             patch = da2d.isel(
@@ -123,40 +126,44 @@ class SurfaceTempPatchDataset(Dataset):
 
             # v: validity mask from data itself (1=valid ocean, 0=invalid/land/no-data).
             v_np = self._validity_mask(arr, da2d).astype(np.float32, copy=False)
-
-        arr = np.nan_to_num(
-            arr,
-            nan=self.nan_fill_value,
-            posinf=self.nan_fill_value,
-            neginf=self.nan_fill_value,
-        )
+            # do nan correction in place
+            np.nan_to_num(
+                arr,
+                copy=False,
+                nan=self.nan_fill_value,
+                posinf=self.nan_fill_value,
+                neginf=self.nan_fill_value,
+            )
         y = torch.from_numpy(arr).unsqueeze(0)
         v = torch.from_numpy(v_np).unsqueeze(0)
 
-        # Apply the same random geometric augmentation to y and masks.
-        k_rot, flip_h, flip_v = self._sample_aug_params()
-        y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
-        v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
+        # Normalize Temperature: 0 mean, 1 stdev
         y = temperature_standardize(mode="norm", tensor=y)
 
-        # m: inpainting keep-mask (1=known, 0=hide), sampled only inside valid ocean.
-        m = torch.ones_like(v, dtype=y.dtype)
+        if self.enable_transform:
+            # Apply the same random geometric augmentation to y and masks if enabled.
+            k_rot, flip_h, flip_v = self._sample_aug_params()
+            y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
+            v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
+
+        # v: validity mask (float32 0/1), y: data (float32)
+        k = v  # no clone
+
+        # Randomly hide; do it in-place on y to avoid extra tensors
         if self.mask_fraction > 0.0:
-            hide_inside_valid = (torch.rand_like(v) < self.mask_fraction) & (v > 0.5)
-            m[hide_inside_valid] = 0.0
+            hide = torch.rand_like(v) < self.mask_fraction  # NO validity restriction
+            k[hide] = 0.0
+            y[hide] = 0.0  # in-place masking
 
-        # k: known pixels = valid ocean pixels kept by inpainting mask.
-        k = (v * m).to(dtype=y.dtype)
-        masked = y * k  # unknown ocean + all land/invalid become 0.0
-
-        # x return mode variants (only 2 supported).
-        if self.x_return_mode == "raw_plus_mask":
-            x = torch.cat([y, k], dim=0)
+        # Decide what to return as x
+        if self.x_return_mode == "currupted_plus_mask":
+            x = torch.cat([y, k], dim=0)  # (2, H, W)
         else:
-            x = torch.cat([masked, k], dim=0)
+            x = y  # (1, H, W)
 
         info = {
-            k: (v.item() if isinstance(v, np.generic) else v) for k, v in row.items()
+            kk: (vv.item() if isinstance(vv, np.generic) else vv)
+            for kk, vv in row.items()
         }
         info["nodata_fraction_effective"] = nodata_fraction
 
@@ -220,8 +227,8 @@ class SurfaceTempPatchDataset(Dataset):
                                     lon_name: slice(x0, x0 + e),
                                 }
                             )
-                            arr = patch.values.astype(np.float32, copy=False)
-                            rec["nodata_fraction"] = self._nodata_fraction(arr, da2d)
+                            patch = patch.astype("float32")
+                            arr = patch.to_numpy()  # or patch.values
                         records.append(rec)
 
         if not records:

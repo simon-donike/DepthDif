@@ -4,8 +4,9 @@ dataset:
   edge_size: 128 # Patch size (pixels) for each tile, also used as stride (non-overlapping tiles).
   max_nodata_fraction: 0.2 # Max invalid/nodata ratio allowed per tile when enforce_validity=true.
   nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.
-  mask_fraction: 0.50 # Fraction of valid ocean pixels hidden to create sparse conditioning input.
-  x_return_mode: "masked_plus_mask" # "raw_plus_mask" or "masked_plus_mask".
+  mask_fraction: 0.50 # Fraction of pixels hidden to create sparse conditioning input.
+  enable_transform: false # Apply random geometric augmentation
+  x_return_mode: "currupted_plus_mask" # "corrputed" or "currupted_plus_mask".
   rebuild_index: true # Rebuild tile index from raw files on startup.
   enforce_validity: true # Drop indexed tiles with too much nodata based on max_nodata_fraction.
 

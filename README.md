@@ -18,6 +18,14 @@ As a first prototype, a conditional pixel-space Diffuser is modeled after [Diffu
 Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train time
 ![img](assets/prelim_results.png)  
 
+## Environment & Dependencies
+
+- The project uses **Python 3.12.3**.
+- All Python dependencies are listed in a single `requirements.txt` file located at the **repository root**.
+- Install dependencies with:
+```bash
+pip install -r requirements.txt
+```
 
 # Comments
 
