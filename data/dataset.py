@@ -146,20 +146,26 @@ class SurfaceTempPatchDataset(Dataset):
             y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
             v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
 
-        # v: validity mask (float32 0/1), y: data (float32)
-        k = v  # no clone
 
-        # Randomly hide; do it in-place on y to avoid extra tensors
+        # Keep uncorrupted target
+        y_clean = y  # (1, H, W)
+
+        # Build known-mask (start from validity mask)
+        k = v.clone()  # (1, H, W), float32 0/1 (or bool if you switch)
+
+        # Create corrupted input as a single clone (minimum needed to keep y_clean intact)
+        y_corrupt = y_clean.clone()
+
         if self.mask_fraction > 0.0:
-            hide = torch.rand_like(v) < self.mask_fraction  # NO validity restriction
+            hide = torch.rand_like(y_corrupt) < self.mask_fraction  # random over whole image
             k[hide] = 0.0
-            y[hide] = 0.0  # in-place masking
+            y_corrupt[hide] = 0.0
 
-        # Decide what to return as x
+        # x is the corrupted input (optionally with mask); y is the clean target
         if self.x_return_mode == "currupted_plus_mask":
-            x = torch.cat([y, k], dim=0)  # (2, H, W)
+            x = torch.cat([y_corrupt, k], dim=0)  # (2, H, W)
         else:
-            x = y  # (1, H, W)
+            x = y_corrupt  # (1, H, W)
 
         info = {
             kk: (vv.item() if isinstance(vv, np.generic) else vv)
@@ -192,56 +198,74 @@ class SurfaceTempPatchDataset(Dataset):
         if not nc_files:
             raise FileNotFoundError(f"No .nc files found under {self.root_dir}")
 
-        records: List[Dict[str, Any]] = []
-        for nc_path in tqdm(nc_files, desc="Indexing files", unit="file"):
-            with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
-                da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
-                h = int(da2d.sizes[lat_name])
-                w = int(da2d.sizes[lon_name])
+        template_path = nc_files[0]
+        template_records: List[Dict[str, Any]] = []
+        with xr.open_dataset(template_path, engine="h5netcdf", cache=False) as ds:
+            da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
+            h = int(da2d.sizes[lat_name])
+            w = int(da2d.sizes[lon_name])
 
-                e = self.edge_size
-                s = self.stride
-                if h < e or w < e:
-                    continue
+            e = self.edge_size
+            s = self.stride
+            if h < e or w < e:
+                raise RuntimeError(
+                    "No patches indexed. edge_size is larger than input dimensions."
+                )
 
-                lats = ds[lat_name].values
-                lons = ds[lon_name].values
+            lats = ds[lat_name].values
+            lons = ds[lon_name].values
 
-                for y0 in range(0, h - e + 1, s):
-                    for x0 in range(0, w - e + 1, s):
-                        rec = {
-                            "source_file": nc_path.name,
-                            "y0": int(y0),
-                            "x0": int(x0),
-                            "edge_size": int(e),
-                            "lat0": float(lats[y0]),
-                            "lat1": float(lats[y0 + e - 1]),
-                            "lon0": float(lons[x0]),
-                            "lon1": float(lons[x0 + e - 1]),
-                            "nodata_fraction": np.nan,
-                        }
-                        if self.enforce_validity:
-                            patch = da2d.isel(
-                                {
-                                    lat_name: slice(y0, y0 + e),
-                                    lon_name: slice(x0, x0 + e),
-                                }
-                            )
-                            patch = patch.astype("float32")
-                            arr = patch.to_numpy()  # or patch.values
-                        records.append(rec)
+            for y0 in tqdm(range(0, h - e + 1, s), desc="Indexing template rows"):
+                for x0 in range(0, w - e + 1, s):
+                    rec = {
+                        "y0": int(y0),
+                        "x0": int(x0),
+                        "edge_size": int(e),
+                        "lat0": float(lats[y0]),
+                        "lat1": float(lats[y0 + e - 1]),
+                        "lon0": float(lons[x0]),
+                        "lon1": float(lons[x0 + e - 1]),
+                        "nodata_fraction": np.nan,
+                    }
+                    if self.enforce_validity:
+                        patch = da2d.isel(
+                            {
+                                lat_name: slice(y0, y0 + e),
+                                lon_name: slice(x0, x0 + e),
+                            }
+                        )
+                        arr = patch.astype("float32").to_numpy()
+                        rec["nodata_fraction"] = self._nodata_fraction(arr, da2d)
+                    template_records.append(rec)
 
-        if not records:
+        if not template_records:
             raise RuntimeError(
                 "No patches indexed. Check edge_size/stride and data dimensions."
             )
 
-        df = pd.DataFrame.from_records(records)
+        template_df = pd.DataFrame.from_records(template_records)
         if self.enforce_validity:
-            df = df[df["nodata_fraction"] <= self.max_nodata_fraction].reset_index(
-                drop=True
-            )
-        return df
+            template_df = template_df[
+                template_df["nodata_fraction"] <= self.max_nodata_fraction
+            ].reset_index(drop=True)
+
+        per_file_frames = []
+        for nc_path in tqdm(nc_files, desc="Replicating index", unit="file"):
+            per_file_frames.append(template_df.assign(source_file=nc_path.name))
+
+        df = pd.concat(per_file_frames, ignore_index=True)
+        ordered_cols = [
+            "source_file",
+            "y0",
+            "x0",
+            "edge_size",
+            "lat0",
+            "lat1",
+            "lon0",
+            "lon1",
+            "nodata_fraction",
+        ]
+        return df[ordered_cols]
 
     @staticmethod
     def _write_index(df: pd.DataFrame, path: Path) -> None:

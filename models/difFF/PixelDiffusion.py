@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 from typing import Any
 
@@ -686,6 +687,8 @@ class PixelDiffusionConditional(PixelDiffusion):
             prefix="val",
             force=True,
         )
+        # Drop local tensor refs from this heavy validation path promptly.
+        del recon_mse, y_hat, model_condition, y, x
 
     def on_validation_epoch_end(self) -> None:
         # Run the one-image reconstruction after cheap validation metrics are accumulated.
@@ -819,48 +822,57 @@ class PixelDiffusionConditional(PixelDiffusion):
         if num_to_plot <= 0:
             return
 
-        fig, axes = plt.subplots(
-            num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
-        )
-        x_data, _ = self._split_condition_data_and_mask(x)
-
-        for i in range(num_to_plot):
-            x_image = x_data[i, 0]
-            y_hat_image = y_hat[i, 0]
-            y_target_image = y_target[i, 0]
-            shared_min = torch.min(
-                torch.stack([x_image.min(), y_hat_image.min(), y_target_image.min()])
+        fig = None
+        axes = None
+        x_data = None
+        try:
+            fig, axes = plt.subplots(
+                num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
             )
-            shared_max = torch.max(
-                torch.stack([x_image.max(), y_hat_image.max(), y_target_image.max()])
+            x_data, _ = self._split_condition_data_and_mask(x)
+
+            for i in range(num_to_plot):
+                x_image = x_data[i, 0]
+                y_hat_image = y_hat[i, 0]
+                y_target_image = y_target[i, 0]
+                shared_min = torch.min(
+                    torch.stack([x_image.min(), y_hat_image.min(), y_target_image.min()])
+                )
+                shared_max = torch.max(
+                    torch.stack([x_image.max(), y_hat_image.max(), y_target_image.max()])
+                )
+
+                x_img = self._minmax_stretch(x_image, shared_min, shared_max)
+                y_hat_img = self._minmax_stretch(y_hat_image, shared_min, shared_max)
+                y_target_img = self._minmax_stretch(
+                    y_target_image, shared_min, shared_max
+                )
+
+                axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, 0].set_axis_off()
+                axes[i, 1].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, 1].set_axis_off()
+                axes[i, 2].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, 2].set_axis_off()
+
+                axes[i, 0].set_title("Input")
+                axes[i, 1].set_title("Reconstruction")
+                axes[i, 2].set_title("Target")
+
+            fig.tight_layout()
+            # Keep full reconstruction logs separate from periodic batch previews.
+            image_key = (
+                f"{prefix}/x_y_full_reconstruction"
+                if force
+                else f"{prefix}/x_y_batch_preview"
             )
-
-            x_img = self._minmax_stretch(x_image, shared_min, shared_max)
-            y_hat_img = self._minmax_stretch(y_hat_image, shared_min, shared_max)
-            y_target_img = self._minmax_stretch(
-                y_target_image, shared_min, shared_max
-            )
-
-            axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[i, 0].set_axis_off()
-            axes[i, 1].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[i, 1].set_axis_off()
-            axes[i, 2].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[i, 2].set_axis_off()
-
-            axes[i, 0].set_title("Input")
-            axes[i, 1].set_title("Reconstruction")
-            axes[i, 2].set_title("Target")
-
-        fig.tight_layout()
-        # Keep full reconstruction logs separate from periodic batch previews.
-        image_key = (
-            f"{prefix}/x_y_full_reconstruction"
-            if force
-            else f"{prefix}/x_y_batch_preview"
-        )
-        experiment.log({image_key: wandb.Image(fig)})
-        plt.close(fig)
+            experiment.log({image_key: wandb.Image(fig)})
+        finally:
+            if fig is not None:
+                plt.close(fig)
+            # Explicitly drop local refs after validation plotting to avoid retention.
+            del x_data, axes, fig, x, y_hat, y_target
+            gc.collect()
 
     def configure_optimizers(self):
         optimizer = super().configure_optimizers()
