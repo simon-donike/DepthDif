@@ -2,7 +2,7 @@ dataset:
   dataloader_type: "light" # "raw" (NetCDF on-the-fly) or "light" (CSV + saved y_npy patches).
   root_dir: "/work/data/depth/confirmed" # Directory containing source .nc files.
   index_path: "data/patch_index.parquet" # Cached tile index path (.parquet or .csv).
-  light_index_csv: "data/exported_patches/patch_index_with_paths.csv" # Used when dataloader_type="light".
+  light_index_csv: "/work/data/depth/extracted/patch_index_with_paths.csv" # Used when dataloader_type="light".
   edge_size: 128 # Patch size (pixels) for each tile, also used as stride (non-overlapping tiles).
   max_nodata_fraction: 0.2 # Max invalid/nodata ratio allowed per tile when enforce_validity=true.
   nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.

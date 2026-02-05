@@ -138,7 +138,7 @@ class DepthTileDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    dm = DepthTileDataModule()
+    dm = DepthTileDataModule(config_path="configs/data_config.yaml")
     dm.setup()
     train_loader = dm.train_dataloader()
     val_loader = dm.val_dataloader()

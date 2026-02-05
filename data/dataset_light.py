@@ -166,3 +166,12 @@ class SurfaceTempPatchLightDataset(Dataset):
         if flip_v:
             t = torch.flip(t, dims=(-2,))
         return t
+
+
+if __name__ == "__main__":
+    # Example usage
+    dataset = SurfaceTempPatchLightDataset.from_config("configs/data_config.yaml")
+    print(f"Dataset length: {len(dataset)}")
+    sample = dataset[0]
+    print(f"Sample keys: {list(sample.keys())}")
+    print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
