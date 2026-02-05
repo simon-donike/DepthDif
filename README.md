@@ -49,4 +49,3 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 - [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources. 
 - [ ] More sophisticated way to feed masks to model, how to do it? masks * img?   
 - [ ] more capable backbone?   
-

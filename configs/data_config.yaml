@@ -7,7 +7,7 @@ dataset:
   mask_fraction: 0.50 # Fraction of pixels hidden to create sparse conditioning input.
   enable_transform: false # Apply random geometric augmentation
   x_return_mode: "currupted_plus_mask" # "corrputed" or "currupted_plus_mask".
-  rebuild_index: true # Rebuild tile index from raw files on startup.
+  rebuild_index: false # Rebuild tile index from raw files on startup.
   enforce_validity: true # Drop indexed tiles with too much nodata based on max_nodata_fraction.
 
 
