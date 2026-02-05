@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 from utils.normalizations import (
     PLOT_CMAP,
-    temperature_standardize,
+    temperature_normalize,
     temperature_to_plot_unit,
 )
 
@@ -35,6 +35,7 @@ class SurfaceTempPatchDataset(Dataset):
         mask_fraction: float,
         enable_transform: bool,
         x_return_mode: str,
+        return_info: bool,
         rebuild_index: bool,
     ) -> None:
         self.root_dir = Path(root_dir)
@@ -48,6 +49,7 @@ class SurfaceTempPatchDataset(Dataset):
         self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
         self.enable_transform = bool(enable_transform)
         self.x_return_mode = str(x_return_mode)
+        self.return_info = bool(return_info)
         valid_x_modes = {"corrputed", "currupted_plus_mask"}
         if self.x_return_mode not in valid_x_modes:
             raise ValueError(
@@ -77,6 +79,9 @@ class SurfaceTempPatchDataset(Dataset):
 
         if len(self.tiles) == 0:
             raise RuntimeError("Dataset contains no patches after indexing/filtering.")
+        self._init_index_arrays(self.tiles)
+        # Drop the DataFrame object to avoid per-worker pandas overhead in DataLoader workers.
+        self.tiles = None
 
     @classmethod
     def from_config(
@@ -94,6 +99,7 @@ class SurfaceTempPatchDataset(Dataset):
             mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
             enable_transform=bool(ds_cfg.get("enable_transform", True)),
             x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
+            return_info=bool(ds_cfg.get("return_info", False)),
             rebuild_index=bool(ds_cfg.get("rebuild_index", False)),
         )
 
@@ -103,15 +109,16 @@ class SurfaceTempPatchDataset(Dataset):
             return yaml.safe_load(f)
 
     def __len__(self) -> int:
-        return len(self.tiles)
+        return self._num_tiles
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        row = self.tiles.iloc[int(idx)]
-        nc_path = self.root_dir / str(row["source_file"])
+        row_idx = int(idx)
+        source_file = self._source_file_names[int(self._source_file_codes[row_idx])]
+        nc_path = self.root_dir / source_file
 
-        y0 = int(row["y0"])
-        x0 = int(row["x0"])
-        e = int(row["edge_size"])
+        y0 = int(self._y0[row_idx])
+        x0 = int(self._x0[row_idx])
+        e = int(self._edge_size[row_idx])
 
         # use h5netcdf (declared in requirements).
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
@@ -121,7 +128,9 @@ class SurfaceTempPatchDataset(Dataset):
             )
             arr = patch.values.astype(np.float32, copy=False)
             nodata_fraction = (
-                float(row["nodata_fraction"]) if "nodata_fraction" in row else np.nan
+                np.nan
+                if self._nodata_fraction is None
+                else float(self._nodata_fraction[row_idx])
             )
 
             # v: validity mask from data itself (1=valid ocean, 0=invalid/land/no-data).
@@ -138,7 +147,7 @@ class SurfaceTempPatchDataset(Dataset):
         v = torch.from_numpy(v_np).unsqueeze(0)
 
         # Normalize Temperature: 0 mean, 1 stdev
-        y = temperature_standardize(mode="norm", tensor=y)
+        y = temperature_normalize(mode="norm", tensor=y)
 
         if self.enable_transform:
             # Apply the same random geometric augmentation to y and masks if enabled.
@@ -167,13 +176,49 @@ class SurfaceTempPatchDataset(Dataset):
         else:
             x = y_corrupt  # (1, H, W)
 
-        info = {
-            kk: (vv.item() if isinstance(vv, np.generic) else vv)
-            for kk, vv in row.items()
-        }
-        info["nodata_fraction_effective"] = nodata_fraction
+        sample = {"x": x, "y": y}
+        if self.return_info:
+            info = {
+                key: (
+                    self._info_columns[key][row_idx].item()
+                    if isinstance(self._info_columns[key][row_idx], np.generic)
+                    else self._info_columns[key][row_idx]
+                )
+                for key in self._info_columns
+            }
+            info["nodata_fraction_effective"] = nodata_fraction
+            sample["info"] = info
+        return sample
 
-        return {"x": x, "y": y, "info": info}
+    def _init_index_arrays(self, tiles: pd.DataFrame) -> None:
+        required_columns = {"source_file", "y0", "x0", "edge_size"}
+        missing_columns = required_columns.difference(tiles.columns)
+        if missing_columns:
+            raise RuntimeError(
+                f"Index file is missing required columns: {sorted(missing_columns)}"
+            )
+
+        source_file_cat = tiles["source_file"].astype("category")
+        self._source_file_names = source_file_cat.cat.categories.to_list()
+        self._source_file_codes = source_file_cat.cat.codes.to_numpy(
+            dtype=np.int32, copy=True
+        )
+        self._y0 = tiles["y0"].to_numpy(dtype=np.int32, copy=True)
+        self._x0 = tiles["x0"].to_numpy(dtype=np.int32, copy=True)
+        self._edge_size = tiles["edge_size"].to_numpy(dtype=np.int32, copy=True)
+        self._nodata_fraction = (
+            tiles["nodata_fraction"].to_numpy(dtype=np.float32, copy=True)
+            if "nodata_fraction" in tiles.columns
+            else None
+        )
+        self._num_tiles = int(self._source_file_codes.shape[0])
+
+        if self.return_info:
+            self._info_columns = {
+                column: tiles[column].to_numpy(copy=True) for column in tiles.columns
+            }
+        else:
+            self._info_columns = {}
 
     @staticmethod
     def _sample_aug_params() -> Tuple[int, bool, bool]:
@@ -250,7 +295,7 @@ class SurfaceTempPatchDataset(Dataset):
             ].reset_index(drop=True)
 
         per_file_frames = []
-        for nc_path in tqdm(nc_files, desc="Replicating index", unit="file"):
+        for nc_path in nc_files:
             per_file_frames.append(template_df.assign(source_file=nc_path.name))
 
         df = pd.concat(per_file_frames, ignore_index=True)
@@ -371,10 +416,10 @@ class SurfaceTempPatchDataset(Dataset):
             x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
             x = temperature_to_plot_unit(
-                torch.from_numpy(x), tensor_is_standardized=True
+                torch.from_numpy(x), tensor_is_normalized=True
             ).numpy()
             y = temperature_to_plot_unit(
-                torch.from_numpy(y), tensor_is_standardized=True
+                torch.from_numpy(y), tensor_is_normalized=True
             ).numpy()
 
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
@@ -426,6 +471,90 @@ class SurfaceTempPatchDataset(Dataset):
         print(f"Overall y max: {y_max_overall}")
         print(f"Mean: {mean}")
         print(f"Std:  {std}")
+        
+    def save_dataset_to_disk(
+        self,
+        dir: str | Path,
+        *,
+        val_fraction: float = 0.2,
+        split_seed: int = 42,
+        flush_every: int = 500,
+    ) -> Path:
+        out_dir = Path(dir)
+        y_dir = out_dir / "y_npy"
+        y_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = out_dir / "patch_index_with_paths.csv"
+
+        if self.index_path.suffix.lower() == ".parquet":
+            index_df = pd.read_parquet(self.index_path)
+        else:
+            index_df = pd.read_csv(self.index_path)
+        if (
+            self.enforce_validity
+            and "nodata_fraction" in index_df.columns
+            and index_df["nodata_fraction"].notna().any()
+        ):
+            index_df = index_df[
+                index_df["nodata_fraction"] <= self.max_nodata_fraction
+            ].reset_index(drop=True)
+        else:
+            index_df = index_df.reset_index(drop=True)
+        if len(index_df) != len(self):
+            raise RuntimeError(
+                "Index size mismatch after filtering. Rebuild index and retry export."
+            )
+
+        val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        n_samples = len(self)
+        val_len = int(round(n_samples * val_fraction))
+        if n_samples > 1:
+            val_len = min(max(val_len, 1 if val_fraction > 0.0 else 0), n_samples - 1)
+        else:
+            val_len = 0
+        rng = np.random.default_rng(split_seed)
+        val_indices = set(rng.permutation(n_samples)[:val_len].tolist())
+        flush_every = max(1, int(flush_every))
+
+        records: List[Dict[str, Any]] = []
+        for i in tqdm(range(n_samples), desc="Saving dataset to disk"):
+            source_file = self._source_file_names[int(self._source_file_codes[i])]
+            nc_path = self.root_dir / source_file
+            y0 = int(self._y0[i])
+            x0 = int(self._x0[i])
+            e = int(self._edge_size[i])
+
+            with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
+                da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
+                patch = da2d.isel(
+                    {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
+                )
+                arr = patch.values.astype(np.float32, copy=False)
+                np.nan_to_num(
+                    arr,
+                    copy=False,
+                    nan=self.nan_fill_value,
+                    posinf=self.nan_fill_value,
+                    neginf=self.nan_fill_value,
+                )
+
+            y = torch.from_numpy(arr).unsqueeze(0)
+            y = temperature_normalize(mode="norm", tensor=y)
+            y_np = y.numpy().astype(np.float32, copy=False)
+
+            y_rel_path = Path("y_npy") / f"{i:08d}.npy"
+            y_abs_path = out_dir / y_rel_path
+            np.save(y_abs_path, y_np)
+
+            row = index_df.iloc[i].to_dict()
+            row["sample_idx"] = i
+            row["split"] = "val" if i in val_indices else "train"
+            row["y_npy_path"] = y_rel_path.as_posix()
+            records.append(row)
+            if ((i + 1) % flush_every == 0) or (i + 1 == n_samples):
+                pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
+
+        return csv_path
+        
 
 
 if __name__ == "__main__":
@@ -433,6 +562,7 @@ if __name__ == "__main__":
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     dataset._plot_example_image()
+    dataset.save_dataset_to_disk("/work/data/depth/extracted/", val_fraction=0.2)
     # dataset._get_stats()
 
     print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")

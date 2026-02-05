@@ -8,6 +8,7 @@ import yaml
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 from data.dataset import SurfaceTempPatchDataset
+from data.dataset_light import SurfaceTempPatchLightDataset
 
 
 class DepthTileDataModule(pl.LightningDataModule):
@@ -25,11 +26,22 @@ class DepthTileDataModule(pl.LightningDataModule):
         dl_cfg = self._cfg_training.get("dataloader", {})
         split_cfg = self._cfg_data.get("split", {})
         ds_cfg = self._cfg_data["dataset"]
+        self.dataloader_type = str(ds_cfg.get("dataloader_type", "raw")).strip().lower()
+        valid_loader_types = {"raw", "light"}
+        if self.dataloader_type not in valid_loader_types:
+            raise ValueError(
+                f"dataset.dataloader_type must be one of {sorted(valid_loader_types)} "
+                f"(got '{self.dataloader_type}')."
+            )
 
         self.batch_size = int(dl_cfg.get("batch_size", 16))
         self.val_batch_size = int(dl_cfg.get("val_batch_size", self.batch_size))
         self.num_workers = int(dl_cfg.get("num_workers", 4))
         self.val_num_workers = int(dl_cfg.get("val_num_workers", self.num_workers))
+        self.persistent_workers = bool(dl_cfg.get("persistent_workers", False))
+        self.val_persistent_workers = bool(
+            dl_cfg.get("val_persistent_workers", self.persistent_workers)
+        )
         prefetch_factor_cfg = dl_cfg.get("prefetch_factor", 2)
         self.prefetch_factor = (
             None if prefetch_factor_cfg is None else int(prefetch_factor_cfg)
@@ -52,28 +64,39 @@ class DepthTileDataModule(pl.LightningDataModule):
             return yaml.safe_load(f)
 
     def setup(self, stage: str | None = None) -> None:
-        if self.dataset is None:
-            self.dataset = SurfaceTempPatchDataset.from_config(self.config_path)
+        if self.train_dataset is None or self.val_dataset is None:
+            if self.dataloader_type == "light":
+                self.train_dataset = SurfaceTempPatchLightDataset.from_config(
+                    self.config_path, split="train"
+                )
+                self.val_dataset = SurfaceTempPatchLightDataset.from_config(
+                    self.config_path, split="val"
+                )
+                self.dataset = None
+            else:
+                if self.dataset is None:
+                    self.dataset = SurfaceTempPatchDataset.from_config(self.config_path)
 
-        if self.train_dataset is not None and self.val_dataset is not None:
-            return
+                total_len = len(self.dataset)
+                if total_len == 0:
+                    raise RuntimeError("Dataset is empty; cannot create train/val split.")
 
-        total_len = len(self.dataset)
-        if total_len == 0:
-            raise RuntimeError("Dataset is empty; cannot create train/val split.")
+                val_len = int(round(total_len * self.val_fraction))
+                if total_len > 1:
+                    val_len = min(max(val_len, 1), total_len - 1)
+                else:
+                    val_len = 0
+                train_len = total_len - val_len
 
-        val_len = int(round(total_len * self.val_fraction))
-        if total_len > 1:
-            val_len = min(max(val_len, 1), total_len - 1)
-        else:
-            val_len = 0
-        train_len = total_len - val_len
-
-        generator = torch.Generator().manual_seed(self.seed)
-        self.train_dataset, self.val_dataset = random_split(
-            self.dataset,
-            [train_len, val_len],
-            generator=generator,
+                generator = torch.Generator().manual_seed(self.seed)
+                self.train_dataset, self.val_dataset = random_split(
+                    self.dataset,
+                    [train_len, val_len],
+                    generator=generator,
+                )
+        print(
+            f"Created datamodule of type '{self.dataloader_type}' with "
+            f"{len(self.train_dataset)} train and {len(self.val_dataset)} val images."
         )
 
     def train_dataloader(self) -> DataLoader:
@@ -85,7 +108,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             shuffle=self.shuffle,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
-            persistent_workers=self.num_workers > 0,
+            persistent_workers=self.num_workers > 0 and self.persistent_workers,
         )
         if self.num_workers > 0 and self.prefetch_factor is not None:
             kwargs["prefetch_factor"] = self.prefetch_factor
@@ -107,7 +130,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=num_workers,
             pin_memory=self.pin_memory,
-            persistent_workers=num_workers > 0,
+            persistent_workers=num_workers > 0 and self.val_persistent_workers,
         )
         if num_workers > 0 and self.prefetch_factor is not None:
             kwargs["prefetch_factor"] = self.prefetch_factor

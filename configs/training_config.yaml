@@ -25,6 +25,7 @@ trainer: # PL Trainer Settings
   lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
+  val_batches_per_epoch: 50 # Optional absolute cap on validation batches/epoch (int). null uses limit_val_batches.
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
   gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
@@ -32,7 +33,7 @@ trainer: # PL Trainer Settings
 
 wandb: # Logging Settings
   project: "DepthDif_Simon" # W&B project name.
-  entity: esa-phi-lab # W&B team/user; null uses your default account.
+  entity: "esa-phi-lab" # W&B team/user; null uses your default account.
   run_name: null # Explicit run name; null lets W&B auto-name.
   log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
   verbose: true # Enable extra metric/image logging from the LightningModule.
@@ -41,13 +42,15 @@ wandb: # Logging Settings
   watch_log_freq: 100 # How often (steps) to log watched gradients/params.
   watch_log_graph: false # Whether to log the computational graph.
   log_stats_every_n_steps: 100 # Step interval for lightweight scalar debug stats.
-  log_images_every_n_steps: 100 # Step interval for validation preview images.
+  log_images_every_n_steps: 10 # Step interval for validation preview images.
 
 dataloader: # DataLoader Settings
   batch_size: 24 # Training batch size.
   val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
   num_workers: 4 # Number of DataLoader worker processes.
   val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
+  persistent_workers: false # Keep train workers alive across epochs; false is safer when host RAM keeps growing.
+  val_persistent_workers: false # Validation workers persistence (effective only when val_num_workers > 0).
   prefetch_factor: 2 # Batches prefetched per worker (used only when num_workers > 0).
   shuffle: true # Shuffle training data each epoch.
   pin_memory: false # Pin host memory for faster host->GPU transfer.

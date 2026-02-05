@@ -11,7 +11,7 @@ PLOT_TEMP_MAX = Y_MEAN + (PLOT_STD_MULTIPLIER * Y_STD)
 PLOT_CMAP = "turbo"
 
 
-def temperature_standardize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
+def temperature_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
     """
     mode="norm"   -> (x - mean) / std
     mode="denorm" -> x * std + mean
@@ -30,15 +30,15 @@ def temperature_standardize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
 def temperature_to_plot_unit(
     tensor: torch.Tensor,
     *,
-    tensor_is_standardized: bool = True,
+    tensor_is_normalized: bool = True,
 ) -> torch.Tensor:
     """
     Convert temperature data to [0, 1] for plotting using fixed dataset-level
     stretch limits from this module.
     """
     temp = (
-        temperature_standardize(mode="denorm", tensor=tensor)
-        if tensor_is_standardized
+        temperature_normalize(mode="denorm", tensor=tensor)
+        if tensor_is_normalized
         else tensor
     )
     t_min = torch.as_tensor(PLOT_TEMP_MIN, dtype=temp.dtype, device=temp.device)

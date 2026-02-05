@@ -220,6 +220,16 @@ def main(
         accelerator = trainer_cfg.get("accelerator", "auto")
         devices = trainer_cfg.get("devices", "auto")
 
+    # Optional hard cap on number of validation batches per epoch.
+    val_batches_per_epoch = trainer_cfg.get("val_batches_per_epoch", None)
+    if val_batches_per_epoch is not None:
+        limit_val_batches = int(val_batches_per_epoch)
+        if limit_val_batches < 1:
+            raise ValueError("trainer.val_batches_per_epoch must be >= 1 when set.")
+    else:
+        # Lightning-native value: float fraction (0-1] or int batch count.
+        limit_val_batches = trainer_cfg.get("limit_val_batches", 1.0)
+
     # Trainer configuration is fully driven from training_config.yaml.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
@@ -232,7 +242,7 @@ def main(
         logger=logger,
         callbacks=[checkpoint_callback, lr_monitor_callback],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
-        limit_val_batches=trainer_cfg.get("limit_val_batches", 1.0),
+        limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
     )

@@ -689,6 +689,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, model_condition, y, x
+        gc.collect()
 
     def on_validation_epoch_end(self) -> None:
         # Run the one-image reconstruction after cheap validation metrics are accumulated.
