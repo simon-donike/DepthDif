@@ -12,11 +12,41 @@ Current Status:
 - 1-band only for experimentation
 - 128x128 hardcoded
 
+### Repository Tweaks (Data)
+- Synthetic occlusion pipeline to create sparse observations with configurable `mask_fraction`.
+- Patch-based masking with min/max patch sizes (`mask_patch_min`, `mask_patch_max`) instead of single-pixel drops.
+- Validity/land masks derived from nodata or fill values; invalid pixels are tracked separately from corruption.
+- Optional filtering of tiles by `max_nodata_fraction` to avoid overly invalid patches.
+- Corrupted input + mask channel return modes for conditional modeling (`x_return_mode`).
+- Z-score temperature normalization and optional geometric augmentation (rotations/flips) applied consistently to data and masks.
+- Dataset index build with nodata-fraction metadata for fast filtering.
+
 ## Model
-As a first prototype, a conditional pixel-space Diffuser is modeled after [DiffusionFF](https://github.com/mikonvergence/DiffusionFastForward)
+As a first prototype, a conditional pixel-space Diffuser is modeled after [DiffusionFF](https://github.com/mikonvergence/DiffusionFastForward).  
+
+The model is trained on 1-channel temp + valid pixel mask. Loss can be pulled including or excluding the mask.
+
+### Repository Tweaks (Model)
+- Condition channels include both data and mask (`condition_channels`, `condition_mask_channels`).
+- Masked loss option that restricts training loss to valid pixels (`mask_loss_with_valid_pixels`).
+- Inpainting-style known-pixel clamping during sampling for stability (`clamp_known_pixels`).
+- ReduceLROnPlateau learning-rate scheduler configuration and logging support.
+
+### Repository Tweaks (Training/Logging)
+- PSNR and SSIM computed during validation (when `skimage` is available).
+- Validation-time sampling (DDPM or DDIM) for qualitative reconstruction checks.
+- Per-epoch cached validation example used for full reconstruction logging.
+- W&B image logging for inputs, targets, predictions, masks, and reconstruction grids.
+- Periodic stats logging (e.g., masked fraction, stdev etc) during train/val.
+- Checkpointing + resume support, plus learning-rate monitoring callbacks.
+- Optional W&B `watch` settings for gradients/parameters/graphs.
+
+### Sampling
+- DDIM/DDPM sampling possible
+- inpaitning-style injection of known values during generation can be turned on
 
 ## Results
-Preliminary results for sub-surface reconstruction, 50% occlusion, 3hr train time
+Preliminary results for sub-surface reconstruction, 50% pixelated occlusion, 3hr train time.
 ![img](assets/prelim_results.png)  
 
 ## Environment & Dependencies
