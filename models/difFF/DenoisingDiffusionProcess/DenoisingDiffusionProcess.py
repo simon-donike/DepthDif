@@ -180,7 +180,14 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         )
 
     @torch.no_grad()
-    def forward(self, condition, sampler=None, verbose=False):
+    def forward(
+        self,
+        condition,
+        sampler=None,
+        verbose=False,
+        known_mask: torch.Tensor | None = None,
+        known_values: torch.Tensor | None = None,
+    ):
         """
         forward() function triggers a complete inference cycle
 
@@ -204,6 +211,32 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         x_t = torch.randn([b, self.generated_channels, h, w], device=device)
 
+        apply_known = False
+        if known_mask is not None and known_values is not None:
+            known_mask = known_mask.to(device=device, dtype=x_t.dtype)
+            known_values = known_values.to(device=device, dtype=x_t.dtype)
+            if known_mask.ndim == 3:
+                known_mask = known_mask.unsqueeze(1)
+            if known_mask.ndim == 4 and known_mask.size(1) != 1:
+                known_mask = known_mask.amax(dim=1, keepdim=True)
+            if known_values.ndim == 3:
+                known_values = known_values.unsqueeze(1)
+            if (
+                known_values.ndim == 4
+                and known_values.size(1) != x_t.size(1)
+                and known_values.size(1) == 1
+            ):
+                known_values = known_values.repeat(1, x_t.size(1), 1, 1)
+            if (
+                known_mask.shape[:1] == x_t.shape[:1]
+                and known_mask.shape[2:] == x_t.shape[2:]
+                and known_values.shape == x_t.shape
+            ):
+                apply_known = True
+
+        if apply_known:
+            x_t = x_t * (1.0 - known_mask) + known_values * known_mask
+
         for i in (
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
         ):
@@ -211,6 +244,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             model_input = torch.cat([x_t, condition], 1).to(device)
             z_t = self.model(model_input, t)  # prediction of noise
             x_t = sampler(x_t, t, z_t)  # prediction of next state
+            if apply_known:
+                x_t = x_t * (1.0 - known_mask) + known_values * known_mask
 
         return x_t
 

@@ -39,11 +39,17 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 - [ ] Reduce resolution to something that we could expect from Argo profiles
 - [ ] Implement masked loss for train/val for land pixels  
 - [ ] Implement two masks: known land pixels and  missing pixels
+- [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
 
 ## RoadMap
 #### Tier 1
 - [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
 - [ ] Aux data: coords, other priors, etc: How to to include them?  
+    - Patch‑level FiLM conditioning:
+        - Compute patch center (lat, lon), embed with an MLP, and inject via FiLM (scale/shift) in ConvNeXt blocks.
+        - => global geophysical priors without a full coord grid.
+        - edit UnetConvNextBlock to accept an extra embedding and applying it inside blocks.
+- [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 
 #### Tier 2
 - [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources. 

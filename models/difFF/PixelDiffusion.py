@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -229,7 +230,13 @@ class PixelDiffusion(pl.LightningModule):
         return loss
 
     def _log_common_batch_stats(
-        self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
+        self,
+        tensor: torch.Tensor,
+        prefix: str,
+        batch_size: int | None = None,
+        *,
+        on_step: bool = True,
+        on_epoch: bool = False,
     ) -> None:
         if not self.wandb_verbose:
             return
@@ -239,32 +246,32 @@ class PixelDiffusion(pl.LightningModule):
         self.log(
             f"stats/{prefix}_batch_mean",
             tensor.mean(),
-            on_step=True,
-            on_epoch=False,
+            on_step=on_step,
+            on_epoch=on_epoch,
             logger=True,
             batch_size=batch_size,
         )
         self.log(
             f"stats/{prefix}_batch_std",
             tensor.std(),
-            on_step=True,
-            on_epoch=False,
+            on_step=on_step,
+            on_epoch=on_epoch,
             logger=True,
             batch_size=batch_size,
         )
         self.log(
             f"stats/{prefix}_batch_min",
             tensor.min(),
-            on_step=True,
-            on_epoch=False,
+            on_step=on_step,
+            on_epoch=on_epoch,
             logger=True,
             batch_size=batch_size,
         )
         self.log(
             f"stats/{prefix}_batch_max",
             tensor.max(),
-            on_step=True,
-            on_epoch=False,
+            on_step=on_step,
+            on_epoch=on_epoch,
             logger=True,
             batch_size=batch_size,
         )
@@ -413,6 +420,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
+        self._warned_known_pixel_mismatch = False
 
         # Conditional diffusion predicts y while conditioned on x (and optional mask channels).
         self.model = DenoisingDiffusionConditionalProcess(
@@ -549,6 +557,58 @@ class PixelDiffusionConditional(PixelDiffusion):
             return data_t
         # Mask channels remain as-is; they are semantic conditioning signals, not diffused targets.
         return torch.cat([data_t, mask], dim=1)
+
+    def _extract_known_values_and_mask(
+        self, condition: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        data, mask = self._split_condition_data_and_mask(condition)
+        if mask is None:
+            return None, None
+
+        known_mask = (mask > 0.5).float()
+        if known_mask.size(1) > 1:
+            known_mask = known_mask.amax(dim=1, keepdim=True)
+
+        data_channels = int(data.size(1))
+        generated_channels = int(self.model.generated_channels)
+        if data_channels == generated_channels:
+            known_values = data
+        elif data_channels == 1 and generated_channels > 1:
+            known_values = data.repeat(1, generated_channels, 1, 1)
+        else:
+            if not self._warned_known_pixel_mismatch:
+                warnings.warn(
+                    "Known-pixel clamping skipped: condition data channels "
+                    f"({data_channels}) do not match generated channels "
+                    f"({generated_channels}).",
+                    stacklevel=2,
+                )
+                self._warned_known_pixel_mismatch = True
+            return None, None
+
+        return known_values, known_mask
+
+    @torch.no_grad()
+    def forward(
+        self,
+        condition: torch.Tensor,
+        sampler=None,
+        verbose: bool = False,
+        clamp_known_pixels: bool = True,
+    ) -> torch.Tensor:
+        known_values = None
+        known_mask = None
+        if clamp_known_pixels:
+            known_values, known_mask = self._extract_known_values_and_mask(condition)
+        return self.output_T(
+            self.model(
+                condition,
+                sampler=sampler,
+                verbose=verbose,
+                known_mask=known_mask,
+                known_values=known_values,
+            )
+        )
 
     def _masked_fraction(self, x: torch.Tensor) -> torch.Tensor:
         _, mask = self._split_condition_data_and_mask(x)
@@ -738,8 +798,12 @@ class PixelDiffusionConditional(PixelDiffusion):
                 batch_size=1,
             )
         self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
-        self._log_common_batch_stats(y_hat, prefix="val_pred", batch_size=1)
-        self._log_common_batch_stats(y, prefix="val_target", batch_size=1)
+        self._log_common_batch_stats(
+            y_hat, prefix="val_pred", batch_size=1, on_step=False, on_epoch=True
+        )
+        self._log_common_batch_stats(
+            y, prefix="val_target", batch_size=1, on_step=False, on_epoch=True
+        )
         # This is the one expensive full reconstruction for the epoch; always log it.
         self._maybe_log_wandb_images_conditional(
             x=x,

@@ -45,3 +45,15 @@ def temperature_to_plot_unit(
     t_max = torch.as_tensor(PLOT_TEMP_MAX, dtype=temp.dtype, device=temp.device)
     denom = torch.clamp(t_max - t_min, min=torch.finfo(temp.dtype).eps)
     return ((temp - t_min) / denom).clamp(0.0, 1.0)
+
+
+def minmax_stretch(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Linearly stretch tensor values to [0, 1] based on min and max values in the tensor.
+    """
+    t_min = torch.min(tensor)
+    t_max = torch.max(tensor)
+    denom = torch.clamp(t_max - t_min, min=torch.finfo(tensor.dtype).eps)
+    t = (tensor - t_min) / denom
+    t = t.clamp(0.0, 1.0)
+    return t

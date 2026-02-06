@@ -8,7 +8,13 @@ import torch
 import yaml
 from torch.utils.data import Dataset
 
-from utils.normalizations import temperature_normalize
+from utils.normalizations import minmax_stretch, temperature_normalize
+
+from utils.normalizations import (
+    PLOT_CMAP,
+    temperature_normalize,
+    minmax_stretch,
+)
 
 
 class SurfaceTempPatchLightDataset(Dataset):
@@ -107,7 +113,9 @@ class SurfaceTempPatchLightDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         row = self._rows[int(idx)]
         y_rel_path = Path(str(row["y_npy_path"]))
-        y_abs_path = y_rel_path if y_rel_path.is_absolute() else self.csv_dir / y_rel_path
+        y_abs_path = (
+            y_rel_path if y_rel_path.is_absolute() else self.csv_dir / y_rel_path
+        )
 
         y_np = np.load(y_abs_path).astype(np.float32, copy=False)
         y = torch.from_numpy(y_np)
@@ -167,10 +175,51 @@ class SurfaceTempPatchLightDataset(Dataset):
             t = torch.flip(t, dims=(-2,))
         return t
 
+    def _plot_example_image(self, idx=None) -> None:
+        try:
+            import matplotlib.pyplot as plt
+
+            if idx is None:
+                rand_n = np.random.RandomState()
+                idx = rand_n.randint(0, len(self))
+            print("Plotting random example image from dataset at index:", idx)
+            sample = self.__getitem__(idx)
+            x_t = sample["x"]
+            y_t = sample["y"]
+
+            # Plot the first band when channels are present.
+            if x_t.ndim == 3:
+                x = x_t[0].numpy()
+            else:
+                x = x_t.numpy()
+
+            if y_t.ndim == 3:
+                y = y_t[0].numpy()
+            else:
+                y = y_t.numpy()
+
+            # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
+            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+            y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            x = minmax_stretch(torch.from_numpy(x)).numpy()
+            y = minmax_stretch(torch.from_numpy(y),).numpy()
+
+            fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+            axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+            axes[0].set_title("Input x (masked)")
+            axes[1].imshow(y, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+            axes[1].set_title("Target y (ground truth)")
+            plt.tight_layout()
+            plt.savefig("temp/example_depth_tile_light.png")
+            plt.close()
+        except Exception as e:
+            print(f"Could not plot example image: {e}")
+
 
 if __name__ == "__main__":
     # Example usage
     dataset = SurfaceTempPatchLightDataset.from_config("configs/data_config.yaml")
+    dataset._plot_example_image()
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     print(f"Sample keys: {list(sample.keys())}")
