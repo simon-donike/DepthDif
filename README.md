@@ -37,16 +37,18 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 - [x] Include Deps file
 - [x] DDIM Sampling
 - [ ] Reduce resolution to something that we could expect from Argo profiles
-- [ ] Implement masked loss for train/val for land pixels  
-- [ ] Implement masked loss for train/val for reconstruction pixels?
-- [ ] Implement two masks: known land pixels and  missing pixels? Add land to known?
+- [ ] in dataset, implmeent bigger boxes of corruption instead of pixels
+- [ ] make dataset.py a save-to-disk funcitonality, then load straight form tensors
+- [x] Implement masked loss for train/val for land pixels  
+- [x] Implement masked loss for train/val for reconstruction pixels?
+- [x] Implement two masks: known land pixels and  missing pixels? Add land to known?
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
 
 ## RoadMap
 #### Tier 1
 - [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
-- [ ] Aux data: coords, other priors, etc: How to to include them?  
-    - Patch‑level FiLM conditioning:
+- [ ] Aux data: coords, other priors, etc: How to to include them? Idea:  
+    - Patch‑level [FiLM](https://arxiv.org/abs/1709.07871) conditioning:
         - Compute patch center (lat, lon), embed with an MLP, and inject via FiLM (scale/shift) in ConvNeXt blocks.
         - => global geophysical priors without a full coord grid.
         - edit UnetConvNextBlock to accept an extra embedding and applying it inside blocks.

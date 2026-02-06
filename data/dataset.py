@@ -17,7 +17,8 @@ from utils.stretching import minmax_stretch
 class SurfaceTempPatchDataset(Dataset):
     """
     Surface temperature patch dataset from thetao at time=0 and shallowest depth.
-    Returns dict with masked input `x`, target `y`, and metadata `info`.
+    Returns dict with corrupted input `x`, target `y`, `valid_mask`, `land_mask`,
+    and metadata `info`.
     """
 
     def __init__(
@@ -157,23 +158,26 @@ class SurfaceTempPatchDataset(Dataset):
         y_clean = y  # (1, H, W)
 
         # Build known-mask (start from validity mask)
-        k = v.clone()  # (1, H, W), float32 0/1 (or bool if you switch)
+        valid_mask = v.clone()  # (1, H, W), float32 0/1 (or bool if you switch)
+        land_mask = (v <= 0.0).to(dtype=torch.float32)
 
         # Create corrupted input as a single clone (minimum needed to keep y_clean intact)
         y_corrupt = y_clean.clone()
 
         if self.mask_fraction > 0.0:
             hide = torch.rand_like(y_corrupt) < self.mask_fraction  # random over whole image
-            k[hide] = 0.0
+            valid_mask[hide] = 0.0
             y_corrupt[hide] = 0.0
 
-        # x is the corrupted input (optionally with mask); y is the clean target
-        if self.x_return_mode == "currupted_plus_mask":
-            x = torch.cat([y_corrupt, k], dim=0)  # (2, H, W)
-        else:
-            x = y_corrupt  # (1, H, W)
+        # x is the corrupted input; y is the clean target
+        x = y_corrupt  # (1, H, W)
 
-        sample = {"x": x, "y": y}
+        sample = {
+            "x": x,
+            "y": y,
+            "valid_mask": valid_mask,
+            "land_mask": land_mask,
+        }
         if self.return_info:
             info = {
                 key: (
@@ -397,33 +401,34 @@ class SurfaceTempPatchDataset(Dataset):
             sample = self.__getitem__(idx)
             x_t = sample["x"]
             y_t = sample["y"]
+            valid_mask_t = sample["valid_mask"]
+            land_mask_t = sample["land_mask"]
 
             # Plot the first band when channels are present.
-            if x_t.ndim == 3:
-                x = x_t[0]
-                mask = x_t[1] if x_t.shape[0] > 1 else None
-            else:
-                x = x_t
-                mask = None
-
-            if y_t.ndim == 3:
-                y = y_t[0]
-            else:
-                y = y_t
+            x = x_t[0] if x_t.ndim == 3 else x_t
+            y = y_t[0] if y_t.ndim == 3 else y_t
+            valid_mask = (
+                valid_mask_t[0] if valid_mask_t.ndim == 3 else valid_mask_t
+            )
+            land_mask = land_mask_t[0] if land_mask_t.ndim == 3 else land_mask_t
 
             # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
             x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
             x = temperature_normalize(mode="denorm", tensor=x)
             y = temperature_normalize(mode="denorm", tensor=y)
-            x = minmax_stretch(x, mask=mask).numpy()
-            y = minmax_stretch(y, mask=mask).numpy()
+            x = minmax_stretch(x, mask=valid_mask).numpy()
+            y = minmax_stretch(y, mask=valid_mask).numpy()
 
-            fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+            fig, axes = plt.subplots(1, 4, figsize=(14, 4))
             axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[0].set_title("Input x (masked)")
             axes[1].imshow(y, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
             axes[1].set_title("Target y (ground truth)")
+            axes[2].imshow(valid_mask.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
+            axes[2].set_title("Valid mask")
+            axes[3].imshow(land_mask.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
+            axes[3].set_title("Land mask")
             plt.tight_layout()
             plt.savefig("temp/example_depth_tile.png")
             plt.close()
@@ -476,6 +481,7 @@ class SurfaceTempPatchDataset(Dataset):
         val_fraction: float = 0.2,
         split_seed: int = 42,
         flush_every: int = 500,
+        valid_fraction_threshold: float = 0.25,
     ) -> Path:
         out_dir = Path(dir)
         y_dir = out_dir / "y_npy"
@@ -486,39 +492,22 @@ class SurfaceTempPatchDataset(Dataset):
             index_df = pd.read_parquet(self.index_path)
         else:
             index_df = pd.read_csv(self.index_path)
-        if (
-            self.enforce_validity
-            and "nodata_fraction" in index_df.columns
-            and index_df["nodata_fraction"].notna().any()
-        ):
-            index_df = index_df[
-                index_df["nodata_fraction"] <= self.max_nodata_fraction
-            ].reset_index(drop=True)
-        else:
-            index_df = index_df.reset_index(drop=True)
-        if len(index_df) != len(self):
-            raise RuntimeError(
-                "Index size mismatch after filtering. Rebuild index and retry export."
-            )
+        # No filtering: export every row from the index as-is.
+        index_df = index_df.reset_index(drop=True)
 
         val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
-        n_samples = len(self)
-        val_len = int(round(n_samples * val_fraction))
-        if n_samples > 1:
-            val_len = min(max(val_len, 1 if val_fraction > 0.0 else 0), n_samples - 1)
-        else:
-            val_len = 0
-        rng = np.random.default_rng(split_seed)
-        val_indices = set(rng.permutation(n_samples)[:val_len].tolist())
+        valid_fraction_threshold = float(np.clip(valid_fraction_threshold, 0.0, 1.0))
         flush_every = max(1, int(flush_every))
 
         records: List[Dict[str, Any]] = []
-        for i in tqdm(range(n_samples), desc="Saving dataset to disk"):
-            source_file = self._source_file_names[int(self._source_file_codes[i])]
-            nc_path = self.root_dir / source_file
-            y0 = int(self._y0[i])
-            x0 = int(self._x0[i])
-            e = int(self._edge_size[i])
+        kept_count = 0
+        for i in tqdm(range(len(index_df)), desc="Saving dataset to disk"):
+            row_data = index_df.iloc[i]
+            source_file = row_data["source_file"]
+            nc_path = self.root_dir / str(source_file)
+            y0 = int(row_data["y0"])
+            x0 = int(row_data["x0"])
+            e = int(row_data["edge_size"])
 
             with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
                 da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
@@ -526,29 +515,39 @@ class SurfaceTempPatchDataset(Dataset):
                     {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
                 )
                 arr = patch.values.astype(np.float32, copy=False)
-                np.nan_to_num(
-                    arr,
-                    copy=False,
-                    nan=self.nan_fill_value,
-                    posinf=self.nan_fill_value,
-                    neginf=self.nan_fill_value,
-                )
+                valid_fraction = float(self._validity_mask(arr, da2d).mean())
 
-            y = torch.from_numpy(arr).unsqueeze(0)
-            y = temperature_normalize(mode="norm", tensor=y)
-            y_np = y.numpy().astype(np.float32, copy=False)
+            if valid_fraction <= valid_fraction_threshold:
+                continue
 
-            y_rel_path = Path("y_npy") / f"{i:08d}.npy"
+            y_np = arr
+
+            y_rel_path = Path("y_npy") / f"{kept_count:08d}.npy"
             y_abs_path = out_dir / y_rel_path
             np.save(y_abs_path, y_np)
 
-            row = index_df.iloc[i].to_dict()
-            row["sample_idx"] = i
-            row["split"] = "val" if i in val_indices else "train"
+            row = row_data.to_dict()
+            row["sample_idx"] = kept_count
             row["y_npy_path"] = y_rel_path.as_posix()
+            row["valid_fraction"] = valid_fraction
             records.append(row)
-            if ((i + 1) % flush_every == 0) or (i + 1 == n_samples):
+            kept_count += 1
+            if (kept_count % flush_every == 0):
                 pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
+
+        # Assign train/val split after filtering so ratios are correct.
+        n_samples = len(records)
+        val_len = int(round(n_samples * val_fraction))
+        if n_samples > 1:
+            val_len = min(max(val_len, 1 if val_fraction > 0.0 else 0), n_samples - 1)
+        else:
+            val_len = 0
+        rng = np.random.default_rng(split_seed)
+        val_indices = set(rng.permutation(n_samples)[:val_len].tolist())
+        for idx, row in enumerate(records):
+            row["split"] = "val" if idx in val_indices else "train"
+
+        pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
 
         return csv_path
         
@@ -559,8 +558,8 @@ if __name__ == "__main__":
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     dataset._plot_example_image()
-    dataset.save_dataset_to_disk("/work/data/depth/extracted/", val_fraction=0.2)
-    # dataset._get_stats()
+    dataset.save_dataset_to_disk("/work/data/depth/extracted/", val_fraction=0.25)
+    #dataset._get_stats()
 
     print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
     print(f"Info: {sample['info']}")

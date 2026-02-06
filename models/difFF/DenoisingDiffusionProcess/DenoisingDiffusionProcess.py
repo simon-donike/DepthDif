@@ -249,7 +249,30 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         return x_t
 
-    def p_loss(self, output, condition):
+    @staticmethod
+    def _build_valid_mask(
+        valid_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        if valid_mask is None:
+            return None
+        mask = (valid_mask > 0.5).float()
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim == 4 and mask.size(1) != 1:
+            mask = mask.amax(dim=1, keepdim=True)
+        if mask.ndim == 4 and mask.size(1) == 1 and reference.ndim == 4:
+            if reference.size(1) > 1:
+                mask = mask.expand(-1, reference.size(1), -1, -1)
+        return mask.to(device=reference.device, dtype=reference.dtype)
+
+    def p_loss(
+        self,
+        output,
+        condition,
+        *,
+        valid_mask: torch.Tensor | None = None,
+        mask_loss: bool = False,
+    ):
         """
         Computes conditional denoising objective in caller-provided normalized space.
         (In this project, output/condition data channels are standardized temperatures.)
@@ -271,4 +294,16 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         noise_hat = self.model(model_input, t)
 
         # apply loss
-        return self.loss_fn(noise, noise_hat)
+        if not mask_loss:
+            return self.loss_fn(noise, noise_hat)
+
+        mask = self._build_valid_mask(valid_mask, noise)
+        if mask is None:
+            return self.loss_fn(noise, noise_hat)
+
+        diff = (noise - noise_hat) ** 2
+        masked_diff = diff * mask
+        denom = mask.sum()
+        if denom.item() <= 0:
+            return torch.zeros((), device=diff.device, dtype=diff.dtype)
+        return masked_diff.sum() / denom

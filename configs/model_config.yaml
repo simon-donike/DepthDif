@@ -6,6 +6,7 @@ model: # Model Settings
   condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
   clamp_known_pixels: true # If true, inpainting-style sampling clamps known pixels each diffusion step.
+  mask_loss_with_valid_pixels: true # If true, loss is computed only over valid pixels from the mask.
 
   unet: # Denoiser backbone (ConvNeXt U-Net) settings.
     dim: 64 # Base channel width of U-Net.

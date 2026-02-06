@@ -385,6 +385,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         condition_channels: int = 1,
         condition_mask_channels: int = 1,
         clamp_known_pixels: bool = True,
+        mask_loss_with_valid_pixels: bool = False,
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
         noise_beta_start: float = 1e-4,
@@ -434,6 +435,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.val_ddim_eta = float(val_ddim_eta)
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.clamp_known_pixels = bool(clamp_known_pixels)
+        self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
@@ -455,8 +457,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Single (x, y) validation example cached per epoch for one expensive reconstruction.
-        self._cached_val_example: tuple[torch.Tensor, torch.Tensor] | None = None
+        # Single (x, y, valid_mask, land_mask) validation example cached per epoch.
+        self._cached_val_example: (
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None] | None
+        ) = None
 
     @classmethod
     def from_config(
@@ -489,6 +493,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
+            mask_loss_with_valid_pixels=bool(
+                m.get("mask_loss_with_valid_pixels", False)
+            ),
             num_timesteps=int(
                 noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
             ),
@@ -552,47 +559,44 @@ class PixelDiffusionConditional(PixelDiffusion):
             f"(got '{self.val_inference_sampler}')."
         )
 
-    def _split_condition_data_and_mask(
-        self, x: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        channels = int(x.size(1))
-        if channels <= 1:
-            return x, None
-
-        mask_channels = min(self.condition_mask_channels, channels - 1)
-        if mask_channels <= 0:
-            return x, None
-
-        data = x[:, : channels - mask_channels, ...]
-        mask = x[:, channels - mask_channels :, ...]
-        return data, mask
-
-    def _prepare_condition_for_model(self, x: torch.Tensor) -> torch.Tensor:
-        data, mask = self._split_condition_data_and_mask(x)
+    def _prepare_condition_for_model(
+        self, x: torch.Tensor, valid_mask: torch.Tensor | None
+    ) -> torch.Tensor:
         # Keep conditioning data in the same normalized range as diffusion targets.
-        data_t = self.input_T(data)
-        if mask is None:
+        data_t = self.input_T(x)
+        if valid_mask is None:
+            expected_channels = int(getattr(self.model, "condition_channels", 0))
+            if expected_channels > int(data_t.size(1)):
+                raise RuntimeError(
+                    "valid_mask is required but missing from the batch. "
+                    "Expected condition channels exceed data channels."
+                )
             return data_t
-        # Mask channels remain as-is; they are semantic conditioning signals, not diffused targets.
+        mask = valid_mask
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        # Mask channel remains as-is; it is a semantic conditioning signal, not a diffused target.
         return torch.cat([data_t, mask], dim=1)
 
     def _extract_known_values_and_mask(
-        self, condition: torch.Tensor
+        self, data: torch.Tensor, valid_mask: torch.Tensor | None
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        data, mask = self._split_condition_data_and_mask(condition)
-        if mask is None:
+        if valid_mask is None:
             return None, None
 
-        known_mask = (mask > 0.5).float()
-        if known_mask.size(1) > 1:
+        known_mask = (valid_mask > 0.5).float()
+        if known_mask.ndim == 3:
+            known_mask = known_mask.unsqueeze(1)
+        if known_mask.ndim == 4 and known_mask.size(1) > 1:
             known_mask = known_mask.amax(dim=1, keepdim=True)
 
-        data_channels = int(data.size(1))
+        data_t = self.input_T(data)
+        data_channels = int(data_t.size(1))
         generated_channels = int(self.model.generated_channels)
         if data_channels == generated_channels:
-            known_values = data
+            known_values = data_t
         elif data_channels == 1 and generated_channels > 1:
-            known_values = data.repeat(1, generated_channels, 1, 1)
+            known_values = data_t.repeat(1, generated_channels, 1, 1)
         else:
             if not self._warned_known_pixel_mismatch:
                 warnings.warn(
@@ -613,13 +617,19 @@ class PixelDiffusionConditional(PixelDiffusion):
         sampler=None,
         verbose: bool = False,
         clamp_known_pixels: bool | None = None,
+        *,
+        known_mask: torch.Tensor | None = None,
+        known_values: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if clamp_known_pixels is None:
             clamp_known_pixels = self.clamp_known_pixels
-        known_values = None
-        known_mask = None
-        if clamp_known_pixels:
-            known_values, known_mask = self._extract_known_values_and_mask(condition)
+        if not clamp_known_pixels:
+            known_values = None
+            known_mask = None
+        elif known_values is None or known_mask is None:
+            # Caller did not provide known pixels; skip clamping.
+            known_values = None
+            known_mask = None
         return self.output_T(
             self.model(
                 condition,
@@ -630,17 +640,15 @@ class PixelDiffusionConditional(PixelDiffusion):
             )
         )
 
-    def _masked_fraction(self, x: torch.Tensor) -> torch.Tensor:
-        _, mask = self._split_condition_data_and_mask(x)
-        if mask is None:
-            return (x == 0).float().mean()
-        return (mask < 0.5).float().mean()
+    def _masked_fraction(self, valid_mask: torch.Tensor | None) -> torch.Tensor:
+        if valid_mask is None:
+            return torch.as_tensor(0.0, device=self.device)
+        return (valid_mask < 0.5).float().mean()
 
     def _log_validation_triplet_stats(
         self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
     ) -> None:
-        x_data, _ = self._split_condition_data_and_mask(x)
-        x_min, x_mean, x_std = self._tensor_stats(x_data)
+        x_min, x_mean, x_std = self._tensor_stats(x)
         y_min, y_mean, y_std = self._tensor_stats(y)
         y_hat_min, y_hat_mean, y_hat_std = self._tensor_stats(y_hat)
         sync_dist = self._should_sync_dist()
@@ -742,18 +750,19 @@ class PixelDiffusionConditional(PixelDiffusion):
             if self.trainer is not None and self.trainer.sanity_checking:
                 return
 
-        x, y = self._cached_val_example
-        model_condition = self._prepare_condition_for_model(x)
+        x, y, valid_mask, land_mask = self._cached_val_example
+        model_condition = self._prepare_condition_for_model(x, valid_mask)
+        known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
         # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
-        y_hat = self(model_condition, sampler=self.val_sampler)
+        y_hat = self(
+            model_condition,
+            sampler=self.val_sampler,
+            known_mask=known_mask,
+            known_values=known_values,
+        )
 
-        # Denormalize data channels only (mask stays in 0/1 space).
-        x_data, x_mask = self._split_condition_data_and_mask(x)
-        x_data_denorm = temperature_normalize(mode="denorm", tensor=x_data)
-        if x_mask is not None:
-            x_denorm = torch.cat([x_data_denorm, x_mask], dim=1)
-        else:
-            x_denorm = x_data_denorm
+        # Denormalize data channels only (masks stay in 0/1 space).
+        x_denorm = temperature_normalize(mode="denorm", tensor=x)
         y_denorm = temperature_normalize(mode="denorm", tensor=y)
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
 
@@ -829,9 +838,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 sync_dist=self._should_sync_dist(),
                 batch_size=1,
             )
-        self._log_validation_triplet_stats(
-            x=x_denorm, y=y_denorm, y_hat=y_hat_denorm
-        )
+        self._log_validation_triplet_stats(x=x_denorm, y=y_denorm, y_hat=y_hat_denorm)
         self._log_common_batch_stats(
             y_hat_denorm, prefix="val_pred", batch_size=1, on_step=False, on_epoch=True
         )
@@ -843,12 +850,14 @@ class PixelDiffusionConditional(PixelDiffusion):
             x=x,
             y_hat=y_hat,
             y_target=y,
+            valid_mask=valid_mask,
+            land_mask=land_mask,
             prefix="val",
             force=True,
         )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, model_condition, y, x
-        del y_denorm, y_hat_denorm, x_denorm, x_data_denorm
+        del y_denorm, y_hat_denorm, x_denorm
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:
@@ -859,7 +868,8 @@ class PixelDiffusionConditional(PixelDiffusion):
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         y = batch["y"]
-        model_condition = self._prepare_condition_for_model(x)
+        valid_mask = batch.get("valid_mask")
+        model_condition = self._prepare_condition_for_model(x, valid_mask)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -869,7 +879,12 @@ class PixelDiffusionConditional(PixelDiffusion):
             model_condition, prefix="train_condition", batch_size=int(y.size(0))
         )
         # Conditional p_loss uses x as context while learning to denoise y across random t.
-        loss = self.model.p_loss(y_t, model_condition)
+        loss = self.model.p_loss(
+            y_t,
+            model_condition,
+            valid_mask=valid_mask,
+            mask_loss=self.mask_loss_with_valid_pixels,
+        )
 
         self.log(
             "train/loss",
@@ -883,7 +898,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(x)
+            masked_fraction = self._masked_fraction(valid_mask)
             self.log(
                 "train/masked_fraction",
                 masked_fraction,
@@ -899,7 +914,9 @@ class PixelDiffusionConditional(PixelDiffusion):
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         y = batch["y"]
-        model_condition = self._prepare_condition_for_model(x)
+        valid_mask = batch.get("valid_mask")
+        land_mask = batch.get("land_mask")
+        model_condition = self._prepare_condition_for_model(x, valid_mask)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -909,7 +926,12 @@ class PixelDiffusionConditional(PixelDiffusion):
             model_condition, prefix="val_condition", batch_size=int(y.size(0))
         )
         # Same training objective for validation; full reverse-chain recon is logged at epoch end.
-        loss = self.model.p_loss(y_t, model_condition)
+        loss = self.model.p_loss(
+            y_t,
+            model_condition,
+            valid_mask=valid_mask,
+            mask_loss=self.mask_loss_with_valid_pixels,
+        )
 
         self.log(
             "val/loss",
@@ -934,7 +956,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(x)
+            masked_fraction = self._masked_fraction(valid_mask)
             self.log(
                 "val/masked_fraction",
                 masked_fraction,
@@ -947,7 +969,14 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         if batch_idx == 0 and self._cached_val_example is None:
             # Store exactly one validation sample for epoch-end full reconstruction.
-            self._cached_val_example = (x[:1].detach(), y[:1].detach())
+            cached_valid_mask = valid_mask[:1].detach() if valid_mask is not None else None
+            cached_land_mask = land_mask[:1].detach() if land_mask is not None else None
+            self._cached_val_example = (
+                x[:1].detach(),
+                y[:1].detach(),
+                cached_valid_mask,
+                cached_land_mask,
+            )
 
         return loss
 
@@ -956,7 +985,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         x: torch.Tensor,
         y_hat: torch.Tensor,
         y_target: torch.Tensor,
-        prefix: str,
+        valid_mask: torch.Tensor | None = None,
+        land_mask: torch.Tensor | None = None,
+        prefix: str| None = None,
         force: bool = False,
     ) -> None:
         #if not self.wandb_verbose:
@@ -986,30 +1017,74 @@ class PixelDiffusionConditional(PixelDiffusion):
         fig = None
         axes = None
         try:
+            ncols = 3
+            if valid_mask is not None:
+                ncols += 1
+            if land_mask is not None:
+                ncols += 1
             fig, axes = plt.subplots(
-                num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
+                num_to_plot, ncols, figsize=(4 * ncols, 3 * num_to_plot), squeeze=False
             )
 
             for i in range(num_to_plot):
-                # Match dataset_light: channel 0 is data, channel 1 (if present) is mask.
                 x_image = x[i, 0]
                 y_hat_image = y_hat[i, 0]
                 y_target_image = y_target[i, 0]
-                mask_i = x[i, 1] if x.size(1) > 1 else None
+                mask_i = (
+                    valid_mask[i, 0]
+                    if valid_mask is not None and valid_mask.ndim == 4
+                    else (valid_mask[i] if valid_mask is not None else None)
+                )
                 x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
                 y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
-                y_target_img = self._minmax_stretch_for_plot(y_target_image, mask=mask_i)
+                y_target_img = self._minmax_stretch_for_plot(
+                    y_target_image, mask=mask_i
+                )
 
-                axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, 0].set_axis_off()
-                axes[i, 1].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, 1].set_axis_off()
-                axes[i, 2].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, 2].set_axis_off()
+                col = 0
+                axes[i, col].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, col].set_axis_off()
+                axes[i, col].set_title("Input")
+                col += 1
 
-                axes[i, 0].set_title("Input")
-                axes[i, 1].set_title("Reconstruction")
-                axes[i, 2].set_title("Target")
+                axes[i, col].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, col].set_axis_off()
+                axes[i, col].set_title("Reconstruction")
+                col += 1
+
+                axes[i, col].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[i, col].set_axis_off()
+                axes[i, col].set_title("Target")
+                col += 1
+
+                if valid_mask is not None:
+                    valid_img = (
+                        valid_mask[i, 0]
+                        if valid_mask.ndim == 4
+                        else valid_mask[i]
+                    )
+                    axes[i, col].imshow(
+                        valid_img.detach().float().cpu().numpy(),
+                        cmap="gray",
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
+                    axes[i, col].set_axis_off()
+                    axes[i, col].set_title("Valid mask")
+                    col += 1
+
+                if land_mask is not None:
+                    land_img = (
+                        land_mask[i, 0] if land_mask.ndim == 4 else land_mask[i]
+                    )
+                    axes[i, col].imshow(
+                        land_img.detach().float().cpu().numpy(),
+                        cmap="gray",
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
+                    axes[i, col].set_axis_off()
+                    axes[i, col].set_title("Land mask")
 
             fig.tight_layout()
             # Keep full reconstruction logs separate from periodic batch previews.
