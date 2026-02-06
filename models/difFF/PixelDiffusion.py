@@ -245,6 +245,7 @@ class PixelDiffusion(pl.LightningModule):
             return
         if self.global_step % self.log_stats_every_n_steps != 0:
             return
+        sync_dist = self._should_sync_dist() if on_epoch else False
 
         self.log(
             f"stats/{prefix}_batch_mean",
@@ -252,6 +253,7 @@ class PixelDiffusion(pl.LightningModule):
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
+            sync_dist=sync_dist,
             batch_size=batch_size,
         )
         self.log(
@@ -260,6 +262,7 @@ class PixelDiffusion(pl.LightningModule):
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
+            sync_dist=sync_dist,
             batch_size=batch_size,
         )
         self.log(
@@ -268,6 +271,7 @@ class PixelDiffusion(pl.LightningModule):
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
+            sync_dist=sync_dist,
             batch_size=batch_size,
         )
         self.log(
@@ -276,6 +280,7 @@ class PixelDiffusion(pl.LightningModule):
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
+            sync_dist=sync_dist,
             batch_size=batch_size,
         )
 
@@ -350,7 +355,7 @@ class PixelDiffusion(pl.LightningModule):
     ) -> np.ndarray:
         image = image.detach().float()
         image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        image = temperature_normalize(mode="denorm", tensor=image)
+        #image = temperature_normalize(mode="denorm", tensor=image)
         stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
         return stretched.cpu().numpy().astype(np.float32)
 
@@ -729,24 +734,38 @@ class PixelDiffusionConditional(PixelDiffusion):
     @torch.no_grad()
     def _run_single_image_full_reconstruction_and_log(self) -> None:
         # Expensive diagnostic path: run full reverse diffusion only once on one image.
-        if self._cached_val_example is None:
-            return
-        # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
-        if self.trainer is not None and self.trainer.sanity_checking:
-            return
+        do_pre_checks = False
+        if do_pre_checks:
+            if self._cached_val_example is None:
+                return
+            # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
+            if self.trainer is not None and self.trainer.sanity_checking:
+                return
 
         x, y = self._cached_val_example
         model_condition = self._prepare_condition_for_model(x)
         # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
         y_hat = self(model_condition, sampler=self.val_sampler)
-        recon_mse = torch.mean((y_hat - y) ** 2)
+
+        # Denormalize data channels only (mask stays in 0/1 space).
+        x_data, x_mask = self._split_condition_data_and_mask(x)
+        x_data_denorm = temperature_normalize(mode="denorm", tensor=x_data)
+        if x_mask is not None:
+            x_denorm = torch.cat([x_data_denorm, x_mask], dim=1)
+        else:
+            x_denorm = x_data_denorm
+        y_denorm = temperature_normalize(mode="denorm", tensor=y)
+        y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
+
+        recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
         recon_psnr = None
         recon_ssim = None
+        # Calculate PSNR and SSIM over all bands and average them, if skimage is available and the image has valid data range.
         try:
             from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
-            y_np = y.detach().float().cpu().squeeze(0).numpy()
-            y_hat_np = y_hat.detach().float().cpu().squeeze(0).numpy()
+            y_np = y_denorm.detach().float().cpu().squeeze(0).numpy()
+            y_hat_np = y_hat_denorm.detach().float().cpu().squeeze(0).numpy()
             if y_np.ndim == 2:
                 y_np = y_np[None, ...]
                 y_hat_np = y_hat_np[None, ...]
@@ -785,7 +804,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=False,
+            sync_dist=self._should_sync_dist(),
             batch_size=1,
         )
         if recon_psnr is not None:
@@ -796,7 +815,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-                sync_dist=False,
+                sync_dist=self._should_sync_dist(),
                 batch_size=1,
             )
         if recon_ssim is not None:
@@ -807,15 +826,17 @@ class PixelDiffusionConditional(PixelDiffusion):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=False,
+                sync_dist=self._should_sync_dist(),
                 batch_size=1,
             )
-        self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
-        self._log_common_batch_stats(
-            y_hat, prefix="val_pred", batch_size=1, on_step=False, on_epoch=True
+        self._log_validation_triplet_stats(
+            x=x_denorm, y=y_denorm, y_hat=y_hat_denorm
         )
         self._log_common_batch_stats(
-            y, prefix="val_target", batch_size=1, on_step=False, on_epoch=True
+            y_hat_denorm, prefix="val_pred", batch_size=1, on_step=False, on_epoch=True
+        )
+        self._log_common_batch_stats(
+            y_denorm, prefix="val_target", batch_size=1, on_step=False, on_epoch=True
         )
         # This is the one expensive full reconstruction for the epoch; always log it.
         self._maybe_log_wandb_images_conditional(
@@ -827,6 +848,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, model_condition, y, x
+        del y_denorm, y_hat_denorm, x_denorm, x_data_denorm
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:
@@ -980,9 +1002,9 @@ class PixelDiffusionConditional(PixelDiffusion):
                         mask_i = mask[i].amax(dim=0)
                     else:
                         mask_i = mask[i, 0]
-                x_img = self._minmax_stretch(x_image, mask=mask_i)
-                y_hat_img = self._minmax_stretch(y_hat_image, mask=mask_i)
-                y_target_img = self._minmax_stretch(y_target_image, mask=mask_i)
+                x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
+                y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
+                y_target_img = self._minmax_stretch_for_plot(y_target_image, mask=mask_i)
 
                 axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
                 axes[i, 0].set_axis_off()
@@ -1009,6 +1031,19 @@ class PixelDiffusionConditional(PixelDiffusion):
             # Explicitly drop local refs after validation plotting to avoid retention.
             del x_data, axes, fig, x, y_hat, y_target
             gc.collect()
+
+    @staticmethod
+    def _minmax_stretch_for_plot(
+        image: torch.Tensor,
+        *,
+        mask: torch.Tensor | None = None,
+    ) -> np.ndarray:
+        image = image.detach().float()
+        # Match dataset_light plotting order: nan-to-num -> denorm -> minmax.
+        image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
+        image = temperature_normalize(mode="denorm", tensor=image)
+        stretched = minmax_stretch(image, mask=mask, nodata_value=None)
+        return stretched.cpu().numpy().astype(np.float32)
 
     def configure_optimizers(self):
         optimizer = super().configure_optimizers()
