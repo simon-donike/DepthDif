@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import warnings
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,7 @@ class SurfaceTempPatchLightDataset(Dataset):
         enable_transform: bool = False,
         x_return_mode: str = "currupted_plus_mask",
         return_info: bool = False,
+        return_coords: bool = False,
         nan_fill_value: float = 0.0,
         valid_from_fill_value: bool = True,
         split_seed: int = 7,
@@ -47,9 +49,17 @@ class SurfaceTempPatchLightDataset(Dataset):
             raise ValueError("mask_patch_min must be <= mask_patch_max.")
         self.enable_transform = bool(enable_transform)
         self.return_info = bool(return_info)
+        self.return_coords = bool(return_coords)
         self.valid_from_fill_value = bool(valid_from_fill_value)
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        if self.enable_transform and self.return_coords:
+            warnings.warn(
+                "Geometric augmentation is enabled while return_coords=true. "
+                "Patch data will be rotated/flipped but coords will remain the "
+                "original patch center. Disable transforms if this is undesirable.",
+                stacklevel=2,
+            )
 
         self.x_return_mode = str(x_return_mode)
         valid_x_modes = {"corrputed", "currupted_plus_mask"}
@@ -93,6 +103,15 @@ class SurfaceTempPatchLightDataset(Dataset):
         elif self.split != "all":
             raise ValueError("split must be one of: 'all', 'train', 'val'")
 
+        if self.return_coords:
+            required_cols = {"lat0", "lat1", "lon0", "lon1"}
+            missing = required_cols.difference(df.columns)
+            if missing:
+                raise RuntimeError(
+                    "CSV is missing required coord columns: "
+                    f"{sorted(missing)}."
+                )
+
         if len(df) == 0:
             raise RuntimeError("Dataset is empty after split filtering.")
 
@@ -123,6 +142,7 @@ class SurfaceTempPatchLightDataset(Dataset):
             enable_transform=bool(ds_cfg.get("enable_transform", False)),
             x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             return_info=bool(ds_cfg.get("return_info", False)),
+            return_coords=bool(ds_cfg.get("return_coords", False)),
             nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
             valid_from_fill_value=bool(ds_cfg.get("valid_from_fill_value", True)),
             split_seed=int(ds_cfg.get("random_seed", 7)),
@@ -215,9 +235,27 @@ class SurfaceTempPatchLightDataset(Dataset):
             "valid_mask": valid_mask,
             "land_mask": land_mask,
         }
+        if self.return_coords:
+            lat0 = float(row["lat0"])
+            lat1 = float(row["lat1"])
+            lon0 = float(row["lon0"])
+            lon1 = float(row["lon1"])
+            lat_center = 0.5 * (lat0 + lat1)
+            lon_center = self._center_lon_deg(lon0, lon1)
+            sample["coords"] = torch.tensor(
+                [lat_center, lon_center], dtype=torch.float32
+            )
         if self.return_info:
             sample["info"] = row
         return sample
+
+    @staticmethod
+    def _center_lon_deg(lon0: float, lon1: float) -> float:
+        lon0_rad = np.deg2rad(lon0)
+        lon1_rad = np.deg2rad(lon1)
+        sin_sum = np.sin(lon0_rad) + np.sin(lon1_rad)
+        cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
+        return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
 
     @staticmethod
     def _sample_aug_params() -> tuple[int, bool, bool]:

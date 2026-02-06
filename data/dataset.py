@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -36,6 +37,7 @@ class SurfaceTempPatchDataset(Dataset):
         enable_transform: bool,
         x_return_mode: str,
         return_info: bool,
+        return_coords: bool,
         rebuild_index: bool,
     ) -> None:
         self.root_dir = Path(root_dir)
@@ -56,11 +58,19 @@ class SurfaceTempPatchDataset(Dataset):
         self.enable_transform = bool(enable_transform)
         self.x_return_mode = str(x_return_mode)
         self.return_info = bool(return_info)
+        self.return_coords = bool(return_coords)
         valid_x_modes = {"corrputed", "currupted_plus_mask"}
         if self.x_return_mode not in valid_x_modes:
             raise ValueError(
                 f"Invalid x_return_mode '{self.x_return_mode}'. "
                 f"Choose one of: {sorted(valid_x_modes)}"
+            )
+        if self.enable_transform and self.return_coords:
+            warnings.warn(
+                "Geometric augmentation is enabled while return_coords=true. "
+                "Patch data will be rotated/flipped but coords will remain the "
+                "original patch center. Disable transforms if this is undesirable.",
+                stacklevel=2,
             )
 
         if rebuild_index or not self.index_path.exists():
@@ -108,6 +118,7 @@ class SurfaceTempPatchDataset(Dataset):
             enable_transform=bool(ds_cfg.get("enable_transform", True)),
             x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             return_info=bool(ds_cfg.get("return_info", False)),
+            return_coords=bool(ds_cfg.get("return_coords", False)),
             rebuild_index=bool(ds_cfg.get("rebuild_index", False)),
         )
 
@@ -127,6 +138,13 @@ class SurfaceTempPatchDataset(Dataset):
         y0 = int(self._y0[row_idx])
         x0 = int(self._x0[row_idx])
         e = int(self._edge_size[row_idx])
+        if self.return_coords:
+            lat0 = float(self._lat0[row_idx])
+            lat1 = float(self._lat1[row_idx])
+            lon0 = float(self._lon0[row_idx])
+            lon1 = float(self._lon1[row_idx])
+            lat_center = 0.5 * (lat0 + lat1)
+            lon_center = self._center_lon_deg(lon0, lon1)
 
         # use h5netcdf (declared in requirements).
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
@@ -210,6 +228,10 @@ class SurfaceTempPatchDataset(Dataset):
             "valid_mask": valid_mask,
             "land_mask": land_mask,
         }
+        if self.return_coords:
+            sample["coords"] = torch.tensor(
+                [lat_center, lon_center], dtype=torch.float32
+            )
         if self.return_info:
             info = {
                 key: (
@@ -225,6 +247,8 @@ class SurfaceTempPatchDataset(Dataset):
 
     def _init_index_arrays(self, tiles: pd.DataFrame) -> None:
         required_columns = {"source_file", "y0", "x0", "edge_size"}
+        if self.return_coords:
+            required_columns.update({"lat0", "lat1", "lon0", "lon1"})
         missing_columns = required_columns.difference(tiles.columns)
         if missing_columns:
             raise RuntimeError(
@@ -244,6 +268,11 @@ class SurfaceTempPatchDataset(Dataset):
             if "nodata_fraction" in tiles.columns
             else None
         )
+        if self.return_coords:
+            self._lat0 = tiles["lat0"].to_numpy(dtype=np.float32, copy=True)
+            self._lat1 = tiles["lat1"].to_numpy(dtype=np.float32, copy=True)
+            self._lon0 = tiles["lon0"].to_numpy(dtype=np.float32, copy=True)
+            self._lon1 = tiles["lon1"].to_numpy(dtype=np.float32, copy=True)
         self._num_tiles = int(self._source_file_codes.shape[0])
 
         if self.return_info:
@@ -252,6 +281,14 @@ class SurfaceTempPatchDataset(Dataset):
             }
         else:
             self._info_columns = {}
+
+    @staticmethod
+    def _center_lon_deg(lon0: float, lon1: float) -> float:
+        lon0_rad = np.deg2rad(lon0)
+        lon1_rad = np.deg2rad(lon1)
+        sin_sum = np.sin(lon0_rad) + np.sin(lon1_rad)
+        cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
+        return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
 
     @staticmethod
     def _sample_aug_params() -> Tuple[int, bool, bool]:

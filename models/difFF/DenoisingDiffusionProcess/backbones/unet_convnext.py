@@ -82,11 +82,18 @@ class PreNorm(nn.Module):
 class ConvNextBlock(nn.Module):
     """https://arxiv.org/abs/2201.03545"""
 
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, mult=2, norm=True):
+    def __init__(
+        self, dim, dim_out, *, time_emb_dim=None, coord_emb_dim=None, mult=2, norm=True
+    ):
         super().__init__()
         self.mlp = (
             nn.Sequential(nn.GELU(), nn.Linear(time_emb_dim, dim))
             if exists(time_emb_dim)
+            else None
+        )
+        self.coord_mlp = (
+            nn.Sequential(nn.GELU(), nn.Linear(coord_emb_dim, dim * 2))
+            if exists(coord_emb_dim)
             else None
         )
 
@@ -101,13 +108,21 @@ class ConvNextBlock(nn.Module):
 
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
-    def forward(self, x, time_emb=None):
+    def forward(self, x, time_emb=None, coord_emb=None):
         h = self.ds_conv(x)
 
         if exists(self.mlp):
             assert exists(time_emb), "time emb must be passed in"
             condition = self.mlp(time_emb)
             h = h + rearrange(condition, "b c -> b c 1 1")
+
+        if exists(self.coord_mlp):
+            assert exists(coord_emb), "coord emb must be passed in"
+            scale_shift = self.coord_mlp(coord_emb)
+            scale, shift = scale_shift.chunk(2, dim=1)
+            h = h * (1 + rearrange(scale, "b c -> b c 1 1")) + rearrange(
+                shift, "b c -> b c 1 1"
+            )
 
         h = self.net(h)
         return h + self.res_conv(x)
@@ -149,6 +164,7 @@ class UnetConvNextBlock(nn.Module):
         dim_mults=(1, 2, 4, 8),
         channels=3,
         with_time_emb=True,
+        coord_emb_dim=None,
         output_mean_scale=False,
         residual=False,
     ):
@@ -183,9 +199,15 @@ class UnetConvNextBlock(nn.Module):
                 nn.ModuleList(
                     [
                         ConvNextBlock(
-                            dim_in, dim_out, time_emb_dim=time_dim, norm=ind != 0
+                            dim_in,
+                            dim_out,
+                            time_emb_dim=time_dim,
+                            coord_emb_dim=coord_emb_dim,
+                            norm=ind != 0,
                         ),
-                        ConvNextBlock(dim_out, dim_out, time_emb_dim=time_dim),
+                        ConvNextBlock(
+                            dim_out, dim_out, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+                        ),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
                         Downsample(dim_out) if not is_last else nn.Identity(),
                     ]
@@ -193,9 +215,13 @@ class UnetConvNextBlock(nn.Module):
             )
 
         mid_dim = dims[-1]
-        self.mid_block1 = ConvNextBlock(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block1 = ConvNextBlock(
+            mid_dim, mid_dim, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+        )
         self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim)))
-        self.mid_block2 = ConvNextBlock(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block2 = ConvNextBlock(
+            mid_dim, mid_dim, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+        )
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (num_resolutions - 1)
@@ -203,8 +229,15 @@ class UnetConvNextBlock(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        ConvNextBlock(dim_out * 2, dim_in, time_emb_dim=time_dim),
-                        ConvNextBlock(dim_in, dim_in, time_emb_dim=time_dim),
+                        ConvNextBlock(
+                            dim_out * 2,
+                            dim_in,
+                            time_emb_dim=time_dim,
+                            coord_emb_dim=coord_emb_dim,
+                        ),
+                        ConvNextBlock(
+                            dim_in, dim_in, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+                        ),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                         Upsample(dim_in) if not is_last else nn.Identity(),
                     ]
@@ -212,13 +245,10 @@ class UnetConvNextBlock(nn.Module):
             )
 
         out_dim = default(out_dim, channels)
-        self.final_conv = nn.Sequential(
-            ConvNextBlock(dim, dim),
-            nn.Conv2d(dim, out_dim, 1),
-            # nn.Tanh() # ADDED
-        )
+        self.final_block = ConvNextBlock(dim, dim, coord_emb_dim=coord_emb_dim)
+        self.final_conv = nn.Conv2d(dim, out_dim, 1)
 
-    def forward(self, x, time=None):
+    def forward(self, x, time=None, coord_emb=None):
         orig_x = x
         t = None
         if time is not None and exists(self.time_mlp):
@@ -228,26 +258,26 @@ class UnetConvNextBlock(nn.Module):
         h = []
 
         for convnext, convnext2, attn, downsample in self.downs:
-            x = convnext(x, t)
-            x = convnext2(x, t)
+            x = convnext(x, t, coord_emb)
+            x = convnext2(x, t, coord_emb)
             x = attn(x)
             h.append(x)
             x = downsample(x)
 
-        x = self.mid_block1(x, t)
+        x = self.mid_block1(x, t, coord_emb)
         x = self.mid_attn(x)
-        x = self.mid_block2(x, t)
+        x = self.mid_block2(x, t, coord_emb)
 
         for convnext, convnext2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim=1)
-            x = convnext(x, t)
-            x = convnext2(x, t)
+            x = convnext(x, t, coord_emb)
+            x = convnext2(x, t, coord_emb)
             x = attn(x)
             x = upsample(x)
         if self.residual:
-            return self.final_conv(x) + orig_x
+            return self.final_conv(self.final_block(x, coord_emb=coord_emb)) + orig_x
 
-        out = self.final_conv(x)
+        out = self.final_conv(self.final_block(x, coord_emb=coord_emb))
         if self.output_mean_scale:
             out_mean = torch.mean(out, [1, 2, 3], keepdim=True)
             out = out - original_mean + out_mean

@@ -395,6 +395,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         unet_with_time_emb: bool = True,
         unet_output_mean_scale: bool = False,
         unet_residual: bool = False,
+        coord_conditioning_enabled: bool = False,
+        coord_encoding: str = "unit_sphere",
+        coord_embed_dim: int | None = None,
         batch_size: int = 1,
         lr: float = 1e-3,
         lr_scheduler_enabled: bool = False,
@@ -454,12 +457,22 @@ class PixelDiffusionConditional(PixelDiffusion):
             unet_with_time_emb=unet_with_time_emb,
             unet_output_mean_scale=unet_output_mean_scale,
             unet_residual=unet_residual,
+            coord_conditioning_enabled=coord_conditioning_enabled,
+            coord_encoding=coord_encoding,
+            coord_embed_dim=coord_embed_dim,
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Single (x, y, valid_mask, land_mask) validation example cached per epoch.
+        # Single (x, y, valid_mask, land_mask, coords) validation example cached per epoch.
         self._cached_val_example: (
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None] | None
+            tuple[
+                torch.Tensor,
+                torch.Tensor,
+                torch.Tensor | None,
+                torch.Tensor | None,
+                torch.Tensor | None,
+            ]
+            | None
         ) = None
 
     @classmethod
@@ -485,7 +498,11 @@ class PixelDiffusionConditional(PixelDiffusion):
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
         val_sampling_cfg = t.get("validation_sampling", {})
+        coord_cfg = m.get("coord_conditioning", {})
         unet_kwargs = cls._parse_unet_config(m)
+        coord_embed_dim = coord_cfg.get("embed_dim", None)
+        if coord_embed_dim is not None:
+            coord_embed_dim = int(coord_embed_dim)
 
         return cls(
             datamodule=datamodule,
@@ -509,6 +526,9 @@ class PixelDiffusionConditional(PixelDiffusion):
                 noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))
             ),
             **unet_kwargs,
+            coord_conditioning_enabled=bool(coord_cfg.get("enabled", False)),
+            coord_encoding=str(coord_cfg.get("encoding", "unit_sphere")),
+            coord_embed_dim=coord_embed_dim,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
             lr_scheduler_enabled=bool(plateau_cfg.get("enabled", False)),
@@ -620,6 +640,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         *,
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
+        coords: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if clamp_known_pixels is None:
             clamp_known_pixels = self.clamp_known_pixels
@@ -637,6 +658,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 verbose=verbose,
                 known_mask=known_mask,
                 known_values=known_values,
+                coord=coords,
             )
         )
 
@@ -750,7 +772,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             if self.trainer is not None and self.trainer.sanity_checking:
                 return
 
-        x, y, valid_mask, land_mask = self._cached_val_example
+        x, y, valid_mask, land_mask, coords = self._cached_val_example
         model_condition = self._prepare_condition_for_model(x, valid_mask)
         known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
         # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
@@ -759,6 +781,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             sampler=self.val_sampler,
             known_mask=known_mask,
             known_values=known_values,
+            coords=coords,
         )
 
         # Denormalize data channels only (masks stay in 0/1 space).
@@ -869,6 +892,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         y = batch["y"]
         valid_mask = batch.get("valid_mask")
+        coords = batch.get("coords")
         model_condition = self._prepare_condition_for_model(x, valid_mask)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
@@ -884,6 +908,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             model_condition,
             valid_mask=valid_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
+            coord=coords,
         )
 
         self.log(
@@ -916,6 +941,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         y = batch["y"]
         valid_mask = batch.get("valid_mask")
         land_mask = batch.get("land_mask")
+        coords = batch.get("coords")
         model_condition = self._prepare_condition_for_model(x, valid_mask)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
@@ -931,6 +957,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             model_condition,
             valid_mask=valid_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
+            coord=coords,
         )
 
         self.log(
@@ -971,11 +998,13 @@ class PixelDiffusionConditional(PixelDiffusion):
             # Store exactly one validation sample for epoch-end full reconstruction.
             cached_valid_mask = valid_mask[:1].detach() if valid_mask is not None else None
             cached_land_mask = land_mask[:1].detach() if land_mask is not None else None
+            cached_coords = coords[:1].detach() if coords is not None else None
             self._cached_val_example = (
                 x[:1].detach(),
                 y[:1].detach(),
                 cached_valid_mask,
                 cached_land_mask,
+                cached_coords,
             )
 
         return loss

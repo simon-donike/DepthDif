@@ -68,7 +68,7 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 - [x] Include Deps file
 - [x] DDIM Sampling
 - [ ] Reduce resolution to something that we could expect from Argo profiles
-- [ ] in dataset, implmeent bigger boxes of corruption instead of pixels
+- [x] in dataset, implmeent bigger boxes of corruption instead of pixels
 - [ ] make dataset.py a save-to-disk funcitonality, then load straight form tensors
 - [x] Implement masked loss for train/val for land pixels  
 - [x] Implement masked loss for train/val for reconstruction pixels?
@@ -77,12 +77,12 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 
 ## RoadMap
 #### Tier 1
-- [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
 - [ ] Aux data: coords, other priors, etc: How to to include them? Idea:  
     - Patch‑level [FiLM](https://arxiv.org/abs/1709.07871) conditioning:
         - Compute patch center (lat, lon), embed with an MLP, and inject via FiLM (scale/shift) in ConvNeXt blocks.
         - => global geophysical priors without a full coord grid.
         - edit UnetConvNextBlock to accept an extra embedding and applying it inside blocks.
+- [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
 - [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 
 #### Tier 2

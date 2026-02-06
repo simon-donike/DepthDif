@@ -138,6 +138,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         unet_with_time_emb=True,
         unet_output_mean_scale=False,
         unet_residual=False,
+        coord_conditioning_enabled=False,
+        coord_encoding="unit_sphere",
+        coord_embed_dim=None,
         sampler=None,
     ):
         super().__init__()
@@ -147,6 +150,26 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         self.condition_channels = condition_channels
         self.num_timesteps = num_timesteps
         self.loss_fn = loss_fn
+        self.coord_conditioning_enabled = bool(coord_conditioning_enabled)
+        self.coord_encoding = str(coord_encoding).strip().lower()
+        self.coord_embed_dim = None
+        self.coord_mlp = None
+        if self.coord_conditioning_enabled:
+            valid_encodings = {"unit_sphere", "sincos", "raw"}
+            if self.coord_encoding not in valid_encodings:
+                raise ValueError(
+                    "coord_encoding must be one of "
+                    f"{sorted(valid_encodings)} (got '{self.coord_encoding}')."
+                )
+            if coord_embed_dim is None:
+                coord_embed_dim = unet_dim
+            self.coord_embed_dim = int(coord_embed_dim)
+            enc_dim = self._coord_encoding_dim(self.coord_encoding)
+            self.coord_mlp = nn.Sequential(
+                nn.Linear(enc_dim, self.coord_embed_dim * 4),
+                nn.GELU(),
+                nn.Linear(self.coord_embed_dim * 4, self.coord_embed_dim),
+            )
 
         # Forward Process
         self.forward_process = GaussianForwardProcess(
@@ -163,6 +186,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             channels=self.generated_channels + condition_channels,
             out_dim=self.generated_channels,
             with_time_emb=unet_with_time_emb,
+            coord_emb_dim=self.coord_embed_dim if self.coord_mlp is not None else None,
             output_mean_scale=unet_output_mean_scale,
             residual=unet_residual,
         )
@@ -187,6 +211,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         verbose=False,
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
+        coord: torch.Tensor | None = None,
     ):
         """
         forward() function triggers a complete inference cycle
@@ -198,6 +223,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         b, c, h, w = condition.shape
         device = next(self.model.parameters()).device
         condition = condition.to(device)
+        coord_emb = self._maybe_embed_coords(coord, condition)
 
         # select sampler
         if sampler is None:
@@ -242,7 +268,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             model_input = torch.cat([x_t, condition], 1).to(device)
-            z_t = self.model(model_input, t)  # prediction of noise
+            z_t = self.model(model_input, t, coord_emb=coord_emb)  # prediction of noise
             x_t = sampler(x_t, t, z_t)  # prediction of next state
             if apply_known:
                 x_t = x_t * (1.0 - known_mask) + known_values * known_mask
@@ -272,6 +298,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         *,
         valid_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
+        coord: torch.Tensor | None = None,
     ):
         """
         Computes conditional denoising objective in caller-provided normalized space.
@@ -291,7 +318,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         # reverse pass
         model_input = torch.cat([output_noisy, condition], 1).to(device)
-        noise_hat = self.model(model_input, t)
+        coord_emb = self._maybe_embed_coords(coord, model_input)
+        noise_hat = self.model(model_input, t, coord_emb=coord_emb)
 
         # apply loss
         if not mask_loss:
@@ -307,3 +335,58 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if denom.item() <= 0:
             return torch.zeros((), device=diff.device, dtype=diff.dtype)
         return masked_diff.sum() / denom
+
+    @staticmethod
+    def _coord_encoding_dim(encoding: str) -> int:
+        if encoding == "unit_sphere":
+            return 3
+        if encoding == "sincos":
+            return 4
+        if encoding == "raw":
+            return 2
+        raise ValueError(f"Unsupported coord encoding '{encoding}'.")
+
+    def _encode_coords(self, coord: torch.Tensor) -> torch.Tensor:
+        if coord.ndim != 2 or coord.size(1) != 2:
+            raise ValueError(
+                "coords must have shape (B, 2) with [lat, lon] in degrees."
+            )
+        lat = coord[:, 0]
+        lon = coord[:, 1]
+        deg2rad = math.pi / 180.0
+        lat_rad = lat * deg2rad
+        lon_rad = lon * deg2rad
+        if self.coord_encoding == "unit_sphere":
+            cos_lat = torch.cos(lat_rad)
+            x = cos_lat * torch.cos(lon_rad)
+            y = cos_lat * torch.sin(lon_rad)
+            z = torch.sin(lat_rad)
+            return torch.stack([x, y, z], dim=1)
+        if self.coord_encoding == "sincos":
+            return torch.stack(
+                [
+                    torch.sin(lat_rad),
+                    torch.cos(lat_rad),
+                    torch.sin(lon_rad),
+                    torch.cos(lon_rad),
+                ],
+                dim=1,
+            )
+        if self.coord_encoding == "raw":
+            lat_norm = lat / 90.0
+            lon_norm = lon / 180.0
+            return torch.stack([lat_norm, lon_norm], dim=1)
+        raise ValueError(f"Unsupported coord encoding '{self.coord_encoding}'.")
+
+    def _maybe_embed_coords(
+        self, coord: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        if self.coord_mlp is None:
+            return None
+        if coord is None:
+            raise ValueError(
+                "coord_conditioning is enabled but no coords were provided."
+            )
+        coord = coord.to(device=reference.device, dtype=reference.dtype)
+        enc = self._encode_coords(coord)
+        return self.coord_mlp(enc)
