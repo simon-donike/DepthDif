@@ -226,7 +226,9 @@ class PixelDiffusion(pl.LightningModule):
         self._log_common_batch_stats(
             target, prefix="val", batch_size=int(target.size(0))
         )
-        self._maybe_log_wandb_images(batch=batch, output=target, prefix="val")
+        self._maybe_log_wandb_images(
+            batch=batch, output=target, prefix="val", use_minmax=True
+        )
         return loss
 
     def _log_common_batch_stats(
@@ -305,7 +307,12 @@ class PixelDiffusion(pl.LightningModule):
         )
 
     def _maybe_log_wandb_images(
-        self, batch: Any, output: torch.Tensor, prefix: str
+        self,
+        batch: Any,
+        output: torch.Tensor,
+        prefix: str,
+        *,
+        use_minmax: bool = False,
     ) -> None:
         if not self.wandb_verbose:
             return
@@ -325,9 +332,13 @@ class PixelDiffusion(pl.LightningModule):
         except Exception:
             return
 
-        image = output[0].detach().float().cpu().squeeze(0)
+        image = output[0].detach().float().squeeze(0)
+        if use_minmax:
+            image_np = self._minmax_stretch(image)
+        else:
+            image_np = image.cpu().numpy()
         # Quick qualitative sanity check (ground-truth sample, not reconstructed output).
-        experiment.log({f"{prefix}/y_preview": wandb.Image(image.numpy())})
+        experiment.log({f"{prefix}/y_preview": wandb.Image(image_np)})
 
     @staticmethod
     def _minmax_stretch(
@@ -369,6 +380,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         generated_channels: int = 1,
         condition_channels: int = 1,
         condition_mask_channels: int = 1,
+        clamp_known_pixels: bool = True,
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
         noise_beta_start: float = 1e-4,
@@ -417,6 +429,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
         self.val_ddim_eta = float(val_ddim_eta)
         self.condition_mask_channels = int(max(0, condition_mask_channels))
+        self.clamp_known_pixels = bool(clamp_known_pixels)
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
@@ -471,6 +484,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
+            clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
             num_timesteps=int(
                 noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
             ),
@@ -594,8 +608,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         condition: torch.Tensor,
         sampler=None,
         verbose: bool = False,
-        clamp_known_pixels: bool = True,
+        clamp_known_pixels: bool | None = None,
     ) -> torch.Tensor:
+        if clamp_known_pixels is None:
+            clamp_known_pixels = self.clamp_known_pixels
         known_values = None
         known_mask = None
         if clamp_known_pixels:
@@ -961,18 +977,9 @@ class PixelDiffusionConditional(PixelDiffusion):
                 x_image = x_data[i, 0]
                 y_hat_image = y_hat[i, 0]
                 y_target_image = y_target[i, 0]
-                shared_min = torch.min(
-                    torch.stack([x_image.min(), y_hat_image.min(), y_target_image.min()])
-                )
-                shared_max = torch.max(
-                    torch.stack([x_image.max(), y_hat_image.max(), y_target_image.max()])
-                )
-
-                x_img = self._minmax_stretch(x_image, shared_min, shared_max)
-                y_hat_img = self._minmax_stretch(y_hat_image, shared_min, shared_max)
-                y_target_img = self._minmax_stretch(
-                    y_target_image, shared_min, shared_max
-                )
+                x_img = self._minmax_stretch(x_image)
+                y_hat_img = self._minmax_stretch(y_hat_image)
+                y_target_img = self._minmax_stretch(y_target_image)
 
                 axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
                 axes[i, 0].set_axis_off()
