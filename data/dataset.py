@@ -10,11 +10,8 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from utils.normalizations import (
-    PLOT_CMAP,
-    temperature_normalize,
-    temperature_to_plot_unit,
-)
+from utils.normalizations import PLOT_CMAP, temperature_normalize
+from utils.stretching import minmax_stretch
 
 
 class SurfaceTempPatchDataset(Dataset):
@@ -403,24 +400,24 @@ class SurfaceTempPatchDataset(Dataset):
 
             # Plot the first band when channels are present.
             if x_t.ndim == 3:
-                x = x_t[0].numpy()
+                x = x_t[0]
+                mask = x_t[1] if x_t.shape[0] > 1 else None
             else:
-                x = x_t.numpy()
+                x = x_t
+                mask = None
 
             if y_t.ndim == 3:
-                y = y_t[0].numpy()
+                y = y_t[0]
             else:
-                y = y_t.numpy()
+                y = y_t
 
             # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
-            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-            y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-            x = temperature_to_plot_unit(
-                torch.from_numpy(x), tensor_is_normalized=True
-            ).numpy()
-            y = temperature_to_plot_unit(
-                torch.from_numpy(y), tensor_is_normalized=True
-            ).numpy()
+            x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            x = temperature_normalize(mode="denorm", tensor=x)
+            y = temperature_normalize(mode="denorm", tensor=y)
+            x = minmax_stretch(x, mask=mask).numpy()
+            y = minmax_stretch(y, mask=mask).numpy()
 
             fig, axes = plt.subplots(1, 2, figsize=(8, 4))
             axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)

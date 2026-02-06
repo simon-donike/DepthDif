@@ -16,7 +16,8 @@ from .DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
     DenoisingDiffusionProcess,
 )
-from utils.normalizations import PLOT_CMAP
+from utils.normalizations import PLOT_CMAP, temperature_normalize
+from utils.stretching import minmax_stretch
 
 
 class PixelDiffusion(pl.LightningModule):
@@ -343,17 +344,15 @@ class PixelDiffusion(pl.LightningModule):
     @staticmethod
     def _minmax_stretch(
         image: torch.Tensor,
-        min_value: torch.Tensor | None = None,
-        max_value: torch.Tensor | None = None,
+        *,
+        mask: torch.Tensor | None = None,
+        nodata_value: float | None = 0.0,
     ) -> np.ndarray:
         image = image.detach().float()
-        if min_value is None:
-            min_value = image.min()
-        if max_value is None:
-            max_value = image.max()
-        denom = torch.clamp(max_value - min_value, min=torch.finfo(image.dtype).eps)
-        arr = ((image - min_value) / denom).clamp(0.0, 1.0)
-        return arr.cpu().numpy().astype(np.float32)
+        image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
+        image = temperature_normalize(mode="denorm", tensor=image)
+        stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
+        return stretched.cpu().numpy().astype(np.float32)
 
     def train_dataloader(self):
         if self.datamodule is None:
@@ -768,9 +767,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 )
                 ssim_vals.append(
                     float(
-                        structural_similarity(
-                            y_band, y_hat_band, data_range=data_range
-                        )
+                        structural_similarity(y_band, y_hat_band, data_range=data_range)
                     )
                 )
             if psnr_vals:
@@ -971,15 +968,21 @@ class PixelDiffusionConditional(PixelDiffusion):
             fig, axes = plt.subplots(
                 num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
             )
-            x_data, _ = self._split_condition_data_and_mask(x)
+            x_data, mask = self._split_condition_data_and_mask(x)
 
             for i in range(num_to_plot):
                 x_image = x_data[i, 0]
                 y_hat_image = y_hat[i, 0]
                 y_target_image = y_target[i, 0]
-                x_img = self._minmax_stretch(x_image)
-                y_hat_img = self._minmax_stretch(y_hat_image)
-                y_target_img = self._minmax_stretch(y_target_image)
+                mask_i = None
+                if mask is not None:
+                    if mask.size(1) > 1:
+                        mask_i = mask[i].amax(dim=0)
+                    else:
+                        mask_i = mask[i, 0]
+                x_img = self._minmax_stretch(x_image, mask=mask_i)
+                y_hat_img = self._minmax_stretch(y_hat_image, mask=mask_i)
+                y_target_img = self._minmax_stretch(y_target_image, mask=mask_i)
 
                 axes[i, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
                 axes[i, 0].set_axis_off()
