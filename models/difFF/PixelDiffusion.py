@@ -959,10 +959,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         prefix: str,
         force: bool = False,
     ) -> None:
-        if not self.wandb_verbose:
-            return
-        if self.trainer is not None and not self.trainer.is_global_zero:
-            return
+        #if not self.wandb_verbose:
+        #    return
+        #if self.trainer is not None and not self.trainer.is_global_zero:
+        #    return
         # `force=True` is used by epoch-end full reconstruction logging so it is not
         # dropped by the regular step-based preview cadence.
         if not force and self.global_step % self.log_images_every_n_steps != 0:
@@ -985,23 +985,17 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         fig = None
         axes = None
-        x_data = None
         try:
             fig, axes = plt.subplots(
                 num_to_plot, 3, figsize=(12, 3 * num_to_plot), squeeze=False
             )
-            x_data, mask = self._split_condition_data_and_mask(x)
 
             for i in range(num_to_plot):
-                x_image = x_data[i, 0]
+                # Match dataset_light: channel 0 is data, channel 1 (if present) is mask.
+                x_image = x[i, 0]
                 y_hat_image = y_hat[i, 0]
                 y_target_image = y_target[i, 0]
-                mask_i = None
-                if mask is not None:
-                    if mask.size(1) > 1:
-                        mask_i = mask[i].amax(dim=0)
-                    else:
-                        mask_i = mask[i, 0]
+                mask_i = x[i, 1] if x.size(1) > 1 else None
                 x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
                 y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
                 y_target_img = self._minmax_stretch_for_plot(y_target_image, mask=mask_i)
@@ -1029,7 +1023,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             if fig is not None:
                 plt.close(fig)
             # Explicitly drop local refs after validation plotting to avoid retention.
-            del x_data, axes, fig, x, y_hat, y_target
+            del axes, fig, x, y_hat, y_target
             gc.collect()
 
     @staticmethod
