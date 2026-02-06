@@ -31,6 +31,8 @@ class SurfaceTempPatchDataset(Dataset):
         max_nodata_fraction: float,
         nan_fill_value: float,
         mask_fraction: float,
+        mask_patch_min: int,
+        mask_patch_max: int,
         enable_transform: bool,
         x_return_mode: str,
         return_info: bool,
@@ -45,6 +47,12 @@ class SurfaceTempPatchDataset(Dataset):
         self.max_nodata_fraction = float(max_nodata_fraction)
         self.nan_fill_value = float(nan_fill_value)
         self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
+        self.mask_patch_min = int(mask_patch_min)
+        self.mask_patch_max = int(mask_patch_max)
+        if self.mask_patch_min < 1 or self.mask_patch_max < 1:
+            raise ValueError("mask_patch_min and mask_patch_max must be >= 1.")
+        if self.mask_patch_min > self.mask_patch_max:
+            raise ValueError("mask_patch_min must be <= mask_patch_max.")
         self.enable_transform = bool(enable_transform)
         self.x_return_mode = str(x_return_mode)
         self.return_info = bool(return_info)
@@ -95,6 +103,8 @@ class SurfaceTempPatchDataset(Dataset):
             max_nodata_fraction=float(ds_cfg.get("max_nodata_fraction", 0.2)),
             nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
             mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
+            mask_patch_min=int(ds_cfg.get("mask_patch_min", 3)),
+            mask_patch_max=int(ds_cfg.get("mask_patch_max", 9)),
             enable_transform=bool(ds_cfg.get("enable_transform", True)),
             x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             return_info=bool(ds_cfg.get("return_info", False)),
@@ -165,9 +175,31 @@ class SurfaceTempPatchDataset(Dataset):
         y_corrupt = y_clean.clone()
 
         if self.mask_fraction > 0.0:
-            hide = torch.rand_like(y_corrupt) < self.mask_fraction  # random over whole image
-            valid_mask[hide] = 0.0
-            y_corrupt[hide] = 0.0
+            _, h, w = y_corrupt.shape
+            target = int(round(self.mask_fraction * h * w))
+            if target > 0:
+                patch_mask = torch.zeros(
+                    (h, w), dtype=torch.bool, device=y_corrupt.device
+                )
+                covered = 0
+                while covered < target:
+                    ph = int(
+                        torch.randint(
+                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                        ).item()
+                    )
+                    pw = int(
+                        torch.randint(
+                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                        ).item()
+                    )
+                    y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
+                    x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
+                    patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
+                    covered = int(patch_mask.sum().item())
+                hide = patch_mask.unsqueeze(0)
+                valid_mask[hide] = 0.0
+                y_corrupt[hide] = 0.0
 
         # x is the corrupted input; y is the clean target
         x = y_corrupt  # (1, H, W)

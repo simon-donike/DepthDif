@@ -25,6 +25,8 @@ class SurfaceTempPatchLightDataset(Dataset):
         csv_path: str | Path,
         split: str = "all",
         mask_fraction: float = 0.0,
+        mask_patch_min: int = 3,
+        mask_patch_max: int = 9,
         enable_transform: bool = False,
         x_return_mode: str = "currupted_plus_mask",
         return_info: bool = False,
@@ -37,6 +39,12 @@ class SurfaceTempPatchLightDataset(Dataset):
         self.csv_dir = self.csv_path.parent
         self.split = str(split).strip().lower()
         self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
+        self.mask_patch_min = int(mask_patch_min)
+        self.mask_patch_max = int(mask_patch_max)
+        if self.mask_patch_min < 1 or self.mask_patch_max < 1:
+            raise ValueError("mask_patch_min and mask_patch_max must be >= 1.")
+        if self.mask_patch_min > self.mask_patch_max:
+            raise ValueError("mask_patch_min must be <= mask_patch_max.")
         self.enable_transform = bool(enable_transform)
         self.return_info = bool(return_info)
         self.valid_from_fill_value = bool(valid_from_fill_value)
@@ -110,6 +118,8 @@ class SurfaceTempPatchLightDataset(Dataset):
             csv_path=csv_path,
             split=split,
             mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
+            mask_patch_min=int(ds_cfg.get("mask_patch_min", 3)),
+            mask_patch_max=int(ds_cfg.get("mask_patch_max", 9)),
             enable_transform=bool(ds_cfg.get("enable_transform", False)),
             x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             return_info=bool(ds_cfg.get("return_info", False)),
@@ -169,9 +179,31 @@ class SurfaceTempPatchLightDataset(Dataset):
         y_corrupt = y_clean.clone()
 
         if self.mask_fraction > 0.0:
-            hide = torch.rand_like(y_corrupt) < self.mask_fraction
-            valid_mask[hide] = 0.0
-            y_corrupt[hide] = 0.0
+            _, h, w = y_corrupt.shape
+            target = int(round(self.mask_fraction * h * w))
+            if target > 0:
+                patch_mask = torch.zeros(
+                    (h, w), dtype=torch.bool, device=y_corrupt.device
+                )
+                covered = 0
+                while covered < target:
+                    ph = int(
+                        torch.randint(
+                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                        ).item()
+                    )
+                    pw = int(
+                        torch.randint(
+                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                        ).item()
+                    )
+                    y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
+                    x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
+                    patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
+                    covered = int(patch_mask.sum().item())
+                hide = patch_mask.unsqueeze(0)
+                valid_mask[hide] = 0.0
+                y_corrupt[hide] = 0.0
 
         x = y_corrupt
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
