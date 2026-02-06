@@ -38,7 +38,8 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 - [x] DDIM Sampling
 - [ ] Reduce resolution to something that we could expect from Argo profiles
 - [ ] Implement masked loss for train/val for land pixels  
-- [ ] Implement two masks: known land pixels and  missing pixels
+- [ ] Implement masked loss for train/val for reconstruction pixels?
+- [ ] Implement two masks: known land pixels and  missing pixels? Add land to known?
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
 
 ## RoadMap

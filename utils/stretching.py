@@ -14,24 +14,28 @@ def minmax_stretch(
     Optionally exclude a nodata value (default: 0.0) from the min/max computation.
     """
     t = tensor.detach()
-    valid = torch.isfinite(t)
+    finite = torch.isfinite(t)
+    valid_range = finite
     if mask is not None:
         m = mask.detach()
         if m.shape != t.shape:
             m = m.expand_as(t)
-        valid = valid & (m > 0.0)
+        valid_range = valid_range & (m > 0.0)
     if nodata_value is not None:
         nodata = torch.as_tensor(nodata_value, dtype=t.dtype, device=t.device)
-        valid = valid & ~torch.isclose(t, nodata, atol=1e-6, rtol=0.0)
+        nodata_mask = ~torch.isclose(t, nodata, atol=1e-6, rtol=0.0)
+        valid_range = valid_range & nodata_mask
+    else:
+        nodata_mask = torch.ones_like(t, dtype=torch.bool)
 
-    if torch.any(valid):
-        t_min = t[valid].min()
-        t_max = t[valid].max()
+    if torch.any(valid_range):
+        t_min = t[valid_range].min()
+        t_max = t[valid_range].max()
     else:
         t_min = torch.as_tensor(0.0, dtype=t.dtype, device=t.device)
         t_max = t_min
     denom = torch.clamp(t_max - t_min, min=torch.finfo(t.dtype).eps)
     stretched = ((t - t_min) / denom).clamp(0.0, 1.0)
     if nodata_value is not None:
-        stretched = stretched.masked_fill(~valid, 0.0)
+        stretched = stretched.masked_fill(~finite | ~nodata_mask, 0.0)
     return stretched
