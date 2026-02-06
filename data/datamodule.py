@@ -50,6 +50,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             raise ValueError("dataloader.prefetch_factor must be >= 1 or null.")
         self.pin_memory = bool(dl_cfg.get("pin_memory", True))
         self.shuffle = bool(dl_cfg.get("shuffle", True))
+        self.val_shuffle = bool(dl_cfg.get("val_shuffle", True))
 
         self.val_fraction = float(split_cfg.get("val_fraction", 0.2))
         self.seed = int(ds_cfg.get("random_seed", 7))
@@ -127,7 +128,7 @@ class DepthTileDataModule(pl.LightningDataModule):
         kwargs = dict(
             dataset=self.val_dataset,
             batch_size=self.val_batch_size,
-            shuffle=False,
+            shuffle=self.val_shuffle,
             num_workers=num_workers,
             pin_memory=self.pin_memory,
             persistent_workers=num_workers > 0 and self.val_persistent_workers,

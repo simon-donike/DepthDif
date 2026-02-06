@@ -53,6 +53,7 @@ dataloader: # DataLoader Settings
   val_persistent_workers: false # Validation workers persistence (effective only when val_num_workers > 0).
   prefetch_factor: 2 # Batches prefetched per worker (used only when num_workers > 0).
   shuffle: true # Shuffle training data each epoch.
+  val_shuffle: true # Shuffle validation data each epoch (use with limit_val_batches for random subsets).
   pin_memory: false # Pin host memory for faster host->GPU transfer.
 
 scheduler: # Learning Rate Scheduler Settings
@@ -60,10 +61,10 @@ scheduler: # Learning Rate Scheduler Settings
     enabled: true # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
     monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.
     mode: "min" # "min" lowers LR when metric stops decreasing; "max" for increasing metrics.
-    factor: 0.5 # Multiplicative LR decay applied when plateau is detected.
-    patience: 5 # Number of validation epochs with no improvement before decaying LR.
+    factor: 0.75 # Multiplicative LR decay applied when plateau is detected.
+    patience: 20 # Number of validation epochs with no improvement before decaying LR.
     threshold: 1.0e-4 # Minimum significant metric change to qualify as an improvement.
     threshold_mode: "rel" # "rel" for relative thresholding, "abs" for absolute thresholding.
-    cooldown: 0 # Epochs to wait after an LR drop before resuming plateau checks.
+    cooldown: 5 # Epochs to wait after an LR drop before resuming plateau checks.
     min_lr: 0.0 # Lower bound for learning rate.
     eps: 1.0e-8 # Minimum LR change to apply; smaller updates are ignored.

@@ -1,7 +1,7 @@
 # Settings for instantiating the model architecture/checkpoint behavior.
 model: # Model Settings
   model_type: "cond_px_dif" # "cond_px_dif" for conditional diffusion, "px_dif" for unconditional.
-  resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
+  resume_checkpoint: "logs/2026-02-05_18-03-01/best.ckpt" # false/null starts from scratch; set to a .ckpt path to continue training.
   generated_channels: 1 # Number of channels the model predicts (target y channels).
   condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).

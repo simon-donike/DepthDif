@@ -665,6 +665,45 @@ class PixelDiffusionConditional(PixelDiffusion):
         # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
         y_hat = self(model_condition, sampler=self.val_sampler)
         recon_mse = torch.mean((y_hat - y) ** 2)
+        recon_psnr = None
+        recon_ssim = None
+        try:
+            from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+
+            y_np = y.detach().float().cpu().squeeze(0).numpy()
+            y_hat_np = y_hat.detach().float().cpu().squeeze(0).numpy()
+            if y_np.ndim == 2:
+                y_np = y_np[None, ...]
+                y_hat_np = y_hat_np[None, ...]
+            psnr_vals: list[float] = []
+            ssim_vals: list[float] = []
+            for band_idx in range(y_np.shape[0]):
+                y_band = y_np[band_idx]
+                y_hat_band = y_hat_np[band_idx]
+                data_range = float(y_band.max() - y_band.min())
+                if data_range <= 0.0:
+                    continue
+                psnr_vals.append(
+                    float(
+                        peak_signal_noise_ratio(
+                            y_band, y_hat_band, data_range=data_range
+                        )
+                    )
+                )
+                ssim_vals.append(
+                    float(
+                        structural_similarity(
+                            y_band, y_hat_band, data_range=data_range
+                        )
+                    )
+                )
+            if psnr_vals:
+                recon_psnr = float(sum(psnr_vals) / len(psnr_vals))
+            if ssim_vals:
+                recon_ssim = float(sum(ssim_vals) / len(ssim_vals))
+        except Exception:
+            recon_psnr = None
+            recon_ssim = None
 
         self.log(
             "val/recon_mse_1img",
@@ -676,6 +715,28 @@ class PixelDiffusionConditional(PixelDiffusion):
             sync_dist=False,
             batch_size=1,
         )
+        if recon_psnr is not None:
+            self.log(
+                "val/recon_psnr_1img",
+                float(recon_psnr),
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+                sync_dist=False,
+                batch_size=1,
+            )
+        if recon_ssim is not None:
+            self.log(
+                "val/recon_ssim_1img",
+                float(recon_ssim),
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=False,
+                batch_size=1,
+            )
         self._log_validation_triplet_stats(x=x, y=y, y_hat=y_hat)
         self._log_common_batch_stats(y_hat, prefix="val_pred", batch_size=1)
         self._log_common_batch_stats(y, prefix="val_target", batch_size=1)
