@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 from .forward import *
 from .samplers import *
 from .backbones.unet_convnext import *
+from utils.validation_denoise import build_capture_indices
 
 
 class DenoisingDiffusionProcess(nn.Module):
@@ -212,6 +213,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
         coord: torch.Tensor | None = None,
+        return_intermediates: bool = False,
+        intermediate_step_indices: list[int] | None = None,
     ):
         """
         forward() function triggers a complete inference cycle
@@ -236,6 +239,13 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         it = reversed(range(0, num_timesteps))
 
         x_t = torch.randn([b, self.generated_channels, h, w], device=device)
+        intermediates: list[tuple[int, torch.Tensor]] = []
+        capture_indices: set[int] = set()
+        if return_intermediates:
+            capture_indices = build_capture_indices(
+                total_steps=int(num_timesteps),
+                intermediate_step_indices=intermediate_step_indices,
+            )
 
         apply_known = False
         if known_mask is not None and known_values is not None:
@@ -262,8 +272,10 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         if apply_known:
             x_t = x_t * (1.0 - known_mask) + known_values * known_mask
+        if return_intermediates and 0 in capture_indices:
+            intermediates.append((0, x_t.detach().clone()))
 
-        for i in (
+        for step_index, i in enumerate(
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
@@ -272,7 +284,13 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             x_t = sampler(x_t, t, z_t)  # prediction of next state
             if apply_known:
                 x_t = x_t * (1.0 - known_mask) + known_values * known_mask
+            if return_intermediates:
+                capture_step = step_index + 1
+                if capture_step in capture_indices:
+                    intermediates.append((capture_step, x_t.detach().clone()))
 
+        if return_intermediates:
+            return x_t, intermediates
         return x_t
 
     @staticmethod

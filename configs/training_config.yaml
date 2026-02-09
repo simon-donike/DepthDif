@@ -10,6 +10,8 @@ training: # Internal Model Training Settings
     sampler: "ddpm" # Validation inference sampler: "ddpm" (full chain) or "ddim" (faster).
     ddim_num_timesteps: 200 # Used only when sampler="ddim"; fewer steps = faster, potentially less accurate.
     ddim_eta: 0.0 # Used only when sampler="ddim"; 0.0 is deterministic DDIM.
+    log_intermediates: true # If true, capture and log denoising intermediates (4x4 timestep grid) during validation reconstruction.
+    skip_full_reconstruction_in_sanity_check: false # If true, skip expensive full reverse-diffusion reconstruction during Lightning sanity validation.
 
 trainer: # PL Trainer Settings
   max_epochs: 5000 # Maximum number of training epochs.

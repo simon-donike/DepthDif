@@ -18,6 +18,10 @@ from .DenoisingDiffusionProcess import (
 )
 from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
+from utils.validation_denoise import (
+    build_evenly_spaced_capture_steps,
+    log_wandb_denoise_timestep_grid,
+)
 
 
 class PixelDiffusion(pl.LightningModule):
@@ -413,6 +417,8 @@ class PixelDiffusionConditional(PixelDiffusion):
         val_inference_sampler: str = "ddpm",
         val_ddim_num_timesteps: int = 200,
         val_ddim_eta: float = 0.0,
+        log_intermediates: bool = True,
+        skip_full_reconstruction_in_sanity_check: bool = True,
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
@@ -436,6 +442,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.val_inference_sampler = str(val_inference_sampler).strip().lower()
         self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
         self.val_ddim_eta = float(val_ddim_eta)
+        self.log_intermediates = bool(log_intermediates)
+        self.skip_full_reconstruction_in_sanity_check = bool(
+            skip_full_reconstruction_in_sanity_check
+        )
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
@@ -544,6 +554,14 @@ class PixelDiffusionConditional(PixelDiffusion):
             val_inference_sampler=str(val_sampling_cfg.get("sampler", "ddpm")),
             val_ddim_num_timesteps=int(val_sampling_cfg.get("ddim_num_timesteps", 200)),
             val_ddim_eta=float(val_sampling_cfg.get("ddim_eta", 0.0)),
+            log_intermediates=bool(
+                val_sampling_cfg.get(
+                    "log_intermediates", m.get("log_intermediates", True)
+                )
+            ),
+            skip_full_reconstruction_in_sanity_check=bool(
+                val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
+            ),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
@@ -641,7 +659,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
         coords: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_intermediates: bool = False,
+        intermediate_step_indices: list[int] | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]]:
+        if not self.log_intermediates:
+            return_intermediates = False
+            intermediate_step_indices = None
         if clamp_known_pixels is None:
             clamp_known_pixels = self.clamp_known_pixels
         if not clamp_known_pixels:
@@ -651,16 +674,24 @@ class PixelDiffusionConditional(PixelDiffusion):
             # Caller did not provide known pixels; skip clamping.
             known_values = None
             known_mask = None
-        return self.output_T(
-            self.model(
-                condition,
-                sampler=sampler,
-                verbose=verbose,
-                known_mask=known_mask,
-                known_values=known_values,
-                coord=coords,
-            )
+        model_output = self.model(
+            condition,
+            sampler=sampler,
+            verbose=verbose,
+            known_mask=known_mask,
+            known_values=known_values,
+            coord=coords,
+            return_intermediates=return_intermediates,
+            intermediate_step_indices=intermediate_step_indices,
         )
+        if not return_intermediates:
+            return self.output_T(model_output)
+
+        final_sample, intermediates = model_output
+        out_intermediates = [
+            (step_idx, self.output_T(sample_t)) for step_idx, sample_t in intermediates
+        ]
+        return self.output_T(final_sample), out_intermediates
 
     def _masked_fraction(self, valid_mask: torch.Tensor | None) -> torch.Tensor:
         if valid_mask is None:
@@ -764,25 +795,49 @@ class PixelDiffusionConditional(PixelDiffusion):
     @torch.no_grad()
     def _run_single_image_full_reconstruction_and_log(self) -> None:
         # Expensive diagnostic path: run full reverse diffusion only once on one image.
-        do_pre_checks = False
-        if do_pre_checks:
-            if self._cached_val_example is None:
-                return
-            # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
-            if self.trainer is not None and self.trainer.sanity_checking:
-                return
+        if self._cached_val_example is None:
+            return
+        # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
+        if (
+            self.skip_full_reconstruction_in_sanity_check
+            and self.trainer is not None
+            and self.trainer.sanity_checking
+        ):
+            return
 
         x, y, valid_mask, land_mask, coords = self._cached_val_example
         model_condition = self._prepare_condition_for_model(x, valid_mask)
         known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
-        # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
-        y_hat = self(
-            model_condition,
-            sampler=self.val_sampler,
-            known_mask=known_mask,
-            known_values=known_values,
-            coords=coords,
-        )
+        denoise_samples: list[tuple[int, torch.Tensor]] = []
+        sampler_for_val = None
+        total_steps = 0
+        if self.log_intermediates:
+            sampler_for_val = (
+                self.val_sampler if self.val_sampler is not None else self.model.sampler
+            )
+            total_steps = int(sampler_for_val.num_timesteps)
+            denoise_capture_steps = build_evenly_spaced_capture_steps(
+                total_steps=total_steps,
+                num_frames=16,
+            )
+            # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
+            y_hat, denoise_samples = self(
+                model_condition,
+                sampler=self.val_sampler,
+                known_mask=known_mask,
+                known_values=known_values,
+                coords=coords,
+                return_intermediates=True,
+                intermediate_step_indices=denoise_capture_steps,
+            )
+        else:
+            y_hat = self(
+                model_condition,
+                sampler=self.val_sampler,
+                known_mask=known_mask,
+                known_values=known_values,
+                coords=coords,
+            )
 
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
@@ -878,6 +933,15 @@ class PixelDiffusionConditional(PixelDiffusion):
             prefix="val",
             force=True,
         )
+        if self.log_intermediates and sampler_for_val is not None:
+            log_wandb_denoise_timestep_grid(
+                logger=self.logger,
+                denoise_samples=denoise_samples,
+                total_steps=total_steps,
+                sampler=sampler_for_val,
+                prefix="val",
+                cmap=PLOT_CMAP,
+            )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, model_condition, y, x
         del y_denorm, y_hat_denorm, x_denorm
