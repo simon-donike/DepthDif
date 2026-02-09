@@ -46,8 +46,8 @@ The model is trained on 1-channel temp + valid pixel mask. Loss can be pulled in
 - inpaitning-style injection of known values during generation can be turned on
 
 ## Results
-Preliminary results for sub-surface reconstruction, 50% pixelated occlusion, 3hr train time.
-![img](assets/prelim_results.png)  
+Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling.
+![img](assets/prelim_results2.png)  
 
 ## Environment & Dependencies
 
@@ -59,6 +59,9 @@ pip install -r requirements.txt
 ```
 
 # Comments
+
+## Issues
+- `mask_loss_with_valid_pixels` does the inverse? 😂
 
 ## Notes
 Currently num_workers=0 and pin_mermory=False due to previous PID datalader death. This way, GPUs arent saturated. Find this error and put up again for effective training. ✅ - reduced val workers to 0, increased num_workers and pin_memory=True, bac to good saturation.

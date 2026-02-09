@@ -5,8 +5,8 @@ model: # Model Settings
   generated_channels: 1 # Number of channels the model predicts (target y channels).
   condition_channels: 2 # Total conditioning channels passed into conditional model (data + mask channels).
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
-  clamp_known_pixels: true # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
-  mask_loss_with_valid_pixels: true # If true, loss is computed only over valid pixels from the mask.
+  clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
+  mask_loss_with_valid_pixels: false # If true, loss is computed only over valid pixels from the mask.
 
   coord_conditioning:
     enabled: true # Enable patch-center coordinate conditioning via FiLM.
