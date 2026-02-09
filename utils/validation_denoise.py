@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from utils.normalizations import temperature_to_plot_unit
+from utils.normalizations import temperature_normalize
+from utils.stretching import minmax_stretch
 
 
 def build_capture_indices(
@@ -73,6 +74,8 @@ def log_wandb_denoise_timestep_grid(
     denoise_samples: list[tuple[int, torch.Tensor]],
     total_steps: int,
     sampler: Any,
+    conditioning_image: torch.Tensor | None = None,
+    valid_mask: torch.Tensor | None = None,
     prefix: str = "val",
     cmap: str = "turbo",
     nrows: int = 4,
@@ -102,16 +105,59 @@ def log_wandb_denoise_timestep_grid(
     cmap_fn = cm.get_cmap(cmap)
     timestep_labels: list[str] = []
 
+    sorted_samples = sorted(denoise_samples, key=lambda item: int(item[0]))
+    final_step = int(sorted_samples[-1][0])
+    intermediate_candidates = [
+        (int(step_idx), sample_t)
+        for step_idx, sample_t in sorted_samples
+        if int(step_idx) != 0 and int(step_idx) != final_step
+    ]
+    if len(intermediate_candidates) >= 14:
+        pick_positions = np.linspace(
+            0, len(intermediate_candidates) - 1, num=14
+        ).round().astype(int)
+        picked_intermediates = [intermediate_candidates[int(i)] for i in pick_positions]
+    else:
+        picked_intermediates = intermediate_candidates
+
+    plot_entries: list[tuple[str, int | None, torch.Tensor]] = []
+    if conditioning_image is not None:
+        plot_entries.append(("cond", None, conditioning_image))
+
+    for step_idx, sample_t in picked_intermediates:
+        plot_entries.append(("intermediate", step_idx, sample_t))
+        if len(plot_entries) >= 15:
+            break
+
+    while len(plot_entries) < 15 and picked_intermediates:
+        plot_entries.append(
+            (
+                "intermediate",
+                int(picked_intermediates[-1][0]),
+                picked_intermediates[-1][1],
+            )
+        )
+
+    plot_entries.append(("final", final_step, sorted_samples[-1][1]))
+
     for plot_idx in range(max_plots):
-        if plot_idx >= len(denoise_samples):
+        if plot_idx >= len(plot_entries):
             continue
 
-        step_idx, sample_t = denoise_samples[plot_idx]
+        entry_kind, step_idx, sample_t = plot_entries[plot_idx]
+        mask_i: torch.Tensor | None = None
+        if valid_mask is not None:
+            if valid_mask.ndim == 4:
+                mask_i = valid_mask[0, 0]
+            elif valid_mask.ndim == 3:
+                mask_i = valid_mask[0]
+            elif valid_mask.ndim == 2:
+                mask_i = valid_mask
+
         image_t = sample_t[0, 0].detach().float()
         image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
-        image_plot = temperature_to_plot_unit(
-            image_t, tensor_is_normalized=True
-        ).clamp(0.0, 1.0)
+        image_t = temperature_normalize(mode="denorm", tensor=image_t)
+        image_plot = minmax_stretch(image_t, mask=mask_i, nodata_value=None)
         image_plot = F.interpolate(
             image_plot.unsqueeze(0).unsqueeze(0),
             size=(tile_size_px, tile_size_px),
@@ -127,14 +173,17 @@ def log_wandb_denoise_timestep_grid(
         x0 = col * (tile_size_px + tile_pad_px)
         canvas[y0 : y0 + tile_size_px, x0 : x0 + tile_size_px, :] = rgb
 
-        sampler_t = step_to_sampler_timestep_label(
-            step_index=int(step_idx),
-            total_steps=total_steps,
-            sampler=sampler,
-        )
-        timestep_labels.append(f"{plot_idx + 1}:t={sampler_t}/s={int(step_idx)}")
+        if entry_kind == "cond":
+            timestep_labels.append(f"{plot_idx + 1}:cond")
+        else:
+            sampler_t = step_to_sampler_timestep_label(
+                step_index=int(step_idx),
+                total_steps=total_steps,
+                sampler=sampler,
+            )
+            timestep_labels.append(f"{plot_idx + 1}:t={sampler_t}/s={int(step_idx)}")
 
-    caption = f"Intermediate {len(timestep_labels)} samples."# Not log all timesteps # ", ".join(timestep_labels)
+    caption = "conditioning + 14 intermediates + final"
     experiment.log(
         {
             f"{prefix}/denoise_timestep_grid_4x4": wandb.Image(

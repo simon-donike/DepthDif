@@ -939,6 +939,8 @@ class PixelDiffusionConditional(PixelDiffusion):
                 denoise_samples=denoise_samples,
                 total_steps=total_steps,
                 sampler=sampler_for_val,
+                conditioning_image=x,
+                valid_mask=valid_mask,
                 prefix="val",
                 cmap=PLOT_CMAP,
             )
