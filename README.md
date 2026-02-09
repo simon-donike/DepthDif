@@ -1,6 +1,16 @@
 # Densifying Sparse Ocean Depth Observations
 This implementation is a first test, checking the feasability of densifying sparse ocean measurements.
 
+## Environment & Dependencies
+
+- The project uses **Python 3.12.3**.
+- All Python dependencies are listed in a single `requirements.txt` file located at the **repository root**.
+- Install dependencies with:
+```bash
+pip install -r requirements.txt
+```
+
+
 ## Data
 Currently, monthly tiles from 2000 - 2025 from the [Global Ocean Physics Reanalysis dataset](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F) have been downloaded and are manually masked to simulate real sparse observations. Excluding patches with >20% NoData values, ~106k samples are avaialble (128x128, 1/12 °). Download the data by installing the `copernicusmarine` package, then use the CLI like so `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m  --filter "*2021/*"`  
 The of the obstructions and the coverage percentage are selectable in the `data_config.yaml`.
@@ -12,7 +22,7 @@ Current Status:
 - 1-band only for experimentation
 - 128x128 hardcoded
 
-### Repository Tweaks (Data)
+### Dataset tweaks
 - Synthetic occlusion pipeline to create sparse observations with configurable `mask_fraction`.
 - Patch-based masking with min/max patch sizes (`mask_patch_min`, `mask_patch_max`) instead of single-pixel drops.
 - Validity/land masks derived from nodata or fill values; invalid pixels are tracked separately from corruption.
@@ -27,11 +37,8 @@ As a first prototype, a conditional pixel-space Diffuser is modeled after [Diffu
 
 The model is trained on 1-channel temp + valid pixel mask. Loss can be pulled including or excluding the mask.
 
-### Repository Tweaks (Model)
-- ReduceLROnPlateau learning-rate scheduler configuration and logging support.
-
 ### Major Model Settings + Where to Configure
-These are the core conditioning/robustness tricks in this repo and where they are wired in config.
+These are the core model behaviors in this repo and where they are wired in config.
 
 - **Input channels with mask (conditioning channels)**  
   The conditional diffusion model receives the corrupted data plus a mask channel.  
@@ -60,31 +67,36 @@ These are the core conditioning/robustness tricks in this repo and where they ar
   - `model.clamp_known_pixels: true`  
   This uses the conditioning input + mask to keep known values fixed while denoising.
 
-### Repository Tweaks (Training/Logging)
-- PSNR and SSIM computed during validation (when `skimage` is available).
-- Validation-time sampling (DDPM or DDIM) for qualitative reconstruction checks.
-- Per-epoch cached validation example used for full reconstruction logging.
-- W&B image logging for inputs, targets, predictions, masks, and reconstruction grids.
-- Periodic stats logging (e.g., masked fraction, stdev etc) during train/val.
-- Checkpointing + resume support, plus learning-rate monitoring callbacks.
-- Optional W&B `watch` settings for gradients/parameters/graphs.
+### Minor Model Settings + Where to Configure
+These are the model training behaviors in this repo and where they are wired in config.
 
-### Sampling
-- DDIM/DDPM sampling possible
-- inpaitning-style injection of known values during generation can be turned on
+- **Learning-rate scheduler (ReduceLROnPlateau)**  
+  Configure in `configs/training_config.yaml`:
+  - `scheduler.reduce_on_plateau.enabled`
+  - `scheduler.reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
+  - `trainer.lr_logging_interval` (learning-rate monitor cadence)
+
+- **Checkpointing + resume**  
+  Configure in:
+  - `configs/model_config.yaml`: `model.resume_checkpoint` (false/null or a `.ckpt` path)
+  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (best-checkpoint metric)
+
+- **W&B logging (metrics/images/watch)**  
+  Configure in `configs/training_config.yaml`:
+  - `wandb.project`, `wandb.entity`, `wandb.run_name`, `wandb.log_model`
+  - `wandb.verbose`, `wandb.log_images_every_n_steps`, `wandb.log_stats_every_n_steps`
+  - `wandb.watch_gradients`, `wandb.watch_parameters`, `wandb.watch_log_freq`, `wandb.watch_log_graph`
+
+- **Validation-time sampling + diagnostics**  
+  Configure in `configs/training_config.yaml`:
+  - `training.validation_sampling.sampler` (`ddpm` or `ddim`)
+  - `training.validation_sampling.ddim_num_timesteps`, `ddim_eta`
+  Notes: PSNR/SSIM are computed when `skimage` is available; one cached val example per epoch is used for full reconstruction logging.
 
 ## Results
-Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling.
+Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling. PSNR ~40dB, SSIM ~0.90.
 ![img](assets/prelim_results2.png)  
 
-## Environment & Dependencies
-
-- The project uses **Python 3.12.3**.
-- All Python dependencies are listed in a single `requirements.txt` file located at the **repository root**.
-- Install dependencies with:
-```bash
-pip install -r requirements.txt
-```
 
 # Comments
 
@@ -97,7 +109,7 @@ pip install -r requirements.txt
 - `coord_conditioning` - neither tested nor run - only implemented 
 
 ## Notes
-Currently num_workers=0 and pin_mermory=False due to previous PID datalader death. This way, GPUs arent saturated. Find this error and put up again for effective training. ✅ - reduced val workers to 0, increased num_workers and pin_memory=True, bac to good saturation.
+none.
 
 
 ## ToDos
@@ -120,7 +132,7 @@ Currently num_workers=0 and pin_mermory=False due to previous PID datalader deat
 
 #### Tier 2
 - [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources. 
-- [ ] More sophisticated way to feed masks to model, how to do it? masks * img?   
+- [x] More sophisticated way to feed masks to model, how to do it? masks * img?   
 - [ ] more capable backbone?   
 
 ## Appendix: FiLM Coordinate Injection Details
