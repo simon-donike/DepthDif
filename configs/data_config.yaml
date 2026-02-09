@@ -15,7 +15,7 @@ dataset:
   x_return_mode: "currupted_plus_mask" # "corrputed" or "currupted_plus_mask".
   return_info: false # Return per-sample metadata dict under batch["info"].
   return_coords: true # Return patch-center coords under batch["coords"].
-  rebuild_index: true # Rebuild tile index from raw files on startup.
+  rebuild_index: false # Rebuild tile index from raw files on startup.
   enforce_validity: true # Drop indexed tiles with too much nodata based on max_nodata_fraction.
 
 

@@ -335,6 +335,5 @@ if __name__ == "__main__":
     sample = dataset[0]
     print(f"Sample keys: {list(sample.keys())}")
     print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
-
-
-    sample=dataset[11]
+    print(f"Valid mask sum: {sample['valid_mask'].sum().item()}, Land mask sum: {sample['land_mask'].sum().item()}")
+    print(f"Coords: {sample.get('coords', 'N/A')}")

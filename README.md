@@ -101,7 +101,7 @@ Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clu
 # Comments
 
 ## Known Issues
-- `mask_loss_with_valid_pixels` does the inverse? 😂
+- `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed, not tested in training run
 ![img](assets/val_issue.png)  
 
 ## Untested Imlpementations:
@@ -110,26 +110,26 @@ Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clu
 - new dataset_light and datamodule not yet tested.
 
 ## Notes
-none.
+none currently.
 
 
 ## ToDos
 - [x] Include Deps file
 - [x] DDIM Sampling
-- [ ] Reduce resolution to something that we could expect from Argo profiles
 - [x] in dataset, implmeent bigger boxes of corruption instead of pixels
-- [ ] make dataset.py a save-to-disk funcitonality, then load straight form tensors
+- [x] make dataset.py a save-to-disk funcitonality, then load straight form tensors
 - [x] Implement masked loss for train/val for land pixels  
 - [x] Implement masked loss for train/val for reconstruction pixels?
 - [x] Implement two masks: known land pixels and  missing pixels? Add land to known?
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
+- [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 
 ## RoadMap
 #### Tier 1
 - [x] Aux data: coords, other priors:  
   Patch‑level [FiLM](https://arxiv.org/abs/1709.07871) conditioning with patch-center (lat, lon) embedding and ConvNeXt scale/shift injection for global geophysical priors.
 - [ ] Simulate EO data img + sparse in-situ observation: 1 band surface temp + multiple bands (corrupted) for depth profile. 
-- [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
+- [ ] Reduce resolution to something that we could expect from Argo profiles
 
 #### Tier 2
 - [ ] Check more CopernicusMarine products like ARMOR3D as alternative data sources. 
