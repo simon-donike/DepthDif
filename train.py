@@ -14,6 +14,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
 from models.difFF import PixelDiffusion, PixelDiffusionConditional
 
 
@@ -149,6 +150,7 @@ def main(
     # Load configuration and choose model family.
     model_cfg = load_yaml(model_config_path)
     training_cfg = load_yaml(training_config_path)
+    data_cfg = load_yaml(data_config_path)
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
@@ -167,10 +169,24 @@ def main(
             category=Warning,
         )
 
-    # Data module encapsulates train/val dataset construction and loaders.
+    # Build dataset (currently only temp_v1/light format is supported here).
+    ds_cfg = data_cfg.get("dataset", {})
+    split_cfg = data_cfg.get("split", {})
+    dataloader_cfg = training_cfg.get("dataloader", {})
+    dataloader_type = str(ds_cfg.get("dataloader_type", "light")).strip().lower()
+    if dataloader_type != "light":
+        raise ValueError(
+            f"Only 'light' (temp_v1) dataloader_type is supported in this runner; got '{dataloader_type}'."
+        )
+    dataset = SurfaceTempPatchLightDataset.from_config(
+        data_config_path,
+        split="all",
+    )
     datamodule = DepthTileDataModule(
-        config_path=data_config_path,
-        training_config_path=training_config_path,
+        dataset=dataset,
+        dataloader_cfg=dataloader_cfg,
+        val_fraction=float(split_cfg.get("val_fraction", 0.2)),
+        seed=int(ds_cfg.get("random_seed", 7)),
     )
 
     # Instanciate appropriate model class from config.

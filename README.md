@@ -107,6 +107,7 @@ Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clu
 ## Untested Imlpementations:
 - `mask_loss_with_valid_pixels` - doesnt work
 - `coord_conditioning` - neither tested nor run - only implemented 
+- new dataset_light and datamodule not yet tested.
 
 ## Notes
 none.
