@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -11,15 +10,12 @@ import xarray as xr
 import yaml
 from torch.utils.data import Dataset
 from tqdm import tqdm
-from utils.normalizations import PLOT_CMAP, temperature_normalize
-from utils.stretching import minmax_stretch
 
 
 class SurfaceTempPatchDataset(Dataset):
     """
-    Surface temperature patch dataset from thetao at time=0 and shallowest depth.
-    Returns dict with corrupted input `x`, target `y`, `valid_mask`, `land_mask`,
-    and metadata `info`.
+    Patch dataset for exporting NetCDF tiles to disk (no corruption/stretching).
+    Still a torch Dataset for easy iteration, but primarily used via save_dataset_to_disk.
     """
 
     def __init__(
@@ -27,51 +23,27 @@ class SurfaceTempPatchDataset(Dataset):
         *,
         root_dir: str | Path,
         index_path: str | Path,
+        bands: Sequence[str],
         edge_size: int,
         enforce_validity: bool,
         max_nodata_fraction: float,
         nan_fill_value: float,
-        mask_fraction: float,
-        mask_patch_min: int,
-        mask_patch_max: int,
-        enable_transform: bool,
-        x_return_mode: str,
         return_info: bool,
         return_coords: bool,
         rebuild_index: bool,
     ) -> None:
         self.root_dir = Path(root_dir)
         self.index_path = Path(index_path)
+        if not bands:
+            raise ValueError("At least one band must be provided.")
+        self.bands = [str(band) for band in bands]
         self.edge_size = int(edge_size)
-        # Always tile with non-overlapping patches.
-        self.stride = int(edge_size)
+        self.stride = int(edge_size)  # non-overlapping tiles
         self.enforce_validity = bool(enforce_validity)
         self.max_nodata_fraction = float(max_nodata_fraction)
         self.nan_fill_value = float(nan_fill_value)
-        self.mask_fraction = float(np.clip(mask_fraction, 0.0, 1.0))
-        self.mask_patch_min = int(mask_patch_min)
-        self.mask_patch_max = int(mask_patch_max)
-        if self.mask_patch_min < 1 or self.mask_patch_max < 1:
-            raise ValueError("mask_patch_min and mask_patch_max must be >= 1.")
-        if self.mask_patch_min > self.mask_patch_max:
-            raise ValueError("mask_patch_min must be <= mask_patch_max.")
-        self.enable_transform = bool(enable_transform)
-        self.x_return_mode = str(x_return_mode)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
-        valid_x_modes = {"corrputed", "currupted_plus_mask"}
-        if self.x_return_mode not in valid_x_modes:
-            raise ValueError(
-                f"Invalid x_return_mode '{self.x_return_mode}'. "
-                f"Choose one of: {sorted(valid_x_modes)}"
-            )
-        if self.enable_transform and self.return_coords:
-            warnings.warn(
-                "Geometric augmentation is enabled while return_coords=true. "
-                "Patch data will be rotated/flipped but coords will remain the "
-                "original patch center. Disable transforms if this is undesirable.",
-                stacklevel=2,
-            )
 
         if rebuild_index or not self.index_path.exists():
             index_df = self._build_index()
@@ -96,8 +68,7 @@ class SurfaceTempPatchDataset(Dataset):
         if len(self.tiles) == 0:
             raise RuntimeError("Dataset contains no patches after indexing/filtering.")
         self._init_index_arrays(self.tiles)
-        # Drop the DataFrame object to avoid per-worker pandas overhead in DataLoader workers.
-        self.tiles = None
+        self.tiles = None  # drop DataFrame to reduce worker overhead
 
     @classmethod
     def from_config(
@@ -108,15 +79,11 @@ class SurfaceTempPatchDataset(Dataset):
         return cls(
             root_dir=ds_cfg["root_dir"],
             index_path=ds_cfg["index_path"],
+            bands=ds_cfg.get("bands", ["thetao"]),
             edge_size=int(ds_cfg["edge_size"]),
             enforce_validity=bool(ds_cfg.get("enforce_validity", True)),
             max_nodata_fraction=float(ds_cfg.get("max_nodata_fraction", 0.2)),
             nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
-            mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
-            mask_patch_min=int(ds_cfg.get("mask_patch_min", 3)),
-            mask_patch_max=int(ds_cfg.get("mask_patch_max", 9)),
-            enable_transform=bool(ds_cfg.get("enable_transform", True)),
-            x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
             return_info=bool(ds_cfg.get("return_info", False)),
             return_coords=bool(ds_cfg.get("return_coords", False)),
             rebuild_index=bool(ds_cfg.get("rebuild_index", False)),
@@ -146,83 +113,45 @@ class SurfaceTempPatchDataset(Dataset):
             lat_center = 0.5 * (lat0 + lat1)
             lon_center = self._center_lon_deg(lon0, lon1)
 
-        # use h5netcdf (declared in requirements).
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
-            da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
-            patch = da2d.isel(
-                {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
-            )
-            arr = patch.values.astype(np.float32, copy=False)
+            band_arrays: list[np.ndarray] = []
+            band_valid_masks: list[np.ndarray] = []
+            lat_name = lon_name = None
+            for band in self.bands:
+                da2d, lat_name, lon_name = self._band_2d(ds, band)
+                patch = da2d.isel(
+                    {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
+                )
+                arr = patch.values.astype(np.float32, copy=False)
+                valid_mask_band = self._validity_mask(arr, da2d).astype(
+                    np.float32, copy=False
+                )
+                np.nan_to_num(
+                    arr,
+                    copy=False,
+                    nan=self.nan_fill_value,
+                    posinf=self.nan_fill_value,
+                    neginf=self.nan_fill_value,
+                )
+                band_arrays.append(arr)
+                band_valid_masks.append(valid_mask_band)
+
             nodata_fraction = (
                 np.nan
                 if self._nodata_fraction is None
                 else float(self._nodata_fraction[row_idx])
             )
 
-            # v: validity mask from data itself (1=valid ocean, 0=invalid/land/no-data).
-            v_np = self._validity_mask(arr, da2d).astype(np.float32, copy=False)
-            # do nan correction in place
-            np.nan_to_num(
-                arr,
-                copy=False,
-                nan=self.nan_fill_value,
-                posinf=self.nan_fill_value,
-                neginf=self.nan_fill_value,
-            )
-        y = torch.from_numpy(arr).unsqueeze(0)
-        v = torch.from_numpy(v_np).unsqueeze(0)
+        y_np = np.stack(band_arrays, axis=0)  # (C, H, W)
+        valid_mask_np = np.logical_and.reduce(band_valid_masks).astype(np.float32)
+        y = torch.from_numpy(y_np)
+        valid_mask = torch.from_numpy(valid_mask_np)
+        land_mask = (valid_mask <= 0.0).to(dtype=torch.float32)
 
-        # Normalize Temperature: 0 mean, 1 stdev
-        y = temperature_normalize(mode="norm", tensor=y)
+        # No corruption: x == y
+        x = y.clone()
 
-        if self.enable_transform:
-            # Apply the same random geometric augmentation to y and masks if enabled.
-            k_rot, flip_h, flip_v = self._sample_aug_params()
-            y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
-            v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
-
-
-        # Keep uncorrupted target
-        y_clean = y  # (1, H, W)
-
-        # Build known-mask (start from validity mask)
-        valid_mask = v.clone()  # (1, H, W), float32 0/1 (or bool if you switch)
-        land_mask = (v <= 0.0).to(dtype=torch.float32)
-
-        # Create corrupted input as a single clone (minimum needed to keep y_clean intact)
-        y_corrupt = y_clean.clone()
-
-        if self.mask_fraction > 0.0:
-            _, h, w = y_corrupt.shape
-            target = int(round(self.mask_fraction * h * w))
-            if target > 0:
-                patch_mask = torch.zeros(
-                    (h, w), dtype=torch.bool, device=y_corrupt.device
-                )
-                covered = 0
-                while covered < target:
-                    ph = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
-                    )
-                    pw = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
-                    )
-                    y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
-                    x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
-                    patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
-                    covered = int(patch_mask.sum().item())
-                hide = patch_mask.unsqueeze(0)
-                valid_mask[hide] = 0.0
-                y_corrupt[hide] = 0.0
-
-        # x is the corrupted input; y is the clean target
-        x = y_corrupt  # (1, H, W)
-
-        sample = {
+        sample: Dict[str, Any] = {
             "x": x,
             "y": y,
             "valid_mask": valid_mask,
@@ -242,6 +171,7 @@ class SurfaceTempPatchDataset(Dataset):
                 for key in self._info_columns
             }
             info["nodata_fraction_effective"] = nodata_fraction
+            info["bands"] = self.bands
             sample["info"] = info
         return sample
 
@@ -290,33 +220,16 @@ class SurfaceTempPatchDataset(Dataset):
         cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
         return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
 
-    @staticmethod
-    def _sample_aug_params() -> Tuple[int, bool, bool]:
-        k_rot = int(torch.randint(0, 4, (1,)).item())
-        flip_h = bool(torch.randint(0, 2, (1,)).item())
-        flip_v = bool(torch.randint(0, 2, (1,)).item())
-        return k_rot, flip_h, flip_v
-
-    @staticmethod
-    def _apply_geometric_augment(
-        t: torch.Tensor, k_rot: int, flip_h: bool, flip_v: bool
-    ) -> torch.Tensor:
-        t = torch.rot90(t, k=k_rot, dims=(-2, -1))
-        if flip_h:
-            t = torch.flip(t, dims=(-1,))
-        if flip_v:
-            t = torch.flip(t, dims=(-2,))
-        return t
-
     def _build_index(self) -> pd.DataFrame:
         nc_files = sorted(self.root_dir.glob("*.nc"))
         if not nc_files:
             raise FileNotFoundError(f"No .nc files found under {self.root_dir}")
 
         template_path = nc_files[0]
+        primary_band = self.bands[0]
         template_records: List[Dict[str, Any]] = []
         with xr.open_dataset(template_path, engine="h5netcdf", cache=False) as ds:
-            da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
+            da2d, lat_name, lon_name = self._band_2d(ds, primary_band)
             h = int(da2d.sizes[lat_name])
             w = int(da2d.sizes[lon_name])
 
@@ -392,11 +305,11 @@ class SurfaceTempPatchDataset(Dataset):
         else:
             raise ValueError("index_path must end with .parquet or .csv")
 
-    def _surface_thetao_2d(self, ds: xr.Dataset) -> Tuple[xr.DataArray, str, str]:
-        if "thetao" not in ds.data_vars:
-            raise RuntimeError("Expected 'thetao' in dataset.")
+    def _band_2d(self, ds: xr.Dataset, band: str) -> Tuple[xr.DataArray, str, str]:
+        if band not in ds.data_vars:
+            raise RuntimeError(f"Expected '{band}' in dataset.")
 
-        da = ds["thetao"]
+        da = ds[band]
         lat_name = self._pick_name(ds, da.dims, ("latitude", "lat"))
         lon_name = self._pick_name(ds, da.dims, ("longitude", "lon"))
         depth_dim = self._pick_name(ds, da.dims, ("depth",))
@@ -473,7 +386,6 @@ class SurfaceTempPatchDataset(Dataset):
             valid_mask_t = sample["valid_mask"]
             land_mask_t = sample["land_mask"]
 
-            # Plot the first band when channels are present.
             x = x_t[0] if x_t.ndim == 3 else x_t
             y = y_t[0] if y_t.ndim == 3 else y_t
             valid_mask = (
@@ -481,19 +393,16 @@ class SurfaceTempPatchDataset(Dataset):
             )
             land_mask = land_mask_t[0] if land_mask_t.ndim == 3 else land_mask_t
 
-            # Use fixed dataset-level visualization bounds for stable cross-sample contrast.
             x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-            x = temperature_normalize(mode="denorm", tensor=x)
-            y = temperature_normalize(mode="denorm", tensor=y)
-            x = minmax_stretch(x, mask=valid_mask).numpy()
-            y = minmax_stretch(y, mask=valid_mask).numpy()
 
             fig, axes = plt.subplots(1, 4, figsize=(14, 4))
-            axes[0].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[0].set_title("Input x (masked)")
-            axes[1].imshow(y, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[1].set_title("Target y (ground truth)")
+            im0 = axes[0].imshow(x, cmap="viridis")
+            axes[0].set_title("Input x (band 0)")
+            fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+            im1 = axes[1].imshow(y, cmap="viridis")
+            axes[1].set_title("Target y (band 0)")
+            fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
             axes[2].imshow(valid_mask.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
             axes[2].set_title("Valid mask")
             axes[3].imshow(land_mask.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
@@ -508,26 +417,21 @@ class SurfaceTempPatchDataset(Dataset):
         y_min_overall = float("inf")
         y_max_overall = float("-inf")
 
-        # running stats
         count = 0
         mean = 0.0
-        M2 = 0.0  # sum of squares of differences from the current mean
+        M2 = 0.0
 
         for i in tqdm(range(len(self))):
             sample = self[i]
-            y = sample["y"]  # (1, H, W)
+            y = sample["y"]  # (C, H, W)
 
-            # flatten valid values
             vals = y.reshape(-1)
-
-            # min / max
             y_min = torch.min(vals)
             y_max = torch.max(vals)
             y_min_overall = min(y_min_overall, y_min.item())
             y_max_overall = max(y_max_overall, y_max.item())
 
-            # streaming mean / variance (Welford)
-            vals = vals.double()  # improve numerical stability
+            vals = vals.double()
             for v in vals:
                 count += 1
                 delta = v.item() - mean
@@ -535,14 +439,14 @@ class SurfaceTempPatchDataset(Dataset):
                 delta2 = v.item() - mean
                 M2 += delta * delta2
 
-        variance = M2 / (count - 1)
+        variance = M2 / (count - 1) if count > 1 else 0.0
         std = variance**0.5
 
         print(f"Overall y min: {y_min_overall}")
         print(f"Overall y max: {y_max_overall}")
         print(f"Mean: {mean}")
         print(f"Std:  {std}")
-        
+
     def save_dataset_to_disk(
         self,
         dir: str | Path,
@@ -551,6 +455,7 @@ class SurfaceTempPatchDataset(Dataset):
         split_seed: int = 42,
         flush_every: int = 500,
         valid_fraction_threshold: float = 0.25,
+        bands: Sequence[str] | None = None,
     ) -> Path:
         out_dir = Path(dir)
         y_dir = out_dir / "y_npy"
@@ -561,12 +466,14 @@ class SurfaceTempPatchDataset(Dataset):
             index_df = pd.read_parquet(self.index_path)
         else:
             index_df = pd.read_csv(self.index_path)
-        # No filtering: export every row from the index as-is.
         index_df = index_df.reset_index(drop=True)
 
         val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
         valid_fraction_threshold = float(np.clip(valid_fraction_threshold, 0.0, 1.0))
         flush_every = max(1, int(flush_every))
+        bands_to_save = [str(b) for b in (self.bands if bands is None else bands)]
+        if not bands_to_save:
+            raise ValueError("bands must contain at least one variable to save.")
 
         records: List[Dict[str, Any]] = []
         kept_count = 0
@@ -579,17 +486,33 @@ class SurfaceTempPatchDataset(Dataset):
             e = int(row_data["edge_size"])
 
             with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
-                da2d, lat_name, lon_name = self._surface_thetao_2d(ds)
-                patch = da2d.isel(
-                    {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
-                )
-                arr = patch.values.astype(np.float32, copy=False)
-                valid_fraction = float(self._validity_mask(arr, da2d).mean())
+                band_arrays: list[np.ndarray] = []
+                valid_masks: list[np.ndarray] = []
+                for band in bands_to_save:
+                    da2d, lat_name, lon_name = self._band_2d(ds, band)
+                    patch = da2d.isel(
+                        {lat_name: slice(y0, y0 + e), lon_name: slice(x0, x0 + e)}
+                    )
+                    arr = patch.values.astype(np.float32, copy=False)
+                    valid_mask_band = self._validity_mask(arr, da2d).astype(
+                        np.float32, copy=False
+                    )
+                    np.nan_to_num(
+                        arr,
+                        copy=False,
+                        nan=self.nan_fill_value,
+                        posinf=self.nan_fill_value,
+                        neginf=self.nan_fill_value,
+                    )
+                    band_arrays.append(arr)
+                    valid_masks.append(valid_mask_band)
+
+                y_np = np.stack(band_arrays, axis=0)  # (C, H, W)
+                valid_mask_np = np.logical_and.reduce(valid_masks).astype(np.float32)
+                valid_fraction = float(valid_mask_np.mean())
 
             if valid_fraction <= valid_fraction_threshold:
                 continue
-
-            y_np = arr
 
             y_rel_path = Path("y_npy") / f"{kept_count:08d}.npy"
             y_abs_path = out_dir / y_rel_path
@@ -599,12 +522,13 @@ class SurfaceTempPatchDataset(Dataset):
             row["sample_idx"] = kept_count
             row["y_npy_path"] = y_rel_path.as_posix()
             row["valid_fraction"] = valid_fraction
+            row["bands"] = "|".join(bands_to_save)
+            row["num_channels"] = y_np.shape[0]
             records.append(row)
             kept_count += 1
-            if (kept_count % flush_every == 0):
+            if kept_count % flush_every == 0:
                 pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
 
-        # Assign train/val split after filtering so ratios are correct.
         n_samples = len(records)
         val_len = int(round(n_samples * val_fraction))
         if n_samples > 1:
@@ -617,18 +541,52 @@ class SurfaceTempPatchDataset(Dataset):
             row["split"] = "val" if idx in val_indices else "train"
 
         pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
-
         return csv_path
-        
 
 
 if __name__ == "__main__":
-    dataset = SurfaceTempPatchDataset.from_config("configs/data_config.yaml")
-    print(f"Dataset length: {len(dataset)}")
-    sample = dataset[0]
-    dataset._plot_example_image()
-    dataset.save_dataset_to_disk("/work/data/depth/extracted/", val_fraction=0.25)
-    #dataset._get_stats()
+    # Example 1: temperature only (thetao), config-driven paths
+    ds_temp = SurfaceTempPatchDataset.from_config("configs/data_config.yaml")
+    print(f"[thetao] Dataset length: {len(ds_temp)}")
+    ds_temp.save_dataset_to_disk("/work/data/depth/extracted/thetao", val_fraction=0.2)
 
-    print(f"x shape: {sample['x'].shape}, y shape: {sample['y'].shape}")
-    print(f"Info: {sample['info']}")
+    # Example 2: temperature + salinity (thetao, so)
+    ds_temp_sal = SurfaceTempPatchDataset(
+        root_dir="/data1/datasets/depth/monthy/",
+        index_path="data/patch_index.parquet",
+        bands=["thetao", "so"],
+        edge_size=128,
+        enforce_validity=True,
+        max_nodata_fraction=0.25,
+        nan_fill_value=0.0,
+        return_info=False,
+        return_coords=True,
+        rebuild_index=False,
+    )
+    print(f"[thetao, so] Dataset length: {len(ds_temp_sal)}")
+    ds_temp_sal.save_dataset_to_disk(
+        "/work/data/depth/extracted/thetao_so", val_fraction=0.2
+    )
+
+    # Example 3: salinity only (so) with on-the-fly index rebuild
+    ds_sal = SurfaceTempPatchDataset(
+        root_dir="/data1/datasets/depth/monthy/",
+        index_path="data/patch_index_so.parquet",
+        bands=["so"],
+        edge_size=128,
+        enforce_validity=True,
+        max_nodata_fraction=0.25,
+        nan_fill_value=0.0,
+        return_info=True,
+        return_coords=True,
+        rebuild_index=True,
+    )
+    print(f"[so] Dataset length: {len(ds_sal)}")
+    ds_sal.save_dataset_to_disk("/work/data/depth/extracted/so", val_fraction=0.2)
+
+    # Example 4: write only temperature from a multi-band dataset using save-time override
+    ds_temp_sal.save_dataset_to_disk(
+        "/work/data/depth/extracted/thetao_only_from_multiband",
+        val_fraction=0.2,
+        bands=["thetao"],
+    )

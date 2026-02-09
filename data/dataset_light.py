@@ -57,7 +57,7 @@ class SurfaceTempPatchLightDataset(Dataset):
             warnings.warn(
                 "Geometric augmentation is enabled while return_coords=true. "
                 "Patch data will be rotated/flipped but coords will remain the "
-                "original patch center. Disable transforms if this is undesirable.",
+                "original patch center. Disable transforms if this is undesirable (likely).",
                 stacklevel=2,
             )
 
@@ -165,17 +165,16 @@ class SurfaceTempPatchLightDataset(Dataset):
         )
 
         y_np = np.load(y_abs_path).astype(np.float32, copy=False)
-        # Land mask must be derived from raw on-disk values before any normalization.
-        # Treat non-finite values as land (mask=0), finite as water (mask=1).
+        # Land mask derived before normalization; keep per-channel mask.
         land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
         if y.ndim == 2:
             y = y.unsqueeze(0)
             land_mask = land_mask.unsqueeze(0)
-        if y.ndim != 3 or y.shape[0] != 1:
+        if y.ndim != 3:
             raise RuntimeError(
-                f"Unexpected y shape at {y_abs_path}: {tuple(y.shape)} (expected (1,H,W))"
+                f"Unexpected y shape at {y_abs_path}: {tuple(y.shape)} (expected (C,H,W))"
             )
         y = temperature_normalize(mode="norm", tensor=y)
 
