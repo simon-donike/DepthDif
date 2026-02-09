@@ -46,8 +46,8 @@ The model is trained on 1-channel temp + valid pixel mask. Loss can be pulled in
 - inpaitning-style injection of known values during generation can be turned on
 
 ## Results
-Preliminary results for sub-surface reconstruction, 50% pixelated occlusion, 3hr train time.
-![img](assets/prelim_results.png)  
+Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling.
+![img](assets/prelim_results2.png)  
 
 ## Environment & Dependencies
 
