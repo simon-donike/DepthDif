@@ -77,7 +77,7 @@ def log_wandb_denoise_timestep_grid(
     cmap: str = "turbo",
     nrows: int = 4,
     ncols: int = 4,
-    tile_size_px: int = 96,
+    tile_size_px: int = 128,
     tile_pad_px: int = 2,
 ) -> None:
     if not denoise_samples:
