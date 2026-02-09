@@ -3,7 +3,7 @@ training: # Internal Model Training Settings
   batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
   noise:
     num_timesteps: 1000 # Number of diffusion steps (T).
-    schedule: "linear" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
+    schedule: "cosine" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
     beta_start: 1.0e-4 # Noise level at first timestep (must be > 0 and < beta_end).
     beta_end: 2.0e-2 # Noise level at last timestep (must be < 1 and > beta_start).
   validation_sampling:

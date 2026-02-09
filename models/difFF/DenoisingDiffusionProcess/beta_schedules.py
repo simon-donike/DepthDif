@@ -37,7 +37,7 @@ def cosine_beta_schedule(timesteps, s=0.008, beta_start=0.0001, beta_end=0.02):
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, beta_start, beta_end)
+    return torch.clip(betas, beta_start, beta_end) #ToDo: investigate clipping effects, might not be ideal here because it prevents very strong noise at the end
 
 
 def linear_beta_schedule(timesteps, beta_start=0.0001, beta_end=0.02):

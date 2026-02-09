@@ -217,13 +217,13 @@ def main(
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best",
-        monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss_ckpt")),
+        monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss")),
         mode="min",
-        save_top_k=1,
+        save_top_k=2,
         save_last=False,
     )
     lr_monitor_callback = LearningRateMonitor(
-        logging_interval=str(trainer_cfg.get("lr_logging_interval", "step"))
+        logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
 
     # Build device settings from config
