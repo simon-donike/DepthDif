@@ -345,6 +345,8 @@ def log_wandb_snr_profile(
     total_steps: int,
     denoise_samples: list[tuple[int, torch.Tensor]] | None = None,
     ground_truth: torch.Tensor | None = None,
+    valid_mask: torch.Tensor | None = None,
+    land_mask: torch.Tensor | None = None,
     prefix: str = "val",
     eps: float = 1e-12,
 ) -> None:
@@ -397,29 +399,101 @@ def log_wandb_snr_profile(
 
     if denoise_samples and ground_truth is not None:
         gt = ground_truth.detach().float()
+        missing_mask: torch.Tensor | None = None
+        ocean_mask: torch.Tensor | None = None
+
+        def _to_model_mask(mask_t: torch.Tensor | None) -> torch.Tensor | None:
+            if mask_t is None:
+                return None
+            m = mask_t.detach().float()
+            if m.ndim == 3:
+                m = m.unsqueeze(1)
+            if m.ndim == 4 and gt.ndim == 4:
+                if int(m.size(1)) == 1 and int(gt.size(1)) > 1:
+                    m = m.expand(-1, int(gt.size(1)), -1, -1)
+                elif int(m.size(1)) != int(gt.size(1)):
+                    m = m.amax(dim=1, keepdim=True)
+                    if int(gt.size(1)) > 1:
+                        m = m.expand(-1, int(gt.size(1)), -1, -1)
+            if m.shape != gt.shape:
+                return None
+            return m
+
+        if valid_mask is not None:
+            vm = _to_model_mask(valid_mask)
+            if vm is not None:
+                missing_mask = (vm < 0.5).float()
+        if land_mask is not None:
+            lm = _to_model_mask(land_mask)
+            if lm is not None:
+                ocean_mask = (lm > 0.5).float()
+
+        mse_mask: torch.Tensor | None = None
+        if missing_mask is not None and ocean_mask is not None:
+            mse_mask = missing_mask * ocean_mask
+        elif missing_mask is not None:
+            mse_mask = missing_mask
+        elif ocean_mask is not None:
+            mse_mask = ocean_mask
+
         mse_steps: list[int] = []
         mse_vals: list[float] = []
         for step_idx, sample_t in denoise_samples:
             sample = sample_t.detach().float()
             if sample.shape != gt.shape:
                 continue
-            mse = torch.mean((sample - gt) ** 2)
+            diff_sq = (sample - gt) ** 2
+            if mse_mask is not None:
+                denom = mse_mask.sum()
+                if float(denom.item()) <= 0.0:
+                    continue
+                mse = (diff_sq * mse_mask).sum() / denom
+            else:
+                mse = torch.mean(diff_sq)
             mse_steps.append(int(step_idx))
             mse_vals.append(float(mse.item()))
         if mse_steps:
+            paired = sorted(zip(mse_steps, mse_vals), key=lambda p: p[0])
+            mse_steps = [int(p[0]) for p in paired]
+            mse_vals = [float(p[1]) for p in paired]
             ax_mse = ax.twinx()
             mse_line = ax_mse.plot(
                 np.asarray(mse_steps, dtype=np.int32),
                 np.asarray(mse_vals, dtype=np.float32),
                 linewidth=1.5,
                 color="#d62728",
-                label="MSE (at timestep)",
+                marker="o",
+                markersize=2.5,
+                label=(
+                    "MSE (missing & ocean)"
+                    if (missing_mask is not None and ocean_mask is not None)
+                    else (
+                        "MSE (missing pixels)"
+                        if missing_mask is not None
+                        else (
+                            "MSE (ocean pixels)"
+                            if ocean_mask is not None
+                            else "MSE (at timestep)"
+                        )
+                    )
+                ),
             )
             ax_mse.set_ylabel("MSE", color="#d62728")
             ax_mse.tick_params(axis="y", labelcolor="#d62728")
             handles = snr_line + mse_line
             labels = [h.get_label() for h in handles]
             ax.legend(handles, labels, loc="best")
+            ax.text(
+                0.01,
+                0.02,
+                f"MSE start={mse_vals[0]:.3f}, end={mse_vals[-1]:.3f}",
+                transform=ax.transAxes,
+                fontsize=8,
+                va="bottom",
+                ha="left",
+                color="#333333",
+                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2.0),
+            )
         else:
             ax.legend(loc="best")
     else:

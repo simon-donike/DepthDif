@@ -1166,6 +1166,8 @@ class PixelDiffusionConditional(PixelDiffusion):
                 total_steps=total_steps,
                 denoise_samples=denoise_samples,
                 ground_truth=y,
+                valid_mask=valid_mask,
+                land_mask=land_mask,
                 prefix="val",
             )
         # Drop local tensor refs from this heavy validation path promptly.
