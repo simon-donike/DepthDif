@@ -10,8 +10,8 @@ model: # Model Settings
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
   post_process:
     gaussian_blur:
-      enabled: false # If true, apply a small Gaussian blur to denormalized predictions at final post-process.
-      sigma: 0.35 # Small blur strength (standard deviation in pixels).
+      enabled: true # If true, apply a small Gaussian blur to denormalized predictions at final post-process.
+      sigma: 0.5 # Small blur strength (standard deviation in pixels).
       kernel_size: 3 # Odd kernel size; even values are auto-adjusted to the next odd number.
 
   coord_conditioning:

@@ -793,6 +793,54 @@ class PixelDiffusionConditional(PixelDiffusion):
             sigma=[sigma, sigma],
         )
 
+    @torch.no_grad()
+    def predict_step(
+        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+    ) -> dict[str, Any]:
+        x = batch["x"]
+        valid_mask = batch.get("valid_mask")
+        coords = batch.get("coords")
+        sampler = batch.get("sampler", self.val_sampler)
+        clamp_known_pixels = batch.get("clamp_known_pixels", None)
+        return_intermediates = bool(batch.get("return_intermediates", False))
+        intermediate_step_indices = batch.get("intermediate_step_indices")
+
+        model_condition = self._prepare_condition_for_model(x, valid_mask)
+        known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
+
+        denoise_samples: list[tuple[int, torch.Tensor]] = []
+        if return_intermediates:
+            y_hat, denoise_samples = self(
+                model_condition,
+                sampler=sampler,
+                clamp_known_pixels=clamp_known_pixels,
+                known_mask=known_mask,
+                known_values=known_values,
+                coords=coords,
+                return_intermediates=True,
+                intermediate_step_indices=intermediate_step_indices,
+            )
+        else:
+            y_hat = self(
+                model_condition,
+                sampler=sampler,
+                clamp_known_pixels=clamp_known_pixels,
+                known_mask=known_mask,
+                known_values=known_values,
+                coords=coords,
+            )
+
+        # Keep all post-processing centralized in Lightning inference.
+        y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
+        y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
+
+        return {
+            "y_hat": y_hat,
+            "y_hat_denorm": y_hat_denorm,
+            "denoise_samples": denoise_samples,
+            "sampler": sampler,
+        }
+
     def _log_validation_triplet_stats(
         self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
     ) -> None:
@@ -901,11 +949,15 @@ class PixelDiffusionConditional(PixelDiffusion):
             return
 
         x, y, valid_mask, land_mask, coords = self._cached_val_example
-        model_condition = self._prepare_condition_for_model(x, valid_mask)
-        known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
         total_steps = 0
+        pred_batch: dict[str, Any] = {
+            "x": x,
+            "valid_mask": valid_mask,
+            "coords": coords,
+            "sampler": self.val_sampler,
+        }
         if self.log_intermediates:
             sampler_for_val = (
                 self.val_sampler if self.val_sampler is not None else self.model.sampler
@@ -915,30 +967,18 @@ class PixelDiffusionConditional(PixelDiffusion):
                 total_steps=total_steps,
                 num_frames=16,
             )
-            # Full reverse process: start from noise and iteratively denoise to reconstruct y_hat.
-            y_hat, denoise_samples = self(
-                model_condition,
-                sampler=self.val_sampler,
-                known_mask=known_mask,
-                known_values=known_values,
-                coords=coords,
-                return_intermediates=True,
-                intermediate_step_indices=denoise_capture_steps,
-            )
-        else:
-            y_hat = self(
-                model_condition,
-                sampler=self.val_sampler,
-                known_mask=known_mask,
-                known_values=known_values,
-                coords=coords,
-            )
+            pred_batch["return_intermediates"] = True
+            pred_batch["intermediate_step_indices"] = denoise_capture_steps
+
+        # Use Lightning's inference path for full-validation reconstruction.
+        pred = self.predict_step(pred_batch, batch_idx=0)
+        y_hat = pred["y_hat"]
+        y_hat_denorm = pred["y_hat_denorm"]
+        denoise_samples = pred["denoise_samples"]
 
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
         y_denorm = temperature_normalize(mode="denorm", tensor=y)
-        y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
-        y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
 
         recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
         recon_psnr = None
@@ -1021,9 +1061,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         # This is the one expensive full reconstruction for the epoch; always log it.
         self._maybe_log_wandb_images_conditional(
-            x=x,
-            y_hat=y_hat,
-            y_target=y,
+            x=x_denorm,
+            y_hat=y_hat_denorm,
+            y_target=y_denorm,
             valid_mask=valid_mask,
             land_mask=land_mask,
             prefix="val",
@@ -1047,7 +1087,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 prefix="val",
             )
         # Drop local tensor refs from this heavy validation path promptly.
-        del recon_mse, y_hat, model_condition, y, x
+        del recon_mse, y_hat, pred, pred_batch, y, x
         del y_denorm, y_hat_denorm, x_denorm
         gc.collect()
 
@@ -1235,11 +1275,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                     else (valid_mask[i] if valid_mask is not None else None)
                 )
                 x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
-                y_hat_img = self._minmax_stretch_for_plot(
-                    y_hat_image,
-                    mask=mask_i,
-                    apply_postprocess=True,
-                )
+                y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
                 y_target_img = self._minmax_stretch_for_plot(
                     y_target_image, mask=mask_i
                 )
@@ -1305,16 +1341,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         image: torch.Tensor,
         *,
         mask: torch.Tensor | None = None,
-        apply_postprocess: bool = False,
     ) -> np.ndarray:
         image = image.detach().float()
-        # Match dataset_light plotting order: nan-to-num -> denorm -> minmax.
+        # Inputs are already in denormalized display space.
         image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        image = temperature_normalize(mode="denorm", tensor=image)
-        if apply_postprocess:
-            image = self._apply_postprocess_gaussian_blur(
-                image.unsqueeze(0).unsqueeze(0)
-            ).squeeze(0).squeeze(0)
         stretched = minmax_stretch(image, mask=mask, nodata_value=None)
         return stretched.cpu().numpy().astype(np.float32)
 
