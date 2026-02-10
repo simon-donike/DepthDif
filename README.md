@@ -95,6 +95,114 @@ These are the model training behaviors in this repo and where they are wired in 
   - `training.validation_sampling.ddim_num_timesteps`, `ddim_eta`
   Notes: PSNR/SSIM are computed when `skimage` is available; one cached val example per epoch is used for full reconstruction logging.
 
+## Training
+Train with `train.py`. You can now choose which config files to use from CLI.
+
+### CLI config selection
+```bash
+python3 train.py \
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml
+```
+
+Notes:
+- `--train-config` and `--training-config` are equivalent.
+- `--model-config` also accepts `--mdoel-config` (typo alias).
+- If omitted, all three arguments default to:
+  - `configs/data_config.yaml`
+  - `configs/training_config.yaml`
+  - `configs/model_config.yaml`
+
+### What happens during training
+- A timestamped run folder is created under `logs/`.
+- The exact config files used for the run are copied into that folder.
+- Model type is selected from `model.model_type`:
+  - `cond_px_dif` -> `PixelDiffusionConditional`
+  - `px_dif` -> `PixelDiffusion`
+- Training resumes automatically when `model.resume_checkpoint` is set to a valid `.ckpt` path in `configs/model_config.yaml`.
+
+## Inference
+Inference can be run by loading a checkpoint into the same model class and calling the model's `predict_step`.
+
+### 1) Build model from config + load checkpoint
+```python
+from pathlib import Path
+
+import torch
+import yaml
+from pytorch_lightning import Trainer
+
+from data.datamodule import DepthTileDataModule
+from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
+from models.difFF import PixelDiffusion, PixelDiffusionConditional
+
+
+def load_yaml(path: str) -> dict:
+    with Path(path).open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+model_config_path = "configs/model_config.yaml"
+data_config_path = "configs/data_config.yaml"
+training_config_path = "configs/training_config.yaml"
+ckpt_path = "logs/<run>/best.ckpt"
+
+model_cfg = load_yaml(model_config_path)
+model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+
+dataset = SurfaceTempPatchLightDataset.from_config(data_config_path, split="all")
+datamodule = DepthTileDataModule(dataset=dataset)
+datamodule.setup("fit")
+
+if model_type == "cond_px_dif":
+    model = PixelDiffusionConditional.from_config(
+        model_config_path=model_config_path,
+        data_config_path=data_config_path,
+        training_config_path=training_config_path,
+        datamodule=datamodule,
+    )
+elif model_type == "px_dif":
+    model = PixelDiffusion.from_config(
+        model_config_path=model_config_path,
+        data_config_path=data_config_path,
+        training_config_path=training_config_path,
+        datamodule=datamodule,
+    )
+else:
+    raise ValueError(f"Unsupported model_type: {model_type}")
+
+checkpoint = torch.load(ckpt_path, map_location="cpu")
+model.load_state_dict(checkpoint["state_dict"], strict=True)
+model.eval()
+```
+
+### 2) Run a single `predict_step` directly
+For `PixelDiffusionConditional`, `predict_step` expects at least `x`; it will also use `valid_mask` and optional `coords` if present.
+
+```python
+batch = next(iter(datamodule.val_dataloader()))
+batch = {k: (v if not torch.is_tensor(v) else v.to(model.device)) for k, v in batch.items()}
+
+with torch.no_grad():
+    pred = model.predict_step(batch, batch_idx=0)
+
+y_hat = pred["y_hat"]               # standardized output
+y_hat_denorm = pred["y_hat_denorm"] # temperature-denormalized output
+```
+
+### 3) Run prediction through Lightning
+```python
+trainer = Trainer(accelerator="auto", devices="auto", logger=False)
+predictions = trainer.predict(model=model, dataloaders=datamodule.val_dataloader())
+```
+
+Each prediction item includes:
+- `y_hat`
+- `y_hat_denorm`
+- `denoise_samples` (if intermediates requested)
+- `sampler`
+
 ## Results
 Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling. PSNR ~40dB, SSIM ~0.90.
 ![img](assets/prelim_results2.png)  

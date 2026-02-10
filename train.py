@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import datetime
 import os
 from pathlib import Path
@@ -270,5 +271,34 @@ def main(
     trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train DepthDif models.")
+    parser.add_argument(
+        "--data-config",
+        default="configs/data_config.yaml",
+        help="Path to data config yaml.",
+    )
+    parser.add_argument(
+        "--train-config",
+        "--training-config",
+        default="configs/training_config.yaml",
+        dest="training_config",
+        help="Path to training config yaml.",
+    )
+    parser.add_argument(
+        "--model-config",
+        "--mdoel-config",
+        default="configs/model_config.yaml",
+        dest="model_config",
+        help="Path to model config yaml.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(
+        model_config_path=args.model_config,
+        data_config_path=args.data_config,
+        training_config_path=args.training_config,
+    )
