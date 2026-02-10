@@ -109,15 +109,16 @@ Here is the same checkoint, applied to an image with 75% occlusion:
 ## Known Issues
 - `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed ✅, not yet tested in training run
 ![img](assets/val_issue.png)  
+- somewhat speckled, noisy output. Ideas: DDIM sampling, structure-aware weighted loss, x0 parameterization. 
 
 ## Untested Imlpementations:
 - `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
 - `coord_conditioning` - neither tested nor run - only implemented - works, tested ✅
 - new dataset_light and datamodule not yet tested. - works ✅
+- new x0 parameterization is implemented, but not tested yet
 
 ## Notes
 none currently.
-
 
 ## ToDos
 - [x] Include Deps file

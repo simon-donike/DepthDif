@@ -7,6 +7,7 @@ model: # Model Settings
   condition_mask_channels: 1 # How many of condition_channels are mask channels (excluded from normalization).
   clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
   mask_loss_with_valid_pixels: false # If true, loss is computed only over valid pixels from the mask.
+  parameterization: "epsilon" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
   post_process:
     gaussian_blur:

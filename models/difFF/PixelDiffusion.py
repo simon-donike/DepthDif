@@ -31,6 +31,7 @@ class PixelDiffusion(pl.LightningModule):
         self,
         datamodule: pl.LightningDataModule | None = None,
         generated_channels: int = 1,
+        parameterization: str = "epsilon",
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
         noise_beta_start: float = 1e-4,
@@ -61,6 +62,7 @@ class PixelDiffusion(pl.LightningModule):
         # - learned reverse process p_theta(x_{t-1} | x_t) removes it.
         self.model = DenoisingDiffusionProcess(
             generated_channels=generated_channels,
+            parameterization=parameterization,
             num_timesteps=num_timesteps,
             schedule=noise_schedule,
             beta_start=noise_beta_start,
@@ -94,6 +96,7 @@ class PixelDiffusion(pl.LightningModule):
         return cls(
             datamodule=datamodule,
             generated_channels=int(m.get("generated_channels", m.get("bands", 1))),
+            parameterization=str(m.get("parameterization", "epsilon")),
             num_timesteps=int(
                 noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
             ),
@@ -180,7 +183,8 @@ class PixelDiffusion(pl.LightningModule):
             target_t, prefix="train_target", batch_size=int(target.size(0))
         )
         # Diffusion training objective (p_loss):
-        # sample random timestep t, noise x_0 -> x_t, and train UNet to predict injected noise.
+        # sample random timestep t, noise x_0 -> x_t, and train UNet on selected target
+        # parameterization ("epsilon" noise or "x0" clean sample).
         loss = self.model.p_loss(target_t)
 
         self.log(
@@ -396,6 +400,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         condition_mask_channels: int = 1,
         clamp_known_pixels: bool = True,
         mask_loss_with_valid_pixels: bool = False,
+        parameterization: str = "epsilon",
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
         noise_beta_start: float = 1e-4,
@@ -477,6 +482,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.model = DenoisingDiffusionConditionalProcess(
             generated_channels=generated_channels,
             condition_channels=condition_channels,
+            parameterization=parameterization,
             num_timesteps=num_timesteps,
             schedule=noise_schedule,
             beta_start=noise_beta_start,
@@ -544,6 +550,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
             ),
+            parameterization=str(m.get("parameterization", "epsilon")),
             num_timesteps=int(
                 noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
             ),
@@ -616,6 +623,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 ),
                 train_timesteps=int(train_betas.numel()),
                 betas=train_betas,
+                parameterization=str(self.model.parameterization),
                 # Keep sampler in standardized-space domain; do not clamp to [-1, 1].
                 clip_sample=False,
                 eta=self.val_ddim_eta,
@@ -1112,7 +1120,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self._log_pre_diffusion_stats(
             model_condition, prefix="train_condition", batch_size=int(y.size(0))
         )
-        # Conditional p_loss uses x as context while learning to denoise y across random t.
+        # Conditional p_loss uses x as context while learning selected denoising target.
         loss = self.model.p_loss(
             y_t,
             model_condition,

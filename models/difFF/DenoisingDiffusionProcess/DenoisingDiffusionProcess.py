@@ -13,6 +13,26 @@ from .backbones.unet_convnext import *
 from utils.validation_denoise import build_capture_indices
 
 
+def _normalize_parameterization(parameterization: str) -> str:
+    value = str(parameterization).strip().lower().replace("-", "").replace("_", "")
+    if value in {"epsilon", "eps", "noise"}:
+        return "epsilon"
+    if value in {"x0", "xstart"}:
+        return "x0"
+    raise ValueError(
+        "parameterization must be one of {'epsilon', 'x0'} "
+        f"(got '{parameterization}')."
+    )
+
+
+def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> None:
+    if hasattr(sampler, "set_parameterization"):
+        sampler.set_parameterization(parameterization)
+        return
+    if hasattr(sampler, "parameterization"):
+        sampler.parameterization = parameterization
+
+
 class DenoisingDiffusionProcess(nn.Module):
 
     def __init__(
@@ -28,6 +48,7 @@ class DenoisingDiffusionProcess(nn.Module):
         unet_with_time_emb=True,
         unet_output_mean_scale=False,
         unet_residual=False,
+        parameterization="epsilon",
         sampler=None,
     ):
         super().__init__()
@@ -36,6 +57,7 @@ class DenoisingDiffusionProcess(nn.Module):
         self.generated_channels = generated_channels
         self.num_timesteps = num_timesteps
         self.loss_fn = loss_fn
+        self.parameterization = _normalize_parameterization(parameterization)
 
         # Forward Process Used for Training
         self.forward_process = GaussianForwardProcess(
@@ -61,6 +83,7 @@ class DenoisingDiffusionProcess(nn.Module):
                 schedule=schedule,
                 beta_start=beta_start,
                 beta_end=beta_end,
+                parameterization=self.parameterization,
             )
             if sampler is None
             else sampler
@@ -83,6 +106,7 @@ class DenoisingDiffusionProcess(nn.Module):
             sampler = self.sampler
         else:
             sampler.to(device)
+        _set_sampler_parameterization(sampler, self.parameterization)
 
         # time steps list
         num_timesteps = sampler.num_timesteps
@@ -94,8 +118,8 @@ class DenoisingDiffusionProcess(nn.Module):
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
-            z_t = self.model(x_t, t)  # prediction of noise
-            x_t = sampler(x_t, t, z_t)  # prediction of next state
+            prediction = self.model(x_t, t)
+            x_t = sampler(x_t, t, prediction)
 
         return x_t
 
@@ -117,10 +141,11 @@ class DenoisingDiffusionProcess(nn.Module):
         output_noisy, noise = self.forward_process(output, t, return_noise=True)
 
         # reverse pass
-        noise_hat = self.model(output_noisy, t)
+        prediction = self.model(output_noisy, t)
 
         # apply loss
-        return self.loss_fn(noise, noise_hat)
+        target = noise if self.parameterization == "epsilon" else output
+        return self.loss_fn(target, prediction)
 
 
 class DenoisingDiffusionConditionalProcess(nn.Module):
@@ -142,6 +167,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         coord_conditioning_enabled=False,
         coord_encoding="unit_sphere",
         coord_embed_dim=None,
+        parameterization="epsilon",
         sampler=None,
     ):
         super().__init__()
@@ -151,6 +177,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         self.condition_channels = condition_channels
         self.num_timesteps = num_timesteps
         self.loss_fn = loss_fn
+        self.parameterization = _normalize_parameterization(parameterization)
         self.coord_conditioning_enabled = bool(coord_conditioning_enabled)
         self.coord_encoding = str(coord_encoding).strip().lower()
         self.coord_embed_dim = None
@@ -199,6 +226,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                 schedule=schedule,
                 beta_start=beta_start,
                 beta_end=beta_end,
+                parameterization=self.parameterization,
             )
             if sampler is None
             else sampler
@@ -233,6 +261,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             sampler = self.sampler
         else:
             sampler.to(device)
+        _set_sampler_parameterization(sampler, self.parameterization)
 
         # time steps list
         num_timesteps = sampler.num_timesteps
@@ -280,8 +309,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             model_input = torch.cat([x_t, condition], 1).to(device)
-            z_t = self.model(model_input, t, coord_emb=coord_emb)  # prediction of noise
-            x_t = sampler(x_t, t, z_t)  # prediction of next state
+            prediction = self.model(model_input, t, coord_emb=coord_emb)
+            x_t = sampler(x_t, t, prediction)
             if apply_known:
                 x_t = x_t * (1.0 - known_mask) + known_values * known_mask
             if return_intermediates:
@@ -339,17 +368,18 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         # reverse pass
         model_input = torch.cat([output_noisy, condition], 1).to(device)
         coord_emb = self._maybe_embed_coords(coord, model_input)
-        noise_hat = self.model(model_input, t, coord_emb=coord_emb)
+        prediction = self.model(model_input, t, coord_emb=coord_emb)
+        target = noise if self.parameterization == "epsilon" else output
 
         # apply loss
         if not mask_loss:
-            return self.loss_fn(noise, noise_hat)
+            return self.loss_fn(target, prediction)
 
-        mask = self._build_valid_mask(valid_mask, noise)
+        mask = self._build_valid_mask(valid_mask, target)
         if mask is None:
-            return self.loss_fn(noise, noise_hat)
+            return self.loss_fn(target, prediction)
 
-        diff = (noise - noise_hat) ** 2
+        diff = (target - prediction) ** 2
         masked_diff = diff * mask
         denom = mask.sum()
         if denom.item() <= 0:

@@ -22,6 +22,7 @@ class DDIM_Sampler(nn.Module):
         beta_end=0.02,
         eta=0.0,
         betas=None,
+        parameterization="epsilon",
     ):
 
         super().__init__()
@@ -31,6 +32,7 @@ class DDIM_Sampler(nn.Module):
         self.clip_sample = bool(clip_sample)
         self.schedule = schedule
         self.eta = float(eta)
+        self.parameterization = self._normalize_parameterization(parameterization)
         self.final_alpha_cumprod = torch.tensor(1.0)
 
         if betas is not None:
@@ -77,7 +79,7 @@ class DDIM_Sampler(nn.Module):
     @torch.no_grad()
     def step(self, x_t, t, z_t):
         """
-        Given approximation of noise z_t in x_t predict x_(t-1)
+        Given model prediction in x_t predict x_(t-1).
         """
         assert (t < self.num_timesteps).all()
 
@@ -95,15 +97,26 @@ class DDIM_Sampler(nn.Module):
             self.final_alpha_cumprod.to(device),
         ).view(b, 1, 1, 1)
 
-        # Estimate x_0 from x_t and predicted noise.
-        x_0_pred = (
-            x_t - self.alphas_one_minus_cumprod_sqrt[train_t].view(b, 1, 1, 1) * z_t
-        ) / alpha_cumprod_t.sqrt()
+        x_0_pred, noise_pred = self._prediction_to_x0_and_noise(
+            x_t=x_t,
+            train_t=train_t,
+            prediction=z_t,
+            alpha_cumprod_t=alpha_cumprod_t,
+        )
         if self.clip_sample:
             x_0_pred = torch.clamp(x_0_pred, -1, 1)
+            noise_pred = self._x0_to_noise(
+                x_t=x_t,
+                x0_pred=x_0_pred,
+                alpha_cumprod_t=alpha_cumprod_t,
+                train_t=train_t,
+            )
 
         sigma_t = self.eta * self.estimate_std(alpha_cumprod_t, alpha_cumprod_prev)
-        dir_xt = torch.clamp(1 - alpha_cumprod_prev - sigma_t**2, min=0.0).sqrt() * z_t
+        dir_xt = (
+            torch.clamp(1 - alpha_cumprod_prev - sigma_t**2, min=0.0).sqrt()
+            * noise_pred
+        )
         prev_sample = alpha_cumprod_prev.sqrt() * x_0_pred + dir_xt
 
         if self.eta > 0:
@@ -120,3 +133,47 @@ class DDIM_Sampler(nn.Module):
         )
 
         return var.sqrt()
+
+    @staticmethod
+    def _normalize_parameterization(parameterization: str) -> str:
+        value = str(parameterization).strip().lower().replace("-", "").replace("_", "")
+        if value in {"epsilon", "eps", "noise"}:
+            return "epsilon"
+        if value in {"x0", "xstart"}:
+            return "x0"
+        raise ValueError(
+            "parameterization must be one of {'epsilon', 'x0'} "
+            f"(got '{parameterization}')."
+        )
+
+    def set_parameterization(self, parameterization: str) -> None:
+        self.parameterization = self._normalize_parameterization(parameterization)
+
+    def _x0_to_noise(self, x_t, x0_pred, alpha_cumprod_t, train_t):
+        b = x_t.shape[0]
+        one_minus_alpha_cumprod_sqrt_t = self.alphas_one_minus_cumprod_sqrt[
+            train_t
+        ].view(b, 1, 1, 1)
+        return (
+            x_t - alpha_cumprod_t.sqrt() * x0_pred
+        ) / one_minus_alpha_cumprod_sqrt_t
+
+    def _prediction_to_x0_and_noise(self, x_t, train_t, prediction, alpha_cumprod_t):
+        b = x_t.shape[0]
+        if self.parameterization == "epsilon":
+            noise_pred = prediction
+            x0_pred = (
+                x_t
+                - self.alphas_one_minus_cumprod_sqrt[train_t].view(b, 1, 1, 1)
+                * noise_pred
+            ) / alpha_cumprod_t.sqrt()
+            return x0_pred, noise_pred
+
+        x0_pred = prediction
+        noise_pred = self._x0_to_noise(
+            x_t=x_t,
+            x0_pred=x0_pred,
+            alpha_cumprod_t=alpha_cumprod_t,
+            train_t=train_t,
+        )
+        return x0_pred, noise_pred
