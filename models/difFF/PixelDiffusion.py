@@ -21,6 +21,7 @@ from utils.stretching import minmax_stretch
 from utils.validation_denoise import (
     build_evenly_spaced_capture_steps,
     log_wandb_denoise_timestep_grid,
+    log_wandb_snr_profile,
 )
 
 
@@ -941,6 +942,14 @@ class PixelDiffusionConditional(PixelDiffusion):
                 sampler=sampler_for_val,
                 prefix="val",
                 cmap=PLOT_CMAP,
+            )
+            log_wandb_snr_profile(
+                logger=self.logger,
+                sampler=sampler_for_val,
+                total_steps=total_steps,
+                denoise_samples=denoise_samples,
+                ground_truth=y,
+                prefix="val",
             )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, model_condition, y, x

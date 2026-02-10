@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -143,3 +144,95 @@ def log_wandb_denoise_timestep_grid(
             )
         }
     )
+
+
+def log_wandb_snr_profile(
+    *,
+    logger: Any,
+    sampler: Any,
+    total_steps: int,
+    denoise_samples: list[tuple[int, torch.Tensor]] | None = None,
+    ground_truth: torch.Tensor | None = None,
+    prefix: str = "val",
+    eps: float = 1e-12,
+) -> None:
+    if total_steps <= 0:
+        return
+    if sampler is None:
+        return
+    if not hasattr(sampler, "alphas_cumprod"):
+        return
+    if logger is None or not hasattr(logger, "experiment"):
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+
+    try:
+        import wandb
+    except Exception:
+        return
+
+    alpha_cumprod = sampler.alphas_cumprod.detach().float().cpu()
+    if alpha_cumprod.ndim != 1 or alpha_cumprod.numel() == 0:
+        return
+
+    step_indices = list(range(int(total_steps) + 1))
+    sampler_t_list = [
+        step_to_sampler_timestep_label(
+            step_index=step_idx,
+            total_steps=int(total_steps),
+            sampler=sampler,
+        )
+        for step_idx in step_indices
+    ]
+    sampler_t_tensor = torch.as_tensor(sampler_t_list, dtype=torch.long).clamp(
+        min=0, max=int(alpha_cumprod.numel() - 1)
+    )
+    alpha_bar = alpha_cumprod[sampler_t_tensor]
+    snr = alpha_bar / torch.clamp(1.0 - alpha_bar, min=float(eps))
+    snr_min = torch.min(snr)
+    snr_max = torch.max(snr)
+    snr_norm = (snr - snr_min) / torch.clamp(snr_max - snr_min, min=float(eps))
+    x = np.asarray(step_indices, dtype=np.int32)
+    y = snr_norm.detach().cpu().numpy()
+    fig, ax = plt.subplots(figsize=(5, 3), dpi=150)
+    snr_line = ax.plot(x, y, linewidth=1.5, color="#1f77b4", label="SNR (norm.)")
+    ax.set_xlabel("Reverse step")
+    ax.set_ylabel("Normalized SNR [0, 1]")
+    ax.set_title("SNR and MSE vs Reverse Diff. Step")
+    ax.grid(True, alpha=0.3, linewidth=0.5)
+
+    if denoise_samples and ground_truth is not None:
+        gt = ground_truth.detach().float()
+        mse_steps: list[int] = []
+        mse_vals: list[float] = []
+        for step_idx, sample_t in denoise_samples:
+            sample = sample_t.detach().float()
+            if sample.shape != gt.shape:
+                continue
+            mse = torch.mean((sample - gt) ** 2)
+            mse_steps.append(int(step_idx))
+            mse_vals.append(float(mse.item()))
+        if mse_steps:
+            ax_mse = ax.twinx()
+            mse_line = ax_mse.plot(
+                np.asarray(mse_steps, dtype=np.int32),
+                np.asarray(mse_vals, dtype=np.float32),
+                linewidth=1.5,
+                color="#d62728",
+                label="MSE (at timestep)",
+            )
+            ax_mse.set_ylabel("MSE", color="#d62728")
+            ax_mse.tick_params(axis="y", labelcolor="#d62728")
+            handles = snr_line + mse_line
+            labels = [h.get_label() for h in handles]
+            ax.legend(handles, labels, loc="best")
+        else:
+            ax.legend(loc="best")
+    else:
+        ax.legend(loc="best")
+
+    fig.tight_layout()
+    experiment.log({f"{prefix}/snr_vs_step": wandb.Image(fig)})
+    plt.close(fig)
