@@ -18,7 +18,7 @@ model: # Model Settings
       kernel_size: 3 # Odd kernel size; even values are auto-adjusted to the next odd number.
 
   coord_conditioning:
-    enabled: true # Enable patch-center coordinate conditioning via FiLM.
+    enabled: false # Enable patch-center coordinate conditioning via FiLM.
     encoding: "unit_sphere" # "unit_sphere", "sincos", or "raw".
     embed_dim: null # If null, defaults to unet.dim.
 
