@@ -98,6 +98,10 @@ These are the model training behaviors in this repo and where they are wired in 
 ## Results
 Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling. PSNR ~40dB, SSIM ~0.90.
 ![img](assets/prelim_results2.png)  
+  
+Here is the same checkoint, applied to an image with 75% occlusion:
+![img](assets/prelim_results_75perc.png)  
+
 
 
 # Comments
