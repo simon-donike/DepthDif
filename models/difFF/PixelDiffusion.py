@@ -20,9 +20,9 @@ from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
 from utils.validation_denoise import (
     build_evenly_spaced_capture_steps,
+    log_wandb_diffusion_schedule_profile,
     log_wandb_conditional_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
-    log_wandb_snr_profile,
 )
 
 
@@ -514,6 +514,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             ]
             | None
         ) = None
+        self._logged_schedule_profile_in_sanity = False
 
     @classmethod
     def from_config(
@@ -807,10 +808,21 @@ class PixelDiffusionConditional(PixelDiffusion):
         coords: torch.Tensor | None = None,
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]]:
+        return_x0_intermediates: bool = False,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]]
+        | tuple[
+            torch.Tensor,
+            list[tuple[int, torch.Tensor]],
+            list[tuple[int, torch.Tensor]],
+        ]
+    ):
         if not self.log_intermediates:
             return_intermediates = False
             intermediate_step_indices = None
+        if not return_intermediates:
+            return_x0_intermediates = False
         if clamp_known_pixels is None:
             clamp_known_pixels = self.clamp_known_pixels
         if not clamp_known_pixels:
@@ -829,9 +841,21 @@ class PixelDiffusionConditional(PixelDiffusion):
             coord=coords,
             return_intermediates=return_intermediates,
             intermediate_step_indices=intermediate_step_indices,
+            return_x0_intermediates=return_x0_intermediates,
         )
         if not return_intermediates:
             return self.output_T(model_output)
+
+        if return_x0_intermediates:
+            final_sample, intermediates, x0_intermediates = model_output
+            out_intermediates = [
+                (step_idx, self.output_T(sample_t)) for step_idx, sample_t in intermediates
+            ]
+            out_x0_intermediates = [
+                (step_idx, self.output_T(sample_t))
+                for step_idx, sample_t in x0_intermediates
+            ]
+            return self.output_T(final_sample), out_intermediates, out_x0_intermediates
 
         final_sample, intermediates = model_output
         out_intermediates = [
@@ -882,8 +906,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
 
         denoise_samples: list[tuple[int, torch.Tensor]] = []
+        x0_denoise_samples: list[tuple[int, torch.Tensor]] = []
         if return_intermediates:
-            y_hat, denoise_samples = self(
+            y_hat, denoise_samples, x0_denoise_samples = self(
                 model_condition,
                 sampler=sampler,
                 clamp_known_pixels=clamp_known_pixels,
@@ -892,6 +917,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 coords=coords,
                 return_intermediates=True,
                 intermediate_step_indices=intermediate_step_indices,
+                return_x0_intermediates=True,
             )
         else:
             y_hat = self(
@@ -911,6 +937,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             "y_hat": y_hat,
             "y_hat_denorm": y_hat_denorm,
             "denoise_samples": denoise_samples,
+            "x0_denoise_samples": x0_denoise_samples,
             "sampler": sampler,
         }
 
@@ -1007,6 +1034,22 @@ class PixelDiffusionConditional(PixelDiffusion):
     def on_validation_epoch_start(self) -> None:
         # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
         self._cached_val_example = None
+        if (
+            self.trainer is not None
+            and self.trainer.sanity_checking
+            and not self._logged_schedule_profile_in_sanity
+        ):
+            sampler_for_profile = (
+                self.val_sampler if self.val_sampler is not None else self.model.sampler
+            )
+            if sampler_for_profile is not None and int(sampler_for_profile.num_timesteps) > 0:
+                log_wandb_diffusion_schedule_profile(
+                    logger=self.logger,
+                    sampler=sampler_for_profile,
+                    total_steps=int(sampler_for_profile.num_timesteps),
+                    prefix="val",
+                )
+                self._logged_schedule_profile_in_sanity = True
 
     @torch.no_grad()
     def _run_single_image_full_reconstruction_and_log(self) -> None:
@@ -1049,6 +1092,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         y_hat = pred["y_hat"]
         y_hat_denorm = pred["y_hat_denorm"]
         denoise_samples = pred["denoise_samples"]
+        x0_denoise_samples = pred.get("x0_denoise_samples", [])
 
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
@@ -1153,22 +1197,14 @@ class PixelDiffusionConditional(PixelDiffusion):
             log_wandb_denoise_timestep_grid(
                 logger=self.logger,
                 denoise_samples=denoise_samples,
+                mae_samples=x0_denoise_samples,
                 total_steps=total_steps,
                 sampler=sampler_for_val,
                 conditioning_image=x,
+                ground_truth=y,
                 valid_mask=valid_mask,
                 prefix="val",
                 cmap=PLOT_CMAP,
-            )
-            log_wandb_snr_profile(
-                logger=self.logger,
-                sampler=sampler_for_val,
-                total_steps=total_steps,
-                denoise_samples=denoise_samples,
-                ground_truth=y,
-                valid_mask=valid_mask,
-                land_mask=land_mask,
-                prefix="val",
             )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, pred, pred_batch, y, x

@@ -243,6 +243,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         coord: torch.Tensor | None = None,
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
+        return_x0_intermediates: bool = False,
     ):
         """
         forward() function triggers a complete inference cycle
@@ -269,6 +270,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         x_t = torch.randn([b, self.generated_channels, h, w], device=device)
         intermediates: list[tuple[int, torch.Tensor]] = []
+        x0_intermediates: list[tuple[int, torch.Tensor]] = []
         capture_indices: set[int] = set()
         if return_intermediates:
             capture_indices = build_capture_indices(
@@ -310,6 +312,12 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             model_input = torch.cat([x_t, condition], 1).to(device)
             prediction = self.model(model_input, t, coord_emb=coord_emb)
+            x0_pred = self._prediction_to_x0(
+                x_t=x_t,
+                t=t,
+                prediction=prediction,
+                sampler=sampler,
+            )
             x_t = sampler(x_t, t, prediction)
             if apply_known:
                 x_t = x_t * (1.0 - known_mask) + known_values * known_mask
@@ -317,10 +325,44 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                 capture_step = step_index + 1
                 if capture_step in capture_indices:
                     intermediates.append((capture_step, x_t.detach().clone()))
+                    if return_x0_intermediates:
+                        x0_intermediates.append((capture_step, x0_pred.detach().clone()))
 
         if return_intermediates:
+            if return_x0_intermediates:
+                return x_t, intermediates, x0_intermediates
             return x_t, intermediates
         return x_t
+
+    @staticmethod
+    def _sampler_train_timestep(sampler: nn.Module, t: torch.Tensor) -> torch.Tensor:
+        t_long = t.long()
+        if hasattr(sampler, "ddim_train_steps"):
+            ddim_train_steps = getattr(sampler, "ddim_train_steps")
+            if torch.is_tensor(ddim_train_steps):
+                return ddim_train_steps[t_long]
+        return t_long
+
+    def _prediction_to_x0(
+        self,
+        *,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        prediction: torch.Tensor,
+        sampler: nn.Module,
+    ) -> torch.Tensor:
+        if self.parameterization == "x0":
+            return prediction
+
+        if not hasattr(sampler, "alphas_cumprod"):
+            return prediction
+
+        b = x_t.shape[0]
+        train_t = self._sampler_train_timestep(sampler, t)
+        alpha_cumprod = sampler.alphas_cumprod[train_t].view(b, 1, 1, 1)
+        alpha_cumprod_sqrt = torch.clamp(alpha_cumprod, min=1e-20).sqrt()
+        one_minus_alpha_sqrt = torch.clamp(1.0 - alpha_cumprod, min=1e-20).sqrt()
+        return (x_t - one_minus_alpha_sqrt * prediction) / alpha_cumprod_sqrt
 
     @staticmethod
     def _build_valid_mask(

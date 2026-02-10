@@ -73,10 +73,12 @@ def log_wandb_denoise_timestep_grid(
     *,
     logger: Any,
     denoise_samples: list[tuple[int, torch.Tensor]],
+    mae_samples: list[tuple[int, torch.Tensor]] | None = None,
     total_steps: int,
     sampler: Any,
     conditioning_image: torch.Tensor | None = None,
     eo_conditioning_image: torch.Tensor | None = None,
+    ground_truth: torch.Tensor | None = None,
     valid_mask: torch.Tensor | None = None,
     prefix: str = "val",
     cmap: str = "turbo",
@@ -204,6 +206,231 @@ def log_wandb_denoise_timestep_grid(
             )
         }
     )
+
+    mae_source = denoise_samples if mae_samples is None else mae_samples
+    mae_steps: list[int] = []
+    mae_vals: list[float] = []
+    if ground_truth is not None:
+        gt = ground_truth.detach().float()
+        for step_idx, sample_t in mae_source:
+            sample = sample_t.detach().float()
+            if sample.shape != gt.shape:
+                continue
+            mae = torch.mean(torch.abs(sample - gt))
+            mae_steps.append(int(step_idx))
+            mae_vals.append(float(mae.item()))
+        if mae_steps:
+            by_step: dict[int, list[float]] = {}
+            for step_i, mae_i in zip(mae_steps, mae_vals):
+                by_step.setdefault(int(step_i), []).append(float(mae_i))
+            mae_steps = sorted(by_step.keys())
+            mae_vals = [
+                float(sum(by_step[step_i]) / max(1, len(by_step[step_i])))
+                for step_i in mae_steps
+            ]
+            fig_mae, ax_mae = plt.subplots(figsize=(5, 3), dpi=150)
+            mae_line = ax_mae.plot(
+                np.asarray(mae_steps, dtype=np.int32),
+                np.asarray(mae_vals, dtype=np.float32),
+                linewidth=1.5,
+                color="#d62728",
+                marker="o",
+                markersize=2.5,
+                label=(
+                    "MAE (x0_pred vs target)"
+                    if mae_samples is not None
+                    else "MAE (intermediate vs target)"
+                ),
+            )
+            ax_mae.set_xlabel("Reverse step")
+            ax_mae.set_ylabel("MAE")
+            ax_mae.set_title("Intermediate MAE vs Reverse Diff. Step")
+            ax_mae.grid(True, alpha=0.3, linewidth=0.5)
+            handles = list(mae_line)
+            labels = [h.get_label() for h in handles]
+            ax_mae.legend(handles, labels, loc="best")
+            ax_mae.text(
+                0.01,
+                0.02,
+                f"MAE start={mae_vals[0]:.3f}, end={mae_vals[-1]:.3f}",
+                transform=ax_mae.transAxes,
+                fontsize=8,
+                va="bottom",
+                ha="left",
+                color="#333333",
+                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2.0),
+            )
+            fig_mae.tight_layout()
+            experiment.log({f"{prefix}/intermediate_mae_vs_step": wandb.Image(fig_mae)})
+            plt.close(fig_mae)
+
+
+def log_wandb_diffusion_schedule_profile(
+    *,
+    logger: Any,
+    sampler: Any,
+    total_steps: int,
+    prefix: str = "val",
+    eps: float = 1e-12,
+) -> None:
+    if total_steps <= 0:
+        return
+    if sampler is None:
+        return
+    if not hasattr(sampler, "alphas_cumprod") or not hasattr(sampler, "betas"):
+        return
+    if logger is None or not hasattr(logger, "experiment"):
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+
+    try:
+        import wandb
+    except Exception:
+        return
+
+    alpha_cumprod = sampler.alphas_cumprod.detach().float().cpu()
+    betas = sampler.betas.detach().float().cpu()
+    if alpha_cumprod.ndim != 1 or alpha_cumprod.numel() == 0:
+        return
+    if betas.ndim != 1 or betas.numel() == 0:
+        return
+
+    step_indices = list(range(max(0, int(total_steps))))
+    if not step_indices:
+        return
+
+    reverse_t_list = [
+        step_to_sampler_timestep_label(
+            step_index=step_idx,
+            total_steps=int(total_steps),
+            sampler=sampler,
+        )
+        for step_idx in step_indices
+    ]
+    reverse_t = torch.as_tensor(reverse_t_list, dtype=torch.long).clamp(
+        min=0, max=int(alpha_cumprod.numel() - 1)
+    )
+    forward_t = torch.arange(0, int(total_steps), dtype=torch.long).clamp(
+        min=0, max=int(alpha_cumprod.numel() - 1)
+    )
+
+    def _schedule_terms(t_idx: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        alpha_bar_t = alpha_cumprod[t_idx]
+        beta_t = betas[t_idx]
+        sqrt_alpha_bar_t = torch.sqrt(torch.clamp(alpha_bar_t, min=0.0))
+        sqrt_one_minus_alpha_bar_t = torch.sqrt(
+            torch.clamp(1.0 - alpha_bar_t, min=0.0)
+        )
+        snr_t = alpha_bar_t / torch.clamp(1.0 - alpha_bar_t, min=float(eps))
+        log_snr_t = torch.log10(torch.clamp(snr_t, min=float(eps)))
+
+        prev_t = torch.clamp(t_idx - 1, min=0)
+        alpha_bar_prev = alpha_cumprod[prev_t]
+        alpha_bar_prev = torch.where(
+            t_idx > 0,
+            alpha_bar_prev,
+            torch.ones_like(alpha_bar_prev),
+        )
+        beta_tilde_t = beta_t * (1.0 - alpha_bar_prev) / torch.clamp(
+            1.0 - alpha_bar_t, min=float(eps)
+        )
+        beta_tilde_t = torch.clamp(beta_tilde_t, min=0.0)
+        return sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t, beta_tilde_t, log_snr_t
+
+    rev_sqrt_ab, rev_sqrt_1mab, rev_beta_tilde, rev_log_snr = _schedule_terms(reverse_t)
+    fwd_sqrt_ab, fwd_sqrt_1mab, fwd_beta_tilde, fwd_log_snr = _schedule_terms(forward_t)
+
+    x_rev = np.asarray(step_indices, dtype=np.int32)
+    x_fwd = np.asarray(step_indices, dtype=np.int32)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), dpi=150)
+
+    def _plot_panel(
+        ax: Any,
+        x_vals: np.ndarray,
+        sqrt_ab: torch.Tensor,
+        sqrt_1mab: torch.Tensor,
+        beta_tilde: torch.Tensor,
+        log_snr: torch.Tensor,
+        *,
+        title: str,
+        xlabel: str,
+    ) -> None:
+        l_sqrt_ab = ax.plot(
+            x_vals,
+            sqrt_ab.numpy(),
+            color="#1f77b4",
+            linewidth=1.2,
+            label="sqrt(alpha_bar_t)",
+        )
+        l_sqrt_1mab = ax.plot(
+            x_vals,
+            sqrt_1mab.numpy(),
+            color="#2ca02c",
+            linewidth=1.2,
+            label="sqrt(1-alpha_bar_t)",
+        )
+        l_beta_tilde = ax.plot(
+            x_vals,
+            beta_tilde.numpy(),
+            color="#9467bd",
+            linewidth=1.2,
+            label="beta_tilde_t",
+        )
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Schedule values")
+        ax.grid(True, alpha=0.3, linewidth=0.5)
+        ax.set_title(title)
+
+        ax_log_snr = ax.twinx()
+        l_log_snr = ax_log_snr.plot(
+            x_vals,
+            log_snr.numpy(),
+            color="#d62728",
+            linewidth=1.5,
+            linestyle="--",
+            label="log10(SNR+eps)",
+        )
+        ax_log_snr.set_ylabel("log10(SNR + eps)", color="#d62728")
+        ax_log_snr.tick_params(axis="y", labelcolor="#d62728")
+
+        handles = l_sqrt_ab + l_sqrt_1mab + l_beta_tilde + l_log_snr
+        labels = [h.get_label() for h in handles]
+        ax.legend(handles, labels, loc="best")
+
+    _plot_panel(
+        axes[0],
+        x_rev,
+        rev_sqrt_ab,
+        rev_sqrt_1mab,
+        rev_beta_tilde,
+        rev_log_snr,
+        title="Reverse Process",
+        xlabel="Reverse step",
+    )
+    _plot_panel(
+        axes[1],
+        x_fwd,
+        fwd_sqrt_ab,
+        fwd_sqrt_1mab,
+        fwd_beta_tilde,
+        fwd_log_snr,
+        title="Forward Process",
+        xlabel="Forward step",
+    )
+
+    descriptor_text = (
+        "β̃ₜ  “How violent is this step?”\n"
+        "√ᾱₜ  “Is the original image still visible?”\n"
+        "√(1−ᾱₜ)  “Is noise dominating the pixels?”\n"
+        "log-SNR  “How difficult is denoising here?”"
+    )
+    fig.text(0.02, 0.01, descriptor_text, ha="left", va="bottom", fontsize=9)
+    fig.tight_layout(rect=[0.0, 0.12, 1.0, 1.0])
+    experiment.log({f"{prefix}/diffusion_schedule_vs_step": wandb.Image(fig)})
+    plt.close(fig)
 
 
 def _mask_for_sample(
@@ -336,169 +563,3 @@ def log_wandb_conditional_reconstruction_grid(
     finally:
         if fig is not None:
             plt.close(fig)
-
-
-def log_wandb_snr_profile(
-    *,
-    logger: Any,
-    sampler: Any,
-    total_steps: int,
-    denoise_samples: list[tuple[int, torch.Tensor]] | None = None,
-    ground_truth: torch.Tensor | None = None,
-    valid_mask: torch.Tensor | None = None,
-    land_mask: torch.Tensor | None = None,
-    prefix: str = "val",
-    eps: float = 1e-12,
-) -> None:
-    if total_steps <= 0:
-        return
-    if sampler is None:
-        return
-    if not hasattr(sampler, "alphas_cumprod"):
-        return
-    if logger is None or not hasattr(logger, "experiment"):
-        return
-    experiment = logger.experiment
-    if not hasattr(experiment, "log"):
-        return
-
-    try:
-        import wandb
-    except Exception:
-        return
-
-    alpha_cumprod = sampler.alphas_cumprod.detach().float().cpu()
-    if alpha_cumprod.ndim != 1 or alpha_cumprod.numel() == 0:
-        return
-
-    step_indices = list(range(int(total_steps) + 1))
-    sampler_t_list = [
-        step_to_sampler_timestep_label(
-            step_index=step_idx,
-            total_steps=int(total_steps),
-            sampler=sampler,
-        )
-        for step_idx in step_indices
-    ]
-    sampler_t_tensor = torch.as_tensor(sampler_t_list, dtype=torch.long).clamp(
-        min=0, max=int(alpha_cumprod.numel() - 1)
-    )
-    alpha_bar = alpha_cumprod[sampler_t_tensor]
-    snr = alpha_bar / torch.clamp(1.0 - alpha_bar, min=float(eps))
-    snr_min = torch.min(snr)
-    snr_max = torch.max(snr)
-    snr_norm = (snr - snr_min) / torch.clamp(snr_max - snr_min, min=float(eps))
-    x = np.asarray(step_indices, dtype=np.int32)
-    y = snr_norm.detach().cpu().numpy()
-    fig, ax = plt.subplots(figsize=(5, 3), dpi=150)
-    snr_line = ax.plot(x, y, linewidth=1.5, color="#1f77b4", label="SNR (norm.)")
-    ax.set_xlabel("Reverse step")
-    ax.set_ylabel("Normalized SNR [0, 1]")
-    ax.set_title("SNR and MSE vs Reverse Diff. Step")
-    ax.grid(True, alpha=0.3, linewidth=0.5)
-
-    if denoise_samples and ground_truth is not None:
-        gt = ground_truth.detach().float()
-        missing_mask: torch.Tensor | None = None
-        ocean_mask: torch.Tensor | None = None
-
-        def _to_model_mask(mask_t: torch.Tensor | None) -> torch.Tensor | None:
-            if mask_t is None:
-                return None
-            m = mask_t.detach().float()
-            if m.ndim == 3:
-                m = m.unsqueeze(1)
-            if m.ndim == 4 and gt.ndim == 4:
-                if int(m.size(1)) == 1 and int(gt.size(1)) > 1:
-                    m = m.expand(-1, int(gt.size(1)), -1, -1)
-                elif int(m.size(1)) != int(gt.size(1)):
-                    m = m.amax(dim=1, keepdim=True)
-                    if int(gt.size(1)) > 1:
-                        m = m.expand(-1, int(gt.size(1)), -1, -1)
-            if m.shape != gt.shape:
-                return None
-            return m
-
-        if valid_mask is not None:
-            vm = _to_model_mask(valid_mask)
-            if vm is not None:
-                missing_mask = (vm < 0.5).float()
-        if land_mask is not None:
-            lm = _to_model_mask(land_mask)
-            if lm is not None:
-                ocean_mask = (lm > 0.5).float()
-
-        mse_mask: torch.Tensor | None = None
-        if missing_mask is not None and ocean_mask is not None:
-            mse_mask = missing_mask * ocean_mask
-        elif missing_mask is not None:
-            mse_mask = missing_mask
-        elif ocean_mask is not None:
-            mse_mask = ocean_mask
-
-        mse_steps: list[int] = []
-        mse_vals: list[float] = []
-        for step_idx, sample_t in denoise_samples:
-            sample = sample_t.detach().float()
-            if sample.shape != gt.shape:
-                continue
-            diff_sq = (sample - gt) ** 2
-            if mse_mask is not None:
-                denom = mse_mask.sum()
-                if float(denom.item()) <= 0.0:
-                    continue
-                mse = (diff_sq * mse_mask).sum() / denom
-            else:
-                mse = torch.mean(diff_sq)
-            mse_steps.append(int(step_idx))
-            mse_vals.append(float(mse.item()))
-        if mse_steps:
-            paired = sorted(zip(mse_steps, mse_vals), key=lambda p: p[0])
-            mse_steps = [int(p[0]) for p in paired]
-            mse_vals = [float(p[1]) for p in paired]
-            ax_mse = ax.twinx()
-            mse_line = ax_mse.plot(
-                np.asarray(mse_steps, dtype=np.int32),
-                np.asarray(mse_vals, dtype=np.float32),
-                linewidth=1.5,
-                color="#d62728",
-                marker="o",
-                markersize=2.5,
-                label=(
-                    "MSE (missing & ocean)"
-                    if (missing_mask is not None and ocean_mask is not None)
-                    else (
-                        "MSE (missing pixels)"
-                        if missing_mask is not None
-                        else (
-                            "MSE (ocean pixels)"
-                            if ocean_mask is not None
-                            else "MSE (at timestep)"
-                        )
-                    )
-                ),
-            )
-            ax_mse.set_ylabel("MSE", color="#d62728")
-            ax_mse.tick_params(axis="y", labelcolor="#d62728")
-            handles = snr_line + mse_line
-            labels = [h.get_label() for h in handles]
-            ax.legend(handles, labels, loc="best")
-            ax.text(
-                0.01,
-                0.02,
-                f"MSE start={mse_vals[0]:.3f}, end={mse_vals[-1]:.3f}",
-                transform=ax.transAxes,
-                fontsize=8,
-                va="bottom",
-                ha="left",
-                color="#333333",
-                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2.0),
-            )
-        else:
-            ax.legend(loc="best")
-    else:
-        ax.legend(loc="best")
-
-    fig.tight_layout()
-    experiment.log({f"{prefix}/snr_vs_step": wandb.Image(fig)})
-    plt.close(fig)
