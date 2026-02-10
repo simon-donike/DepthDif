@@ -62,10 +62,12 @@ These are the core model behaviors in this repo and where they are wired in conf
   - `model.coord_conditioning.embed_dim`: embedding width (defaults to `unet.dim` if null)
 
 - **Anchoring known pixels at inference (inpainting clamp)**  
-  During sampling, known pixels are overwritten at every diffusion step for stability.  
+  During sampling, known pixels are overwritten at every diffusion step for stability. See image below: top-left shows conditioning with mask, the other images show 15 intermediate denoising steps with noise only injected into thos epixels where no observations are present to anchor values.  
   Configure in `configs/model_config.yaml`:
   - `model.clamp_known_pixels: true`  
   This uses the conditioning input + mask to keep known values fixed while denoising.
+
+  ![img](assets/clamped_pixels.png)  
 
 ### Minor Model Settings + Where to Configure
 These are the model training behaviors in this repo and where they are wired in config.
