@@ -166,9 +166,7 @@ python3 train.py \
 ### What happens during training
 - A timestamped run folder is created under `logs/`.
 - The exact config files used for the run are copied into that folder.
-- Model type is selected from `model.model_type`:
-  - `cond_px_dif` -> `PixelDiffusionConditional`
-  - `px_dif` -> `PixelDiffusion`
+- Model type is `cond_px_dif` (`PixelDiffusionConditional`).
 - Training resumes automatically when `model.resume_checkpoint` is set to a valid `.ckpt` path in `configs/model_config.yaml`.
 
 ## Inference
@@ -184,7 +182,7 @@ from pytorch_lightning import Trainer
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
-from models.difFF import PixelDiffusion, PixelDiffusionConditional
+from models.difFF import PixelDiffusionConditional
 
 
 def load_yaml(path: str) -> dict:
@@ -197,29 +195,16 @@ data_config_path = "configs/data_config.yaml"
 training_config_path = "configs/training_config.yaml"
 ckpt_path = "logs/<run>/best.ckpt"
 
-model_cfg = load_yaml(model_config_path)
-model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
-
 dataset = SurfaceTempPatchLightDataset.from_config(data_config_path, split="all")
 datamodule = DepthTileDataModule(dataset=dataset)
 datamodule.setup("fit")
 
-if model_type == "cond_px_dif":
-    model = PixelDiffusionConditional.from_config(
-        model_config_path=model_config_path,
-        data_config_path=data_config_path,
-        training_config_path=training_config_path,
-        datamodule=datamodule,
-    )
-elif model_type == "px_dif":
-    model = PixelDiffusion.from_config(
-        model_config_path=model_config_path,
-        data_config_path=data_config_path,
-        training_config_path=training_config_path,
-        datamodule=datamodule,
-    )
-else:
-    raise ValueError(f"Unsupported model_type: {model_type}")
+model = PixelDiffusionConditional.from_config(
+    model_config_path=model_config_path,
+    data_config_path=data_config_path,
+    training_config_path=training_config_path,
+    datamodule=datamodule,
+)
 
 checkpoint = torch.load(ckpt_path, map_location="cpu")
 model.load_state_dict(checkpoint["state_dict"], strict=True)
@@ -262,9 +247,14 @@ Here is the same checkoint, applied to an image with 75% occlusion:
 ![img](assets/prelim_results_75perc.png)  
 
 ### Sampling Process
-The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. While the signal only emerges visually from the noise towards the end, the MSE plot shows that the model converges way earlier. Currently in the DDPM setting, a lot of compute is wasted on the initial noise without much ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.
+The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. In addition to qualitative intermediates, we now log:
+- MAE vs intermediate denoising step (using the per-step `x0` prediction against target).
+- Diffusion schedule diagnostics (reverse + forward): `sqrt(alpha_bar_t)`, `sqrt(1-alpha_bar_t)`, `beta_tilde_t`, and `log10(SNR+eps)`.
+
+Currently in the DDPM setting, a lot of compute is spent in very noisy early steps with limited visual ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.
 ![img](assets/intermediate_steps.png)
-![img](assets/SNR_MSE.png)
+![img](assets/mae_vs_intermediate.png)
+![img](assets/noise_schedules.png)
 
 
 
