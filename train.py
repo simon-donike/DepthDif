@@ -172,7 +172,10 @@ def main(
     # Build dataset (currently only temp_v1/light format is supported here).
     ds_cfg = data_cfg.get("dataset", {})
     split_cfg = data_cfg.get("split", {})
-    dataloader_cfg = training_cfg.get("dataloader", {})
+    dataloader_cfg = dict(training_cfg.get("dataloader", {}))
+    data_dataloader_cfg = data_cfg.get("dataloader", {})
+    if "val_shuffle" in data_dataloader_cfg:
+        dataloader_cfg["val_shuffle"] = bool(data_dataloader_cfg["val_shuffle"])
     dataloader_type = str(ds_cfg.get("dataloader_type", "light")).strip().lower()
     if dataloader_type != "light":
         raise ValueError(
