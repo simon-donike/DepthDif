@@ -251,7 +251,7 @@ The sampling process is currently guided by a cosine schedule. Plotting the inte
 - MAE vs intermediate denoising step (using the per-step `x0` prediction against target).
 - Diffusion schedule diagnostics (reverse + forward): `sqrt(alpha_bar_t)`, `sqrt(1-alpha_bar_t)`, `beta_tilde_t`, and `log10(SNR+eps)`.
 
-Currently in the DDPM setting, a lot of compute is spent in very noisy early steps with limited visual ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.
+Currently in the DDPM setting, a lot of compute is spent in very noisy early steps with limited visual ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.  
 ![img](assets/intermediate_steps.png)
 ![img](assets/mae_vs_intermediate.png)
 ![img](assets/noise_schedules.png)
