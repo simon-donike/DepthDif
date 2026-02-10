@@ -5,7 +5,6 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -21,6 +20,7 @@ from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
 from utils.validation_denoise import (
     build_evenly_spaced_capture_steps,
+    log_wandb_conditional_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
     log_wandb_snr_profile,
 )
@@ -398,6 +398,8 @@ class PixelDiffusionConditional(PixelDiffusion):
         generated_channels: int = 1,
         condition_channels: int = 1,
         condition_mask_channels: int = 1,
+        condition_include_eo: bool = False,
+        condition_use_valid_mask: bool = True,
         clamp_known_pixels: bool = True,
         mask_loss_with_valid_pixels: bool = False,
         parameterization: str = "epsilon",
@@ -471,6 +473,8 @@ class PixelDiffusionConditional(PixelDiffusion):
             kernel_size += 1
         self.postprocess_gaussian_blur_kernel_size = kernel_size
         self.condition_mask_channels = int(max(0, condition_mask_channels))
+        self.condition_include_eo = bool(condition_include_eo)
+        self.condition_use_valid_mask = bool(condition_use_valid_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
         self.wandb_verbose = wandb_verbose
@@ -498,11 +502,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Single (x, y, valid_mask, land_mask, coords) validation example cached per epoch.
+        # Single (x, y, eo, valid_mask, land_mask, coords) validation example cached per epoch.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
                 torch.Tensor,
+                torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
@@ -546,6 +551,8 @@ class PixelDiffusionConditional(PixelDiffusion):
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
+            condition_include_eo=bool(m.get("condition_include_eo", False)),
+            condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
@@ -679,24 +686,81 @@ class PixelDiffusionConditional(PixelDiffusion):
             )
             return super().load_state_dict(state_dict, strict=False)
 
-    def _prepare_condition_for_model(
-        self, x: torch.Tensor, valid_mask: torch.Tensor | None
-    ) -> torch.Tensor:
-        # Keep conditioning data in the same normalized range as diffusion targets.
-        data_t = self.input_T(x)
+    def _prepare_condition_mask(
+        self,
+        valid_mask: torch.Tensor | None,
+        *,
+        batch_size: int,
+        height: int,
+        width: int,
+    ) -> torch.Tensor | None:
+        if not self.condition_use_valid_mask or self.condition_mask_channels <= 0:
+            return None
         if valid_mask is None:
-            expected_channels = int(getattr(self.model, "condition_channels", 0))
-            if expected_channels > int(data_t.size(1)):
-                raise RuntimeError(
-                    "valid_mask is required but missing from the batch. "
-                    "Expected condition channels exceed data channels."
-                )
-            return data_t
+            raise RuntimeError(
+                "condition_use_valid_mask=true requires batch['valid_mask']."
+            )
+
         mask = valid_mask
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
-        # Mask channel remains as-is; it is a semantic conditioning signal, not a diffused target.
-        return torch.cat([data_t, mask], dim=1)
+        if mask.ndim != 4:
+            raise RuntimeError("valid_mask must be shaped as (B,C,H,W) or (B,H,W).")
+        if int(mask.size(0)) != int(batch_size):
+            raise RuntimeError("valid_mask batch size does not match x batch size.")
+        if int(mask.size(-2)) != int(height) or int(mask.size(-1)) != int(width):
+            raise RuntimeError("valid_mask spatial shape does not match x.")
+
+        if int(mask.size(1)) == int(self.condition_mask_channels):
+            return mask
+        if int(mask.size(1)) == 1 and int(self.condition_mask_channels) > 1:
+            return mask.expand(-1, int(self.condition_mask_channels), -1, -1)
+        if int(self.condition_mask_channels) == 1 and int(mask.size(1)) > 1:
+            return mask.amax(dim=1, keepdim=True)
+        raise RuntimeError(
+            "Could not match valid_mask channels to condition_mask_channels "
+            f"(mask={int(mask.size(1))}, expected={int(self.condition_mask_channels)})."
+        )
+
+    def _prepare_condition_for_model(
+        self,
+        x: torch.Tensor,
+        valid_mask: torch.Tensor | None,
+        *,
+        eo: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        # Keep conditioning data in the same normalized range as diffusion targets.
+        condition_parts: list[torch.Tensor] = []
+        if self.condition_include_eo:
+            if eo is None:
+                raise RuntimeError(
+                    "condition_include_eo=true requires batch['eo']."
+                )
+            condition_parts.append(self.input_T(eo))
+
+        data_t = self.input_T(x)
+        condition_parts.append(data_t)
+
+        mask_t = self._prepare_condition_mask(
+            valid_mask,
+            batch_size=int(data_t.size(0)),
+            height=int(data_t.size(-2)),
+            width=int(data_t.size(-1)),
+        )
+        if mask_t is not None:
+            # Mask channel remains as-is; it is a semantic conditioning signal.
+            condition_parts.append(mask_t)
+
+        condition = torch.cat(condition_parts, dim=1)
+        expected_channels = int(getattr(self.model, "condition_channels", 0))
+        if expected_channels > 0 and int(condition.size(1)) != expected_channels:
+            raise RuntimeError(
+                "Conditioning channel mismatch: "
+                f"built={int(condition.size(1))}, expected={expected_channels}. "
+                "Check condition_channels / condition_mask_channels / "
+                "condition_include_eo / condition_use_valid_mask."
+            )
+        return condition
 
     def _extract_known_values_and_mask(
         self, data: torch.Tensor, valid_mask: torch.Tensor | None
@@ -806,6 +870,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
     ) -> dict[str, Any]:
         x = batch["x"]
+        eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
         coords = batch.get("coords")
         sampler = batch.get("sampler", self.val_sampler)
@@ -813,7 +878,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         return_intermediates = bool(batch.get("return_intermediates", False))
         intermediate_step_indices = batch.get("intermediate_step_indices")
 
-        model_condition = self._prepare_condition_for_model(x, valid_mask)
+        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
 
         denoise_samples: list[tuple[int, torch.Tensor]] = []
@@ -956,12 +1021,13 @@ class PixelDiffusionConditional(PixelDiffusion):
         ):
             return
 
-        x, y, valid_mask, land_mask, coords = self._cached_val_example
+        x, y, eo, valid_mask, land_mask, coords = self._cached_val_example
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
         total_steps = 0
         pred_batch: dict[str, Any] = {
             "x": x,
+            "eo": eo,
             "valid_mask": valid_mask,
             "coords": coords,
             "sampler": self.val_sampler,
@@ -987,6 +1053,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
         y_denorm = temperature_normalize(mode="denorm", tensor=y)
+        eo_denorm = (
+            temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
+        )
 
         recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
         recon_psnr = None
@@ -1068,14 +1137,17 @@ class PixelDiffusionConditional(PixelDiffusion):
             y_denorm, prefix="val_target", batch_size=1, on_step=False, on_epoch=True
         )
         # This is the one expensive full reconstruction for the epoch; always log it.
-        self._maybe_log_wandb_images_conditional(
+        log_wandb_conditional_reconstruction_grid(
+            logger=self.logger,
             x=x_denorm,
+            eo=eo_denorm,
             y_hat=y_hat_denorm,
             y_target=y_denorm,
             valid_mask=valid_mask,
             land_mask=land_mask,
             prefix="val",
-            force=True,
+            image_key="x_y_full_reconstruction",
+            cmap=PLOT_CMAP,
         )
         if self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
@@ -1084,6 +1156,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 total_steps=total_steps,
                 sampler=sampler_for_val,
                 conditioning_image=x,
+                eo_conditioning_image=eo,
                 valid_mask=valid_mask,
                 prefix="val",
                 cmap=PLOT_CMAP,
@@ -1098,7 +1171,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, pred, pred_batch, y, x
-        del y_denorm, y_hat_denorm, x_denorm
+        del y_denorm, y_hat_denorm, x_denorm, eo_denorm
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:
@@ -1109,9 +1182,10 @@ class PixelDiffusionConditional(PixelDiffusion):
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         y = batch["y"]
+        eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
         coords = batch.get("coords")
-        model_condition = self._prepare_condition_for_model(x, valid_mask)
+        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -1157,10 +1231,11 @@ class PixelDiffusionConditional(PixelDiffusion):
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         y = batch["y"]
+        eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
-        model_condition = self._prepare_condition_for_model(x, valid_mask)
+        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -1218,145 +1293,18 @@ class PixelDiffusionConditional(PixelDiffusion):
                 valid_mask[:1].detach() if valid_mask is not None else None
             )
             cached_land_mask = land_mask[:1].detach() if land_mask is not None else None
+            cached_eo = eo[:1].detach() if eo is not None else None
             cached_coords = coords[:1].detach() if coords is not None else None
             self._cached_val_example = (
                 x[:1].detach(),
                 y[:1].detach(),
+                cached_eo,
                 cached_valid_mask,
                 cached_land_mask,
                 cached_coords,
             )
 
         return loss
-
-    def _maybe_log_wandb_images_conditional(
-        self,
-        x: torch.Tensor,
-        y_hat: torch.Tensor,
-        y_target: torch.Tensor,
-        valid_mask: torch.Tensor | None = None,
-        land_mask: torch.Tensor | None = None,
-        prefix: str | None = None,
-        force: bool = False,
-    ) -> None:
-        # if not self.wandb_verbose:
-        #    return
-        # if self.trainer is not None and not self.trainer.is_global_zero:
-        #    return
-        # `force=True` is used by epoch-end full reconstruction logging so it is not
-        # dropped by the regular step-based preview cadence.
-        if not force and self.global_step % self.log_images_every_n_steps != 0:
-            return
-        if not hasattr(self.logger, "experiment"):
-            return
-
-        experiment = self.logger.experiment
-        if not hasattr(experiment, "log"):
-            return
-
-        try:
-            import wandb
-        except Exception:
-            return
-
-        num_to_plot = min(5, int(x.size(0)))
-        if num_to_plot <= 0:
-            return
-
-        fig = None
-        axes = None
-        try:
-            ncols = 3
-            if valid_mask is not None:
-                ncols += 1
-            if land_mask is not None:
-                ncols += 1
-            fig, axes = plt.subplots(
-                num_to_plot, ncols, figsize=(4 * ncols, 3 * num_to_plot), squeeze=False
-            )
-
-            for i in range(num_to_plot):
-                x_image = x[i, 0]
-                y_hat_image = y_hat[i, 0]
-                y_target_image = y_target[i, 0]
-                mask_i = (
-                    valid_mask[i, 0]
-                    if valid_mask is not None and valid_mask.ndim == 4
-                    else (valid_mask[i] if valid_mask is not None else None)
-                )
-                x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
-                y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
-                y_target_img = self._minmax_stretch_for_plot(
-                    y_target_image, mask=mask_i
-                )
-
-                col = 0
-                axes[i, col].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, col].set_axis_off()
-                axes[i, col].set_title("Input")
-                col += 1
-
-                axes[i, col].imshow(y_hat_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, col].set_axis_off()
-                axes[i, col].set_title("Reconstruction")
-                col += 1
-
-                axes[i, col].imshow(y_target_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[i, col].set_axis_off()
-                axes[i, col].set_title("Target")
-                col += 1
-
-                if valid_mask is not None:
-                    valid_img = (
-                        valid_mask[i, 0] if valid_mask.ndim == 4 else valid_mask[i]
-                    )
-                    axes[i, col].imshow(
-                        valid_img.detach().float().cpu().numpy(),
-                        cmap="gray",
-                        vmin=0.0,
-                        vmax=1.0,
-                    )
-                    axes[i, col].set_axis_off()
-                    axes[i, col].set_title("Valid mask")
-                    col += 1
-
-                if land_mask is not None:
-                    land_img = land_mask[i, 0] if land_mask.ndim == 4 else land_mask[i]
-                    axes[i, col].imshow(
-                        land_img.detach().float().cpu().numpy(),
-                        cmap="gray",
-                        vmin=0.0,
-                        vmax=1.0,
-                    )
-                    axes[i, col].set_axis_off()
-                    axes[i, col].set_title("Land mask")
-
-            fig.tight_layout()
-            # Keep full reconstruction logs separate from periodic batch previews.
-            image_key = (
-                f"{prefix}/x_y_full_reconstruction"
-                if force
-                else f"{prefix}/x_y_batch_preview"
-            )
-            experiment.log({image_key: wandb.Image(fig)})
-        finally:
-            if fig is not None:
-                plt.close(fig)
-            # Explicitly drop local refs after validation plotting to avoid retention.
-            del axes, fig, x, y_hat, y_target
-            gc.collect()
-
-    def _minmax_stretch_for_plot(
-        self,
-        image: torch.Tensor,
-        *,
-        mask: torch.Tensor | None = None,
-    ) -> np.ndarray:
-        image = image.detach().float()
-        # Inputs are already in denormalized display space.
-        image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        stretched = minmax_stretch(image, mask=mask, nodata_value=None)
-        return stretched.cpu().numpy().astype(np.float32)
 
     def configure_optimizers(self):
         optimizer = super().configure_optimizers()

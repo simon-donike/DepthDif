@@ -15,6 +15,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
 from models.difFF import PixelDiffusion, PixelDiffusionConditional
 
@@ -124,6 +125,36 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
             experiment.save(str(path.resolve()), policy="now")
 
 
+def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
+    variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
+    if variant is None:
+        # Backward-compatible fallback: infer from config filename if explicit variant is absent.
+        stem = Path(data_config_path).stem.lower()
+        if "4band" in stem or "eo" in stem:
+            return "eo_4band"
+        return "temp_v1"
+    return str(variant).strip().lower()
+
+
+def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
+    dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
+    if dataset_variant in {"temp_v1", "single_band", "1band", "default"}:
+        return SurfaceTempPatchLightDataset.from_config(
+            data_config_path,
+            split="all",
+        )
+    if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
+        return SurfaceTempPatch4BandsLightDataset.from_config(
+            data_config_path,
+            split="all",
+        )
+    raise ValueError(
+        "Unsupported dataset variant in data config. "
+        f"Got '{dataset_variant}', expected one of "
+        "{'temp_v1', 'eo_4band'}."
+    )
+
+
 def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
@@ -170,7 +201,7 @@ def main(
             category=Warning,
         )
 
-    # Build dataset (currently only temp_v1/light format is supported here).
+    # Build dataset from config while preserving default temp_v1 behavior.
     ds_cfg = data_cfg.get("dataset", {})
     split_cfg = data_cfg.get("split", {})
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
@@ -180,12 +211,9 @@ def main(
     dataloader_type = str(ds_cfg.get("dataloader_type", "light")).strip().lower()
     if dataloader_type != "light":
         raise ValueError(
-            f"Only 'light' (temp_v1) dataloader_type is supported in this runner; got '{dataloader_type}'."
+            f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
-    dataset = SurfaceTempPatchLightDataset.from_config(
-        data_config_path,
-        split="all",
-    )
+    dataset = build_dataset(data_config_path=data_config_path, ds_cfg=ds_cfg)
     datamodule = DepthTileDataModule(
         dataset=dataset,
         dataloader_cfg=dataloader_cfg,

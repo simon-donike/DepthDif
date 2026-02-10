@@ -1,0 +1,72 @@
+training: # Internal Model Training Settings
+  lr: 1.0e-4 # Optimizer learning rate.
+  batch_size: 16 # Training batch size (informational; dataloader config is source of truth).
+  noise:
+    num_timesteps: 1000 # Number of diffusion steps (T).
+    schedule: "cosine" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
+    beta_start: 1.0e-4 # Noise level at first timestep (must be > 0 and < beta_end).
+    beta_end: 2.0e-2 # Noise level at last timestep (must be < 1 and > beta_start).
+  validation_sampling:
+    sampler: "ddpm" # Validation inference sampler: "ddpm" (full chain) or "ddim" (faster).
+    ddim_num_timesteps: 200 # Used only when sampler="ddim"; fewer steps = faster, potentially less accurate.
+    ddim_eta: 0.0 # Used only when sampler="ddim"; 0.0 is deterministic DDIM.
+    log_intermediates: true # If true, capture and log denoising intermediates (4x4 timestep grid) during validation reconstruction.
+    skip_full_reconstruction_in_sanity_check: false # If true, skip expensive full reverse-diffusion reconstruction during Lightning sanity validation.
+
+trainer: # PL Trainer Settings
+  max_epochs: 5000 # Maximum number of training epochs.
+  accelerator: "auto" # Accelerator backend ("auto", "gpu", "cpu", ...).
+  devices: "auto" # Devices to use ("auto", int, list).
+  num_gpus: 2 # Legacy override: if set, trainer uses this many GPUs directly.
+  strategy: "auto" # Distributed strategy ("auto", "ddp", ...).
+  precision: "16-mixed" # Mixed precision mode; "16-mixed" is best for RTX 3090.
+  matmul_precision: "high" # torch.set_float32_matmul_precision value: "highest" | "high" | "medium".
+  suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
+  suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
+  ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
+  lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
+  log_every_n_steps: 1 # Trainer logging interval (steps).
+  num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
+  val_batches_per_epoch: 50 # Optional absolute cap on validation batches/epoch (int). null uses limit_val_batches.
+  limit_val_batches: 4 # Number/fraction of validation batches per epoch.
+  enable_model_summary: true # Show Lightning model summary at startup.
+  gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
+  rebuild_index: false # Unused by trainer; kept for compatibility (dataset config owns index rebuild).
+
+wandb: # Logging Settings
+  project: "DepthDif_Simon" # W&B project name.
+  entity: "esa-phi-lab" # W&B team/user; null uses your default account.
+  run_name: "eo_4band_cond" # Explicit run name for EO + 3-band conditioning runs.
+  log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
+  verbose: true # Enable extra metric/image logging from the LightningModule.
+  watch_gradients: false # Log gradient histories via wandb.watch.
+  watch_parameters: false # Log parameter histories via wandb.watch (both false disables watch).
+  watch_log_freq: 100 # How often (steps) to log watched gradients/params.
+  watch_log_graph: false # Whether to log the computational graph.
+  log_stats_every_n_steps: 100 # Step interval for lightweight scalar debug stats.
+  log_images_every_n_steps: 10 # Step interval for validation preview images.
+
+dataloader: # DataLoader Settings
+  batch_size: 24 # Training batch size.
+  val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
+  num_workers: 4 # Number of DataLoader worker processes.
+  val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
+  persistent_workers: false # Keep train workers alive across epochs; false is safer when host RAM keeps growing.
+  val_persistent_workers: false # Validation workers persistence (effective only when val_num_workers > 0).
+  prefetch_factor: 2 # Batches prefetched per worker (used only when num_workers > 0).
+  shuffle: true # Shuffle training data each epoch.
+  val_shuffle: true # Shuffle validation data each epoch (use with limit_val_batches for random subsets).
+  pin_memory: false # Pin host memory for faster host->GPU transfer.
+
+scheduler: # Learning Rate Scheduler Settings
+  reduce_on_plateau:
+    enabled: true # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
+    monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.
+    mode: "min" # "min" lowers LR when metric stops decreasing; "max" for increasing metrics.
+    factor: 0.75 # Multiplicative LR decay applied when plateau is detected.
+    patience: 50 # Number of validation epochs with no improvement before decaying LR.
+    threshold: 1.0e-4 # Minimum significant metric change to qualify as an improvement.
+    threshold_mode: "rel" # "rel" for relative thresholding, "abs" for absolute thresholding.
+    cooldown: 5 # Epochs to wait after an LR drop before resuming plateau checks.
+    min_lr: 0.0 # Lower bound for learning rate.
+    eps: 1.0e-8 # Minimum LR change to apply; smaller updates are ignored.

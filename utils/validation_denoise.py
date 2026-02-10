@@ -76,6 +76,7 @@ def log_wandb_denoise_timestep_grid(
     total_steps: int,
     sampler: Any,
     conditioning_image: torch.Tensor | None = None,
+    eo_conditioning_image: torch.Tensor | None = None,
     valid_mask: torch.Tensor | None = None,
     prefix: str = "val",
     cmap: str = "turbo",
@@ -124,13 +125,16 @@ def log_wandb_denoise_timestep_grid(
     plot_entries: list[tuple[str, int | None, torch.Tensor]] = []
     if conditioning_image is not None:
         plot_entries.append(("cond", None, conditioning_image))
+    if eo_conditioning_image is not None:
+        plot_entries.append(("eo", None, eo_conditioning_image))
 
+    max_entries_before_final = max(0, max_plots - 1)
     for step_idx, sample_t in picked_intermediates:
         plot_entries.append(("intermediate", step_idx, sample_t))
-        if len(plot_entries) >= 15:
+        if len(plot_entries) >= max_entries_before_final:
             break
 
-    while len(plot_entries) < 15 and picked_intermediates:
+    while len(plot_entries) < max_entries_before_final and picked_intermediates:
         plot_entries.append(
             (
                 "intermediate",
@@ -176,6 +180,8 @@ def log_wandb_denoise_timestep_grid(
 
         if entry_kind == "cond":
             timestep_labels.append(f"{plot_idx + 1}:cond")
+        elif entry_kind == "eo":
+            timestep_labels.append(f"{plot_idx + 1}:eo")
         else:
             sampler_t = step_to_sampler_timestep_label(
                 step_index=int(step_idx),
@@ -184,7 +190,12 @@ def log_wandb_denoise_timestep_grid(
             )
             timestep_labels.append(f"{plot_idx + 1}:t={sampler_t}/s={int(step_idx)}")
 
-    caption = "conditioning + 14 intermediates + final"
+    if conditioning_image is not None and eo_conditioning_image is not None:
+        caption = "conditioning + eo + intermediates + final"
+    elif conditioning_image is not None:
+        caption = "conditioning + intermediates + final"
+    else:
+        caption = "intermediates + final"
     experiment.log(
         {
             f"{prefix}/denoise_timestep_grid_4x4": wandb.Image(
@@ -193,6 +204,138 @@ def log_wandb_denoise_timestep_grid(
             )
         }
     )
+
+
+def _mask_for_sample(
+    mask: torch.Tensor | None,
+    sample_idx: int,
+) -> torch.Tensor | None:
+    if mask is None:
+        return None
+    if mask.ndim == 4:
+        sample_mask = mask[sample_idx]
+        if sample_mask.size(0) == 1:
+            return sample_mask[0]
+        return sample_mask.amax(dim=0)
+    if mask.ndim == 3:
+        return mask[sample_idx]
+    if mask.ndim == 2:
+        return mask
+    return None
+
+
+def _plot_band_image(
+    tensor: torch.Tensor,
+    sample_idx: int,
+    *,
+    mask: torch.Tensor | None = None,
+) -> np.ndarray:
+    image_t = tensor[sample_idx, 0].detach().float()
+    image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
+    image_t = minmax_stretch(image_t, mask=mask, nodata_value=None)
+    return image_t.cpu().numpy().astype(np.float32)
+
+
+def log_wandb_conditional_reconstruction_grid(
+    *,
+    logger: Any,
+    x: torch.Tensor,
+    y_hat: torch.Tensor,
+    y_target: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+    land_mask: torch.Tensor | None = None,
+    eo: torch.Tensor | None = None,
+    prefix: str = "val",
+    image_key: str = "x_y_full_reconstruction",
+    cmap: str = "turbo",
+) -> None:
+    if logger is None or not hasattr(logger, "experiment"):
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+
+    try:
+        import wandb
+    except Exception:
+        return
+
+    num_to_plot = min(5, int(x.size(0)))
+    if num_to_plot <= 0:
+        return
+
+    fig = None
+    try:
+        ncols = 3
+        if eo is not None:
+            ncols += 1
+        if valid_mask is not None:
+            ncols += 1
+        if land_mask is not None:
+            ncols += 1
+        fig, axes = plt.subplots(
+            num_to_plot, ncols, figsize=(4 * ncols, 3 * num_to_plot), squeeze=False
+        )
+
+        for i in range(num_to_plot):
+            mask_i = _mask_for_sample(valid_mask, i)
+            x_img = _plot_band_image(x, i, mask=mask_i)
+            y_hat_img = _plot_band_image(y_hat, i, mask=mask_i)
+            y_target_img = _plot_band_image(y_target, i, mask=mask_i)
+
+            col = 0
+            axes[i, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[i, col].set_axis_off()
+            axes[i, col].set_title("Input")
+            col += 1
+
+            if eo is not None:
+                eo_img = _plot_band_image(eo, i, mask=mask_i)
+                axes[i, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[i, col].set_axis_off()
+                axes[i, col].set_title("EO condition")
+                col += 1
+
+            axes[i, col].imshow(y_hat_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[i, col].set_axis_off()
+            axes[i, col].set_title("Reconstruction")
+            col += 1
+
+            axes[i, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[i, col].set_axis_off()
+            axes[i, col].set_title("Target")
+            col += 1
+
+            if valid_mask is not None:
+                valid_img = _mask_for_sample(valid_mask, i)
+                if valid_img is not None:
+                    axes[i, col].imshow(
+                        valid_img.detach().float().cpu().numpy(),
+                        cmap="gray",
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
+                    axes[i, col].set_axis_off()
+                    axes[i, col].set_title("Valid mask")
+                col += 1
+
+            if land_mask is not None:
+                land_img = _mask_for_sample(land_mask, i)
+                if land_img is not None:
+                    axes[i, col].imshow(
+                        land_img.detach().float().cpu().numpy(),
+                        cmap="gray",
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
+                    axes[i, col].set_axis_off()
+                    axes[i, col].set_title("Land mask")
+
+        fig.tight_layout()
+        experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})
+    finally:
+        if fig is not None:
+            plt.close(fig)
 
 
 def log_wandb_snr_profile(

@@ -45,6 +45,8 @@ These are the core model behaviors in this repo and where they are wired in conf
   Configure in `configs/model_config.yaml`:
   - `model.condition_channels`: total conditioning channels passed to the denoiser (data + mask).
   - `model.condition_mask_channels`: number of those channels that are mask semantics (excluded from normalization).  
+  - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
+  - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
   This is built from `x` and `valid_mask` in the dataset.
 
 - **Masked pixel loss computation**  
@@ -113,6 +115,18 @@ Notes:
   - `configs/data_config.yaml`
   - `configs/training_config.yaml`
   - `configs/model_config.yaml`
+
+### EO + 3-band conditional training
+Use the EO/4-band config set to train with:
+- condition = `eo` + corrupted `x` (3 bands)
+- target = `y` (3 clean temperature bands)
+
+```bash
+python3 train.py \
+  --data-config configs/data_config_eo_4band.yaml \
+  --train-config configs/training_config_eo_4band.yaml \
+  --model-config configs/model_config_eo_4band.yaml
+```
 
 ### What happens during training
 - A timestamped run folder is created under `logs/`.
@@ -209,6 +223,11 @@ Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clu
   
 Here is the same checkoint, applied to an image with 75% occlusion:
 ![img](assets/prelim_results_75perc.png)  
+
+### Sampling Process
+The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. While the signal only emerges visually from the noise towards the end, the MSE plot shows that the model converges way earlier. Currently in the DDPM setting, a lot of compute is wasted on the initial noise without much ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.
+![img](assets/intermediate_steps.png)
+![img](assets/SNR_MSE.png)
 
 
 
