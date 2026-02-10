@@ -103,13 +103,13 @@ Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clu
 # Comments
 
 ## Known Issues
-- `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed, not tested in training run
+- `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed ✅, not yet tested in training run
 ![img](assets/val_issue.png)  
 
 ## Untested Imlpementations:
-- `mask_loss_with_valid_pixels` - doesnt work
-- `coord_conditioning` - neither tested nor run - only implemented 
-- new dataset_light and datamodule not yet tested.
+- `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
+- `coord_conditioning` - neither tested nor run - only implemented - works, tested ✅
+- new dataset_light and datamodule not yet tested. - works ✅
 
 ## Notes
 none currently.
@@ -117,7 +117,7 @@ none currently.
 
 ## ToDos
 - [x] Include Deps file
-- [x] DDIM Sampling
+- [ ] DDIM Sampling implemented but doesnt work! switching from DDPM to DDIM sampling might mess up noise schedules, but for now a DDPM checkpoint doesnt work with DDIM sampling
 - [x] in dataset, implmeent bigger boxes of corruption instead of pixels
 - [x] make dataset.py a save-to-disk funcitonality, then load straight form tensors
 - [x] Implement masked loss for train/val for land pixels  
@@ -125,6 +125,9 @@ none currently.
 - [x] Implement two masks: known land pixels and  missing pixels? Add land to known?
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
 - [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
+- [ ] Add a frequency-aware loss like L2 on gradients or PSD loss to get rid of speckle noise in output
+- [ ] Try out x0 instead of epsilon param
+- [ ] Activate and test EMA Weights
 
 ## RoadMap
 #### Tier 1

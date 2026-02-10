@@ -8,7 +8,7 @@ dataset:
   max_nodata_fraction: 0.25 # Max invalid/nodata ratio allowed per tile when enforce_validity=true.
   nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.
   valid_from_fill_value: true # Light mode: infer validity mask from standardized fill value.
-  mask_fraction: 0.50 # Fraction of pixels hidden to create sparse conditioning input.
+  mask_fraction: 0.75 # Fraction of pixels hidden to create sparse conditioning input.
   mask_patch_min: 3 # Minimum patch side length for corruption (pixels).
   mask_patch_max: 9 # Maximum patch side length for corruption (pixels).
   enable_transform: false # Apply random geometric augmentation
@@ -21,3 +21,6 @@ dataset:
 
 split:
   val_fraction: 0.2 # Fraction of dataset reserved for validation.
+
+dataloader:
+  val_shuffle: true # Shuffle validation dataloader order each epoch.

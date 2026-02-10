@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torchvision.transforms.functional as tvf
 import yaml
 
 from .DenoisingDiffusionProcess import (
@@ -360,7 +361,7 @@ class PixelDiffusion(pl.LightningModule):
     ) -> np.ndarray:
         image = image.detach().float()
         image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        #image = temperature_normalize(mode="denorm", tensor=image)
+        # image = temperature_normalize(mode="denorm", tensor=image)
         stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
         return stretched.cpu().numpy().astype(np.float32)
 
@@ -383,6 +384,10 @@ class PixelDiffusion(pl.LightningModule):
 
 
 class PixelDiffusionConditional(PixelDiffusion):
+    # Prefixes that are allowed to differ between checkpoints when only the
+    # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
+    _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
+
     def __init__(
         self,
         datamodule: pl.LightningDataModule | None = None,
@@ -420,6 +425,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         val_ddim_eta: float = 0.0,
         log_intermediates: bool = True,
         skip_full_reconstruction_in_sanity_check: bool = True,
+        postprocess_gaussian_blur_enabled: bool = False,
+        postprocess_gaussian_blur_sigma: float = 0.35,
+        postprocess_gaussian_blur_kernel_size: int = 3,
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
@@ -447,6 +455,16 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.skip_full_reconstruction_in_sanity_check = bool(
             skip_full_reconstruction_in_sanity_check
         )
+        self.postprocess_gaussian_blur_enabled = bool(postprocess_gaussian_blur_enabled)
+        self.postprocess_gaussian_blur_sigma = max(
+            0.0, float(postprocess_gaussian_blur_sigma)
+        )
+        kernel_size = int(postprocess_gaussian_blur_kernel_size)
+        if kernel_size < 1:
+            kernel_size = 1
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        self.postprocess_gaussian_blur_kernel_size = kernel_size
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
@@ -510,6 +528,8 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
+        postprocess_cfg = m.get("post_process", m.get("post-process", {}))
+        gaussian_blur_cfg = postprocess_cfg.get("gaussian_blur", {})
         unet_kwargs = cls._parse_unet_config(m)
         coord_embed_dim = coord_cfg.get("embed_dim", None)
         if coord_embed_dim is not None:
@@ -563,6 +583,13 @@ class PixelDiffusionConditional(PixelDiffusion):
             skip_full_reconstruction_in_sanity_check=bool(
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
             ),
+            postprocess_gaussian_blur_enabled=bool(
+                gaussian_blur_cfg.get("enabled", False)
+            ),
+            postprocess_gaussian_blur_sigma=float(gaussian_blur_cfg.get("sigma", 0.35)),
+            postprocess_gaussian_blur_kernel_size=int(
+                gaussian_blur_cfg.get("kernel_size", 3)
+            ),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
@@ -597,6 +624,52 @@ class PixelDiffusionConditional(PixelDiffusion):
             "training.validation_sampling.sampler must be one of {'ddpm', 'ddim'} "
             f"(got '{self.val_inference_sampler}')."
         )
+
+    @classmethod
+    def _is_sampler_only_state_mismatch(
+        cls,
+        missing_keys: set[str],
+        unexpected_keys: set[str],
+    ) -> bool:
+        # Accept fallback only when every mismatched key belongs to an
+        # explicitly whitelisted sampler namespace.
+        mismatched_keys = missing_keys | unexpected_keys
+        if not mismatched_keys:
+            return False
+        return all(
+            any(key.startswith(prefix) for prefix in cls._SAMPLER_STATE_PREFIXES)
+            for key in mismatched_keys
+        )
+
+    def load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
+        # Keep default PyTorch/Lightning behavior unless we can prove the
+        # mismatch is sampler-only. This preserves strictness for all learned
+        # weights and model architecture changes.
+        if not strict:
+            return super().load_state_dict(state_dict, strict=False)
+
+        try:
+            return super().load_state_dict(state_dict, strict=True)
+        except RuntimeError:
+            model_state_keys = set(self.state_dict().keys())
+            checkpoint_state_keys = set(state_dict.keys())
+            missing_keys = model_state_keys - checkpoint_state_keys
+            unexpected_keys = checkpoint_state_keys - model_state_keys
+
+            # Only tolerate key drift introduced by validation sampler switches.
+            # Any non-sampler key mismatch still raises and blocks resume.
+            if not self._is_sampler_only_state_mismatch(
+                missing_keys=missing_keys,
+                unexpected_keys=unexpected_keys,
+            ):
+                raise
+
+            warnings.warn(
+                "Sampler-only checkpoint mismatch detected; "
+                "retrying load_state_dict with strict=False.",
+                stacklevel=2,
+            )
+            return super().load_state_dict(state_dict, strict=False)
 
     def _prepare_condition_for_model(
         self, x: torch.Tensor, valid_mask: torch.Tensor | None
@@ -698,6 +771,27 @@ class PixelDiffusionConditional(PixelDiffusion):
         if valid_mask is None:
             return torch.as_tensor(0.0, device=self.device)
         return (valid_mask < 0.5).float().mean()
+
+    def _apply_postprocess_gaussian_blur(self, tensor: torch.Tensor) -> torch.Tensor:
+        if not self.postprocess_gaussian_blur_enabled:
+            return tensor
+        if self.postprocess_gaussian_blur_sigma <= 0.0:
+            return tensor
+        if tensor.ndim not in (3, 4):
+            return tensor
+
+        kernel_size = int(self.postprocess_gaussian_blur_kernel_size)
+        if kernel_size <= 1:
+            return tensor
+
+        sigma = float(self.postprocess_gaussian_blur_sigma)
+        # torchvision applies the same spatial kernel per channel/band (depthwise),
+        # so all bands are blurred equally with no channel mixing.
+        return tvf.gaussian_blur(
+            tensor,
+            kernel_size=[kernel_size, kernel_size],
+            sigma=[sigma, sigma],
+        )
 
     def _log_validation_triplet_stats(
         self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
@@ -844,6 +938,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
         y_denorm = temperature_normalize(mode="denorm", tensor=y)
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
+        y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
 
         recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
         recon_psnr = None
@@ -1069,7 +1164,9 @@ class PixelDiffusionConditional(PixelDiffusion):
 
         if batch_idx == 0 and self._cached_val_example is None:
             # Store exactly one validation sample for epoch-end full reconstruction.
-            cached_valid_mask = valid_mask[:1].detach() if valid_mask is not None else None
+            cached_valid_mask = (
+                valid_mask[:1].detach() if valid_mask is not None else None
+            )
             cached_land_mask = land_mask[:1].detach() if land_mask is not None else None
             cached_coords = coords[:1].detach() if coords is not None else None
             self._cached_val_example = (
@@ -1089,12 +1186,12 @@ class PixelDiffusionConditional(PixelDiffusion):
         y_target: torch.Tensor,
         valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
-        prefix: str| None = None,
+        prefix: str | None = None,
         force: bool = False,
     ) -> None:
-        #if not self.wandb_verbose:
+        # if not self.wandb_verbose:
         #    return
-        #if self.trainer is not None and not self.trainer.is_global_zero:
+        # if self.trainer is not None and not self.trainer.is_global_zero:
         #    return
         # `force=True` is used by epoch-end full reconstruction logging so it is not
         # dropped by the regular step-based preview cadence.
@@ -1138,7 +1235,11 @@ class PixelDiffusionConditional(PixelDiffusion):
                     else (valid_mask[i] if valid_mask is not None else None)
                 )
                 x_img = self._minmax_stretch_for_plot(x_image, mask=mask_i)
-                y_hat_img = self._minmax_stretch_for_plot(y_hat_image, mask=mask_i)
+                y_hat_img = self._minmax_stretch_for_plot(
+                    y_hat_image,
+                    mask=mask_i,
+                    apply_postprocess=True,
+                )
                 y_target_img = self._minmax_stretch_for_plot(
                     y_target_image, mask=mask_i
                 )
@@ -1161,9 +1262,7 @@ class PixelDiffusionConditional(PixelDiffusion):
 
                 if valid_mask is not None:
                     valid_img = (
-                        valid_mask[i, 0]
-                        if valid_mask.ndim == 4
-                        else valid_mask[i]
+                        valid_mask[i, 0] if valid_mask.ndim == 4 else valid_mask[i]
                     )
                     axes[i, col].imshow(
                         valid_img.detach().float().cpu().numpy(),
@@ -1176,9 +1275,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                     col += 1
 
                 if land_mask is not None:
-                    land_img = (
-                        land_mask[i, 0] if land_mask.ndim == 4 else land_mask[i]
-                    )
+                    land_img = land_mask[i, 0] if land_mask.ndim == 4 else land_mask[i]
                     axes[i, col].imshow(
                         land_img.detach().float().cpu().numpy(),
                         cmap="gray",
@@ -1203,16 +1300,21 @@ class PixelDiffusionConditional(PixelDiffusion):
             del axes, fig, x, y_hat, y_target
             gc.collect()
 
-    @staticmethod
     def _minmax_stretch_for_plot(
+        self,
         image: torch.Tensor,
         *,
         mask: torch.Tensor | None = None,
+        apply_postprocess: bool = False,
     ) -> np.ndarray:
         image = image.detach().float()
         # Match dataset_light plotting order: nan-to-num -> denorm -> minmax.
         image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
         image = temperature_normalize(mode="denorm", tensor=image)
+        if apply_postprocess:
+            image = self._apply_postprocess_gaussian_blur(
+                image.unsqueeze(0).unsqueeze(0)
+            ).squeeze(0).squeeze(0)
         stretched = minmax_stretch(image, mask=mask, nodata_value=None)
         return stretched.cpu().numpy().astype(np.float32)
 
