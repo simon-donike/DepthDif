@@ -3,10 +3,10 @@ model: # Model Settings
   model_type: "cond_px_dif" # "cond_px_dif" for conditional diffusion, "px_dif" for unconditional (Depreciated).
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
   generated_channels: 3 # Predict 3-band temperature profile target y.
-  condition_channels: 4 # EO (1) + corrupted temp channels x (3).
-  condition_mask_channels: 0 # No mask channel is concatenated into the model condition in this setup.
+  condition_channels: 5 # EO (1) + corrupted temp channels x (3) + valid mask (1).
+  condition_mask_channels: 1 # One valid-mask channel is concatenated to the model condition.
   condition_include_eo: true # Include batch["eo"] as extra condition channel.
-  condition_use_valid_mask: false # Keep valid_mask for loss/logging only, not as model condition.
+  condition_use_valid_mask: true # Use valid_mask as conditioning input in addition to EO + x.
   clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
   mask_loss_with_valid_pixels: false # If true, loss is computed only over valid pixels from the mask.
   parameterization: "epsilon" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).

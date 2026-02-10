@@ -18,9 +18,29 @@ The of the obstructions and the coverage percentage are selectable in the `data_
 Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)  
 
-Current Status:
-- 1-band only for experimentation
-- 128x128 hardcoded
+### Implemented dataset/task modes
+There are currently two implemented training tasks:
+
+1. **Straight corrupted -> uncorrupted (single-band)**  
+   Uses `SurfaceTempPatchLightDataset` (`temp_v1` style):
+   - `x`: corrupted temperature band
+   - `y`: clean temperature band (ground truth)
+   - optional masks: `valid_mask`, `land_mask`
+
+2. **EO-conditioned multiband reconstruction**  
+   Uses `SurfaceTempPatch4BandsLightDataset` (`eo_4band` style):
+   - `eo`: first band used as extra condition (surface/EO-like observation)
+   - `x`: corrupted deeper temperature bands
+   - `valid_mask`: mask channel used as additional condition
+   - `y`: clean deeper temperature bands (ground truth)
+   - optional masks: `valid_mask`, `land_mask`
+
+EO + multiband dataloader example (`eo` + deeper levels as corrupted/target):
+![img](assets/eo_dataset_example.png)
+
+In config, switch this via `dataset.dataset_variant`:
+- `temp_v1` for single-band corrupted->clean
+- `eo_4band` for EO + multiband conditioning
 
 ### Dataset tweaks
 - Synthetic occlusion pipeline to create sparse observations with configurable `mask_fraction`.
@@ -35,7 +55,11 @@ Current Status:
 ## Model
 As a first prototype, a conditional pixel-space Diffuser is modeled after [DiffusionFF](https://github.com/mikonvergence/DiffusionFastForward).  
 
-The model is trained on 1-channel temp + valid pixel mask. Loss can be pulled including or excluding the mask.
+Current implemented conditioning/target setups:
+- Single-band: `x -> y` (corrupted temp to clean temp)
+- EO multiband: `[eo, x, valid_mask] -> y` (EO + corrupted deeper bands + mask to clean deeper bands)
+
+Loss can be computed with or without masking by valid pixels (`mask_loss_with_valid_pixels`).
 
 ### Major Model Settings + Where to Configure
 These are the core model behaviors in this repo and where they are wired in config.
@@ -47,6 +71,7 @@ These are the core model behaviors in this repo and where they are wired in conf
   - `model.condition_mask_channels`: number of those channels that are mask semantics (excluded from normalization).  
   - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
   - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
+  In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
   This is built from `x` and `valid_mask` in the dataset.
 
 - **Masked pixel loss computation**  
@@ -118,7 +143,7 @@ Notes:
 
 ### EO + 3-band conditional training
 Use the EO/4-band config set to train with:
-- condition = `eo` + corrupted `x` (3 bands)
+- condition = `eo` + corrupted `x` (3 bands) + `valid_mask` (1 band) = 5 condition channels
 - target = `y` (3 clean temperature bands)
 
 ```bash
@@ -126,6 +151,16 @@ python3 train.py \
   --data-config configs/data_config_eo_4band.yaml \
   --train-config configs/training_config_eo_4band.yaml \
   --model-config configs/model_config_eo_4band.yaml
+```
+
+### Straight corrupted -> uncorrupted training
+Use the default single-band setup:
+
+```bash
+python3 train.py \
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml
 ```
 
 ### What happens during training
@@ -190,6 +225,8 @@ checkpoint = torch.load(ckpt_path, map_location="cpu")
 model.load_state_dict(checkpoint["state_dict"], strict=True)
 model.eval()
 ```
+
+If you run the EO multiband mode, swap the dataset class to `SurfaceTempPatch4BandsLightDataset` and use the EO config files.
 
 ### 2) Run a single `predict_step` directly
 For `PixelDiffusionConditional`, `predict_step` expects at least `x`; it will also use `valid_mask` and optional `coords` if present.

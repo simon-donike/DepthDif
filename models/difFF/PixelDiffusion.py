@@ -1156,7 +1156,6 @@ class PixelDiffusionConditional(PixelDiffusion):
                 total_steps=total_steps,
                 sampler=sampler_for_val,
                 conditioning_image=x,
-                eo_conditioning_image=eo,
                 valid_mask=valid_mask,
                 prefix="val",
                 cmap=PLOT_CMAP,
