@@ -382,12 +382,30 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = mask.clamp_(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
+    @staticmethod
+    def _build_land_mask(
+        land_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        if land_mask is None:
+            return None
+        mask = (land_mask > 0.5).float()
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim == 4 and mask.size(1) != 1:
+            mask = mask.amax(dim=1, keepdim=True)
+        if mask.ndim == 4 and mask.size(1) == 1 and reference.ndim == 4:
+            if reference.size(1) > 1:
+                mask = mask.expand(-1, reference.size(1), -1, -1)
+        mask = mask.clamp_(0.0, 1.0)
+        return mask.to(device=reference.device, dtype=reference.dtype)
+
     def p_loss(
         self,
         output,
         condition,
         *,
         valid_mask: torch.Tensor | None = None,
+        land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
         coord: torch.Tensor | None = None,
     ):
@@ -420,7 +438,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = self._build_valid_mask(valid_mask, target)
         if mask is None:
             return self.loss_fn(target, prediction)
+        ocean_mask = self._build_land_mask(land_mask, target)
+        if ocean_mask is not None:
+            mask = mask * ocean_mask
 
+        # manually computes MSE loss over masked pixels
         diff = (target - prediction) ** 2
         masked_diff = diff * mask
         denom = mask.sum()

@@ -1221,6 +1221,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         y = batch["y"]
         eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
+        land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         y_t = self.input_T(y)
@@ -1236,6 +1237,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             y_t,
             model_condition,
             valid_mask=valid_mask,
+            land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             coord=coords,
         )
@@ -1286,6 +1288,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             y_t,
             model_condition,
             valid_mask=valid_mask,
+            land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             coord=coords,
         )
