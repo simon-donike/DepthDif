@@ -15,6 +15,8 @@ pip install -r requirements.txt
 Currently, monthly tiles from 2000 - 2025 from the [Global Ocean Physics Reanalysis dataset](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F) have been downloaded and are manually masked to simulate real sparse observations. Excluding patches with >20% NoData values, ~106k samples are avaialble (128x128, 1/12 °). Download the data by installing the `copernicusmarine` package, then use the CLI like so `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m  --filter "*2021/*"`  
 The of the obstructions and the coverage percentage are selectable in the `data_config.yaml`.
 
+The validation split is geographically coherent: the same spatial locations/windows across timesteps are assigned to either train or val, not both.
+
 Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)  
 
@@ -50,6 +52,7 @@ In config, switch this via `dataset.dataset_variant`:
 - Corrupted input + mask channel return modes for conditional modeling (`x_return_mode`).
 - Z-score temperature normalization and optional geometric augmentation (rotations/flips) applied consistently to data and masks.
 - Dataset index build with nodata-fraction metadata for fast filtering.
+- Geographically coherent split support via the index `split` column (same location kept in one split over time).
 - Optional patch-center coordinate return (`return_coords`) using index columns (`lat0/lat1/lon0/lon1`) with dateline-safe longitude center computation.
 
 ## Model
@@ -120,6 +123,8 @@ Notes:
 Use the EO/4-band config set to train with:
 - condition = `eo` (1 band)  + corrupted `x` (3 bands) + `valid_mask` (1 band) = 5 condition channels
 - target = `y` (3 clean temperature bands)
+- `dataloader.eo_dropout_prob` enables train-time EO dropout (randomly zeroes EO for a subset of samples)
+  - reasoning: this reduces EO shortcut learning so the model does not over-rely on EO and still reconstructs from the actual corrupted `x` (+ mask context).
 
 ```bash
 python3 train.py \
@@ -247,10 +252,8 @@ Current noise scheduled implemented: `linear`, `sigmoid` and `cosine`. Cosine is
 # Comments
 
 ## Known Issues
-- `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed ✅, not yet tested in training run
-![img](assets/val_issue.png)  
 - somewhat speckled, noisy output. Ideas: DDIM sampling, structure-aware weighted loss, x0 parameterization. 
-- Land mask potentially doesn't work, at least its not plotted right currently - fixed ✅, logic error in dataset `__getitem__` 
+- patches with large land areas make generation struggle everywhere in image
 
 ## Untested Imlpementations:
 - `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
@@ -263,7 +266,6 @@ none currently.
 
 ## ToDos
 - [ ] DDIM Sampling implemented but doesnt work! switching from DDPM to DDIM sampling might mess up noise schedules, but for now a DDPM checkpoint doesnt work with DDIM sampling
-- [ ] **Important**: Make val set geographically consistent. As in, select ~20 perc of geographic locations for val, keep them the same over time
 - [ ] Encode timestamp somehow
 
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
@@ -273,6 +275,7 @@ none currently.
 - [ ] Activate and test EMA Weights
 
 **Done**:
+- [x] **Important**: Make val set geographically consistent. As in, select ~20 perc of geographic locations for val, keep them the same over time
 - [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 - [x] in dataset, implmeent bigger boxes of corruption instead of pixels
 - [x] make dataset.py a save-to-disk funcitonality, then load straight form tensors
@@ -310,6 +313,12 @@ These are the model/training behaviors in this repo and where they are wired in 
   - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
   - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
   In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
+
+- **EO dropout (train-time conditioning regularization)**  
+  Configure in `configs/training_config.yaml` or `configs/training_config_eo_4band.yaml`:
+  - `dataloader.eo_dropout_prob` (for example `0.25`)  
+  During training, EO is randomly zeroed for the configured fraction of samples.  
+  This is used to prevent EO over-reliance and encourage reconstruction from the sparse/deeper `x` signal itself.
 
 - **Masked pixel loss computation**  
   Loss can be restricted to valid (ocean) pixels to avoid land/no-data bias.  

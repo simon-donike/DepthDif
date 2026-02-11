@@ -28,7 +28,7 @@ trainer: # PL Trainer Settings
   lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
-  val_batches_per_epoch: 300 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
+  val_batches_per_epoch: 150 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
   gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
