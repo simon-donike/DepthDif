@@ -71,7 +71,8 @@ class DepthTileDataModule(pl.LightningDataModule):
             )
         ) and num_workers > 0
         pin_memory = bool(cfg.get("pin_memory", True))
-        shuffle = bool(cfg.get("val_shuffle" if is_val else "shuffle", not is_val))
+        # Default to shuffling both train and validation unless explicitly disabled.
+        shuffle = bool(cfg.get("val_shuffle" if is_val else "shuffle", True))
         prefetch_factor = cfg.get("prefetch_factor", 2)
         kwargs: dict[str, Any] = dict(
             dataset=dataset,

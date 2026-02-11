@@ -259,7 +259,7 @@ Current noise scheduled implemented: `linear`, `sigmoid` and `cosine`. Cosine is
 - `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
 - `coord_conditioning` - neither tested nor run - only implemented - works, tested ✅
 - new dataset_light and datamodule not yet tested. - works ✅
-- new x0 parameterization is implemented, but not tested yet
+- new x0 parameterization is implemented, but not tested yet  - works very well ✅
 
 ## Notes
 none currently.
@@ -267,14 +267,13 @@ none currently.
 ## ToDos
 - [ ] DDIM Sampling implemented but doesnt work! switching from DDPM to DDIM sampling might mess up noise schedules, but for now a DDPM checkpoint doesnt work with DDIM sampling
 - [ ] Encode timestamp somehow
-
+  - Prob merge lcoation + time somehow (Check out DiffusionSat, they did that)
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
-
 - [ ] Add a frequency-aware loss like L2 on gradients or PSD loss to get rid of speckle noise in output
-- [ ] Try out x0 instead of epsilon param
 - [ ] Activate and test EMA Weights
 
 **Done**:
+- [x] Try out x0 instead of epsilon param
 - [x] **Important**: Make val set geographically consistent. As in, select ~20 perc of geographic locations for val, keep them the same over time
 - [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 - [x] in dataset, implmeent bigger boxes of corruption instead of pixels
