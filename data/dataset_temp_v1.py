@@ -50,6 +50,7 @@ class SurfaceTempPatchLightDataset(Dataset):
         self.enable_transform = bool(enable_transform)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
+        self.nan_fill_value = float(nan_fill_value)
         self.valid_from_fill_value = bool(valid_from_fill_value)
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
@@ -120,7 +121,7 @@ class SurfaceTempPatchLightDataset(Dataset):
 
         self._rows = df.to_dict(orient="records")
 
-        fill = torch.tensor([[[float(nan_fill_value)]]], dtype=torch.float32)
+        fill = torch.tensor([[[self.nan_fill_value]]], dtype=torch.float32)
         self._normalized_fill_value = temperature_normalize(mode="norm", tensor=fill)
 
     @classmethod
@@ -170,8 +171,12 @@ class SurfaceTempPatchLightDataset(Dataset):
 
         # Load target tile and precompute a land/finite mask before normalization.
         y_np = np.load(y_abs_path).astype(np.float32, copy=False)
-        # Land mask derived before normalization; keep per-channel mask.
-        land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
+        # Land/ocean mask derived before normalization; exclude configured fill value.
+        # This keeps masked-loss ocean filtering consistent when disk exports use fill pixels.
+        land_mask_np = (
+            np.isfinite(y_np)
+            & (~np.isclose(y_np, self.nan_fill_value, atol=1e-8))
+        ).astype(np.float32, copy=False)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
         if y.ndim == 2:

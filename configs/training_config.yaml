@@ -50,7 +50,6 @@ wandb: # Logging Settings
 dataloader: # DataLoader Settings
   batch_size: 24 # Training batch size.
   val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
-  eo_dropout_prob: 0.0 # Train-only: probability to zero the EO condition band for a sample.
   num_workers: 4 # Number of DataLoader worker processes.
   val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
   persistent_workers: false # Keep train workers alive across epochs; false is safer when host RAM keeps growing.

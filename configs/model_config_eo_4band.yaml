@@ -8,7 +8,7 @@ model: # Model Settings
   condition_include_eo: true # Include batch["eo"] as extra condition channel.
   condition_use_valid_mask: true # Use valid_mask as conditioning input in addition to EO + x.
   clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
-  mask_loss_with_valid_pixels: true # If true, loss is computed only over valid pixels from the mask.
+  mask_loss_with_valid_pixels: true # If true, loss is computed over missing pixels (1-valid_mask), with optional land/ocean gating.
   parameterization: "x0" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
   post_process:
@@ -18,7 +18,7 @@ model: # Model Settings
       kernel_size: 3 # Odd kernel size; even values are auto-adjusted to the next odd number.
 
   coord_conditioning:
-    enabled: false # Enable patch-center coordinate conditioning via FiLM.
+    enabled: true # Enable patch-center coordinate conditioning via FiLM.
     encoding: "unit_sphere" # "unit_sphere", "sincos", or "raw".
     embed_dim: null # If null, defaults to unet.dim.
 

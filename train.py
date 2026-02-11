@@ -222,11 +222,12 @@ def main(
         raise ValueError(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
-    # Instantiate dataset variant and optionally inject train-time EO dropout setting.
+    # Instantiate dataset variant and inject EO dropout probability from data config.
+    # Train/val subsets share the same base dataset object, so this applies to both.
     dataset = build_dataset(data_config_path=data_config_path, ds_cfg=ds_cfg)
     if hasattr(dataset, "eo_dropout_prob"):
         dataset.eo_dropout_prob = float(
-            max(0.0, min(1.0, float(dataloader_cfg.get("eo_dropout_prob", 0.0))))
+            max(0.0, min(1.0, float(ds_cfg.get("eo_dropout_prob", 0.0))))
         )
     datamodule = DepthTileDataModule(
         dataset=dataset,

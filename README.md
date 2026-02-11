@@ -123,7 +123,7 @@ Notes:
 Use the EO/4-band config set to train with:
 - condition = `eo` (1 band)  + corrupted `x` (3 bands) + `valid_mask` (1 band) = 5 condition channels
 - target = `y` (3 clean temperature bands)
-- `dataloader.eo_dropout_prob` enables train-time EO dropout (randomly zeroes EO for a subset of samples)
+- `dataset.eo_dropout_prob` enables EO dropout (randomly zeroes EO for a subset of samples in both train and val)
   - reasoning: this reduces EO shortcut learning so the model does not over-rely on EO and still reconstructs from the actual corrupted `x` (+ mask context).
 
 ```bash
@@ -314,17 +314,18 @@ These are the model/training behaviors in this repo and where they are wired in 
   - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
   In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
 
-- **EO dropout (train-time conditioning regularization)**  
-  Configure in `configs/training_config.yaml` or `configs/training_config_eo_4band.yaml`:
-  - `dataloader.eo_dropout_prob` (for example `0.25`)  
-  During training, EO is randomly zeroed for the configured fraction of samples.  
+- **EO dropout (conditioning regularization)**  
+  Configure in `configs/data_config.yaml` or `configs/data_config_eo_4band.yaml`:
+  - `dataset.eo_dropout_prob` (for example `0.25`)  
+  EO is randomly zeroed for the configured fraction of samples in both train and val.  
   This is used to prevent EO over-reliance and encourage reconstruction from the sparse/deeper `x` signal itself.
 
 - **Masked pixel loss computation**  
   Loss can be restricted to valid (ocean) pixels to avoid land/no-data bias.  
   Configure in `configs/model_config.yaml`:
   - `model.mask_loss_with_valid_pixels: true`  
-  When enabled, the conditional loss is multiplied by the valid mask and normalized by its sum.
+  When enabled, the conditional loss is computed over missing pixels (`1 - valid_mask`),
+  optionally restricted to ocean pixels via `land_mask`, then normalized by mask sum.
 
 - **Anchoring known pixels at inference (inpainting clamp)**  
   During sampling, known pixels are overwritten at every diffusion step for stability.  
