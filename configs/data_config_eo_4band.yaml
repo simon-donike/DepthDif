@@ -12,7 +12,7 @@ dataset:
   mask_fraction: 0.75 # Fraction of pixels hidden to create sparse conditioning input.
   mask_patch_min: 3 # Minimum patch side length for corruption (pixels).
   mask_patch_max: 9 # Maximum patch side length for corruption (pixels).
-  eo_dropout_prob: 0.25 # Probability to zero EO conditioning per sample (applies to train and val).
+  eo_dropout_prob: 0.50 # Probability to zero EO conditioning per sample (applies to train and val).
   enable_transform: false # Apply random geometric augmentation
   x_return_mode: "currupted_plus_mask" # "corrputed" or "currupted_plus_mask".
   return_info: false # Return per-sample metadata dict under batch["info"].
