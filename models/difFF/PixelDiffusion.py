@@ -897,6 +897,16 @@ class PixelDiffusionConditional(PixelDiffusion):
             sigma=[sigma, sigma],
         )
 
+    def _apply_postprocess_zero_land_pixels(
+        self, tensor: torch.Tensor, land_mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        if land_mask is None:
+            return tensor
+        if tensor.ndim not in (3, 4):
+            return tensor
+        ocean_mask = (land_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
+        return tensor * ocean_mask
+
     @torch.no_grad()
     def predict_step(
         self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
@@ -904,6 +914,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         x = batch["x"]
         eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
+        land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         sampler = batch.get("sampler", self.val_sampler)
         clamp_known_pixels = batch.get("clamp_known_pixels", None)
@@ -940,6 +951,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         # Keep all post-processing centralized in Lightning inference.
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
         y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
+        y_hat_denorm = self._apply_postprocess_zero_land_pixels(
+            y_hat_denorm, land_mask
+        )
 
         return {
             "y_hat": y_hat,

@@ -216,6 +216,7 @@ def log_wandb_denoise_timestep_grid(
             sample = sample_t.detach().float()
             if sample.shape != gt.shape:
                 continue
+            # Intentionally unmasked: MAE is computed over the full image tensor.
             mae = torch.mean(torch.abs(sample - gt))
             mae_steps.append(int(step_idx))
             mae_vals.append(float(mae.item()))
