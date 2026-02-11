@@ -1069,7 +1069,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                     logger=self.logger,
                     sampler=sampler_for_profile,
                     total_steps=int(sampler_for_profile.num_timesteps),
-                    prefix="val",
+                    prefix="val_imgs",
                 )
                 self._logged_schedule_profile_in_sanity = True
 
@@ -1229,7 +1229,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             y_target=y_denorm,
             valid_mask=valid_mask,
             land_mask=land_mask,
-            prefix="val",
+            prefix="val_imgs",
             image_key="x_y_full_reconstruction",
             cmap=PLOT_CMAP,
         )
@@ -1243,7 +1243,7 @@ class PixelDiffusionConditional(PixelDiffusion):
                 conditioning_image=x,
                 ground_truth=y,
                 valid_mask=valid_mask,
-                prefix="val",
+                prefix="val_imgs",
                 cmap=PLOT_CMAP,
             )
         # Drop local tensor refs from this heavy validation path promptly.

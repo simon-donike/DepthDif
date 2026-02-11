@@ -80,7 +80,7 @@ def log_wandb_denoise_timestep_grid(
     eo_conditioning_image: torch.Tensor | None = None,
     ground_truth: torch.Tensor | None = None,
     valid_mask: torch.Tensor | None = None,
-    prefix: str = "val",
+    prefix: str = "val_imgs",
     cmap: str = "turbo",
     nrows: int = 4,
     ncols: int = 4,
@@ -271,7 +271,7 @@ def log_wandb_diffusion_schedule_profile(
     logger: Any,
     sampler: Any,
     total_steps: int,
-    prefix: str = "val",
+    prefix: str = "val_imgs",
     eps: float = 1e-12,
 ) -> None:
     if total_steps <= 0:
@@ -484,7 +484,7 @@ def log_wandb_conditional_reconstruction_grid(
     valid_mask: torch.Tensor | None = None,
     land_mask: torch.Tensor | None = None,
     eo: torch.Tensor | None = None,
-    prefix: str = "val",
+    prefix: str = "val_imgs",
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
 ) -> None:
