@@ -227,9 +227,20 @@ The sampling process is currently guided by a cosine schedule. Plotting the inte
 - Diffusion schedule diagnostics (reverse + forward): `sqrt(alpha_bar_t)`, `sqrt(1-alpha_bar_t)`, `beta_tilde_t`, and `log10(SNR+eps)`.
 
 Currently in the DDPM setting, a lot of compute is spent in very noisy early steps with limited visual ROI. DDIM sampling could fix that, alternatively a less agressive noise schedule. Potentially switching to `x0` parameterization can make this effect smaller as well.  
-![img](assets/intermediate_steps.png)
-![img](assets/mae_vs_intermediate.png)
-![img](assets/noise_schedules.png)
+
+The image below shows the original x as well as 15 intermediate reconstructions along the denoising path.  
+<p align="center">
+  <img src="assets/intermediate_steps.png" alt="intermediate_steps" width="40%">
+</p>
+The generated images at the intermediate denoising steps have the following MAE in relation to the target:
+<p align="center">
+  <img src="assets/mae_vs_intermediate.png" alt="mae_vs_intermediate" width="50%">
+</p>
+
+Current noise scheduled implemented: `linear`, `sigmoid` and `cosine`. Cosine is curently active and produces the following noise schedules.  
+<p align="center">
+  <img src="assets/noise_schedules.png" alt="noise_schedules" width="85%">
+</p>
 
 
 
@@ -239,7 +250,7 @@ Currently in the DDPM setting, a lot of compute is spent in very noisy early ste
 - `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed ✅, not yet tested in training run
 ![img](assets/val_issue.png)  
 - somewhat speckled, noisy output. Ideas: DDIM sampling, structure-aware weighted loss, x0 parameterization. 
-- Land mask potentially doesn't work, at least its not plotted right currently
+- Land mask potentially doesn't work, at least its not plotted right currently - fixed ✅, logic error in dataset `__getitem__` 
 
 ## Untested Imlpementations:
 - `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
@@ -251,18 +262,25 @@ Currently in the DDPM setting, a lot of compute is spent in very noisy early ste
 none currently.
 
 ## ToDos
-- [x] Include Deps file
 - [ ] DDIM Sampling implemented but doesnt work! switching from DDPM to DDIM sampling might mess up noise schedules, but for now a DDPM checkpoint doesnt work with DDIM sampling
+- [ ] **Important**: Make val set geographically consistent. As in, select ~20 perc of geographic locations for val, keep them the same over time
+- [ ] Encode timestamp somehow
+
+- [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
+
+- [ ] Add a frequency-aware loss like L2 on gradients or PSD loss to get rid of speckle noise in output
+- [ ] Try out x0 instead of epsilon param
+- [ ] Activate and test EMA Weights
+
+**Done**:
+- [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
 - [x] in dataset, implmeent bigger boxes of corruption instead of pixels
 - [x] make dataset.py a save-to-disk funcitonality, then load straight form tensors
 - [x] Implement masked loss for train/val for land pixels  
 - [x] Implement masked loss for train/val for reconstruction pixels?
 - [x] Implement two masks: known land pixels and  missing pixels? Add land to known?
-- [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
-- [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
-- [ ] Add a frequency-aware loss like L2 on gradients or PSD loss to get rid of speckle noise in output
-- [ ] Try out x0 instead of epsilon param
-- [ ] Activate and test EMA Weights
+- [x] Include Deps file
+
 
 ## RoadMap
 #### Tier 1
