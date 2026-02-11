@@ -501,10 +501,9 @@ def log_wandb_conditional_reconstruction_grid(
     num_to_plot = min(5, int(x.size(0)))
     if num_to_plot <= 0:
         return
+    # Show one representative band per sample by default. Plotting all bands can
+    # look like repeated images when channels are highly correlated.
     channels_to_plot = 1
-    if x.ndim == 4 and y_hat.ndim == 4 and y_target.ndim == 4:
-        channels_to_plot = int(min(x.size(1), y_hat.size(1), y_target.size(1)))
-    channels_to_plot = max(1, channels_to_plot)
 
     fig = None
     try:

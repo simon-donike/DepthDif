@@ -379,7 +379,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             if reference.size(1) > 1:
                 mask = mask.expand(-1, reference.size(1), -1, -1)
         mask = 1.0 - mask  # now 1 = missing
-        mask = mask.clamp_(0.0, 1.0)
+        mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
     @staticmethod
@@ -396,7 +396,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if mask.ndim == 4 and mask.size(1) == 1 and reference.ndim == 4:
             if reference.size(1) > 1:
                 mask = mask.expand(-1, reference.size(1), -1, -1)
-        mask = mask.clamp_(0.0, 1.0)
+        mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
     def p_loss(

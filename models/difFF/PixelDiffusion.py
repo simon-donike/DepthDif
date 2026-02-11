@@ -432,6 +432,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         val_ddim_eta: float = 0.0,
         log_intermediates: bool = True,
         skip_full_reconstruction_in_sanity_check: bool = True,
+        max_full_reconstruction_samples: int = 4,
         postprocess_gaussian_blur_enabled: bool = False,
         postprocess_gaussian_blur_sigma: float = 0.35,
         postprocess_gaussian_blur_kernel_size: int = 3,
@@ -461,6 +462,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.log_intermediates = bool(log_intermediates)
         self.skip_full_reconstruction_in_sanity_check = bool(
             skip_full_reconstruction_in_sanity_check
+        )
+        self.max_full_reconstruction_samples = max(
+            1, int(max_full_reconstruction_samples)
         )
         self.postprocess_gaussian_blur_enabled = bool(postprocess_gaussian_blur_enabled)
         self.postprocess_gaussian_blur_sigma = max(
@@ -502,7 +506,8 @@ class PixelDiffusionConditional(PixelDiffusion):
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Single (x, y, eo, valid_mask, land_mask, coords) validation example cached per epoch.
+        # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords)
+        # used for one epoch-end full reverse-diffusion reconstruction pass.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
@@ -597,6 +602,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             ),
             skip_full_reconstruction_in_sanity_check=bool(
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
+            ),
+            max_full_reconstruction_samples=int(
+                val_sampling_cfg.get("max_full_reconstruction_samples", 4)
             ),
             postprocess_gaussian_blur_enabled=bool(
                 gaussian_blur_cfg.get("enabled", False)
@@ -1053,7 +1061,8 @@ class PixelDiffusionConditional(PixelDiffusion):
 
     @torch.no_grad()
     def _run_single_image_full_reconstruction_and_log(self) -> None:
-        # Expensive diagnostic path: run full reverse diffusion only once on one image.
+        # Expensive diagnostic path: run full reverse diffusion only once per epoch
+        # on a small cached validation mini-batch.
         if self._cached_val_example is None:
             return
         # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
@@ -1101,38 +1110,46 @@ class PixelDiffusionConditional(PixelDiffusion):
             temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
         )
 
+        recon_batch_size = int(y_denorm.size(0))
         recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
         recon_psnr = None
         recon_ssim = None
-        # Calculate PSNR and SSIM over all bands and average them, if skimage is available and the image has valid data range.
+        # Calculate PSNR and SSIM over samples and bands and average them,
+        # if skimage is available and each slice has valid data range.
         try:
             from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
-            y_np = y_denorm.detach().float().cpu().squeeze(0).numpy()
-            y_hat_np = y_hat_denorm.detach().float().cpu().squeeze(0).numpy()
+            y_np = y_denorm.detach().float().cpu().numpy()
+            y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
             if y_np.ndim == 2:
-                y_np = y_np[None, ...]
-                y_hat_np = y_hat_np[None, ...]
+                y_np = y_np[None, None, ...]
+                y_hat_np = y_hat_np[None, None, ...]
+            elif y_np.ndim == 3:
+                y_np = y_np[:, None, ...]
+                y_hat_np = y_hat_np[:, None, ...]
             psnr_vals: list[float] = []
             ssim_vals: list[float] = []
-            for band_idx in range(y_np.shape[0]):
-                y_band = y_np[band_idx]
-                y_hat_band = y_hat_np[band_idx]
-                data_range = float(y_band.max() - y_band.min())
-                if data_range <= 0.0:
-                    continue
-                psnr_vals.append(
-                    float(
-                        peak_signal_noise_ratio(
-                            y_band, y_hat_band, data_range=data_range
+            for sample_idx in range(y_np.shape[0]):
+                for band_idx in range(y_np.shape[1]):
+                    y_band = y_np[sample_idx, band_idx]
+                    y_hat_band = y_hat_np[sample_idx, band_idx]
+                    data_range = float(y_band.max() - y_band.min())
+                    if data_range <= 0.0:
+                        continue
+                    psnr_vals.append(
+                        float(
+                            peak_signal_noise_ratio(
+                                y_band, y_hat_band, data_range=data_range
+                            )
                         )
                     )
-                )
-                ssim_vals.append(
-                    float(
-                        structural_similarity(y_band, y_hat_band, data_range=data_range)
+                    ssim_vals.append(
+                        float(
+                            structural_similarity(
+                                y_band, y_hat_band, data_range=data_range
+                            )
+                        )
                     )
-                )
             if psnr_vals:
                 recon_psnr = float(sum(psnr_vals) / len(psnr_vals))
             if ssim_vals:
@@ -1142,43 +1159,51 @@ class PixelDiffusionConditional(PixelDiffusion):
             recon_ssim = None
 
         self.log(
-            "val/recon_mse_1img",
+            "val/recon_mse_full_recon",
             recon_mse,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
             logger=True,
             sync_dist=self._should_sync_dist(),
-            batch_size=1,
+            batch_size=recon_batch_size,
         )
         if recon_psnr is not None:
             self.log(
-                "val/recon_psnr_1img",
+                "val/recon_psnr_full_recon",
                 float(recon_psnr),
                 on_step=False,
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
                 sync_dist=self._should_sync_dist(),
-                batch_size=1,
+                batch_size=recon_batch_size,
             )
         if recon_ssim is not None:
             self.log(
-                "val/recon_ssim_1img",
+                "val/recon_ssim_full_recon",
                 float(recon_ssim),
                 on_step=False,
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
                 sync_dist=self._should_sync_dist(),
-                batch_size=1,
+                batch_size=recon_batch_size,
             )
         self._log_validation_triplet_stats(x=x_denorm, y=y_denorm, y_hat=y_hat_denorm)
         self._log_common_batch_stats(
-            y_hat_denorm, prefix="val_pred", batch_size=1, on_step=False, on_epoch=True
+            y_hat_denorm,
+            prefix="val_pred",
+            batch_size=recon_batch_size,
+            on_step=False,
+            on_epoch=True,
         )
         self._log_common_batch_stats(
-            y_denorm, prefix="val_target", batch_size=1, on_step=False, on_epoch=True
+            y_denorm,
+            prefix="val_target",
+            batch_size=recon_batch_size,
+            on_step=False,
+            on_epoch=True,
         )
         # This is the one expensive full reconstruction for the epoch; always log it.
         log_wandb_conditional_reconstruction_grid(
@@ -1212,7 +1237,7 @@ class PixelDiffusionConditional(PixelDiffusion):
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:
-        # Run the one-image reconstruction after cheap validation metrics are accumulated.
+        # Run one full-reconstruction pass after cheap validation metrics are accumulated.
         self._run_single_image_full_reconstruction_and_log()
         self._cached_val_example = None
 
@@ -1328,16 +1353,20 @@ class PixelDiffusionConditional(PixelDiffusion):
             )
 
         if batch_idx == 0 and self._cached_val_example is None:
-            # Store exactly one validation sample for epoch-end full reconstruction.
+            # Cache up to N validation samples from the first val batch for one
+            # epoch-end full reverse-diffusion reconstruction pass.
+            n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
             cached_valid_mask = (
-                valid_mask[:1].detach() if valid_mask is not None else None
+                valid_mask[:n_cache].detach() if valid_mask is not None else None
             )
-            cached_land_mask = land_mask[:1].detach() if land_mask is not None else None
-            cached_eo = eo[:1].detach() if eo is not None else None
-            cached_coords = coords[:1].detach() if coords is not None else None
+            cached_land_mask = (
+                land_mask[:n_cache].detach() if land_mask is not None else None
+            )
+            cached_eo = eo[:n_cache].detach() if eo is not None else None
+            cached_coords = coords[:n_cache].detach() if coords is not None else None
             self._cached_val_example = (
-                x[:1].detach(),
-                y[:1].detach(),
+                x[:n_cache].detach(),
+                y[:n_cache].detach(),
                 cached_eo,
                 cached_valid_mask,
                 cached_land_mask,

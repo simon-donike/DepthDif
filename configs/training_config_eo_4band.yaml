@@ -12,6 +12,7 @@ training: # Internal Model Training Settings
     ddim_eta: 0.0 # Used only when sampler="ddim"; 0.0 is deterministic DDIM.
     log_intermediates: true # If true, capture and log denoising intermediates (4x4 timestep grid) during validation reconstruction.
     skip_full_reconstruction_in_sanity_check: false # If true, skip expensive full reverse-diffusion reconstruction during Lightning sanity validation.
+    max_full_reconstruction_samples: 4 # Max val samples from first val batch for the one epoch-end full reconstruction pass.
 
 trainer: # PL Trainer Settings
   max_epochs: 5000 # Maximum number of training epochs.
@@ -27,7 +28,7 @@ trainer: # PL Trainer Settings
   lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
-  val_batches_per_epoch: 50 # Optional absolute cap on validation batches/epoch (int). null uses limit_val_batches.
+  val_batches_per_epoch: 300 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
   gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
