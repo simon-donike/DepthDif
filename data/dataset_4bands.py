@@ -185,7 +185,16 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         eo_np = y_np_all[0:1]
         y_np = y_np_all[1:4]
 
-        land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
+        # Build one shared spatial water-valid mask and broadcast to all target bands.
+        # Pixels are valid only if all bands are finite and not zero; zeros are treated as land.
+        finite_all = np.isfinite(y_np).all(axis=0)
+        non_zero_all = (~np.isclose(y_np, 0.0, atol=1e-8)).all(axis=0)
+        land_mask_spatial_np = (finite_all & non_zero_all).astype(
+            np.float32, copy=False
+        )
+        land_mask_np = np.repeat(
+            land_mask_spatial_np[None, ...], repeats=y_np.shape[0], axis=0
+        )
         eo = torch.from_numpy(eo_np)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
@@ -194,9 +203,12 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         y = temperature_normalize(mode="norm", tensor=y)
 
         if self.valid_from_fill_value:
-            v = ~torch.isclose(y, self._normalized_fill_value, atol=1e-6, rtol=0.0)
-            v = v.to(dtype=torch.float32)
-            v = v * land_mask
+            # Keep a shared spatial validity mask across all bands.
+            v_per_band = ~torch.isclose(
+                y, self._normalized_fill_value, atol=1e-6, rtol=0.0
+            )
+            v_spatial = v_per_band.all(dim=0, keepdim=True).to(dtype=torch.float32)
+            v = v_spatial.expand_as(y) * land_mask
         else:
             v = land_mask.clone()
 
@@ -303,30 +315,45 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             sample = self.__getitem__(idx)
 
             eo_t = sample["eo"][0]
-            x_t = sample["x"][0]
-            y_t = sample["y"][0]
-            valid_mask_t = sample["valid_mask"][0]
-            land_mask_t = sample["land_mask"][0]
+            x_t = sample["x"]
+            y_t = sample["y"]
+            valid_mask_t = sample["valid_mask"]
+            land_mask_t = sample["land_mask"]
 
             eo = temperature_normalize(mode="denorm", tensor=eo_t)
             x = temperature_normalize(mode="denorm", tensor=x_t)
             y = temperature_normalize(mode="denorm", tensor=y_t)
 
-            eo = minmax_stretch(eo, mask=valid_mask_t, nodata_value=None).numpy()
-            x = minmax_stretch(x, mask=valid_mask_t, nodata_value=None).numpy()
-            y = minmax_stretch(y, mask=valid_mask_t, nodata_value=None).numpy()
+            eo_img = minmax_stretch(eo, mask=valid_mask_t[0], nodata_value=None).numpy()
 
-            fig, axes = plt.subplots(1, 5, figsize=(17, 4))
-            axes[0].imshow(eo, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[0].set_title("EO (band 0)")
-            axes[1].imshow(x, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[1].set_title("Input x (band 1 masked)")
-            axes[2].imshow(y, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-            axes[2].set_title("Target y (band 1)")
-            axes[3].imshow(valid_mask_t.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
-            axes[3].set_title("Valid mask")
-            axes[4].imshow(land_mask_t.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0)
-            axes[4].set_title("Land mask")
+            num_bands = int(x.shape[0])
+            fig, axes = plt.subplots(num_bands, 5, figsize=(17, 4 * num_bands), squeeze=False)
+            for band_idx in range(num_bands):
+                mask_band = valid_mask_t[band_idx]
+                land_band = land_mask_t[band_idx]
+                x_img = minmax_stretch(x[band_idx], mask=mask_band, nodata_value=None).numpy()
+                y_img = minmax_stretch(y[band_idx], mask=mask_band, nodata_value=None).numpy()
+
+                axes[band_idx, 0].imshow(eo_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 1].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 2].imshow(y_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 3].imshow(
+                    mask_band.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0
+                )
+                axes[band_idx, 4].imshow(
+                    land_band.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0
+                )
+
+                if band_idx == 0:
+                    axes[band_idx, 0].set_title("EO (band 0)")
+                    axes[band_idx, 1].set_title("Input x")
+                    axes[band_idx, 2].set_title("Target y")
+                    axes[band_idx, 3].set_title("Valid mask")
+                    axes[band_idx, 4].set_title("Land mask")
+                axes[band_idx, 0].set_ylabel(f"Band {band_idx + 1}")
+
+                for col in range(5):
+                    axes[band_idx, col].set_axis_off()
             plt.tight_layout()
             plt.savefig("temp/example_depth_tile_4bands.png")
             plt.close()
@@ -336,7 +363,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = SurfaceTempPatch4BandsLightDataset.from_config(
-        "configs/data_4band_config.yaml"
+        "configs/data_config_eo_4band.yaml"
     )
     dataset._plot_example_image()
 
@@ -353,3 +380,23 @@ if __name__ == "__main__":
         f"Land mask sum: {sample['land_mask'].sum().item()}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
+    
+    
+    # testing images
+    if False:
+        import time
+        for i in range(5):
+            dataset._plot_example_image()
+            time.sleep(4)
+    
+    # looking at values
+    if False:
+        # count 0s in x: pixels are 0s after norm!
+        zero_count = (sample["x"] == 0.0).sum().item()
+        total_count = sample["x"].numel()
+        print(f"Zero count in x: {zero_count} / {total_count} ({100 * zero_count / total_count:.2f}%)")
+        # count 0s in mask
+        mask_zero_count = (sample["valid_mask"] == 0.0).sum().item()
+        mask_total_count = sample["valid_mask"].numel()
+        print(f"Zero count in valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)")
+    

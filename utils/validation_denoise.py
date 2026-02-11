@@ -455,9 +455,20 @@ def _plot_band_image(
     tensor: torch.Tensor,
     sample_idx: int,
     *,
+    band_idx: int = 0,
     mask: torch.Tensor | None = None,
 ) -> np.ndarray:
-    image_t = tensor[sample_idx, 0].detach().float()
+    if tensor.ndim == 4:
+        channel_idx = int(max(0, min(int(band_idx), int(tensor.size(1)) - 1)))
+        image_t = tensor[sample_idx, channel_idx].detach().float()
+    elif tensor.ndim == 3:
+        image_t = tensor[sample_idx].detach().float()
+    elif tensor.ndim == 2:
+        image_t = tensor.detach().float()
+    else:
+        raise RuntimeError(
+            f"Expected tensor ndim in {{2,3,4}} for plotting, got {int(tensor.ndim)}."
+        )
     image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
     image_t = minmax_stretch(image_t, mask=mask, nodata_value=None)
     return image_t.cpu().numpy().astype(np.float32)
@@ -490,9 +501,14 @@ def log_wandb_conditional_reconstruction_grid(
     num_to_plot = min(5, int(x.size(0)))
     if num_to_plot <= 0:
         return
+    channels_to_plot = 1
+    if x.ndim == 4 and y_hat.ndim == 4 and y_target.ndim == 4:
+        channels_to_plot = int(min(x.size(1), y_hat.size(1), y_target.size(1)))
+    channels_to_plot = max(1, channels_to_plot)
 
     fig = None
     try:
+        total_rows = num_to_plot * channels_to_plot
         ncols = 3
         if eo is not None:
             ncols += 1
@@ -501,62 +517,81 @@ def log_wandb_conditional_reconstruction_grid(
         if land_mask is not None:
             ncols += 1
         fig, axes = plt.subplots(
-            num_to_plot, ncols, figsize=(4 * ncols, 3 * num_to_plot), squeeze=False
+            total_rows, ncols, figsize=(4 * ncols, 2.8 * total_rows), squeeze=False
         )
 
         for i in range(num_to_plot):
-            mask_i = _mask_for_sample(valid_mask, i)
-            x_img = _plot_band_image(x, i, mask=mask_i)
-            y_hat_img = _plot_band_image(y_hat, i, mask=mask_i)
-            y_target_img = _plot_band_image(y_target, i, mask=mask_i)
+            valid_mask_i = _mask_for_sample(valid_mask, i)
+            land_mask_i = _mask_for_sample(land_mask, i)
+            for band_idx in range(channels_to_plot):
+                row_idx = (i * channels_to_plot) + band_idx
+                mask_band = valid_mask_i
+                if mask_band is not None and mask_band.ndim == 3:
+                    mask_band = mask_band[min(band_idx, int(mask_band.size(0)) - 1)]
+                land_band = land_mask_i
+                if land_band is not None and land_band.ndim == 3:
+                    land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-            col = 0
-            axes[i, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
-            axes[i, col].set_axis_off()
-            axes[i, col].set_title("Input")
-            col += 1
+                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=mask_band)
+                y_hat_img = _plot_band_image(
+                    y_hat, i, band_idx=band_idx, mask=mask_band
+                )
+                y_target_img = _plot_band_image(
+                    y_target, i, band_idx=band_idx, mask=mask_band
+                )
 
-            if eo is not None:
-                eo_img = _plot_band_image(eo, i, mask=mask_i)
-                axes[i, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
-                axes[i, col].set_axis_off()
-                axes[i, col].set_title("EO condition")
+                col = 0
+                axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].set_axis_off()
+                if row_idx == 0:
+                    axes[row_idx, col].set_title("Input")
                 col += 1
 
-            axes[i, col].imshow(y_hat_img, cmap=cmap, vmin=0.0, vmax=1.0)
-            axes[i, col].set_axis_off()
-            axes[i, col].set_title("Reconstruction")
-            col += 1
+                if eo is not None:
+                    eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=mask_band)
+                    axes[row_idx, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].set_axis_off()
+                    if row_idx == 0:
+                        axes[row_idx, col].set_title("EO condition")
+                    col += 1
 
-            axes[i, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
-            axes[i, col].set_axis_off()
-            axes[i, col].set_title("Target")
-            col += 1
+                axes[row_idx, col].imshow(y_hat_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].set_axis_off()
+                if row_idx == 0:
+                    axes[row_idx, col].set_title("Reconstruction")
+                col += 1
 
-            if valid_mask is not None:
-                valid_img = _mask_for_sample(valid_mask, i)
-                if valid_img is not None:
-                    axes[i, col].imshow(
-                        valid_img.detach().float().cpu().numpy(),
+                axes[row_idx, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].set_axis_off()
+                if row_idx == 0:
+                    axes[row_idx, col].set_title("Target")
+                col += 1
+
+                if valid_mask is not None:
+                    if mask_band is not None:
+                        axes[row_idx, col].imshow(
+                            mask_band.detach().float().cpu().numpy(),
+                            cmap="gray",
+                            vmin=0.0,
+                            vmax=1.0,
+                        )
+                        axes[row_idx, col].set_axis_off()
+                        if row_idx == 0:
+                            axes[row_idx, col].set_title("Valid mask")
+                    col += 1
+
+                if land_mask is not None and land_band is not None:
+                    axes[row_idx, col].imshow(
+                        land_band.detach().float().cpu().numpy(),
                         cmap="gray",
                         vmin=0.0,
                         vmax=1.0,
                     )
-                    axes[i, col].set_axis_off()
-                    axes[i, col].set_title("Valid mask")
-                col += 1
+                    axes[row_idx, col].set_axis_off()
+                    if row_idx == 0:
+                        axes[row_idx, col].set_title("Land mask")
 
-            if land_mask is not None:
-                land_img = _mask_for_sample(land_mask, i)
-                if land_img is not None:
-                    axes[i, col].imshow(
-                        land_img.detach().float().cpu().numpy(),
-                        cmap="gray",
-                        vmin=0.0,
-                        vmax=1.0,
-                    )
-                    axes[i, col].set_axis_off()
-                    axes[i, col].set_title("Land mask")
+                axes[row_idx, 0].set_ylabel(f"s{i} b{band_idx}", rotation=90)
 
         fig.tight_layout()
         experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})

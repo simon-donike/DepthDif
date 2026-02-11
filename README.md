@@ -61,66 +61,42 @@ Current implemented conditioning/target setups:
 
 Loss can be computed with or without masking by valid pixels (`mask_loss_with_valid_pixels`).
 
-### Major Model Settings + Where to Configure
-These are the core model behaviors in this repo and where they are wired in config.
+### Model Description
+- **Model type**: Conditional diffusion model in pixel space (`PixelDiffusionConditional`) with a **ConvNeXt U-Net denoiser** (`UnetConvNextBlock`). CNN/U-Net-style model.
+- **Architecture (default config in this repo)**:
+  - `dim_mults=[1,2,4,8]` gives 4 encoder stages and 3 decoder stages.
+  - Encoder stage block pattern: `ConvNextBlock -> ConvNextBlock -> LinearAttention -> Downsample` (last encoder stage uses identity downsample).
+  - Bottleneck block pattern: `ConvNextBlock -> LinearAttention -> ConvNextBlock`.
+  - Decoder stage block pattern: `concat skip -> ConvNextBlock -> ConvNextBlock -> LinearAttention -> Upsample` (last decoder stage uses identity upsample).
+  - Output head: final `ConvNextBlock` followed by `1x1 Conv2d` to `generated_channels`.
+- **Parameter count**: current EO config is approximately **57M parameters**.
+- **Backbone I/O**:
+  - Input to denoiser at each reverse/training step: `cat([x_t, condition], dim=1)` with shape `(B, generated_channels + condition_channels, H, W)`.
+  - Output from denoiser: `(B, generated_channels, H, W)` (predicts `epsilon` noise or `x0`, based on `model.parameterization`).
+- **Conditioning construction (EO task)**:
+  - Dataset returns `eo: (B,1,H,W)`, `x: (B,3,H,W)`, `valid_mask: (B,3,H,W)`, `y: (B,3,H,W)`.
+  - With EO config (`condition_include_eo=true`, `condition_mask_channels=1`), condition is:
+    - `condition = cat([eo, x, valid_mask_reduced], dim=1) = (B,5,H,W)`
+    - where `valid_mask_reduced` is `(B,1,H,W)`.
+- **Training flow (EO task)**:
+  - Target `y` is the diffusion sample branch: `(B,3,H,W)`.
+  - Random timestep `t` is sampled per item: `(B,)`.
+  - Forward process adds Gaussian noise to `y` only: `y_t = q(y_t | y_0)` and returns sampled `noise` `(B,3,H,W)`.
+  - Denoiser input becomes `cat([y_t, condition], dim=1) = (B,8,H,W)`.
+  - With `parameterization: "epsilon"` (default), loss compares predicted noise vs sampled noise.
+- **Inference flow**:
+  - Start from random latent `x_T ~ N(0,I)` with shape `(B,3,H,W)`.
+  - Keep `condition` fixed (`(B,5,H,W)` in EO mode) through all reverse steps.
+  - At each step, denoiser input is `cat([x_t, condition], dim=1) = (B,8,H,W)`, output `(B,3,H,W)`.
+  - Sampler update:
+    - DDPM: injects stochastic noise each step for `t>0`.
+    - DDIM: deterministic when `eta=0`, stochastic when `eta>0`.
+- **Where noise is injected**:
+  - Noise is **added to the generated/target branch** (`y` in training, latent `x_t` in inference).
+  - Noise is **not added to conditioning channels** (`eo`, `x`, `valid_mask`).
+  - Conditioning is provided by **channel concatenation**, not by adding noise to condition tensors.
 
-- **Input channels with mask (conditioning channels)**  
-  The conditional diffusion model receives the corrupted data plus a mask channel.  
-  Configure in `configs/model_config.yaml`:
-  - `model.condition_channels`: total conditioning channels passed to the denoiser (data + mask).
-  - `model.condition_mask_channels`: number of those channels that are mask semantics (excluded from normalization).  
-  - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
-  - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
-  In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
-  This is built from `x` and `valid_mask` in the dataset.
-
-- **Masked pixel loss computation**  
-  Loss can be restricted to valid (ocean) pixels to avoid land/no‑data bias.  
-  Configure in `configs/model_config.yaml`:
-  - `model.mask_loss_with_valid_pixels: true`  
-  When enabled, the conditional loss is multiplied by the `valid_mask` and normalized by its sum.
-
-- **Coordinate encoding + FiLM injection**  
-  Patch-center coordinates are encoded and injected via FiLM scale/shift in every ConvNeXt block.  
-  Configure in:
-  - `configs/data_config.yaml`: `dataset.return_coords: true` (adds coords to each batch)
-  - `configs/model_config.yaml`: `model.coord_conditioning.enabled: true`
-  - `model.coord_conditioning.encoding`: `unit_sphere`, `sincos`, or `raw`
-  - `model.coord_conditioning.embed_dim`: embedding width (defaults to `unet.dim` if null)
-
-- **Anchoring known pixels at inference (inpainting clamp)**  
-  During sampling, known pixels are overwritten at every diffusion step for stability. See image below: top-left shows conditioning with mask, the other images show 15 intermediate denoising steps with noise only injected into thos epixels where no observations are present to anchor values.  
-  Configure in `configs/model_config.yaml`:
-  - `model.clamp_known_pixels: true`  
-  This uses the conditioning input + mask to keep known values fixed while denoising.
-
-  ![img](assets/clamped_pixels.png)  
-
-### Minor Model Settings + Where to Configure
-These are the model training behaviors in this repo and where they are wired in config.
-
-- **Learning-rate scheduler (ReduceLROnPlateau)**  
-  Configure in `configs/training_config.yaml`:
-  - `scheduler.reduce_on_plateau.enabled`
-  - `scheduler.reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
-  - `trainer.lr_logging_interval` (learning-rate monitor cadence)
-
-- **Checkpointing + resume**  
-  Configure in:
-  - `configs/model_config.yaml`: `model.resume_checkpoint` (false/null or a `.ckpt` path)
-  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (best-checkpoint metric)
-
-- **W&B logging (metrics/images/watch)**  
-  Configure in `configs/training_config.yaml`:
-  - `wandb.project`, `wandb.entity`, `wandb.run_name`, `wandb.log_model`
-  - `wandb.verbose`, `wandb.log_images_every_n_steps`, `wandb.log_stats_every_n_steps`
-  - `wandb.watch_gradients`, `wandb.watch_parameters`, `wandb.watch_log_freq`, `wandb.watch_log_graph`
-
-- **Validation-time sampling + diagnostics**  
-  Configure in `configs/training_config.yaml`:
-  - `training.validation_sampling.sampler` (`ddpm` or `ddim`)
-  - `training.validation_sampling.ddim_num_timesteps`, `ddim_eta`
-  Notes: PSNR/SSIM are computed when `skimage` is available; one cached val example per epoch is used for full reconstruction logging.
+For model/training knobs, see **Appendix A1** (major + minor settings) and **Appendix A2** (FiLM coordinate injection details).
 
 ## Training
 Train with `train.py`. You can now choose which config files to use from CLI.
@@ -135,7 +111,6 @@ python3 train.py \
 
 Notes:
 - `--train-config` and `--training-config` are equivalent.
-- `--model-config` also accepts `--mdoel-config` (typo alias).
 - If omitted, all three arguments default to:
   - `configs/data_config.yaml`
   - `configs/training_config.yaml`
@@ -143,7 +118,7 @@ Notes:
 
 ### EO + 3-band conditional training
 Use the EO/4-band config set to train with:
-- condition = `eo` + corrupted `x` (3 bands) + `valid_mask` (1 band) = 5 condition channels
+- condition = `eo` (1 band)  + corrupted `x` (3 bands) + `valid_mask` (1 band) = 5 condition channels
 - target = `y` (3 clean temperature bands)
 
 ```bash
@@ -165,7 +140,7 @@ python3 train.py \
 
 ### What happens during training
 - A timestamped run folder is created under `logs/`.
-- The exact config files used for the run are copied into that folder.
+- The exact config files used for the run are copied into that folder, Callback saves top k=2 checkpoints.
 - Model type is `cond_px_dif` (`PixelDiffusionConditional`).
 - Training resumes automatically when `model.resume_checkpoint` is set to a valid `.ckpt` path in `configs/model_config.yaml`.
 
@@ -264,6 +239,7 @@ Currently in the DDPM setting, a lot of compute is spent in very noisy early ste
 - `mask_loss_with_valid_pixels` does the inverse? 😂 - Fixed ✅, not yet tested in training run
 ![img](assets/val_issue.png)  
 - somewhat speckled, noisy output. Ideas: DDIM sampling, structure-aware weighted loss, x0 parameterization. 
+- Land mask potentially doesn't work, at least its not plotted right currently
 
 ## Untested Imlpementations:
 - `mask_loss_with_valid_pixels` - doesnt work - fixed ✅
@@ -300,7 +276,72 @@ none currently.
 - [x] More sophisticated way to feed masks to model, how to do it? masks * img?   
 - [ ] more capable backbone?   
 
-## Appendix: FiLM Coordinate Injection Details
+# Appendix: 
+
+## A1: Major and Minor Model Settings
+
+These are the model/training behaviors in this repo and where they are wired in config.
+
+### Major model settings
+
+- **Input channels with mask (conditioning channels)**  
+  The conditional diffusion model receives corrupted data plus mask channels.  
+  Configure in `configs/model_config.yaml`:
+  - `model.condition_channels`: total conditioning channels passed to the denoiser (data + mask).
+  - `model.condition_mask_channels`: number of condition channels that are mask semantics.
+  - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
+  - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
+  In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
+
+- **Masked pixel loss computation**  
+  Loss can be restricted to valid (ocean) pixels to avoid land/no-data bias.  
+  Configure in `configs/model_config.yaml`:
+  - `model.mask_loss_with_valid_pixels: true`  
+  When enabled, the conditional loss is multiplied by the valid mask and normalized by its sum.
+
+- **Anchoring known pixels at inference (inpainting clamp)**  
+  During sampling, known pixels are overwritten at every diffusion step for stability.  
+  Configure in `configs/model_config.yaml`:
+  - `model.clamp_known_pixels: true`  
+  This uses the conditioning input + mask to keep known values fixed while denoising.
+
+  ![img](assets/clamped_pixels.png)  
+
+- **Coordinate encoding + FiLM injection**  
+  Patch-center coordinates are encoded and injected via FiLM scale/shift in ConvNeXt blocks.  
+  Configure in:
+  - `configs/data_config.yaml`: `dataset.return_coords: true` (adds coords to each batch)
+  - `configs/model_config.yaml`: `model.coord_conditioning.enabled: true`
+  - `model.coord_conditioning.encoding`: `unit_sphere`, `sincos`, or `raw`
+  - `model.coord_conditioning.embed_dim`: embedding width (defaults to `unet.dim` if null)
+  Exact mechanism is described in **Appendix A2**.
+
+### Minor model/training settings
+
+- **Learning-rate scheduler (ReduceLROnPlateau)**  
+  Configure in `configs/training_config.yaml`:
+  - `scheduler.reduce_on_plateau.enabled`
+  - `scheduler.reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
+  - `trainer.lr_logging_interval` (learning-rate monitor cadence)
+
+- **Checkpointing + resume**  
+  Configure in:
+  - `configs/model_config.yaml`: `model.resume_checkpoint` (false/null or a `.ckpt` path)
+  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (best-checkpoint metric)
+
+- **W&B logging (metrics/images/watch)**  
+  Configure in `configs/training_config.yaml`:
+  - `wandb.project`, `wandb.entity`, `wandb.run_name`, `wandb.log_model`
+  - `wandb.verbose`, `wandb.log_images_every_n_steps`, `wandb.log_stats_every_n_steps`
+  - `wandb.watch_gradients`, `wandb.watch_parameters`, `wandb.watch_log_freq`, `wandb.watch_log_graph`
+
+- **Validation-time sampling + diagnostics**  
+  Configure in `configs/training_config.yaml`:
+  - `training.validation_sampling.sampler` (`ddpm` or `ddim`)
+  - `training.validation_sampling.ddim_num_timesteps`, `ddim_eta`
+  Notes: PSNR/SSIM are computed when `skimage` is available; one cached val example per epoch is used for full reconstruction logging.
+
+## A2: FiLM Coordinate Injection Details
 
 ### Coordinate Encoding Options
 Encoding options (set with `model.coord_conditioning.encoding`):
