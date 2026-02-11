@@ -1095,6 +1095,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             "x": x,
             "eo": eo,
             "valid_mask": valid_mask,
+            "land_mask": land_mask,
             "coords": coords,
             "sampler": self.val_sampler,
         }

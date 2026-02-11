@@ -33,9 +33,11 @@ class DepthTileDataModule(pl.LightningDataModule):
         self._train_val_split_done = val_dataset is not None
 
     def setup(self, stage: str | None = None) -> None:
+        # Reuse existing split when a dedicated val_dataset was provided.
         if self._train_val_split_done:
             return
 
+        # Build a deterministic train/val partition from one base dataset.
         total_len = len(self.dataset)
         if total_len == 0:
             raise RuntimeError("Dataset is empty; cannot create train/val split.")
@@ -47,6 +49,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             val_len = 0
         train_len = total_len - val_len
 
+        # Seeded split keeps train/val assignment stable across runs.
         generator = torch.Generator().manual_seed(self.seed)
         self.train_dataset, self.val_dataset = random_split(
             self.dataset,
@@ -57,6 +60,7 @@ class DepthTileDataModule(pl.LightningDataModule):
 
     def _build_loader(self, dataset: Dataset, is_val: bool = False) -> DataLoader:
         cfg = self.dataloader_cfg
+        # Resolve train/val-specific overrides with sensible defaults.
         batch_size = int(cfg.get("val_batch_size" if is_val else "batch_size", 16))
         num_workers_key = "val_num_workers" if is_val else "num_workers"
         num_workers = int(cfg.get(num_workers_key, 0 if is_val else 4))
@@ -77,6 +81,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
         )
+        # prefetch_factor is only valid when worker processes are enabled.
         if num_workers > 0 and prefetch_factor is not None:
             kwargs["prefetch_factor"] = int(prefetch_factor)
         return DataLoader(**kwargs)

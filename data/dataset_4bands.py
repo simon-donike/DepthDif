@@ -57,6 +57,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         self.valid_from_fill_value = bool(valid_from_fill_value)
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        self.eo_dropout_prob = 0.0
         if self.enable_transform and self.return_coords:
             warnings.warn(
                 "Geometric augmentation is enabled while return_coords=true. "
@@ -76,6 +77,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         if not self.csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {self.csv_path}")
 
+        # Read the patch index once; rows are resolved to absolute paths on demand in __getitem__.
         import pandas as pd
 
         if self.csv_path.suffix.lower() == ".parquet":
@@ -85,6 +87,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         if "y_npy_path" not in df.columns:
             raise RuntimeError("Index is missing required column 'y_npy_path'.")
 
+        # Support either explicit split column or deterministic local split for reproducibility.
         if self.split in {"train", "val"}:
             if "split" not in df.columns:
                 n_samples = len(df)
@@ -109,6 +112,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         elif self.split != "all":
             raise ValueError("split must be one of: 'all', 'train', 'val'")
 
+        # Coordinate conditioning needs patch bounds from the index.
         if self.return_coords:
             required_cols = {"lat0", "lat1", "lon0", "lon1"}
             missing = required_cols.difference(df.columns)
@@ -164,12 +168,14 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         return len(self._rows)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
+        # Resolve relative file paths against the index location.
         row = self._rows[int(idx)]
         y_rel_path = Path(str(row["y_npy_path"]))
         y_abs_path = (
             y_rel_path if y_rel_path.is_absolute() else self.csv_dir / y_rel_path
         )
 
+        # Expect at least 4 channels: EO (surface) + 3 target depth bands.
         y_np_all = np.load(y_abs_path).astype(np.float32, copy=False)
         if y_np_all.ndim == 2:
             raise RuntimeError(
@@ -182,6 +188,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
                 "(expected at least 4 channels)."
             )
 
+        # Channel layout: [0]=EO condition, [1:4]=supervised depth targets.
         eo_np = y_np_all[0:1]
         y_np = y_np_all[1:4]
 
@@ -202,6 +209,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         eo = temperature_normalize(mode="norm", tensor=eo)
         y = temperature_normalize(mode="norm", tensor=y)
 
+        # Compute per-pixel training validity from fill values, then combine with land/water mask.
         if self.valid_from_fill_value:
             # Keep a shared spatial validity mask across all bands.
             v_per_band = ~torch.isclose(
@@ -212,6 +220,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         else:
             v = land_mask.clone()
 
+        # Apply the same geometric transform to data and masks to keep them aligned.
         if self.enable_transform:
             k_rot, flip_h, flip_v = self._sample_aug_params()
             eo = self._apply_geometric_augment(eo, k_rot, flip_h, flip_v)
@@ -225,6 +234,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         valid_mask = v.clone()
         y_corrupt = y_clean.clone()
 
+        # Corrupt x by masking random spatial patches that are shared across all target channels.
         if self.mask_fraction > 0.0:
             _, h, w = y_corrupt.shape
             target = int(round(self.mask_fraction * h * w))
@@ -252,10 +262,14 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
                 valid_mask[:, patch_mask] = 0.0
                 y_corrupt[:, patch_mask] = 0.0
 
+        # Keep tensors finite before returning a batch dict.
         x = y_corrupt
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        # Random dropout of EO conditioning for ablation/testing (after all other processing to keep it simple).
+        if self.eo_dropout_prob > 0.0 and bool(torch.rand(()) < self.eo_dropout_prob):
+            eo = torch.zeros_like(eo)
 
         sample: dict[str, Any] = {
             "eo": eo,

@@ -214,6 +214,10 @@ def main(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
     dataset = build_dataset(data_config_path=data_config_path, ds_cfg=ds_cfg)
+    if hasattr(dataset, "eo_dropout_prob"):
+        dataset.eo_dropout_prob = float(
+            max(0.0, min(1.0, float(dataloader_cfg.get("eo_dropout_prob", 0.0))))
+        )
     datamodule = DepthTileDataModule(
         dataset=dataset,
         dataloader_cfg=dataloader_cfg,

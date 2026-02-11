@@ -72,12 +72,14 @@ class SurfaceTempPatchLightDataset(Dataset):
         if not self.csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {self.csv_path}")
 
+        # Read the patch index once and keep row metadata in memory.
         import pandas as pd
 
         df = pd.read_csv(self.csv_path)
         if "y_npy_path" not in df.columns:
             raise RuntimeError("CSV is missing required column 'y_npy_path'.")
 
+        # If split labels are missing, derive a deterministic split so runs are repeatable.
         if self.split in {"train", "val"}:
             if "split" not in df.columns:
                 # Deterministic split if CSV is missing split column.
@@ -103,6 +105,7 @@ class SurfaceTempPatchLightDataset(Dataset):
         elif self.split != "all":
             raise ValueError("split must be one of: 'all', 'train', 'val'")
 
+        # Coordinate conditioning requires patch bounds in index metadata.
         if self.return_coords:
             required_cols = {"lat0", "lat1", "lon0", "lon1"}
             missing = required_cols.difference(df.columns)
@@ -158,12 +161,14 @@ class SurfaceTempPatchLightDataset(Dataset):
         return len(self._rows)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
+        # Resolve sample file path relative to the CSV folder.
         row = self._rows[int(idx)]
         y_rel_path = Path(str(row["y_npy_path"]))
         y_abs_path = (
             y_rel_path if y_rel_path.is_absolute() else self.csv_dir / y_rel_path
         )
 
+        # Load target tile and precompute a land/finite mask before normalization.
         y_np = np.load(y_abs_path).astype(np.float32, copy=False)
         # Land mask derived before normalization; keep per-channel mask.
         land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
@@ -178,6 +183,7 @@ class SurfaceTempPatchLightDataset(Dataset):
             )
         y = temperature_normalize(mode="norm", tensor=y)
 
+        # Validity mask marks learnable pixels (exclude fill values and invalid land pixels).
         if self.valid_from_fill_value:
             v = ~torch.isclose(y, self._normalized_fill_value, atol=1e-6, rtol=0.0)
             v = v.to(dtype=torch.float32)
@@ -185,6 +191,7 @@ class SurfaceTempPatchLightDataset(Dataset):
         else:
             v = land_mask.clone()
 
+        # Keep masks and data synchronized under random rotation/flip augmentation.
         if self.enable_transform:
             k_rot, flip_h, flip_v = self._sample_aug_params()
             y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
@@ -197,6 +204,7 @@ class SurfaceTempPatchLightDataset(Dataset):
         valid_mask = v.clone()
         y_corrupt = y_clean.clone()
 
+        # Generate sparse-observation inputs by masking random spatial patches in x.
         if self.mask_fraction > 0.0:
             _, h, w = y_corrupt.shape
             target = int(round(self.mask_fraction * h * w))
@@ -224,6 +232,7 @@ class SurfaceTempPatchLightDataset(Dataset):
                 valid_mask[hide] = 0.0
                 y_corrupt[hide] = 0.0
 
+        # Final sanitize step to avoid propagating NaN/Inf into training.
         x = y_corrupt
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
