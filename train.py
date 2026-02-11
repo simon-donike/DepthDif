@@ -28,6 +28,7 @@ def load_yaml(path: str) -> dict[str, Any]:
 
 # Resolve an optional resume checkpoint path and validate it early.
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
+    # Accept false/null to start fresh; otherwise require a valid checkpoint path string.
     resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
     if resume_cfg is False or resume_cfg is None:
         return None
@@ -92,6 +93,7 @@ def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
 def build_wandb_logger(
     training_cfg: dict[str, Any], model: pl.LightningModule
 ) -> WandbLogger:
+    # Build logger from config first; watch settings are attached conditionally below.
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
         project=wandb_cfg.get("project", "DepthDif"),
@@ -114,10 +116,12 @@ def build_wandb_logger(
 
 
 def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> None:
+    # In offline/disabled logger modes experiment may be unavailable.
     experiment = getattr(logger, "experiment", None)
     if experiment is None:
         return
 
+    # Upload exact local config files so each run can be reproduced from W&B artifacts.
     for cfg_path in config_paths:
         path = Path(cfg_path)
         if path.is_file():
@@ -126,6 +130,7 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
 
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
+    # Prefer explicit dataset variant from config, with filename-based fallback for old configs.
     variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
     if variant is None:
         # Backward-compatible fallback: infer from config filename if explicit variant is absent.
@@ -137,6 +142,7 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
 
 
 def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
+    # Route to dataset implementation matching the requested training task.
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"temp_v1", "single_band", "1band", "default"}:
         return SurfaceTempPatchLightDataset.from_config(
@@ -164,6 +170,7 @@ def main(
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
+    # Create one run directory per launch; non-zero ranks reuse the resolved path.
     # Use one timestamped run directory; only global rank 0 creates it.
     run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_dir = Path("logs") / run_stamp
@@ -183,6 +190,7 @@ def main(
     model_cfg = load_yaml(model_config_path)
     training_cfg = load_yaml(training_config_path)
     data_cfg = load_yaml(data_config_path)
+    # Resolve resume path once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
     model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
@@ -204,6 +212,7 @@ def main(
     # Build dataset from config while preserving default temp_v1 behavior.
     ds_cfg = data_cfg.get("dataset", {})
     split_cfg = data_cfg.get("split", {})
+    # Training config owns dataloader behavior; selected data config can still override val shuffle.
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
     data_dataloader_cfg = data_cfg.get("dataloader", {})
     if "val_shuffle" in data_dataloader_cfg:
@@ -213,6 +222,7 @@ def main(
         raise ValueError(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
+    # Instantiate dataset variant and optionally inject train-time EO dropout setting.
     dataset = build_dataset(data_config_path=data_config_path, ds_cfg=ds_cfg)
     if hasattr(dataset, "eo_dropout_prob"):
         dataset.eo_dropout_prob = float(
@@ -226,6 +236,7 @@ def main(
     )
 
     # Instanciate appropriate model class from config.
+    # Both model builders receive the datamodule because validation utilities query loaders from it.
     if model_type == "cond_px_dif":
         model = PixelDiffusionConditional.from_config(
             model_config_path=model_config_path,
@@ -246,10 +257,12 @@ def main(
     # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(training_cfg, model)
     if is_global_zero:
+        # Avoid duplicate uploads from DDP worker ranks.
         upload_configs_to_wandb(
             logger,
             [model_config_path, data_config_path, training_config_path],
         )
+    # Save only top-k checkpoints by monitored validation metric.
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best",
@@ -264,6 +277,7 @@ def main(
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
+    # Keep backward compatibility with legacy num_gpus while supporting Lightning auto config.
     if num_gpus is not None:
         num_gpus = int(num_gpus)
         accelerator = "gpu" if num_gpus > 0 else "cpu"
@@ -304,6 +318,7 @@ def main(
 
 
 def parse_args() -> argparse.Namespace:
+    # Keep CLI names stable and map aliases to canonical destination keys.
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",
