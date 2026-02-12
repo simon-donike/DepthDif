@@ -9,7 +9,7 @@ import yaml
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
-from models.difFF import PixelDiffusion, PixelDiffusionConditional
+from models.difFF import PixelDiffusionConditional
 
 # ----------------------------
 # In-script settings
@@ -66,6 +66,16 @@ def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
     )
 
 
+def resolve_model_type(model_cfg: dict[str, Any]) -> str:
+    model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
+    if model_type == "cond_px_dif":
+        return model_type
+    raise ValueError(
+        "Unsupported model.model_type value "
+        f"'{model_type}'. Only 'cond_px_dif' is supported; legacy 'px_dif' was removed."
+    )
+
+
 def build_datamodule(
     dataset: torch.utils.data.Dataset,
     data_cfg: dict[str, Any],
@@ -91,23 +101,14 @@ def build_model(
     training_config_path: str,
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
-) -> PixelDiffusion | PixelDiffusionConditional:
-    model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif"))
-    if model_type == "cond_px_dif":
-        return PixelDiffusionConditional.from_config(
-            model_config_path=model_config_path,
-            data_config_path=data_config_path,
-            training_config_path=training_config_path,
-            datamodule=datamodule,
-        )
-    if model_type == "px_dif":
-        return PixelDiffusion.from_config(
-            model_config_path=model_config_path,
-            data_config_path=data_config_path,
-            training_config_path=training_config_path,
-            datamodule=datamodule,
-        )
-    raise ValueError(f"Unsupported model_type '{model_type}'.")
+) -> PixelDiffusionConditional:
+    resolve_model_type(model_cfg)
+    return PixelDiffusionConditional.from_config(
+        model_config_path=model_config_path,
+        data_config_path=data_config_path,
+        training_config_path=training_config_path,
+        datamodule=datamodule,
+    )
 
 
 def resolve_checkpoint_path(ckpt_override: str | None, model_cfg: dict[str, Any]) -> str | None:
@@ -142,7 +143,7 @@ def pretty_shape(value: Any) -> str:
 
 
 def build_random_batch(
-    model: PixelDiffusion | PixelDiffusionConditional,
+    model: PixelDiffusionConditional,
     data_cfg: dict[str, Any],
     batch_size: int,
     height: int,
@@ -185,18 +186,13 @@ def build_random_batch(
 
 
 def run_predict_once(
-    model: PixelDiffusion | PixelDiffusionConditional,
+    model: PixelDiffusionConditional,
     batch: dict[str, Any],
     include_intermediates: bool,
 ) -> dict[str, Any]:
     if include_intermediates:
         batch = dict(batch)
         batch["return_intermediates"] = True
-
-    if not hasattr(model, "predict_step"):
-        raise RuntimeError(
-            "Model does not implement predict_step. Use a conditional model (model_type='cond_px_dif')."
-        )
 
     with torch.no_grad():
         return model.predict_step(batch, batch_idx=0)
@@ -216,6 +212,7 @@ def main() -> None:
     model_cfg = load_yaml(MODEL_CONFIG_PATH)
     data_cfg = load_yaml(DATA_CONFIG_PATH)
     training_cfg = load_yaml(TRAIN_CONFIG_PATH)
+    resolve_model_type(model_cfg)
 
     device = choose_device(DEVICE)
 

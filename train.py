@@ -17,7 +17,7 @@ from pytorch_lightning.loggers import WandbLogger
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
-from models.difFF import PixelDiffusion, PixelDiffusionConditional
+from models.difFF import PixelDiffusionConditional
 
 
 # Centralized YAML loader for config files.
@@ -161,6 +161,16 @@ def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
     )
 
 
+def resolve_model_type(model_cfg: dict[str, Any]) -> str:
+    model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
+    if model_type == "cond_px_dif":
+        return model_type
+    raise ValueError(
+        "Unsupported model.model_type value "
+        f"'{model_type}'. Only 'cond_px_dif' is supported; legacy 'px_dif' was removed."
+    )
+
+
 def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
@@ -186,14 +196,14 @@ def main(
         shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
         shutil.copy2(training_config_path, run_dir / Path(training_config_path).name)
 
-    # Load configuration and choose model family.
+    # Load configuration and validate model settings.
     model_cfg = load_yaml(model_config_path)
     training_cfg = load_yaml(training_config_path)
     data_cfg = load_yaml(data_config_path)
     # Resolve resume path once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
-    model_type = model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+    resolve_model_type(model_cfg)
 
     # Use Tensor Cores efficiently for fp16/bf16 mixed precision.
     torch.set_float32_matmul_precision(str(trainer_cfg.get("matmul_precision", "high")))
@@ -236,24 +246,13 @@ def main(
         seed=int(ds_cfg.get("random_seed", 7)),
     )
 
-    # Instanciate appropriate model class from config.
-    # Both model builders receive the datamodule because validation utilities query loaders from it.
-    if model_type == "cond_px_dif":
-        model = PixelDiffusionConditional.from_config(
-            model_config_path=model_config_path,
-            data_config_path=data_config_path,
-            training_config_path=training_config_path,
-            datamodule=datamodule,
-        )
-    elif model_type == "px_dif":
-        model = PixelDiffusion.from_config(
-            model_config_path=model_config_path,
-            data_config_path=data_config_path,
-            training_config_path=training_config_path,
-            datamodule=datamodule,
-        )
-    else:
-        raise ValueError(f"Unsupported model_type: {model_type}")
+    # Instantiate the conditional model from config.
+    model = PixelDiffusionConditional.from_config(
+        model_config_path=model_config_path,
+        data_config_path=data_config_path,
+        training_config_path=training_config_path,
+        datamodule=datamodule,
+    )
 
     # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(training_cfg, model)

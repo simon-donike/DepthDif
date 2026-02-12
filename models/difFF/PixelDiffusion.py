@@ -14,7 +14,6 @@ import yaml
 from .DenoisingDiffusionProcess import (
     DDIM_Sampler,
     DenoisingDiffusionConditionalProcess,
-    DenoisingDiffusionProcess,
 )
 from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
@@ -26,368 +25,7 @@ from utils.validation_denoise import (
 )
 
 
-class PixelDiffusion(pl.LightningModule):
-    def __init__(
-        self,
-        datamodule: pl.LightningDataModule | None = None,
-        generated_channels: int = 1,
-        parameterization: str = "epsilon",
-        num_timesteps: int = 1000,
-        noise_schedule: str = "linear",
-        noise_beta_start: float = 1e-4,
-        noise_beta_end: float = 2e-2,
-        unet_dim: int = 64,
-        unet_dim_mults: tuple[int, ...] = (1, 2, 4, 8),
-        unet_with_time_emb: bool = True,
-        unet_output_mean_scale: bool = False,
-        unet_residual: bool = False,
-        batch_size: int = 1,
-        lr: float = 1e-3,
-        wandb_verbose: bool = True,
-        log_stats_every_n_steps: int = 1,
-        log_images_every_n_steps: int = 200,
-    ) -> None:
-        super().__init__()
-        self.save_hyperparameters(ignore=["datamodule"])
-
-        self.datamodule = datamodule
-        self.lr = lr
-        self.batch_size = batch_size
-        self.wandb_verbose = wandb_verbose
-        self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
-        self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
-
-        # Core diffusion object:
-        # - forward process q(x_t | x_0) adds Gaussian noise over timesteps
-        # - learned reverse process p_theta(x_{t-1} | x_t) removes it.
-        self.model = DenoisingDiffusionProcess(
-            generated_channels=generated_channels,
-            parameterization=parameterization,
-            num_timesteps=num_timesteps,
-            schedule=noise_schedule,
-            beta_start=noise_beta_start,
-            beta_end=noise_beta_end,
-            unet_dim=unet_dim,
-            unet_dim_mults=unet_dim_mults,
-            unet_with_time_emb=unet_with_time_emb,
-            unet_output_mean_scale=unet_output_mean_scale,
-            unet_residual=unet_residual,
-        )
-
-    @classmethod
-    def from_config(
-        cls,
-        model_config_path: str = "configs/model_config.yaml",
-        data_config_path: str = "configs/data_config.yaml",
-        training_config_path: str = "configs/training_config.yaml",
-        datamodule: pl.LightningDataModule | None = None,
-    ) -> "PixelDiffusion":
-        model_cfg = cls._load_yaml(model_config_path)
-        data_cfg = cls._load_yaml(data_config_path)
-        training_cfg = cls._load_yaml(training_config_path)
-
-        m = model_cfg.get("model", {})
-        t = training_cfg.get("training", model_cfg.get("training", {}))
-        noise_cfg = t.get("noise", {})
-        w = training_cfg.get("wandb", model_cfg.get("wandb", {}))
-        d = training_cfg.get("dataloader", data_cfg.get("dataloader", {}))
-        unet_kwargs = cls._parse_unet_config(m)
-
-        return cls(
-            datamodule=datamodule,
-            generated_channels=int(m.get("generated_channels", m.get("bands", 1))),
-            parameterization=str(m.get("parameterization", "epsilon")),
-            num_timesteps=int(
-                noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
-            ),
-            noise_schedule=str(
-                noise_cfg.get("schedule", m.get("noise_schedule", "linear"))
-            ),
-            noise_beta_start=float(
-                noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))
-            ),
-            noise_beta_end=float(
-                noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))
-            ),
-            **unet_kwargs,
-            batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
-            lr=float(t.get("lr", 1e-3)),
-            wandb_verbose=bool(w.get("verbose", True)),
-            log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
-            log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
-        )
-
-    @staticmethod
-    def _load_yaml(path: str) -> dict[str, Any]:
-        with Path(path).open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-
-    @staticmethod
-    def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:
-        if isinstance(value, str):
-            parts = [p.strip() for p in value.split(",") if p.strip()]
-            value = parts if parts else [1, 2, 4, 8]
-        elif isinstance(value, (int, float)):
-            value = [int(value)]
-        elif not isinstance(value, (list, tuple)):
-            value = [1, 2, 4, 8]
-
-        dim_mults = tuple(int(v) for v in value)
-        if len(dim_mults) == 0:
-            dim_mults = (1, 2, 4, 8)
-        return dim_mults
-
-    @classmethod
-    def _parse_unet_config(cls, model_section: dict[str, Any]) -> dict[str, Any]:
-        unet = model_section.get("unet", {})
-        return {
-            "unet_dim": int(unet.get("dim", 64)),
-            "unet_dim_mults": cls._parse_unet_dim_mults(
-                unet.get("dim_mults", [1, 2, 4, 8])
-            ),
-            "unet_with_time_emb": bool(unet.get("with_time_emb", True)),
-            "unet_output_mean_scale": bool(unet.get("output_mean_scale", False)),
-            "unet_residual": bool(unet.get("residual", False)),
-        }
-
-    @torch.no_grad()
-    def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
-        # Inference runs reverse diffusion and returns outputs in dataset-standardized space.
-        return self.output_T(self.model(*args, **kwargs))
-
-    def input_T(self, value: torch.Tensor) -> torch.Tensor:
-        # Dataset already provides standardized temperatures (z-score), so keep identity here.
-        # This avoids a second normalization pass and preserves the training target distribution.
-        return value
-
-    def output_T(self, value: torch.Tensor) -> torch.Tensor:
-        # Return samples in the same standardized space used by the dataset.
-        return value
-
-    def _extract_unconditional_target(self, batch: Any) -> torch.Tensor:
-        if isinstance(batch, dict):
-            return batch["y"]
-        if isinstance(batch, (tuple, list)):
-            return batch[-1]
-        return batch
-
-    @staticmethod
-    def _should_sync_dist() -> bool:
-        return torch.distributed.is_available() and torch.distributed.is_initialized()
-
-    def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        target = self._extract_unconditional_target(batch)
-        target_t = self.input_T(target)
-        # Log effective diffusion-space stats right before noising starts.
-        self._log_pre_diffusion_stats(
-            target_t, prefix="train_target", batch_size=int(target.size(0))
-        )
-        # Diffusion training objective (p_loss):
-        # sample random timestep t, noise x_0 -> x_t, and train UNet on selected target
-        # parameterization ("epsilon" noise or "x0" clean sample).
-        loss = self.model.p_loss(target_t)
-
-        self.log(
-            "train/loss",
-            loss,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=target.size(0),
-        )
-        self._log_common_batch_stats(
-            target, prefix="train", batch_size=int(target.size(0))
-        )
-        self._maybe_log_wandb_images(batch=batch, output=target, prefix="train")
-        return loss
-
-    def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        target = self._extract_unconditional_target(batch)
-        target_t = self.input_T(target)
-        # Log effective diffusion-space stats right before noising starts.
-        self._log_pre_diffusion_stats(
-            target_t, prefix="val_target", batch_size=int(target.size(0))
-        )
-        # Use the same denoising objective at validation time to track optimization progress.
-        loss = self.model.p_loss(target_t)
-
-        self.log(
-            "val/loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=target.size(0),
-        )
-        loss_ckpt = torch.nan_to_num(loss.detach(), nan=1e9, posinf=1e9, neginf=1e9)
-        self.log(
-            "val/loss_ckpt",
-            loss_ckpt,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=False,
-            logger=True,
-            sync_dist=True,
-            batch_size=target.size(0),
-        )
-        self._log_common_batch_stats(
-            target, prefix="val", batch_size=int(target.size(0))
-        )
-        self._maybe_log_wandb_images(
-            batch=batch, output=target, prefix="val", use_minmax=True
-        )
-        return loss
-
-    def _log_common_batch_stats(
-        self,
-        tensor: torch.Tensor,
-        prefix: str,
-        batch_size: int | None = None,
-        *,
-        on_step: bool = True,
-        on_epoch: bool = False,
-    ) -> None:
-        if not self.wandb_verbose:
-            return
-        if self.global_step % self.log_stats_every_n_steps != 0:
-            return
-        sync_dist = self._should_sync_dist() if on_epoch else False
-
-        self.log(
-            f"stats/{prefix}_batch_mean",
-            tensor.mean(),
-            on_step=on_step,
-            on_epoch=on_epoch,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-        self.log(
-            f"stats/{prefix}_batch_std",
-            tensor.std(),
-            on_step=on_step,
-            on_epoch=on_epoch,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-        self.log(
-            f"stats/{prefix}_batch_min",
-            tensor.min(),
-            on_step=on_step,
-            on_epoch=on_epoch,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-        self.log(
-            f"stats/{prefix}_batch_max",
-            tensor.max(),
-            on_step=on_step,
-            on_epoch=on_epoch,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-
-    def _log_pre_diffusion_stats(
-        self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
-    ) -> None:
-        if not self.wandb_verbose:
-            return
-        if self.global_step % self.log_stats_every_n_steps != 0:
-            return
-        sync_dist = self._should_sync_dist()
-
-        self.log(
-            f"pre_diffusion/{prefix}_mean",
-            tensor.mean(),
-            on_step=True,
-            on_epoch=False,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-        self.log(
-            f"pre_diffusion/{prefix}_std",
-            tensor.std(unbiased=False),
-            on_step=True,
-            on_epoch=False,
-            logger=True,
-            sync_dist=sync_dist,
-            batch_size=batch_size,
-        )
-
-    def _maybe_log_wandb_images(
-        self,
-        batch: Any,
-        output: torch.Tensor,
-        prefix: str,
-        *,
-        use_minmax: bool = False,
-    ) -> None:
-        if not self.wandb_verbose:
-            return
-        if self.trainer is not None and not self.trainer.is_global_zero:
-            return
-        if self.global_step % self.log_images_every_n_steps != 0:
-            return
-        if not hasattr(self.logger, "experiment"):
-            return
-
-        experiment = self.logger.experiment
-        if not hasattr(experiment, "log"):
-            return
-
-        try:
-            import wandb
-        except Exception:
-            return
-
-        image = output[0].detach().float().squeeze(0)
-        if use_minmax:
-            image_np = self._minmax_stretch(image)
-        else:
-            image_np = image.cpu().numpy()
-        # Quick qualitative sanity check (ground-truth sample, not reconstructed output).
-        experiment.log({f"{prefix}/y_preview": wandb.Image(image_np)})
-
-    @staticmethod
-    def _minmax_stretch(
-        image: torch.Tensor,
-        *,
-        mask: torch.Tensor | None = None,
-        nodata_value: float | None = 0.0,
-    ) -> np.ndarray:
-        image = image.detach().float()
-        image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
-        # image = temperature_normalize(mode="denorm", tensor=image)
-        stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
-        return stretched.cpu().numpy().astype(np.float32)
-
-    def train_dataloader(self):
-        if self.datamodule is None:
-            raise RuntimeError("No datamodule was provided to the model.")
-        return self.datamodule.train_dataloader()
-
-    def val_dataloader(self):
-        if self.datamodule is None:
-            return None
-        return self.datamodule.val_dataloader()
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=self.lr,
-        )
-        return optimizer
-
-
-class PixelDiffusionConditional(PixelDiffusion):
+class PixelDiffusionConditional(pl.LightningModule):
     # Prefixes that are allowed to differ between checkpoints when only the
     # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
     _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
@@ -631,6 +269,189 @@ class PixelDiffusionConditional(PixelDiffusion):
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
         )
+
+    @staticmethod
+    def _load_yaml(path: str) -> dict[str, Any]:
+        with Path(path).open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+
+    @staticmethod
+    def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:
+        if isinstance(value, str):
+            parts = [p.strip() for p in value.split(",") if p.strip()]
+            value = parts if parts else [1, 2, 4, 8]
+        elif isinstance(value, (int, float)):
+            value = [int(value)]
+        elif not isinstance(value, (list, tuple)):
+            value = [1, 2, 4, 8]
+
+        dim_mults = tuple(int(v) for v in value)
+        if len(dim_mults) == 0:
+            dim_mults = (1, 2, 4, 8)
+        return dim_mults
+
+    @classmethod
+    def _parse_unet_config(cls, model_section: dict[str, Any]) -> dict[str, Any]:
+        unet = model_section.get("unet", {})
+        return {
+            "unet_dim": int(unet.get("dim", 64)),
+            "unet_dim_mults": cls._parse_unet_dim_mults(
+                unet.get("dim_mults", [1, 2, 4, 8])
+            ),
+            "unet_with_time_emb": bool(unet.get("with_time_emb", True)),
+            "unet_output_mean_scale": bool(unet.get("output_mean_scale", False)),
+            "unet_residual": bool(unet.get("residual", False)),
+        }
+
+    def input_T(self, value: torch.Tensor) -> torch.Tensor:
+        # Dataset already provides standardized temperatures (z-score), so keep identity here.
+        # This avoids a second normalization pass and preserves the training target distribution.
+        return value
+
+    def output_T(self, value: torch.Tensor) -> torch.Tensor:
+        # Return samples in the same standardized space used by the dataset.
+        return value
+
+    @staticmethod
+    def _should_sync_dist() -> bool:
+        return torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    def _log_common_batch_stats(
+        self,
+        tensor: torch.Tensor,
+        prefix: str,
+        batch_size: int | None = None,
+        *,
+        on_step: bool = True,
+        on_epoch: bool = False,
+    ) -> None:
+        if not self.wandb_verbose:
+            return
+        if self.global_step % self.log_stats_every_n_steps != 0:
+            return
+        sync_dist = self._should_sync_dist() if on_epoch else False
+
+        self.log(
+            f"stats/{prefix}_batch_mean",
+            tensor.mean(),
+            on_step=on_step,
+            on_epoch=on_epoch,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_std",
+            tensor.std(),
+            on_step=on_step,
+            on_epoch=on_epoch,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_min",
+            tensor.min(),
+            on_step=on_step,
+            on_epoch=on_epoch,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"stats/{prefix}_batch_max",
+            tensor.max(),
+            on_step=on_step,
+            on_epoch=on_epoch,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+
+    def _log_pre_diffusion_stats(
+        self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
+    ) -> None:
+        if not self.wandb_verbose:
+            return
+        if self.global_step % self.log_stats_every_n_steps != 0:
+            return
+        sync_dist = self._should_sync_dist()
+
+        self.log(
+            f"pre_diffusion/{prefix}_mean",
+            tensor.mean(),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"pre_diffusion/{prefix}_std",
+            tensor.std(unbiased=False),
+            on_step=True,
+            on_epoch=False,
+            logger=True,
+            sync_dist=sync_dist,
+            batch_size=batch_size,
+        )
+
+    def _maybe_log_wandb_images(
+        self,
+        batch: Any,
+        output: torch.Tensor,
+        prefix: str,
+        *,
+        use_minmax: bool = False,
+    ) -> None:
+        if not self.wandb_verbose:
+            return
+        if self.trainer is not None and not self.trainer.is_global_zero:
+            return
+        if self.global_step % self.log_images_every_n_steps != 0:
+            return
+        if not hasattr(self.logger, "experiment"):
+            return
+
+        experiment = self.logger.experiment
+        if not hasattr(experiment, "log"):
+            return
+
+        try:
+            import wandb
+        except Exception:
+            return
+
+        image = output[0].detach().float().squeeze(0)
+        if use_minmax:
+            image_np = self._minmax_stretch(image)
+        else:
+            image_np = image.cpu().numpy()
+        # Quick qualitative sanity check (ground-truth sample, not reconstructed output).
+        experiment.log({f"{prefix}/y_preview": wandb.Image(image_np)})
+
+    @staticmethod
+    def _minmax_stretch(
+        image: torch.Tensor,
+        *,
+        mask: torch.Tensor | None = None,
+        nodata_value: float | None = 0.0,
+    ) -> np.ndarray:
+        image = image.detach().float()
+        image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
+        # image = temperature_normalize(mode="denorm", tensor=image)
+        stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
+        return stretched.cpu().numpy().astype(np.float32)
+
+    def train_dataloader(self):
+        if self.datamodule is None:
+            raise RuntimeError("No datamodule was provided to the model.")
+        return self.datamodule.train_dataloader()
+
+    def val_dataloader(self):
+        if self.datamodule is None:
+            return None
+        return self.datamodule.val_dataloader()
 
     @staticmethod
     def _tensor_stats(
@@ -1405,7 +1226,10 @@ class PixelDiffusionConditional(PixelDiffusion):
         return loss
 
     def configure_optimizers(self):
-        optimizer = super().configure_optimizers()
+        optimizer = torch.optim.AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self.lr,
+        )
         if not self.lr_scheduler_enabled:
             return optimizer
 

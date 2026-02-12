@@ -143,7 +143,7 @@ python3 train.py \
 ### What happens during training
 - A timestamped run folder is created under `logs/`.
 - The exact config files used for the run are copied into that folder, and checkpointing keeps `best.ckpt` (by `trainer.ckpt_monitor`) plus `last.ckpt`.
-- Model type is `cond_px_dif` (`PixelDiffusionConditional`).
+- The only supported model type is `cond_px_dif` (`PixelDiffusionConditional`).
 - Training resumes automatically when `model.resume_checkpoint` is set to a valid `.ckpt` path in `configs/model_config.yaml`.
 
 ## Inference
