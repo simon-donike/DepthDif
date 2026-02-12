@@ -246,6 +246,7 @@ def log_wandb_denoise_timestep_grid(
             ax_mae.set_xlabel("Reverse step")
             ax_mae.set_ylabel("MAE")
             ax_mae.set_title("Intermediate MAE vs Reverse Diff. Step")
+            ax_mae.invert_xaxis()
             ax_mae.grid(True, alpha=0.3, linewidth=0.5)
             handles = list(mae_line)
             labels = [h.get_label() for h in handles]

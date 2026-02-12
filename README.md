@@ -220,11 +220,21 @@ Each prediction item includes:
 - `sampler`
 
 ## Results
-Preliminary results for sub-surface reconstruction, 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for vosualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling. PSNR ~40dB, SSIM ~0.90.
-![img](assets/prelim_results2.png)  
-  
-Here is the same checkoint, applied to an image with 75% occlusion:
-![img](assets/prelim_results_75perc.png)  
+### Experiment 1 (1-band corruption, 50%)
+Preliminary results for sub-surface reconstruction with 1-band setup and 50% pixelated occlusion (clustered), 24hr train time. Valid masks for training, land mask only for visualization. Loss calculated over whole image. No inpainting pixel anchoring in DDPM sampling. PSNR ~40dB, SSIM ~0.90.
+![img](assets/prelim_results2.png)
+
+The same checkpoint applied to 75 percent occusion indicates it learned the distribution somewhat well.  
+![img](assets/prelim_results_75perc.png)
+
+
+### Experiment 2 (3-band x and y, EO condition, 95% corruption)
+EO-conditioned multiband setup (`x`: 3-band corrupted input (depth levels 3,4,5), `y`: 3-band clean target, plus EO condition (surface obs.)), evaluated at 95% corruption. Good results, but likely over-reliance on EO condition.
+![img](assets/95per_obstr_with_condition.png)
+
+### Experiment 3 (75% corruption, 50% dropout)
+Test setting with 75% corruption and 50% EO condition dropout, keeping the same checkpoint for comparison. Quality obviosuly suffers with EO condition removed, but reconstructs distribution well. Note: EO dropout is random, so model has seen same location with EO condition previously. Unlikely that model momorizes this though with only 57M parameters and 110k samples.
+![img](assets/75perc_50drop.png)
 
 ### Sampling Process
 The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. In addition to qualitative intermediates, we now log:
