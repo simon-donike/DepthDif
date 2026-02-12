@@ -38,6 +38,8 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         return_coords: bool = False,
         nan_fill_value: float = 0.0,
         valid_from_fill_value: bool = True,
+        eo_random_scale_enabled: bool = False,
+        eo_speckle_noise_enabled: bool = False,
         split_seed: int = 7,
         val_fraction: float = 0.2,
     ) -> None:
@@ -55,6 +57,8 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
         self.valid_from_fill_value = bool(valid_from_fill_value)
+        self.eo_random_scale_enabled = bool(eo_random_scale_enabled)
+        self.eo_speckle_noise_enabled = bool(eo_speckle_noise_enabled)
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
         self.eo_dropout_prob = 0.0
@@ -118,8 +122,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             missing = required_cols.difference(df.columns)
             if missing:
                 raise RuntimeError(
-                    "Index is missing required coord columns: "
-                    f"{sorted(missing)}."
+                    "Index is missing required coord columns: " f"{sorted(missing)}."
                 )
 
         if len(df) == 0:
@@ -155,6 +158,10 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             return_coords=bool(ds_cfg.get("return_coords", False)),
             nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
             valid_from_fill_value=bool(ds_cfg.get("valid_from_fill_value", True)),
+            eo_random_scale_enabled=bool(ds_cfg.get("eo_random_scale_enabled", False)),
+            eo_speckle_noise_enabled=bool(
+                ds_cfg.get("eo_speckle_noise_enabled", False)
+            ),
             split_seed=int(ds_cfg.get("random_seed", 7)),
             val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         )
@@ -202,12 +209,24 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         land_mask_np = np.repeat(
             land_mask_spatial_np[None, ...], repeats=y_np.shape[0], axis=0
         )
+
+        # to Torch
         eo = torch.from_numpy(eo_np)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
 
+        # Normalize inputs
         eo = temperature_normalize(mode="norm", tensor=eo)
         y = temperature_normalize(mode="norm", tensor=y)
+
+        # Add random scale or speckle noise
+        if self.eo_random_scale_enabled:
+            eo = eo * torch.empty((), dtype=eo.dtype, device=eo.device).uniform_(
+                0.9, 1.1
+            )
+        if self.eo_speckle_noise_enabled:
+            speckle = 1.0 + (0.05 * torch.randn_like(eo))
+            eo = eo * torch.clamp(speckle, min=0.9, max=1.1)
 
         # Compute per-pixel training validity from fill values, then combine with land/water mask.
         if self.valid_from_fill_value:
@@ -226,9 +245,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             eo = self._apply_geometric_augment(eo, k_rot, flip_h, flip_v)
             y = self._apply_geometric_augment(y, k_rot, flip_h, flip_v)
             v = self._apply_geometric_augment(v, k_rot, flip_h, flip_v)
-            land_mask = self._apply_geometric_augment(
-                land_mask, k_rot, flip_h, flip_v
-            )
+            land_mask = self._apply_geometric_augment(land_mask, k_rot, flip_h, flip_v)
 
         y_clean = y
         valid_mask = v.clone()
@@ -341,12 +358,18 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             eo_img = minmax_stretch(eo, mask=valid_mask_t[0], nodata_value=None).numpy()
 
             num_bands = int(x.shape[0])
-            fig, axes = plt.subplots(num_bands, 5, figsize=(17, 4 * num_bands), squeeze=False)
+            fig, axes = plt.subplots(
+                num_bands, 5, figsize=(17, 4 * num_bands), squeeze=False
+            )
             for band_idx in range(num_bands):
                 mask_band = valid_mask_t[band_idx]
                 land_band = land_mask_t[band_idx]
-                x_img = minmax_stretch(x[band_idx], mask=mask_band, nodata_value=None).numpy()
-                y_img = minmax_stretch(y[band_idx], mask=mask_band, nodata_value=None).numpy()
+                x_img = minmax_stretch(
+                    x[band_idx], mask=mask_band, nodata_value=None
+                ).numpy()
+                y_img = minmax_stretch(
+                    y[band_idx], mask=mask_band, nodata_value=None
+                ).numpy()
 
                 axes[band_idx, 0].imshow(eo_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
                 axes[band_idx, 1].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
@@ -394,23 +417,26 @@ if __name__ == "__main__":
         f"Land mask sum: {sample['land_mask'].sum().item()}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
-    
-    
+
     # testing images
     if False:
         import time
+
         for i in range(5):
             dataset._plot_example_image()
             time.sleep(4)
-    
+
     # looking at values
     if False:
         # count 0s in x: pixels are 0s after norm!
         zero_count = (sample["x"] == 0.0).sum().item()
         total_count = sample["x"].numel()
-        print(f"Zero count in x: {zero_count} / {total_count} ({100 * zero_count / total_count:.2f}%)")
+        print(
+            f"Zero count in x: {zero_count} / {total_count} ({100 * zero_count / total_count:.2f}%)"
+        )
         # count 0s in mask
         mask_zero_count = (sample["valid_mask"] == 0.0).sum().item()
         mask_total_count = sample["valid_mask"].numel()
-        print(f"Zero count in valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)")
-    
+        print(
+            f"Zero count in valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)"
+        )

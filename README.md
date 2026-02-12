@@ -239,6 +239,12 @@ Test setting with 75% corruption and 50% EO condition dropout, keeping the same 
 After 100 training epochs on the previous setting, I switched to 95% percent corruption and still 50% dropout. Samples where EO is available are well and faithfully reconstructed. Samples without the EO conditioning generate a very plausible reconstruction, but it is visible that some currents/patterns look correct but are not 100% correlated with the ground truth. This might be a point where we can draw a very realistic reconstruction from the distribution, but we do not have enough information to accurately reconstruct this exact scenario.  
 ![img](assets/95perc_50drop.png)
 
+### Experiment 4 (High corruption, EO dropout, and EO degradation)
+Now, to simulate an EO observation that is not so well correlated with the `y` variables, the `eo` gets degraded: a random multiplication between 0.9 and 1.1, and a small speckle noise gets added. This should encourage the model to respect the structure and shape of the EO observation, but rely less on it's absolute values.  
+  
+... currently running ...
+
+
 ### Sampling Process
 The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. In addition to qualitative intermediates, we now log:
 - MAE vs intermediate denoising step (using the per-step `x0` prediction against target).
