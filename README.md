@@ -145,7 +145,7 @@ python3 train.py \
 
 ### What happens during training
 - A timestamped run folder is created under `logs/`.
-- The exact config files used for the run are copied into that folder, Callback saves top k=2 checkpoints.
+- The exact config files used for the run are copied into that folder, and checkpointing keeps `best.ckpt` (by `trainer.ckpt_monitor`) plus `last.ckpt`.
 - Model type is `cond_px_dif` (`PixelDiffusionConditional`).
 - Training resumes automatically when `model.resume_checkpoint` is set to a valid `.ckpt` path in `configs/model_config.yaml`.
 
@@ -232,9 +232,12 @@ The same checkpoint applied to 75 percent occusion indicates it learned the dist
 EO-conditioned multiband setup (`x`: 3-band corrupted input (depth levels 3,4,5), `y`: 3-band clean target, plus EO condition (surface obs.)), evaluated at 95% corruption. Good results, but likely over-reliance on EO condition.
 ![img](assets/95per_obstr_with_condition.png)
 
-### Experiment 3 (75% corruption, 50% dropout)
+### Experiment 3 (High corruption and EO dropout)
 Test setting with 75% corruption and 50% EO condition dropout, keeping the same checkpoint for comparison. Quality obviosuly suffers with EO condition removed, but reconstructs distribution well. Note: EO dropout is random, so model has seen same location with EO condition previously. Unlikely that model momorizes this though with only 57M parameters and 110k samples.
 ![img](assets/75perc_50drop.png)
+
+After 100 training epochs on the previous setting, I switched to 95% percent corruption and still 50% dropout. Samples where EO is available are well and faithfully reconstructed. Samples without the EO conditioning generate a very plausible reconstruction, but it is visible that some currents/patterns look correct but are not 100% correlated with the ground truth. This might be a point where we can draw a very realistic reconstruction from the distribution, but we do not have enough information to accurately reconstruct this exact scenario.  
+![img](assets/95perc_50drop.png)
 
 ### Sampling Process
 The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. In addition to qualitative intermediates, we now log:
@@ -364,7 +367,7 @@ These are the model/training behaviors in this repo and where they are wired in 
 - **Checkpointing + resume**  
   Configure in:
   - `configs/model_config.yaml`: `model.resume_checkpoint` (false/null or a `.ckpt` path)
-  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (best-checkpoint metric)
+  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (metric used for `best.ckpt`; `last.ckpt` is always saved)
 
 - **W&B logging (metrics/images/watch)**  
   Configure in `configs/training_config.yaml`:

@@ -254,7 +254,7 @@ def log_wandb_denoise_timestep_grid(
             ax_mae.text(
                 0.01,
                 0.02,
-                f"MAE start={mae_vals[0]:.3f}, end={mae_vals[-1]:.3f}",
+                f"MAE start={mae_vals[-1]:.3f}, end={mae_vals[0]:.3f}",
                 transform=ax_mae.transAxes,
                 fontsize=8,
                 va="bottom",

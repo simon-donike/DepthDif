@@ -263,14 +263,14 @@ def main(
             logger,
             [model_config_path, data_config_path, training_config_path],
         )
-    # Save only top-k checkpoints by monitored validation metric.
+    # Save the best checkpoint by monitored validation metric and always keep the latest checkpoint.
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best",
         monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss")),
         mode="min",
-        save_top_k=2,
-        save_last=False,
+        save_top_k=1,
+        save_last=True,
     )
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
