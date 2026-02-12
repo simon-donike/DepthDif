@@ -25,7 +25,7 @@ trainer: # PL Trainer Settings
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
   ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
-  lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
+  lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
   val_batches_per_epoch: 300 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
@@ -60,6 +60,10 @@ dataloader: # DataLoader Settings
   pin_memory: false # Pin host memory for faster host->GPU transfer.
 
 scheduler: # Learning Rate Scheduler Settings
+  warmup:
+    enabled: true # Enable linear LR warmup (step-based) before plateau scheduling.
+    steps: 1000 # Number of optimizer steps to ramp LR from start_ratio to full base LR.
+    start_ratio: 0.1 # Initial LR as a ratio of training.lr at first warmup step.
   reduce_on_plateau:
     enabled: true # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
     monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.

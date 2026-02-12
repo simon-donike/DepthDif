@@ -25,10 +25,10 @@ trainer: # PL Trainer Settings
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
   ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
-  lr_logging_interval: "epoch" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
+  lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
   log_every_n_steps: 1 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
-  val_batches_per_epoch: 150 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
+  val_batches_per_epoch: 200 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
   enable_model_summary: true # Show Lightning model summary at startup.
   gradient_clip_val: 1.0 # Gradient clipping threshold (0.0 disables clipping).
@@ -60,14 +60,18 @@ dataloader: # DataLoader Settings
   pin_memory: false # Pin host memory for faster host->GPU transfer.
 
 scheduler: # Learning Rate Scheduler Settings
+  warmup:
+    enabled: true # Enable linear LR warmup (step-based) before plateau scheduling.
+    steps: 1000 # Number of optimizer steps to ramp LR from start_ratio to full base LR.
+    start_ratio: 0.1 # Initial LR as a ratio of training.lr at first warmup step.
   reduce_on_plateau:
     enabled: true # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
     monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.
     mode: "min" # "min" lowers LR when metric stops decreasing; "max" for increasing metrics.
     factor: 0.75 # Multiplicative LR decay applied when plateau is detected.
-    patience: 50 # Number of validation epochs with no improvement before decaying LR.
+    patience: 25 # Number of validation epochs with no improvement before decaying LR.
     threshold: 1.0e-4 # Minimum significant metric change to qualify as an improvement.
     threshold_mode: "rel" # "rel" for relative thresholding, "abs" for absolute thresholding.
-    cooldown: 5 # Epochs to wait after an LR drop before resuming plateau checks.
+    cooldown: 0 # Epochs to wait after an LR drop before resuming plateau checks.
     min_lr: 0.0 # Lower bound for learning rate.
     eps: 1.0e-8 # Minimum LR change to apply; smaller updates are ignored.

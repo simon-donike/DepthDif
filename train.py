@@ -266,7 +266,7 @@ def main(
     # Save the best checkpoint by monitored validation metric and always keep the latest checkpoint.
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
-        filename="best",
+        filename="best-epoch{epoch:03d}",
         monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss")),
         mode="min",
         save_top_k=1,

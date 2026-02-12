@@ -106,10 +106,7 @@ Train with `train.py`. You can now choose which config files to use from CLI.
 
 ### CLI config selection
 ```bash
-python3 train.py \
-  --data-config configs/data_config.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml
+python3 train.py --data-config configs/data_config_eo_4band.yaml --train-config configs/training_config_eo_4band.yaml --model-config configs/model_config_eo_4band.yaml
 ```
 
 Notes:
@@ -364,11 +361,16 @@ These are the model/training behaviors in this repo and where they are wired in 
 
 ### Minor model/training settings
 
-- **Learning-rate scheduler (ReduceLROnPlateau)**  
+- **Learning-rate scheduler (Warmup + ReduceLROnPlateau)**  
   Configure in `configs/training_config.yaml`:
+  - `scheduler.warmup.enabled`, `steps`, `start_ratio`
   - `scheduler.reduce_on_plateau.enabled`
   - `scheduler.reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
   - `trainer.lr_logging_interval` (learning-rate monitor cadence)
+  Notes:
+  - Warmup is step-based (optimizer updates), not epoch-based.
+  - Default warmup ramps LR linearly from `0.1 * training.lr` to `training.lr` over the first `1000` optimizer steps.
+  - Warmup is currently wired in the conditional model path; after warmup, `ReduceLROnPlateau` controls LR as usual.
 
 - **Checkpointing + resume**  
   Configure in:

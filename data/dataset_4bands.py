@@ -214,19 +214,22 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         eo = torch.from_numpy(eo_np)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
-
+        
+        # Add random scale or speckle noise
+        if self.eo_random_scale_enabled:
+            deg_offset = 2.0 # offset in degrees
+            offset = torch.empty((), device=eo.device, dtype=eo.dtype).uniform_(-deg_offset, deg_offset)
+            eo = eo + offset
+        if self.eo_speckle_noise_enabled:
+            noise_std = 0.01  # 1% local variation            
+            eps = torch.randn_like(eo)
+            multiplier = 1.0 + noise_std * eps
+            multiplier = multiplier.clamp(0.9, 1.1)  # allow at most ±10% scaling
+            eo = eo * multiplier
+            
         # Normalize inputs
         eo = temperature_normalize(mode="norm", tensor=eo)
         y = temperature_normalize(mode="norm", tensor=y)
-
-        # Add random scale or speckle noise
-        if self.eo_random_scale_enabled:
-            eo = eo * torch.empty((), dtype=eo.dtype, device=eo.device).uniform_(
-                0.9, 1.1
-            )
-        if self.eo_speckle_noise_enabled:
-            speckle = 1.0 + (0.05 * torch.randn_like(eo))
-            eo = eo * torch.clamp(speckle, min=0.9, max=1.1)
 
         # Compute per-pixel training validity from fill values, then combine with land/water mask.
         if self.valid_from_fill_value:

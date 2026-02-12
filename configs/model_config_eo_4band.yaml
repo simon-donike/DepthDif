@@ -1,7 +1,7 @@
 # Settings for instantiating the model architecture/checkpoint behavior.
 model: # Model Settings
   model_type: "cond_px_dif" # "cond_px_dif" for conditional diffusion, "px_dif" for unconditional (Depreciated).
-  resume_checkpoint: "logs/2026-02-11_17-11-24/best.ckpt" # false/null starts from scratch; set to a .ckpt path to continue training.
+  resume_checkpoint: false  # false/null starts from scratch; set to a .ckpt path to continue training.
   generated_channels: 3 # Predict 3-band temperature profile target y.
   condition_channels: 5 # EO (1) + corrupted temp channels x (3) + valid mask (1).
   condition_mask_channels: 1 # One valid-mask channel is concatenated to the model condition.

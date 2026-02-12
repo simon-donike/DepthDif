@@ -427,6 +427,9 @@ class PixelDiffusionConditional(PixelDiffusion):
         lr_scheduler_cooldown: int = 0,
         lr_scheduler_min_lr: float = 0.0,
         lr_scheduler_eps: float = 1e-8,
+        lr_warmup_enabled: bool = True,
+        lr_warmup_steps: int = 1000,
+        lr_warmup_start_ratio: float = 0.1,
         val_inference_sampler: str = "ddpm",
         val_ddim_num_timesteps: int = 200,
         val_ddim_eta: float = 0.0,
@@ -456,6 +459,13 @@ class PixelDiffusionConditional(PixelDiffusion):
         self.lr_scheduler_cooldown = int(lr_scheduler_cooldown)
         self.lr_scheduler_min_lr = float(lr_scheduler_min_lr)
         self.lr_scheduler_eps = float(lr_scheduler_eps)
+        self.lr_warmup_enabled = bool(lr_warmup_enabled)
+        self.lr_warmup_steps = int(lr_warmup_steps)
+        if self.lr_warmup_steps < 0:
+            raise ValueError("lr_warmup_steps must be >= 0.")
+        self.lr_warmup_start_ratio = float(lr_warmup_start_ratio)
+        if not 0.0 <= self.lr_warmup_start_ratio <= 1.0:
+            raise ValueError("lr_warmup_start_ratio must be in [0.0, 1.0].")
         self.val_inference_sampler = str(val_inference_sampler).strip().lower()
         self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
         self.val_ddim_eta = float(val_ddim_eta)
@@ -543,6 +553,7 @@ class PixelDiffusionConditional(PixelDiffusion):
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
+        warmup_cfg = scheduler_cfg.get("warmup", {})
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
         postprocess_cfg = m.get("post_process", m.get("post-process", {}))
@@ -592,6 +603,9 @@ class PixelDiffusionConditional(PixelDiffusion):
             lr_scheduler_cooldown=int(plateau_cfg.get("cooldown", 0)),
             lr_scheduler_min_lr=float(plateau_cfg.get("min_lr", 0.0)),
             lr_scheduler_eps=float(plateau_cfg.get("eps", 1e-8)),
+            lr_warmup_enabled=bool(warmup_cfg.get("enabled", True)),
+            lr_warmup_steps=int(warmup_cfg.get("steps", 1000)),
+            lr_warmup_start_ratio=float(warmup_cfg.get("start_ratio", 0.1)),
             val_inference_sampler=str(val_sampling_cfg.get("sampler", "ddpm")),
             val_ddim_num_timesteps=int(val_sampling_cfg.get("ddim_num_timesteps", 200)),
             val_ddim_eta=float(val_sampling_cfg.get("ddim_eta", 0.0)),
@@ -1415,3 +1429,30 @@ class PixelDiffusionConditional(PixelDiffusion):
                 "frequency": 1,
             },
         }
+
+    def optimizer_step(
+        self,
+        epoch: int,
+        batch_idx: int,
+        optimizer: torch.optim.Optimizer,
+        optimizer_closure: Any | None = None,
+    ) -> None:
+        # Keep warmup in optimizer-step space so schedule is stable across epoch lengths.
+        if (
+            self.lr_warmup_enabled
+            and self.lr_warmup_steps > 0
+            and self.global_step < self.lr_warmup_steps
+        ):
+            warmup_progress = float(self.global_step + 1) / float(self.lr_warmup_steps)
+            warmup_factor = self.lr_warmup_start_ratio + (
+                1.0 - self.lr_warmup_start_ratio
+            ) * warmup_progress
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = float(self.lr) * warmup_factor
+
+        super().optimizer_step(
+            epoch=epoch,
+            batch_idx=batch_idx,
+            optimizer=optimizer,
+            optimizer_closure=optimizer_closure,
+        )
