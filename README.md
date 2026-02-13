@@ -237,9 +237,9 @@ After 100 training epochs on the previous setting, I switched to 95% percent cor
 ![img](assets/95perc_50drop.png)
 
 ### Experiment 4 (High corruption, EO dropout, and EO degradation)
-Now, to simulate an EO observation that is not so well correlated with the `y` variables, the `eo` gets degraded: a random multiplication between 0.9 and 1.1, and a small speckle noise gets added. This should encourage the model to respect the structure and shape of the EO observation, but rely less on it's absolute values.  
+Now, to simulate an EO observation that is not so well correlated with the `y` variable, the `eo` gets degraded: a random multiplication between 0.9 and 1.1, and a small speckle noise gets added. This should encourage the model to respect the structure and shape of the EO observation, but rely less on it's absolute values. This model has been trained from scratch. It seems like the reconstruction still works reasonably well, both for degraded EO images and for purely `x->y` reconstruction  
   
-... currently running ...
+![img](assets/eo_x0_maskedLoss_95perc_50percDO_EOdegradation.png)
 
 
 ### Sampling Process
