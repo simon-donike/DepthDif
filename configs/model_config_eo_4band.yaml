@@ -1,7 +1,7 @@
 # Settings for instantiating the model architecture/checkpoint behavior.
 model: # Model Settings
   model_type: "cond_px_dif" # Model type (only conditional diffusion is supported).
-  resume_checkpoint: "logs/2026-02-11_17-11-24/best.ckpt"  # false/null starts from scratch; set to a .ckpt path to continue training.
+  resume_checkpoint: false #"logs/2026-02-11_17-11-24/best.ckpt"  # false/null starts from scratch; set to a .ckpt path to continue training.
   generated_channels: 3 # Predict 3-band temperature profile target y.
   condition_channels: 5 # EO (1) + corrupted temp channels x (3) + valid mask (1).
   condition_mask_channels: 1 # One valid-mask channel is concatenated to the model condition.
@@ -20,7 +20,7 @@ model: # Model Settings
   coord_conditioning:
     enabled: true # Enable patch-center coordinate conditioning via FiLM.
     encoding: "unit_sphere" # "unit_sphere", "sincos", or "raw".
-    include_date: false # If true, also encode batch["date"] (YYYYMMDD) together with coords.
+    include_date: true # If true, also encode batch["date"] (YYYYMMDD) together with coords.
     date_encoding: "day_of_year_sincos" # Current option: non-leap day-of-year sin/cos with denominator 365.
     embed_dim: null # If null, defaults to unet.dim.
 
