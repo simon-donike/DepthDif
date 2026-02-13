@@ -276,19 +276,19 @@ Current noise scheduled implemented: `linear`, `sigmoid` and `cosine`. Cosine is
 - `coord_conditioning` - neither tested nor run - only implemented - works, tested ✅
 - new dataset_light and datamodule not yet tested. - works ✅
 - new x0 parameterization is implemented, but not tested yet  - works very well ✅
+- Date + Coord embedding simplemented, but not yet tested 
 
 ## Notes
 none currently.
 
 ## ToDos
 - [ ] DDIM Sampling implemented but doesnt work! switching from DDPM to DDIM sampling might mess up noise schedules, but for now a DDPM checkpoint doesnt work with DDIM sampling
-- [ ] Encode timestamp somehow
-  - Prob merge lcoation + time somehow (Check out DiffusionSat, they did that)
 - [ ] Increase unet.dim (e.g., 64 → 96 or 128), deeper level by extending dim_mults (e.g., [1, 2, 4, 8, 8])
 - [ ] Add a frequency-aware loss like L2 on gradients or PSD loss to get rid of speckle noise in output
 - [ ] Activate and test EMA Weights
 
 **Done**:
+- [x] Encode timestamp somehow: merged in mlp with coord embeddings
 - [x] Try out x0 instead of epsilon param
 - [x] **Important**: Make val set geographically consistent. As in, select ~20 perc of geographic locations for val, keep them the same over time
 - [x] Add known‑pixel clamping during sampling (inpainting‑style diffusion): at each step, overwrite known pixels with observed values.
@@ -356,6 +356,8 @@ These are the model/training behaviors in this repo and where they are wired in 
   - `configs/data_config.yaml`: `dataset.return_coords: true` (adds coords to each batch)
   - `configs/model_config.yaml`: `model.coord_conditioning.enabled: true`
   - `model.coord_conditioning.encoding`: `unit_sphere`, `sincos`, or `raw`
+  - `model.coord_conditioning.include_date`: include `batch["date"]` (`YYYYMMDD`) in FiLM conditioning
+  - `model.coord_conditioning.date_encoding`: currently `day_of_year_sincos` (fixed denominator `365`)
   - `model.coord_conditioning.embed_dim`: embedding width (defaults to `unet.dim` if null)
   Exact mechanism is described in **Appendix A2**.
 
@@ -396,6 +398,23 @@ Encoding options (set with `model.coord_conditioning.encoding`):
 - `unit_sphere`: Convert lat/lon to a 3D unit vector (x,y,z). This avoids lon wrap discontinuity and is the default.
 - `sincos`: Use sin/cos for lat and lon (4D). Also wrap-safe, slightly higher dimensional.
 - `raw`: Normalize degrees to [-1, 1] (lat/90, lon/180). Simplest but can be discontinuous at +/-180.
+
+When `model.coord_conditioning.include_date=true`, `batch["date"]` is parsed as `YYYYMMDD`.
+Monthly file names (`YYYYMM`) are mapped to `YYYYMM15` before encoding.
+
+### Date Encoding And Fusion With Coordinates
+Date encoding is controlled by `model.coord_conditioning.date_encoding`.
+
+Current option:
+- `day_of_year_sincos`: parse `YYYYMMDD` -> compute non-leap `day_of_year` -> encode as:
+  - `sin(2*pi*day_of_year/365)`
+  - `cos(2*pi*day_of_year/365)`
+
+Fusion with coordinate encoding:
+- First encode coordinates using `model.coord_conditioning.encoding`.
+- If `include_date=true`, concatenate date features to the coordinate feature vector:
+  - `fused = concat(coord_features, date_features)`
+- The fused vector is passed through the coordinate MLP to produce one embedding used by FiLM.
 
 ### Exact Injection Mechanism (Scale-Shift)
 The coordinate embedding is injected via a per-channel FiLM scale and shift inside each `ConvNextBlock`.

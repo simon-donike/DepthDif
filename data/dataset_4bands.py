@@ -291,12 +291,15 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         if self.eo_dropout_prob > 0.0 and bool(torch.rand(()) < self.eo_dropout_prob):
             eo = torch.zeros_like(eo)
 
+        date = self._parse_date_yyyymmdd(row.get("source_file"))
+
         sample: dict[str, Any] = {
             "eo": eo,
             "x": x,
             "y": y,
             "valid_mask": valid_mask,
             "land_mask": land_mask,
+            "date": date,
         }
         if self.return_coords:
             lat0 = float(row["lat0"])
@@ -319,6 +322,26 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         sin_sum = np.sin(lon0_rad) + np.sin(lon1_rad)
         cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
         return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
+
+    @staticmethod
+    def _parse_date_yyyymmdd(source_file: Any) -> int:
+        source = Path(str(source_file))
+        suffix = source.stem.rsplit("_", 1)[-1]
+        if suffix.isdigit():
+            if len(suffix) == 8:
+                year = int(suffix[:4])
+                month = int(suffix[4:6])
+                day = int(suffix[6:8])
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    return year * 10000 + month * 100 + day
+            if len(suffix) == 6:
+                year = int(suffix[:4])
+                month = int(suffix[4:6])
+                if 1 <= month <= 12:
+                    # Monthly source files carry no day; fix to the middle of month for now.
+                    return year * 10000 + month * 100 + 15
+        # Keep invalid/missing source dates deterministic so batches remain collate-friendly.
+        return 19700115
 
     @staticmethod
     def _sample_aug_params() -> tuple[int, bool, bool]:

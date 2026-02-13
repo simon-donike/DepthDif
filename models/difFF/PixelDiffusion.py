@@ -52,6 +52,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         unet_residual: bool = False,
         coord_conditioning_enabled: bool = False,
         coord_encoding: str = "unit_sphere",
+        date_conditioning_enabled: bool = False,
+        date_encoding: str = "day_of_year_sincos",
         coord_embed_dim: int | None = None,
         batch_size: int = 1,
         lr: float = 1e-3,
@@ -150,16 +152,19 @@ class PixelDiffusionConditional(pl.LightningModule):
             unet_residual=unet_residual,
             coord_conditioning_enabled=coord_conditioning_enabled,
             coord_encoding=coord_encoding,
+            date_conditioning_enabled=date_conditioning_enabled,
+            date_encoding=date_encoding,
             coord_embed_dim=coord_embed_dim,
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords)
+        # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords, date)
         # used for one epoch-end full reverse-diffusion reconstruction pass.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
                 torch.Tensor,
+                torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
@@ -228,6 +233,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             **unet_kwargs,
             coord_conditioning_enabled=bool(coord_cfg.get("enabled", False)),
             coord_encoding=str(coord_cfg.get("encoding", "unit_sphere")),
+            date_conditioning_enabled=bool(coord_cfg.get("include_date", False)),
+            date_encoding=str(coord_cfg.get("date_encoding", "day_of_year_sincos")),
             coord_embed_dim=coord_embed_dim,
             batch_size=int(t.get("batch_size", d.get("batch_size", 1))),
             lr=float(t.get("lr", 1e-3)),
@@ -649,6 +656,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
         coords: torch.Tensor | None = None,
+        date: torch.Tensor | None = None,
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
         return_x0_intermediates: bool = False,
@@ -682,6 +690,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             known_mask=known_mask,
             known_values=known_values,
             coord=coords,
+            date=date,
             return_intermediates=return_intermediates,
             intermediate_step_indices=intermediate_step_indices,
             return_x0_intermediates=return_x0_intermediates,
@@ -751,6 +760,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         valid_mask = batch.get("valid_mask")
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
+        date = batch.get("date")
         sampler = batch.get("sampler", self.val_sampler)
         clamp_known_pixels = batch.get("clamp_known_pixels", None)
         return_intermediates = bool(batch.get("return_intermediates", False))
@@ -769,6 +779,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 known_mask=known_mask,
                 known_values=known_values,
                 coords=coords,
+                date=date,
                 return_intermediates=True,
                 intermediate_step_indices=intermediate_step_indices,
                 return_x0_intermediates=True,
@@ -781,6 +792,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 known_mask=known_mask,
                 known_values=known_values,
                 coords=coords,
+                date=date,
             )
 
         # Keep all post-processing centralized in Lightning inference.
@@ -922,7 +934,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         ):
             return
 
-        x, y, eo, valid_mask, land_mask, coords = self._cached_val_example
+        x, y, eo, valid_mask, land_mask, coords, date = self._cached_val_example
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
         total_steps = 0
@@ -932,6 +944,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             "valid_mask": valid_mask,
             "land_mask": land_mask,
             "coords": coords,
+            "date": date,
             "sampler": self.val_sampler,
         }
         if self.log_intermediates:
@@ -1098,6 +1111,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         valid_mask = batch.get("valid_mask")
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
+        date = batch.get("date")
         model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
@@ -1115,6 +1129,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             coord=coords,
+            date=date,
         )
 
         self.log(
@@ -1149,6 +1164,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         valid_mask = batch.get("valid_mask")
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
+        date = batch.get("date")
         model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
@@ -1166,6 +1182,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             coord=coords,
+            date=date,
         )
 
         self.log(
@@ -1214,6 +1231,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
             cached_eo = eo[:n_cache].detach() if eo is not None else None
             cached_coords = coords[:n_cache].detach() if coords is not None else None
+            cached_date = date[:n_cache].detach() if date is not None else None
             self._cached_val_example = (
                 x[:n_cache].detach(),
                 y[:n_cache].detach(),
@@ -1221,6 +1239,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 cached_valid_mask,
                 cached_land_mask,
                 cached_coords,
+                cached_date,
             )
 
         return loss

@@ -157,6 +157,7 @@ def build_random_batch(
     condition_mask_channels = int(getattr(m, "condition_mask_channels", 0))
     include_eo = bool(getattr(m, "condition_include_eo", False))
     coord_enabled = bool(getattr(m, "coord_conditioning_enabled", False))
+    date_enabled = bool(getattr(m, "date_conditioning_enabled", False))
 
     eo_channels = 1 if include_eo else 0
     x_channels = condition_channels - condition_mask_channels - eo_channels
@@ -181,6 +182,10 @@ def build_random_batch(
         lat = -90.0 + 180.0 * torch.rand(batch_size, 1, device=device)
         lon = -180.0 + 360.0 * torch.rand(batch_size, 1, device=device)
         batch["coords"] = torch.cat([lat, lon], dim=1)
+        if date_enabled:
+            # Match dataset convention for monthly tiles: YYYYMM15.
+            months = torch.randint(1, 13, (batch_size,), device=device, dtype=torch.long)
+            batch["date"] = torch.full_like(months, 2024) * 10000 + months * 100 + 15
 
     return batch
 

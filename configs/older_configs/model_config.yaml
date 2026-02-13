@@ -18,6 +18,8 @@ model: # Model Settings
   coord_conditioning:
     enabled: true # Enable patch-center coordinate conditioning via FiLM.
     encoding: "unit_sphere" # "unit_sphere", "sincos", or "raw".
+    include_date: false # If true, also encode batch["date"] (YYYYMMDD) together with coords.
+    date_encoding: "day_of_year_sincos" # Current option: non-leap day-of-year sin/cos with denominator 365.
     embed_dim: null # If null, defaults to unet.dim.
 
   unet: # Denoiser backbone (ConvNeXt U-Net) settings.

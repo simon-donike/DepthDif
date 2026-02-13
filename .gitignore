@@ -9,6 +9,9 @@ wandb/
 *.ckp
 *.parquet
 
+# AI
+AGENTS.md
+.github/copilot-instructions.md
 
 # auto
 .DS_Store
@@ -24,6 +27,8 @@ envVars.txt
 *.noseids
 .nyc_output
 .vscode-test
+.vscode
+.vscode/*
 __pycache__
 *__pycache__*
 *.log

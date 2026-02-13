@@ -166,6 +166,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         unet_residual=False,
         coord_conditioning_enabled=False,
         coord_encoding="unit_sphere",
+        date_conditioning_enabled=False,
+        date_encoding="day_of_year_sincos",
         coord_embed_dim=None,
         parameterization="epsilon",
         sampler=None,
@@ -180,8 +182,14 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         self.parameterization = _normalize_parameterization(parameterization)
         self.coord_conditioning_enabled = bool(coord_conditioning_enabled)
         self.coord_encoding = str(coord_encoding).strip().lower()
+        self.date_conditioning_enabled = bool(date_conditioning_enabled)
+        self.date_encoding = str(date_encoding).strip().lower()
         self.coord_embed_dim = None
         self.coord_mlp = None
+        if self.date_conditioning_enabled and not self.coord_conditioning_enabled:
+            raise ValueError(
+                "date conditioning requires coord_conditioning.enabled=true."
+            )
         if self.coord_conditioning_enabled:
             valid_encodings = {"unit_sphere", "sincos", "raw"}
             if self.coord_encoding not in valid_encodings:
@@ -189,10 +197,19 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                     "coord_encoding must be one of "
                     f"{sorted(valid_encodings)} (got '{self.coord_encoding}')."
                 )
+            if self.date_conditioning_enabled:
+                valid_date_encodings = {"day_of_year_sincos"}
+                if self.date_encoding not in valid_date_encodings:
+                    raise ValueError(
+                        "date_encoding must be one of "
+                        f"{sorted(valid_date_encodings)} (got '{self.date_encoding}')."
+                    )
             if coord_embed_dim is None:
                 coord_embed_dim = unet_dim
             self.coord_embed_dim = int(coord_embed_dim)
             enc_dim = self._coord_encoding_dim(self.coord_encoding)
+            if self.date_conditioning_enabled:
+                enc_dim += self._date_encoding_dim(self.date_encoding)
             self.coord_mlp = nn.Sequential(
                 nn.Linear(enc_dim, self.coord_embed_dim * 4),
                 nn.GELU(),
@@ -241,6 +258,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
         coord: torch.Tensor | None = None,
+        date: torch.Tensor | None = None,
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
         return_x0_intermediates: bool = False,
@@ -255,7 +273,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         b, c, h, w = condition.shape
         device = next(self.model.parameters()).device
         condition = condition.to(device)
-        coord_emb = self._maybe_embed_coords(coord, condition)
+        coord_emb = self._maybe_embed_coords(coord, condition, date=date)
 
         # select sampler
         if sampler is None:
@@ -408,6 +426,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
         coord: torch.Tensor | None = None,
+        date: torch.Tensor | None = None,
     ):
         """
         Computes conditional denoising objective in caller-provided normalized space.
@@ -427,7 +446,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         # reverse pass
         model_input = torch.cat([output_noisy, condition], 1).to(device)
-        coord_emb = self._maybe_embed_coords(coord, model_input)
+        coord_emb = self._maybe_embed_coords(coord, model_input, date=date)
         prediction = self.model(model_input, t, coord_emb=coord_emb)
         target = noise if self.parameterization == "epsilon" else output
 
@@ -459,6 +478,12 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if encoding == "raw":
             return 2
         raise ValueError(f"Unsupported coord encoding '{encoding}'.")
+
+    @staticmethod
+    def _date_encoding_dim(encoding: str) -> int:
+        if encoding == "day_of_year_sincos":
+            return 2
+        raise ValueError(f"Unsupported date encoding '{encoding}'.")
 
     def _encode_coords(self, coord: torch.Tensor) -> torch.Tensor:
         if coord.ndim != 2 or coord.size(1) != 2:
@@ -492,8 +517,46 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             return torch.stack([lat_norm, lon_norm], dim=1)
         raise ValueError(f"Unsupported coord encoding '{self.coord_encoding}'.")
 
+    def _encode_date(self, date: torch.Tensor) -> torch.Tensor:
+        if date.ndim == 2 and date.size(1) == 1:
+            date = date[:, 0]
+        if date.ndim != 1:
+            raise ValueError("date must have shape (B,) or (B, 1) as YYYYMMDD integers.")
+
+        date_int = torch.round(date).to(dtype=torch.long)
+        month = (date_int // 100) % 100
+        day = date_int % 100
+
+        month_lengths = torch.tensor(
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31],
+            device=date_int.device,
+            dtype=torch.long,
+        )
+        valid_month = (month >= 1) & (month <= 12)
+        clamped_month = torch.clamp(month, min=1, max=12)
+        max_day = month_lengths[clamped_month - 1]
+        valid_day = (day >= 1) & (day <= max_day)
+        if not bool(torch.all(valid_month & valid_day)):
+            raise ValueError("date values must be valid YYYYMMDD integers.")
+
+        month_offsets = torch.tensor(
+            [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334],
+            device=date_int.device,
+            dtype=torch.long,
+        )
+        # Use a fixed non-leap calendar to keep day-of-year encoding stable year-to-year.
+        day_of_year = month_offsets[month - 1] + day
+        phase = (2.0 * math.pi * day_of_year.to(dtype=torch.float32)) / 365.0
+        if self.date_encoding == "day_of_year_sincos":
+            return torch.stack([torch.sin(phase), torch.cos(phase)], dim=1)
+        raise ValueError(f"Unsupported date encoding '{self.date_encoding}'.")
+
     def _maybe_embed_coords(
-        self, coord: torch.Tensor | None, reference: torch.Tensor
+        self,
+        coord: torch.Tensor | None,
+        reference: torch.Tensor,
+        *,
+        date: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         if self.coord_mlp is None:
             return None
@@ -503,4 +566,14 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             )
         coord = coord.to(device=reference.device, dtype=reference.dtype)
         enc = self._encode_coords(coord)
+        if self.date_conditioning_enabled:
+            if date is None:
+                raise ValueError(
+                    "date conditioning is enabled but no date values were provided."
+                )
+            if not torch.is_tensor(date):
+                date = torch.as_tensor(date, device=reference.device)
+            date = date.to(device=reference.device)
+            date_enc = self._encode_date(date).to(dtype=reference.dtype)
+            enc = torch.cat([enc, date_enc], dim=1)
         return self.coord_mlp(enc)
