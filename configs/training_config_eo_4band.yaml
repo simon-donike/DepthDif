@@ -62,8 +62,8 @@ dataloader: # DataLoader Settings
 scheduler: # Learning Rate Scheduler Settings
   warmup:
     enabled: true # Enable linear LR warmup (step-based) before plateau scheduling.
-    steps: 1000 # Number of optimizer steps to ramp LR from start_ratio to full base LR.
-    start_ratio: 0.1 # Initial LR as a ratio of training.lr at first warmup step.
+    steps: 15000 # Number of optimizer steps to ramp LR from start_ratio to full base LR.
+    start_ratio: 0.2 # Initial LR as a ratio of training.lr at first warmup step.
   reduce_on_plateau:
     enabled: true # Enable ReduceLROnPlateau scheduler in conditional diffusion training.
     monitor: "val/loss_ckpt" # Validation metric to monitor for LR reduction.
