@@ -241,6 +241,11 @@ Now, to simulate an EO observation that is not so well correlated with the `y` v
   
 ![img](assets/eo_x0_maskedLoss_95perc_50percDO_EOdegradation.png)
 
+### Experiment 5: Lower temperature Levels
+The following levels were extracted to make the target harder: 0 (EO), 4 (5m), 10 (16m), 17 (50m). Training is done with 95% corruption, 50% EO dropout, and EO conditioning degradation.
+
+... currently running ...
+
 
 ### Sampling Process
 The sampling process is currently guided by a cosine schedule. Plotting the intermediate steps shows a lot of noise initially, until the very end of the schedule. In addition to qualitative intermediates, we now log:

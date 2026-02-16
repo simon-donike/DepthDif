@@ -149,3 +149,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
     # Example: python3 data/assign_window_split.py /work/data/depth/4_bands/patch_index_with_paths.csv --output-csv /work/data/depth/4_bands/patch_index_with_paths_split.csv --val-fraction 0.2 --seed 42
+    # /work/data/depth/4_bands_v2/patch_index_with_paths.csv

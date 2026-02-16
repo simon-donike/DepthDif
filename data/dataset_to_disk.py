@@ -364,13 +364,13 @@ def _load_config(config_path: str = "configs/data_config.yaml") -> dict[str, Any
 
 
 if __name__ == "__main__":
-    cfg = _load_config("configs/data_config.yaml")
+    cfg = _load_config("configs/data_config_eo_4band.yaml")
     ds_cfg = cfg.get("dataset", {})
 
     csv_path = to_disk(
-        root_dir=ds_cfg["root_dir"],
-        output_dir="/work/data/depth/4_bands",
-        bands=[0, 3, 4, 5],
+        root_dir="/data1/datasets/depth/monthy/",
+        output_dir="/work/data/depth/4_bands_v2",
+        bands=[0, 4, 10, 17],
         variable=str(ds_cfg.get("bands", ["thetao"])[0]),
         edge_size=int(ds_cfg.get("edge_size", 128)),
         enforce_validity=bool(ds_cfg.get("enforce_validity", True)),
