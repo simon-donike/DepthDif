@@ -1,3 +1,5 @@
+![img](assets/banner_depthdif.png)  
+
 # Densifying Sparse Ocean Depth Observations
 This implementation is a first test, checking the feasability of densifying sparse ocean measurements.
 
@@ -244,7 +246,8 @@ Now, to simulate an EO observation that is not so well correlated with the `y` v
 ### Experiment 5: Lower temperature Levels
 The following levels were extracted to make the target harder: 0 (EO), 4 (5m), 10 (16m), 17 (50m). Training is done with 95% corruption, 50% EO dropout, and EO conditioning degradation.
 
-... currently running ...
+Works for these depth levels without a loss in quality
+![img](assets/deeper.png)
 
 
 ### Sampling Process
