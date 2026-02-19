@@ -1,6 +1,6 @@
 <p align="center">
   <div style="width:70%; overflow:hidden; border-radius:16px;">
-    <img src="assets/banner.png" style="width:100%; display:block;" />
+    <img src="assets/banner_depthdif.png" style="width:100%; display:block;" />
   </div>
 </p>
 
