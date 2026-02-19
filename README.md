@@ -1,4 +1,6 @@
-![img](assets/banner_depthdif.png)  
+<p align="center">
+  <img src="assets/banner_depthdif.png" width="70%" style="border-radius: 12px;" />
+</p>
 
 # Densifying Sparse Ocean Depth Observations
 This implementation is a first test, checking the feasability of densifying sparse ocean measurements.
