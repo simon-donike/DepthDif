@@ -1,7 +1,5 @@
 <p align="center">
-  <div style="width:70%; overflow:hidden; border-radius:16px;">
-    <img src="assets/banner_depthdif.png" style="width:65%; display:block;" />
-  </div>
+  <img src="assets/banner_depthdif.png" width="70%" style="border-radius: 12px;" />
 </p>
 
 # Densifying Sparse Ocean Depth Observations
