@@ -3,11 +3,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/">
-    <img src="https://img.shields.io/badge/Open-Documentation-0b2e4f?style=for-the-badge" alt="Open Documentation" />
+  <a href="https://simon-donike.github.io/DepthDif/">
+    <img src="https://img.shields.io/badge/Visit-Documentation-0b2e4f?style=for-the-badge" alt="Open Documentation" />
   </a>
-  <a href="docs/experiments.md">
-    <img src="https://img.shields.io/badge/Open-Experiments-0f3f68?style=for-the-badge" alt="Open Experiments" />
+  <a href="https://simon-donike.github.io/DepthDif/experiments/">
+    <img src="https://img.shields.io/badge/Open-Experiments-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
 </p>
 
