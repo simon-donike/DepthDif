@@ -7,8 +7,11 @@ docs_dir: docs
 theme:
   name: material
   features:
+    - navigation.tabs
     - navigation.sections
     - navigation.expand
+    - navigation.top
+    - toc.integrate
   palette:
     scheme: slate
     primary: blue
@@ -38,13 +41,15 @@ markdown_extensions:
   - attr_list
 
 nav:
-  - Home: index.md
-  - Data: data.md
-  - Model: model.md
-  - Date + Coordination Injection: date-coordination-injection.md
-  - Training: training.md
-  - Inference: inference.md
+  # Keep primary content layered under the Home tab.
+  - Home:
+      - Overview: index.md
+      - Data: data.md
+      - Model: model.md
+      - Date + Coordination Injection: date-coordination-injection.md
+      - Training: training.md
+      - Inference: inference.md
+      - Model Settings: settings.md
+      - Development: development.md
   - Experiments: experiments.md
-  - Model Settings: settings.md
-  - Development: development.md
   - API Reference: api.md

@@ -11,3 +11,20 @@
   --md-default-fg-color: #d7e9f7;
   --md-typeset-a-color: #7cc8ff;
 }
+
+/* Use a subtle ocean gradient on the top bar to add depth without hurting readability. */
+.md-header,
+.md-tabs {
+  background: linear-gradient(90deg, #071e33 0%, #0b2e4f 55%, #0f3f68 100%);
+}
+
+/* Improve left-sidebar orientation with stronger active-state contrast. */
+.md-nav__link--active {
+  color: #a8dcff;
+  font-weight: 700;
+}
+
+/* Keep section separators visible in the dark palette for better layering. */
+.md-nav__title {
+  border-bottom: 1px solid rgba(124, 200, 255, 0.22);
+}
