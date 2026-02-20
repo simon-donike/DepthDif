@@ -5,7 +5,17 @@ repo_name: DepthDif
 docs_dir: docs
 
 theme:
-  name: mkdocs
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+  palette:
+    scheme: slate
+    primary: blue
+    accent: light blue
+
+extra_css:
+  - stylesheets/extra.css
 
 plugins:
   - search
