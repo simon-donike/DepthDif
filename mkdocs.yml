@@ -1,0 +1,38 @@
+site_name: DepthDif
+site_description: Densifying sparse ocean depth observations with conditional diffusion.
+repo_name: DepthDif
+
+docs_dir: docs
+
+theme:
+  name: mkdocs
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            show_source: false
+            show_root_heading: true
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - fenced_code
+  - attr_list
+
+nav:
+  - Home: index.md
+  - Data: data.md
+  - Model: model.md
+  - Date + Coordination Injection: date-coordination-injection.md
+  - Training: training.md
+  - Inference: inference.md
+  - Experiments: experiments.md
+  - Model Settings: settings.md
+  - Comments & Roadmap: comments.md
+  - API Reference: api.md
