@@ -12,9 +12,14 @@ PLOT_CMAP = "turbo"
 
 
 def temperature_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
-    """
-    mode="norm"   -> (x - mean) / std
-    mode="denorm" -> x * std + mean
+    """Compute temperature normalize and return the result.
+
+    Args:
+        mode (str): Input value.
+        tensor (torch.Tensor): Tensor input for the computation.
+
+    Returns:
+        torch.Tensor: Tensor output produced by this call.
     """
     if mode not in {"norm", "denorm"}:
         raise ValueError("mode must be 'norm' or 'denorm'")
@@ -32,9 +37,14 @@ def temperature_to_plot_unit(
     *,
     tensor_is_normalized: bool = True,
 ) -> torch.Tensor:
-    """
-    Convert temperature data to [0, 1] for plotting using fixed dataset-level
-    stretch limits from this module.
+    """Compute temperature to plot unit and return the result.
+
+    Args:
+        tensor (torch.Tensor): Tensor input for the computation.
+        tensor_is_normalized (bool): Boolean flag controlling behavior.
+
+    Returns:
+        torch.Tensor: Tensor output produced by this call.
     """
     temp = (
         temperature_normalize(mode="denorm", tensor=tensor)

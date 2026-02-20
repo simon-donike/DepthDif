@@ -1,69 +1,100 @@
 # Inference
-Inference can be run by loading a checkpoint into the same model class and calling the model's `predict_step`.
+There are two practical inference workflows in this repository:
+- run the standalone script `inference.py`
+- call `PixelDiffusionConditional.predict_step(...)` directly
 
-## 1) Build model from config + load checkpoint
+## Workflow 1: Use `inference.py`
+`inference.py` is a configurable script for quick prediction sanity checks.
+
+### What it supports
+- load config files and instantiate model/datamodule
+- load checkpoint (explicit override or `model.resume_checkpoint`)
+- run from:
+  - dataloader sample (`MODE="dataloader"`)
+  - synthetic random batch (`MODE="random"`)
+- optional intermediate sample capture
+
+### Important script settings
+At the top of `inference.py`, set:
+- `MODEL_CONFIG_PATH`
+- `DATA_CONFIG_PATH`
+- `TRAIN_CONFIG_PATH`
+- `CHECKPOINT_PATH` (or keep `None` to use config resume path)
+- `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`
+
+### Note on default paths
+The script defaults still point to `configs/model_config.yaml` / `configs/data_config.yaml` / `configs/training_config.yaml`. In this repository, the actively used configs are:
+- EO setup: `configs/*_eo_4band.yaml`
+- legacy single-band setup: `configs/older_configs/*.yaml`
+
+## Workflow 2: Direct `predict_step`
+The model inference entry point is:
+- `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`
+
+Minimum required batch key:
+- `x`
+
+Common optional keys:
+- `eo`
+- `valid_mask`
+- `land_mask`
+- `coords`
+- `date`
+- `sampler`
+- `clamp_known_pixels`
+- `return_intermediates`
+- `intermediate_step_indices`
+
+### Returned outputs
+`predict_step` returns a dictionary containing:
+- `y_hat`: standardized prediction
+- `y_hat_denorm`: temperature-denormalized prediction
+- `denoise_samples`: reverse samples (if requested)
+- `x0_denoise_samples`: per-step x0 predictions (if requested)
+- `sampler`: sampler used for prediction
+
+## Example (EO config)
 ```python
-from pathlib import Path
-
 import torch
-import yaml
-from pytorch_lightning import Trainer
 
 from data.datamodule import DepthTileDataModule
-from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
+from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from models.difFF import PixelDiffusionConditional
 
+model_config = "configs/model_config_eo_4band.yaml"
+data_config = "configs/data_config_eo_4band.yaml"
+train_config = "configs/training_config_eo_4band.yaml"
+ckpt_path = "logs/<run>/best-epochXXX.ckpt"
 
-def load_yaml(path: str) -> dict:
-    with Path(path).open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-model_config_path = "configs/model_config.yaml"
-data_config_path = "configs/data_config.yaml"
-training_config_path = "configs/training_config.yaml"
-ckpt_path = "logs/<run>/best.ckpt"
-
-dataset = SurfaceTempPatchLightDataset.from_config(data_config_path, split="all")
+dataset = SurfaceTempPatch4BandsLightDataset.from_config(data_config, split="all")
 datamodule = DepthTileDataModule(dataset=dataset)
 datamodule.setup("fit")
 
 model = PixelDiffusionConditional.from_config(
-    model_config_path=model_config_path,
-    data_config_path=data_config_path,
-    training_config_path=training_config_path,
+    model_config_path=model_config,
+    data_config_path=data_config,
+    training_config_path=train_config,
     datamodule=datamodule,
 )
 
-checkpoint = torch.load(ckpt_path, map_location="cpu")
-model.load_state_dict(checkpoint["state_dict"], strict=True)
+state = torch.load(ckpt_path, map_location="cpu")
+state_dict = state["state_dict"] if "state_dict" in state else state
+model.load_state_dict(state_dict, strict=False)
 model.eval()
-```
 
-If you run the EO multiband mode, swap the dataset class to `SurfaceTempPatch4BandsLightDataset` and use the EO config files.
-
-## 2) Run a single `predict_step` directly
-For `PixelDiffusionConditional`, `predict_step` expects at least `x`; it will also use `valid_mask` and optional `coords` if present.
-
-```python
 batch = next(iter(datamodule.val_dataloader()))
-batch = {k: (v if not torch.is_tensor(v) else v.to(model.device)) for k, v in batch.items()}
-
 with torch.no_grad():
     pred = model.predict_step(batch, batch_idx=0)
 
-y_hat = pred["y_hat"]               # standardized output
-y_hat_denorm = pred["y_hat_denorm"] # temperature-denormalized output
+y_hat = pred["y_hat"]
+y_hat_denorm = pred["y_hat_denorm"]
 ```
 
-## 3) Run prediction through Lightning
-```python
-trainer = Trainer(accelerator="auto", devices="auto", logger=False)
-predictions = trainer.predict(model=model, dataloaders=datamodule.val_dataloader())
-```
+## Sampler Choice
+Validation/inference sampler can be switched via training config:
+- `training.validation_sampling.sampler: "ddpm"` or `"ddim"`
+- DDIM controls:
+  - `ddim_num_timesteps`
+  - `ddim_eta`
 
-Each prediction item includes:
-- `y_hat`
-- `y_hat_denorm`
-- `denoise_samples` (if intermediates requested)
-- `sampler`
+The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.

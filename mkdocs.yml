@@ -34,5 +34,5 @@ nav:
   - Inference: inference.md
   - Experiments: experiments.md
   - Model Settings: settings.md
-  - Comments & Roadmap: comments.md
+  - Development: development.md
   - API Reference: api.md

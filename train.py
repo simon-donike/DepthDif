@@ -22,6 +22,14 @@ from models.difFF import PixelDiffusionConditional
 
 # Centralized YAML loader for config files.
 def load_yaml(path: str) -> dict[str, Any]:
+    """Load and return yaml data.
+
+    Args:
+        path (str): Path to an input or output file.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -29,6 +37,14 @@ def load_yaml(path: str) -> dict[str, Any]:
 # Resolve an optional resume checkpoint path and validate it early.
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     # Accept false/null to start fresh; otherwise require a valid checkpoint path string.
+    """Resolve and validate resume ckpt path.
+
+    Args:
+        model_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        str | None: Computed output value.
+    """
     resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
     if resume_cfg is False or resume_cfg is None:
         return None
@@ -46,6 +62,14 @@ def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
 # Build process rank defensively across common launchers.
 # Preference order avoids local-rank-only false positives in multi-node jobs.
 def resolve_global_rank() -> int:
+    """Resolve and validate global rank.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        int: Computed scalar output.
+    """
     rank_env_keys = ("RANK", "SLURM_PROCID", "OMPI_COMM_WORLD_RANK", "LOCAL_RANK")
     for key in rank_env_keys:
         value = os.environ.get(key)
@@ -66,6 +90,14 @@ def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
     # - parameters only -> "parameters"
     # - neither -> disable watch by returning None.
     # Explicit toggles take precedence when provided.
+    """Resolve and validate wandb watch mode.
+
+    Args:
+        wandb_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        str | None: Computed output value.
+    """
     has_explicit_toggles = (
         "watch_gradients" in wandb_cfg or "watch_parameters" in wandb_cfg
     )
@@ -94,6 +126,15 @@ def build_wandb_logger(
     training_cfg: dict[str, Any], model: pl.LightningModule
 ) -> WandbLogger:
     # Build logger from config first; watch settings are attached conditionally below.
+    """Build and return wandb logger.
+
+    Args:
+        training_cfg (dict[str, Any]): Configuration dictionary or section.
+        model (pl.LightningModule): Input value.
+
+    Returns:
+        WandbLogger: Computed output value.
+    """
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
         project=wandb_cfg.get("project", "DepthDif"),
@@ -117,6 +158,15 @@ def build_wandb_logger(
 
 def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> None:
     # In offline/disabled logger modes experiment may be unavailable.
+    """Upload configs to wandb to experiment tracking.
+
+    Args:
+        logger (WandbLogger): Logger instance used for experiment tracking.
+        config_paths (list[str]): Path to an input or output file.
+
+    Returns:
+        None: No value is returned.
+    """
     experiment = getattr(logger, "experiment", None)
     if experiment is None:
         return
@@ -131,6 +181,15 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
     # Prefer explicit dataset variant from config, with filename-based fallback for old configs.
+    """Resolve and validate dataset variant.
+
+    Args:
+        ds_cfg (dict[str, Any]): Configuration dictionary or section.
+        data_config_path (str): Path to an input or output file.
+
+    Returns:
+        str: Computed scalar output.
+    """
     variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
     if variant is None:
         # Backward-compatible fallback: infer from config filename if explicit variant is absent.
@@ -141,8 +200,19 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
     return str(variant).strip().lower()
 
 
-def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
+def build_dataset(
+    data_config_path: str, ds_cfg: dict[str, Any]
+) -> SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset:
     # Route to dataset implementation matching the requested training task.
+    """Build and return dataset.
+
+    Args:
+        data_config_path (str): Path to an input or output file.
+        ds_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset: Computed output value.
+    """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"temp_v1", "single_band", "1band", "default"}:
         return SurfaceTempPatchLightDataset.from_config(
@@ -162,6 +232,14 @@ def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
 
 
 def resolve_model_type(model_cfg: dict[str, Any]) -> str:
+    """Resolve and validate model type.
+
+    Args:
+        model_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        str: Computed scalar output.
+    """
     model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
     if model_type == "cond_px_dif":
         return model_type
@@ -177,6 +255,16 @@ def main(
     training_config_path: str = "configs/training_config.yaml",
 ) -> None:
     # Determine rank before creating any run-scoped folders/files.
+    """Run the script entry point.
+
+    Args:
+        model_config_path (str): Path to an input or output file.
+        data_config_path (str): Path to an input or output file.
+        training_config_path (str): Path to an input or output file.
+
+    Returns:
+        None: No value is returned.
+    """
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
@@ -319,6 +407,14 @@ def main(
 
 def parse_args() -> argparse.Namespace:
     # Keep CLI names stable and map aliases to canonical destination keys.
+    """Parse command-line arguments for this script.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        argparse.Namespace: Computed output value.
+    """
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",

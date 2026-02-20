@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import math
+from typing import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +18,14 @@ from utils.validation_denoise import build_capture_indices
 
 
 def _normalize_parameterization(parameterization: str) -> str:
+    """Helper that computes normalize parameterization.
+
+    Args:
+        parameterization (str): Input value.
+
+    Returns:
+        str: Computed scalar output.
+    """
     value = str(parameterization).strip().lower().replace("-", "").replace("_", "")
     if value in {"epsilon", "eps", "noise"}:
         return "epsilon"
@@ -26,6 +38,15 @@ def _normalize_parameterization(parameterization: str) -> str:
 
 
 def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> None:
+    """Helper that computes set sampler parameterization.
+
+    Args:
+        sampler (nn.Module): Sampler instance used for reverse diffusion.
+        parameterization (str): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
     if hasattr(sampler, "set_parameterization"):
         sampler.set_parameterization(parameterization)
         return
@@ -35,22 +56,43 @@ def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> 
 
 class DenoisingDiffusionProcess(nn.Module):
 
+    """Unconditional diffusion process module for training and sampling."""
     def __init__(
         self,
-        generated_channels=3,
-        loss_fn=F.mse_loss,
-        schedule="linear",
-        beta_start=0.0001,
-        beta_end=0.02,
-        num_timesteps=1000,
-        unet_dim=64,
-        unet_dim_mults=(1, 2, 4, 8),
-        unet_with_time_emb=True,
-        unet_output_mean_scale=False,
-        unet_residual=False,
-        parameterization="epsilon",
-        sampler=None,
-    ):
+        generated_channels: int = 3,
+        loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.mse_loss,
+        schedule: str = "linear",
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+        num_timesteps: int = 1000,
+        unet_dim: int = 64,
+        unet_dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        unet_with_time_emb: bool = True,
+        unet_output_mean_scale: bool = False,
+        unet_residual: bool = False,
+        parameterization: str = "epsilon",
+        sampler: nn.Module | None = None,
+    ) -> None:
+        """Initialize DenoisingDiffusionProcess with configured parameters.
+
+        Args:
+            generated_channels (int): Input value.
+            loss_fn (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): Tensor input for the computation.
+            schedule (str): Input value.
+            beta_start (float): Input value.
+            beta_end (float): Input value.
+            num_timesteps (int): Step or timestep value.
+            unet_dim (int): Input value.
+            unet_dim_mults (tuple[int, ...]): Input value.
+            unet_with_time_emb (bool): Boolean flag controlling behavior.
+            unet_output_mean_scale (bool): Boolean flag controlling behavior.
+            unet_residual (bool): Boolean flag controlling behavior.
+            parameterization (str): Input value.
+            sampler (nn.Module | None): Sampler instance used for reverse diffusion.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__()
 
         # Basic Params
@@ -90,11 +132,23 @@ class DenoisingDiffusionProcess(nn.Module):
         )
 
     @torch.no_grad()
-    def forward(self, shape=(256, 256), batch_size=1, sampler=None, verbose=False):
-        """
-        forward() function triggers a complete inference cycle
+    def forward(
+        self,
+        shape: tuple[int, int] = (256, 256),
+        batch_size: int = 1,
+        sampler: nn.Module | None = None,
+        verbose: bool = False,
+    ) -> torch.Tensor:
+        """Run reverse diffusion and return generated outputs.
 
-        A custom sampler can be provided as an argument!
+        Args:
+            shape (tuple[int, int]): Input value.
+            batch_size (int): Size/count parameter.
+            sampler (nn.Module | None): Sampler instance used for reverse diffusion.
+            verbose (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
 
         # read dimensions
@@ -123,10 +177,14 @@ class DenoisingDiffusionProcess(nn.Module):
 
         return x_t
 
-    def p_loss(self, output):
-        """
-        Computes denoising objective in whatever normalized space the caller uses.
-        (In this project, caller feeds standardized temperature targets.)
+    def p_loss(self, output: torch.Tensor) -> torch.Tensor:
+        """Compute the diffusion training loss for the current batch.
+
+        Args:
+            output (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
 
         b, c, h, w = output.shape
@@ -150,28 +208,55 @@ class DenoisingDiffusionProcess(nn.Module):
 
 class DenoisingDiffusionConditionalProcess(nn.Module):
 
+    """Conditional diffusion process module for guided reconstruction."""
     def __init__(
         self,
-        generated_channels=3,
-        condition_channels=3,
-        loss_fn=F.mse_loss,
-        schedule="linear",
-        beta_start=0.0001,
-        beta_end=0.02,
-        num_timesteps=1000,
-        unet_dim=64,
-        unet_dim_mults=(1, 2, 4, 8),
-        unet_with_time_emb=True,
-        unet_output_mean_scale=False,
-        unet_residual=False,
-        coord_conditioning_enabled=False,
-        coord_encoding="unit_sphere",
-        date_conditioning_enabled=False,
-        date_encoding="day_of_year_sincos",
-        coord_embed_dim=None,
-        parameterization="epsilon",
-        sampler=None,
-    ):
+        generated_channels: int = 3,
+        condition_channels: int = 3,
+        loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = F.mse_loss,
+        schedule: str = "linear",
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+        num_timesteps: int = 1000,
+        unet_dim: int = 64,
+        unet_dim_mults: tuple[int, ...] = (1, 2, 4, 8),
+        unet_with_time_emb: bool = True,
+        unet_output_mean_scale: bool = False,
+        unet_residual: bool = False,
+        coord_conditioning_enabled: bool = False,
+        coord_encoding: str = "unit_sphere",
+        date_conditioning_enabled: bool = False,
+        date_encoding: str = "day_of_year_sincos",
+        coord_embed_dim: int | None = None,
+        parameterization: str = "epsilon",
+        sampler: nn.Module | None = None,
+    ) -> None:
+        """Initialize DenoisingDiffusionConditionalProcess with configured parameters.
+
+        Args:
+            generated_channels (int): Input value.
+            condition_channels (int): Input value.
+            loss_fn (Callable[[torch.Tensor, torch.Tensor], torch.Tensor]): Tensor input for the computation.
+            schedule (str): Input value.
+            beta_start (float): Input value.
+            beta_end (float): Input value.
+            num_timesteps (int): Step or timestep value.
+            unet_dim (int): Input value.
+            unet_dim_mults (tuple[int, ...]): Input value.
+            unet_with_time_emb (bool): Boolean flag controlling behavior.
+            unet_output_mean_scale (bool): Boolean flag controlling behavior.
+            unet_residual (bool): Boolean flag controlling behavior.
+            coord_conditioning_enabled (bool): Boolean flag controlling behavior.
+            coord_encoding (str): Input value.
+            date_conditioning_enabled (bool): Boolean flag controlling behavior.
+            date_encoding (str): Input value.
+            coord_embed_dim (int | None): Input value.
+            parameterization (str): Input value.
+            sampler (nn.Module | None): Sampler instance used for reverse diffusion.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__()
 
         # Basic Params
@@ -252,9 +337,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
     @torch.no_grad()
     def forward(
         self,
-        condition,
-        sampler=None,
-        verbose=False,
+        condition: torch.Tensor,
+        sampler: nn.Module | None = None,
+        verbose: bool = False,
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
         coord: torch.Tensor | None = None,
@@ -262,11 +347,31 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
         return_x0_intermediates: bool = False,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]]
+        | tuple[
+            torch.Tensor,
+            list[tuple[int, torch.Tensor]],
+            list[tuple[int, torch.Tensor]],
+        ]
     ):
-        """
-        forward() function triggers a complete inference cycle
+        """Run reverse diffusion and return generated outputs.
 
-        A custom sampler can be provided as an argument!
+        Args:
+            condition (torch.Tensor): Tensor input for the computation.
+            sampler (nn.Module | None): Sampler instance used for reverse diffusion.
+            verbose (bool): Boolean flag controlling behavior.
+            known_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            known_values (torch.Tensor | None): Tensor input for the computation.
+            coord (torch.Tensor | None): Coordinate conditioning values.
+            date (torch.Tensor | None): Date conditioning values.
+            return_intermediates (bool): Boolean flag controlling behavior.
+            intermediate_step_indices (list[int] | None): Input value.
+            return_x0_intermediates (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]] | tuple[torch.Tensor, list[tuple[int, torch.Tensor]], list[tuple[int, torch.Tensor]]]: Tensor output produced by this call.
         """
 
         # read dimensions
@@ -362,6 +467,15 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
     @staticmethod
     def _sampler_train_timestep(sampler: nn.Module, t: torch.Tensor) -> torch.Tensor:
+        """Helper that computes sampler train timestep.
+
+        Args:
+            sampler (nn.Module): Sampler instance used for reverse diffusion.
+            t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         t_long = t.long()
         if hasattr(sampler, "ddim_train_steps"):
             ddim_train_steps = getattr(sampler, "ddim_train_steps")
@@ -377,6 +491,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         prediction: torch.Tensor,
         sampler: nn.Module,
     ) -> torch.Tensor:
+        """Helper that computes prediction to x0.
+
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+            prediction (torch.Tensor): Tensor input for the computation.
+            sampler (nn.Module): Sampler instance used for reverse diffusion.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if self.parameterization == "x0":
             return prediction
 
@@ -394,6 +519,15 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
     def _build_valid_mask(
         valid_mask: torch.Tensor | None, reference: torch.Tensor
     ) -> torch.Tensor | None:
+        """Helper that computes build valid mask.
+
+        Args:
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            reference (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor | None: Tensor output produced by this call.
+        """
         if valid_mask is None:
             return None
         mask = (valid_mask > 0.5).float()
@@ -418,6 +552,15 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
     def _build_land_mask(
         land_mask: torch.Tensor | None, reference: torch.Tensor
     ) -> torch.Tensor | None:
+        """Helper that computes build land mask.
+
+        Args:
+            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            reference (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor | None: Tensor output produced by this call.
+        """
         if land_mask is None:
             return None
         mask = (land_mask > 0.5).float()
@@ -439,18 +582,28 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
     def p_loss(
         self,
-        output,
-        condition,
+        output: torch.Tensor,
+        condition: torch.Tensor,
         *,
         valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
-    ):
-        """
-        Computes conditional denoising objective in caller-provided normalized space.
-        (In this project, output/condition data channels are standardized temperatures.)
+    ) -> torch.Tensor:
+        """Compute the diffusion training loss for the current batch.
+
+        Args:
+            output (torch.Tensor): Tensor input for the computation.
+            condition (torch.Tensor): Tensor input for the computation.
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            mask_loss (bool): Mask tensor controlling valid or known pixels.
+            coord (torch.Tensor | None): Coordinate conditioning values.
+            date (torch.Tensor | None): Date conditioning values.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
 
         b, c, h, w = output.shape
@@ -491,6 +644,14 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
     @staticmethod
     def _coord_encoding_dim(encoding: str) -> int:
+        """Helper that computes coord encoding dim.
+
+        Args:
+            encoding (str): Input value.
+
+        Returns:
+            int: Computed scalar output.
+        """
         if encoding == "unit_sphere":
             return 3
         if encoding == "sincos":
@@ -501,11 +662,27 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
     @staticmethod
     def _date_encoding_dim(encoding: str) -> int:
+        """Helper that computes date encoding dim.
+
+        Args:
+            encoding (str): Input value.
+
+        Returns:
+            int: Computed scalar output.
+        """
         if encoding == "day_of_year_sincos":
             return 2
         raise ValueError(f"Unsupported date encoding '{encoding}'.")
 
     def _encode_coords(self, coord: torch.Tensor) -> torch.Tensor:
+        """Helper that computes encode coords.
+
+        Args:
+            coord (torch.Tensor): Coordinate conditioning values.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if coord.ndim != 2 or coord.size(1) != 2:
             raise ValueError(
                 "coords must have shape (B, 2) with [lat, lon] in degrees."
@@ -538,6 +715,14 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         raise ValueError(f"Unsupported coord encoding '{self.coord_encoding}'.")
 
     def _encode_date(self, date: torch.Tensor) -> torch.Tensor:
+        """Helper that computes encode date.
+
+        Args:
+            date (torch.Tensor): Date conditioning values.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if date.ndim == 2 and date.size(1) == 1:
             date = date[:, 0]
         if date.ndim != 1:
@@ -578,6 +763,16 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         *,
         date: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
+        """Helper that computes maybe embed coords.
+
+        Args:
+            coord (torch.Tensor | None): Coordinate conditioning values.
+            reference (torch.Tensor): Tensor input for the computation.
+            date (torch.Tensor | None): Date conditioning values.
+
+        Returns:
+            torch.Tensor | None: Tensor output produced by this call.
+        """
         if self.coord_mlp is None:
             return None
         if coord is None:

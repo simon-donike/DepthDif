@@ -41,11 +41,28 @@ RANDOM_WIDTH: int | None = None
 
 
 def load_yaml(path: str) -> dict[str, Any]:
+    """Load and return yaml data.
+
+    Args:
+        path (str): Path to an input or output file.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
+    """Resolve and validate dataset variant.
+
+    Args:
+        ds_cfg (dict[str, Any]): Configuration dictionary or section.
+        data_config_path (str): Path to an input or output file.
+
+    Returns:
+        str: Computed scalar output.
+    """
     variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
     if variant is None:
         stem = Path(data_config_path).stem.lower()
@@ -55,7 +72,18 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
     return str(variant).strip().lower()
 
 
-def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
+def build_dataset(
+    data_config_path: str, ds_cfg: dict[str, Any]
+) -> SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset:
+    """Build and return dataset.
+
+    Args:
+        data_config_path (str): Path to an input or output file.
+        ds_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset: Computed output value.
+    """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"temp_v1", "single_band", "1band", "default"}:
         return SurfaceTempPatchLightDataset.from_config(data_config_path, split="all")
@@ -67,6 +95,14 @@ def build_dataset(data_config_path: str, ds_cfg: dict[str, Any]):
 
 
 def resolve_model_type(model_cfg: dict[str, Any]) -> str:
+    """Resolve and validate model type.
+
+    Args:
+        model_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        str: Computed scalar output.
+    """
     model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
     if model_type == "cond_px_dif":
         return model_type
@@ -81,6 +117,16 @@ def build_datamodule(
     data_cfg: dict[str, Any],
     training_cfg: dict[str, Any],
 ) -> DepthTileDataModule:
+    """Build and return datamodule.
+
+    Args:
+        dataset (torch.utils.data.Dataset): Input value.
+        data_cfg (dict[str, Any]): Configuration dictionary or section.
+        training_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        DepthTileDataModule: Computed output value.
+    """
     split_cfg = data_cfg.get("split", {})
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
     data_dataloader_cfg = data_cfg.get("dataloader", {})
@@ -102,6 +148,18 @@ def build_model(
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
 ) -> PixelDiffusionConditional:
+    """Build and return model.
+
+    Args:
+        model_config_path (str): Path to an input or output file.
+        data_config_path (str): Path to an input or output file.
+        training_config_path (str): Path to an input or output file.
+        model_cfg (dict[str, Any]): Configuration dictionary or section.
+        datamodule (DepthTileDataModule): Input value.
+
+    Returns:
+        PixelDiffusionConditional: Computed output value.
+    """
     resolve_model_type(model_cfg)
     return PixelDiffusionConditional.from_config(
         model_config_path=model_config_path,
@@ -112,6 +170,15 @@ def build_model(
 
 
 def resolve_checkpoint_path(ckpt_override: str | None, model_cfg: dict[str, Any]) -> str | None:
+    """Resolve and validate checkpoint path.
+
+    Args:
+        ckpt_override (str | None): Input value.
+        model_cfg (dict[str, Any]): Configuration dictionary or section.
+
+    Returns:
+        str | None: Computed output value.
+    """
     if ckpt_override:
         ckpt_path = Path(ckpt_override).expanduser()
         if not ckpt_path.is_file():
@@ -128,6 +195,15 @@ def resolve_checkpoint_path(ckpt_override: str | None, model_cfg: dict[str, Any]
 
 
 def to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
+    """Move tensor values in a batch dictionary to the target device.
+
+    Args:
+        batch (dict[str, Any]): Input value.
+        device (torch.device): Target device for tensor operations.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     out: dict[str, Any] = {}
     for k, v in batch.items():
         out[k] = v.to(device) if torch.is_tensor(v) else v
@@ -135,6 +211,14 @@ def to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
 
 
 def pretty_shape(value: Any) -> str:
+    """Return a compact human-readable shape/type description.
+
+    Args:
+        value (Any): Input value.
+
+    Returns:
+        str: Computed scalar output.
+    """
     if torch.is_tensor(value):
         return f"tensor{tuple(value.shape)}"
     if isinstance(value, list):
@@ -150,6 +234,19 @@ def build_random_batch(
     width: int,
     device: torch.device,
 ) -> dict[str, Any]:
+    """Build and return random batch.
+
+    Args:
+        model (PixelDiffusionConditional): Input value.
+        data_cfg (dict[str, Any]): Configuration dictionary or section.
+        batch_size (int): Size/count parameter.
+        height (int): Size/count parameter.
+        width (int): Size/count parameter.
+        device (torch.device): Target device for tensor operations.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     m = model.hparams if hasattr(model, "hparams") else {}
 
     generated_channels = int(getattr(m, "generated_channels", 1))
@@ -200,6 +297,16 @@ def run_predict_once(
     batch: dict[str, Any],
     include_intermediates: bool,
 ) -> dict[str, Any]:
+    """Compute run predict once and return the result.
+
+    Args:
+        model (PixelDiffusionConditional): Input value.
+        batch (dict[str, Any]): Input value.
+        include_intermediates (bool): Boolean flag controlling behavior.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     if include_intermediates:
         batch = dict(batch)
         batch["return_intermediates"] = True
@@ -209,6 +316,14 @@ def run_predict_once(
 
 
 def choose_device(device_arg: str) -> torch.device:
+    """Choose and return device.
+
+    Args:
+        device_arg (str): Input value.
+
+    Returns:
+        torch.device: Computed output value.
+    """
     if device_arg == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device_arg == "cuda" and not torch.cuda.is_available():
@@ -217,6 +332,14 @@ def choose_device(device_arg: str) -> torch.device:
 
 
 def main() -> None:
+    """Run the script entry point.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        None: No value is returned.
+    """
     torch.manual_seed(int(SEED))
 
     model_cfg = load_yaml(MODEL_CONFIG_PATH)

@@ -1,76 +1,122 @@
-# A1: Major and Minor Model Settings
+# Model Settings
+This page maps key configuration flags to their runtime behavior in code.
 
-These are the model/training behaviors in this repo and where they are wired in config.
+Primary config files used in current EO setup:
+- `configs/data_config_eo_4band.yaml`
+- `configs/model_config_eo_4band.yaml`
+- `configs/training_config_eo_4band.yaml`
 
-## Major model settings
+Legacy single-band configs:
+- `configs/older_configs/data_config.yaml`
+- `configs/older_configs/model_config.yaml`
+- `configs/older_configs/training_config.yaml`
 
-- **Input channels with mask (conditioning channels)**  
-  The conditional diffusion model receives corrupted data plus mask channels.  
-  Configure in `configs/model_config.yaml`:
-  - `model.condition_channels`: total conditioning channels passed to the denoiser (data + mask).
-  - `model.condition_mask_channels`: number of condition channels that are mask semantics.
-  - `model.condition_include_eo`: if true, prepend `eo` as an additional condition channel when present.
-  - `model.condition_use_valid_mask`: if false, keep `valid_mask` out of condition input (still available for masked loss/logging).  
-  In EO 3-band mode this is set to 5 condition channels total: `eo (1) + x (3) + mask (1)`.
+## Major Settings
+### Conditioning channels
+Config (`model_config_*`):
+- `model.generated_channels`
+- `model.condition_channels`
+- `model.condition_mask_channels`
+- `model.condition_include_eo`
+- `model.condition_use_valid_mask`
 
-- **EO dropout (conditioning regularization)**  
-  Configure in `configs/data_config.yaml` or `configs/data_config_eo_4band.yaml`:
-  - `dataset.eo_dropout_prob` (for example `0.25`)  
-  EO is randomly zeroed for the configured fraction of samples in both train and val.  
-  This is used to prevent EO over-reliance and encourage reconstruction from the sparse/deeper `x` signal itself.
+Runtime effect:
+- controls how `condition = [eo?, x, valid_mask?]` is assembled
+- channel count is validated against expected `condition_channels`
 
-- **Masked pixel loss computation**  
-  Loss can be restricted to valid (ocean) pixels to avoid land/no-data bias.  
-  Configure in `configs/model_config.yaml`:
-  - `model.mask_loss_with_valid_pixels: true`  
-  When enabled, the conditional loss is computed over missing pixels (`1 - valid_mask`),
-  optionally restricted to ocean pixels via `land_mask`, then normalized by mask sum.
+### Diffusion target parameterization
+Config:
+- `model.parameterization`: `epsilon` or `x0`
 
-- **Anchoring known pixels at inference (inpainting clamp)**  
-  During sampling, known pixels are overwritten at every diffusion step for stability.  
-  Configure in `configs/model_config.yaml`:
-  - `model.clamp_known_pixels: true`  
-  This uses the conditioning input + mask to keep known values fixed while denoising.
+Runtime effect:
+- defines target in diffusion loss and sampler conversions
+- current EO config uses `x0`
 
-  ![img](assets/clamped_pixels.png)  
+### Masked loss
+Config:
+- `model.mask_loss_with_valid_pixels`
 
-- **Coordinate encoding + FiLM injection**  
-  Patch-center coordinates are encoded and injected via FiLM scale/shift in ConvNeXt blocks.  
-  Configure in:
-  - `configs/data_config.yaml`: `dataset.return_coords: true` (adds coords to each batch)
-  - `configs/model_config.yaml`: `model.coord_conditioning.enabled: true`
-  - `model.coord_conditioning.encoding`: `unit_sphere`, `sincos`, or `raw`
-  - `model.coord_conditioning.include_date`: include `batch["date"]` (`YYYYMMDD`) in FiLM conditioning
-  - `model.coord_conditioning.date_encoding`: currently `day_of_year_sincos` (fixed denominator `365`)
-  - `model.coord_conditioning.embed_dim`: embedding width (defaults to `unet.dim` if null)
-  Exact mechanism is described in [Date + Coordination Injection](date-coordination-injection.md).
+Runtime effect:
+- if enabled, loss is computed on missing pixels (`1 - valid_mask`)
+- optionally gated by `land_mask` to focus on ocean pixels
 
-## Minor model/training settings
+### Known-pixel clamping during sampling
+Config:
+- `model.clamp_known_pixels`
 
-- **Learning-rate scheduler (Warmup + ReduceLROnPlateau)**  
-  Configure in `configs/training_config.yaml`:
-  - `scheduler.warmup.enabled`, `steps`, `start_ratio`
-  - `scheduler.reduce_on_plateau.enabled`
-  - `scheduler.reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
-  - `trainer.lr_logging_interval` (learning-rate monitor cadence)
-  Notes:
-  - Warmup is step-based (optimizer updates), not epoch-based.
-  - Default warmup ramps LR linearly from `0.1 * training.lr` to `training.lr` over the first `1000` optimizer steps.
-  - Warmup is currently wired in the conditional model path; after warmup, `ReduceLROnPlateau` controls LR as usual.
+Runtime effect:
+- if enabled and known masks/values are available, known pixels are overwritten each reverse step
+- useful for inpainting-style stability
 
-- **Checkpointing + resume**  
-  Configure in:
-  - `configs/model_config.yaml`: `model.resume_checkpoint` (false/null or a `.ckpt` path)
-  - `configs/training_config.yaml`: `trainer.ckpt_monitor` (metric used for `best.ckpt`; `last.ckpt` is always saved)
+Illustration:
+![img](assets/clamped_pixels.png)
 
-- **W&B logging (metrics/images/watch)**  
-  Configure in `configs/training_config.yaml`:
-  - `wandb.project`, `wandb.entity`, `wandb.run_name`, `wandb.log_model`
-  - `wandb.verbose`, `wandb.log_images_every_n_steps`, `wandb.log_stats_every_n_steps`
-  - `wandb.watch_gradients`, `wandb.watch_parameters`, `wandb.watch_log_freq`, `wandb.watch_log_graph`
+### Coordinate/date FiLM conditioning
+Config:
+- data: `dataset.return_coords`
+- model:
+  - `coord_conditioning.enabled`
+  - `coord_conditioning.encoding`
+  - `coord_conditioning.include_date`
+  - `coord_conditioning.date_encoding`
+  - `coord_conditioning.embed_dim`
 
-- **Validation-time sampling + diagnostics**  
-  Configure in `configs/training_config.yaml`:
-  - `training.validation_sampling.sampler` (`ddpm` or `ddim`)
-  - `training.validation_sampling.ddim_num_timesteps`, `ddim_eta`
-  Notes: PSNR/SSIM are computed when `skimage` is available; one cached val example per epoch is used for full reconstruction logging.
+Runtime effect:
+- creates a coordinate/date embedding and injects it via FiLM in ConvNeXt blocks
+- details: [Date + Coordination Injection](date-coordination-injection.md)
+
+## Training and Optimization Settings
+### Noise schedule and diffusion steps
+Config (`training.noise`):
+- `num_timesteps`
+- `schedule`: `linear`, `cosine`, `quadratic`, `sigmoid`
+- `beta_start`, `beta_end`
+
+### Validation sampling mode
+Config (`training.validation_sampling`):
+- `sampler`: `ddpm` or `ddim`
+- `ddim_num_timesteps`, `ddim_eta`
+- `log_intermediates`
+
+Runtime effect:
+- training loss still uses forward noising objective
+- full reverse sampling diagnostics use chosen validation sampler
+
+### Learning-rate warmup and plateau scheduler
+Config (`scheduler`):
+- `warmup.enabled`, `warmup.steps`, `warmup.start_ratio`
+- `reduce_on_plateau.enabled`
+- `reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
+
+Runtime effect:
+- warmup is applied per optimizer step in `optimizer_step`
+- plateau scheduler is applied on epoch-level monitored metric
+
+## Trainer/Runtime Controls
+Config (`trainer`):
+- hardware/precision: `accelerator`, `devices`, optional `num_gpus`, `precision`
+- logging/checkpoint cadence: `log_every_n_steps`, `ckpt_monitor`, `lr_logging_interval`
+- validation load: `val_batches_per_epoch` or `limit_val_batches`
+- stability knobs: `gradient_clip_val`, warning suppressions
+
+## Dataloader Settings
+Config (`dataloader`):
+- `batch_size`, `val_batch_size`
+- `num_workers`, `val_num_workers`
+- `shuffle`, `val_shuffle`
+- `pin_memory`, `persistent_workers`, `prefetch_factor`
+
+Runtime notes:
+- `prefetch_factor` is only applied when `num_workers > 0`
+- validation shuffle defaults to true in DataModule unless explicitly changed
+
+## Logging Settings (W&B)
+Config (`wandb`):
+- project/entity/run naming
+- model logging policy
+- watch toggles (`watch_gradients`, `watch_parameters`)
+- scalar/image logging intervals
+
+Runtime notes:
+- watch mode is resolved from explicit gradient/parameter toggles
+- config files used in the run are uploaded to W&B run files when possible

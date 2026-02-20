@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 @dataclass
 class _ExportParams:
+    """Container for dataset export configuration parameters."""
     root_dir: Path
     output_dir: Path
     variable: str
@@ -28,10 +29,27 @@ class _ExportParams:
 
 
 class _NetCDFPatchExporter:
+    """Exporter that writes NetCDF patch data and metadata to disk."""
     def __init__(self, params: _ExportParams) -> None:
+        """Initialize _NetCDFPatchExporter with configured parameters.
+
+        Args:
+            params (_ExportParams): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         self.params = params
 
     def run(self) -> Path:
+        """Compute run and return the result.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            Path: Computed output value.
+        """
         nc_files = sorted(self.params.root_dir.glob("*.nc"))
         if not nc_files:
             raise FileNotFoundError(f"No .nc files found under {self.params.root_dir}")
@@ -124,6 +142,14 @@ class _NetCDFPatchExporter:
         return csv_path
 
     def _build_full_index(self, nc_files: list[Path]) -> pd.DataFrame:
+        """Helper that computes build full index.
+
+        Args:
+            nc_files (list[Path]): Input value.
+
+        Returns:
+            pd.DataFrame: Computed output value.
+        """
         template_rows = self._build_template_rows(nc_files[0])
         template_df = pd.DataFrame.from_records(template_rows)
         per_file_frames = [template_df.assign(source_file=nc_path.name) for nc_path in nc_files]
@@ -144,6 +170,14 @@ class _NetCDFPatchExporter:
         return full_df[cols]
 
     def _build_template_rows(self, template_path: Path) -> list[dict[str, Any]]:
+        """Helper that computes build template rows.
+
+        Args:
+            template_path (Path): Path to an input or output file.
+
+        Returns:
+            list[dict[str, Any]]: List containing computed outputs.
+        """
         rows: list[dict[str, Any]] = []
         edge = int(self.params.edge_size)
 
@@ -216,6 +250,14 @@ class _NetCDFPatchExporter:
     def _extract_depth_stack(
         self, ds: xr.Dataset
     ) -> tuple[xr.DataArray, str, str, np.ndarray, np.ndarray]:
+        """Helper that computes extract depth stack.
+
+        Args:
+            ds (xr.Dataset): Input value.
+
+        Returns:
+            tuple[xr.DataArray, str, str, np.ndarray, np.ndarray]: Tuple containing computed outputs.
+        """
         if self.params.variable not in ds.data_vars:
             raise RuntimeError(
                 f"Expected variable '{self.params.variable}' in dataset. "
@@ -259,6 +301,16 @@ class _NetCDFPatchExporter:
     def _pick_name(
         ds: xr.Dataset, dims: tuple[str, ...], candidates: tuple[str, ...]
     ) -> str | None:
+        """Helper that computes pick name.
+
+        Args:
+            ds (xr.Dataset): Input value.
+            dims (tuple[str, ...]): Input value.
+            candidates (tuple[str, ...]): Input value.
+
+        Returns:
+            str | None: Computed output value.
+        """
         low_dims = {d.lower(): d for d in dims}
         for cand in candidates:
             if cand in low_dims:
@@ -283,6 +335,14 @@ class _NetCDFPatchExporter:
 
     @staticmethod
     def _fill_values(da: xr.DataArray) -> list[float]:
+        """Helper that computes fill values.
+
+        Args:
+            da (xr.DataArray): Input value.
+
+        Returns:
+            list[float]: List containing computed outputs.
+        """
         values: list[float] = []
         if "_FillValue" in da.attrs:
             values.append(float(da.attrs["_FillValue"]))
@@ -291,12 +351,29 @@ class _NetCDFPatchExporter:
         return values
 
     def _validity_mask(self, arr: np.ndarray, da: xr.DataArray) -> np.ndarray:
+        """Helper that computes validity mask.
+
+        Args:
+            arr (np.ndarray): Input value.
+            da (xr.DataArray): Input value.
+
+        Returns:
+            np.ndarray: Computed output value.
+        """
         valid = np.isfinite(arr)
         for fill_value in self._fill_values(da):
             valid &= ~np.isclose(arr, fill_value)
         return valid
 
     def _assign_split(self, records: list[dict[str, Any]]) -> None:
+        """Helper that computes assign split.
+
+        Args:
+            records (list[dict[str, Any]]): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         n_samples = len(records)
         val_len = int(round(n_samples * self.params.val_fraction))
         if n_samples > 1:
@@ -326,12 +403,24 @@ def to_disk(
     split_seed: int = 42,
     flush_every: int = 500,
 ) -> Path:
-    """
-    Export depth-band patches from NetCDF files to `output_dir/y_npy/*.npy`.
-    Writes `patch_index_with_paths.csv` into the same output folder.
+    """Export dataset patches and index metadata to disk.
 
-    `bands` are depth-rank indices after sorting depth values ascending.
-    Example: `bands=[0, 3, 4, 5]`.
+    Args:
+        root_dir (str | Path): Input value.
+        output_dir (str | Path): Input value.
+        bands (Sequence[int]): Input value.
+        variable (str): Input value.
+        edge_size (int): Input value.
+        enforce_validity (bool): Boolean flag controlling behavior.
+        max_nodata_fraction (float): Input value.
+        nan_fill_value (float): Input value.
+        valid_fraction_threshold (float): Input value.
+        val_fraction (float): Input value.
+        split_seed (int): Input value.
+        flush_every (int): Input value.
+
+    Returns:
+        Path: Computed output value.
     """
     if not bands:
         raise ValueError("bands must contain at least one depth index.")
@@ -359,6 +448,14 @@ def to_disk(
 
 
 def _load_config(config_path: str = "configs/data_config.yaml") -> dict[str, Any]:
+    """Load and return config data.
+
+    Args:
+        config_path (str): Path to an input or output file.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     with Path(config_path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 

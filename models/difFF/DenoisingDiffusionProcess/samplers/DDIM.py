@@ -4,6 +4,10 @@ This file contains the DDIM sampler class for a diffusion process
 
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 import torch
 from torch import nn
 
@@ -12,19 +16,36 @@ from ..beta_schedules import *
 
 class DDIM_Sampler(nn.Module):
 
+    """DDIM sampler that performs accelerated reverse-diffusion updates."""
     def __init__(
         self,
-        num_timesteps=100,
-        train_timesteps=1000,
-        clip_sample=True,
-        schedule="linear",
-        beta_start=0.0001,
-        beta_end=0.02,
-        eta=0.0,
-        betas=None,
-        parameterization="epsilon",
-    ):
+        num_timesteps: int = 100,
+        train_timesteps: int = 1000,
+        clip_sample: bool = True,
+        schedule: str = "linear",
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+        eta: float = 0.0,
+        betas: torch.Tensor | list[float] | tuple[float, ...] | None = None,
+        parameterization: str = "epsilon",
+    ) -> None:
 
+        """Initialize DDIM_Sampler with configured parameters.
+
+        Args:
+            num_timesteps (int): Step or timestep value.
+            train_timesteps (int): Step or timestep value.
+            clip_sample (bool): Boolean flag controlling behavior.
+            schedule (str): Input value.
+            beta_start (float): Input value.
+            beta_end (float): Input value.
+            eta (float): Input value.
+            betas (torch.Tensor | list[float] | tuple[float, ...] | None): Tensor input for the computation.
+            parameterization (str): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__()
 
         self.num_timesteps = int(num_timesteps)
@@ -73,13 +94,29 @@ class DDIM_Sampler(nn.Module):
         self.register_buffer("ddim_prev_steps", ddim_prev)
 
     @torch.no_grad()
-    def forward(self, *args, **kwargs):
+    def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+        """Run the sampler call and return the next sample.
+
+        Args:
+            *args (Any): Additional positional arguments forwarded to the underlying call.
+            **kwargs (Any): Additional keyword arguments forwarded to the underlying call.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         return self.step(*args, **kwargs)
 
     @torch.no_grad()
-    def step(self, x_t, t, z_t):
-        """
-        Given model prediction in x_t predict x_(t-1).
+    def step(self, x_t: torch.Tensor, t: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
+        """Predict the previous diffusion sample for one timestep.
+
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+            z_t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
         assert (t < self.num_timesteps).all()
 
@@ -124,7 +161,18 @@ class DDIM_Sampler(nn.Module):
 
         return prev_sample
 
-    def estimate_std(self, alpha_cumprod, alpha_cumprod_prev):
+    def estimate_std(
+        self, alpha_cumprod: torch.Tensor, alpha_cumprod_prev: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute estimate std and return the result.
+
+        Args:
+            alpha_cumprod (torch.Tensor): Tensor input for the computation.
+            alpha_cumprod_prev (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         one_minus_alpha_cumprod = 1 - alpha_cumprod
         one_minus_alpha_cumprod_prev = 1 - alpha_cumprod_prev
 
@@ -136,6 +184,14 @@ class DDIM_Sampler(nn.Module):
 
     @staticmethod
     def _normalize_parameterization(parameterization: str) -> str:
+        """Helper that computes normalize parameterization.
+
+        Args:
+            parameterization (str): Input value.
+
+        Returns:
+            str: Computed scalar output.
+        """
         value = str(parameterization).strip().lower().replace("-", "").replace("_", "")
         if value in {"epsilon", "eps", "noise"}:
             return "epsilon"
@@ -147,9 +203,34 @@ class DDIM_Sampler(nn.Module):
         )
 
     def set_parameterization(self, parameterization: str) -> None:
+        """Compute set parameterization and return the result.
+
+        Args:
+            parameterization (str): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         self.parameterization = self._normalize_parameterization(parameterization)
 
-    def _x0_to_noise(self, x_t, x0_pred, alpha_cumprod_t, train_t):
+    def _x0_to_noise(
+        self,
+        x_t: torch.Tensor,
+        x0_pred: torch.Tensor,
+        alpha_cumprod_t: torch.Tensor,
+        train_t: torch.Tensor,
+    ) -> torch.Tensor:
+        """Helper that computes x0 to noise.
+
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            x0_pred (torch.Tensor): Tensor input for the computation.
+            alpha_cumprod_t (torch.Tensor): Tensor input for the computation.
+            train_t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         b = x_t.shape[0]
         one_minus_alpha_cumprod_sqrt_t = self.alphas_one_minus_cumprod_sqrt[
             train_t
@@ -158,7 +239,24 @@ class DDIM_Sampler(nn.Module):
             x_t - alpha_cumprod_t.sqrt() * x0_pred
         ) / one_minus_alpha_cumprod_sqrt_t
 
-    def _prediction_to_x0_and_noise(self, x_t, train_t, prediction, alpha_cumprod_t):
+    def _prediction_to_x0_and_noise(
+        self,
+        x_t: torch.Tensor,
+        train_t: torch.Tensor,
+        prediction: torch.Tensor,
+        alpha_cumprod_t: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Helper that computes prediction to x0 and noise.
+
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            train_t (torch.Tensor): Tensor input for the computation.
+            prediction (torch.Tensor): Tensor input for the computation.
+            alpha_cumprod_t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Tuple containing computed outputs.
+        """
         b = x_t.shape[0]
         if self.parameterization == "epsilon":
             noise_pred = prediction

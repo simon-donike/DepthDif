@@ -8,6 +8,8 @@ Current Models:
 
 """
 
+from __future__ import annotations
+
 import torch
 from torch import nn
 
@@ -15,44 +17,72 @@ from .beta_schedules import *
 
 
 class ForwardModel(nn.Module):
-    """
-    (Forward Model Template)
-    """
+    """Base interface for forward diffusion process implementations."""
 
-    def __init__(self, num_timesteps=1000, schedule="linear"):
+    def __init__(self, num_timesteps: int = 1000, schedule: str = "linear") -> None:
 
+        """Initialize ForwardModel with configured parameters.
+
+        Args:
+            num_timesteps (int): Step or timestep value.
+            schedule (str): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__()
         self.schedule = schedule
         self.num_timesteps = num_timesteps
 
     @torch.no_grad()
-    def forward(self, x_0, t):
-        """
-        Get noisy sample at t given x_0
+    def forward(self, x_0: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Run the module forward computation.
+
+        Args:
+            x_0 (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
         raise NotImplemented
 
     @torch.no_grad()
-    def step(self, x_t, t):
-        """
-        Get next sample in the process
+    def step(self, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Run one update step.
+
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
         """
         raise NotImplemented
 
 
 class GaussianForwardProcess(ForwardModel):
-    """
-    Gassian Forward Model
-    """
+    """Forward diffusion process based on Gaussian noise transitions."""
 
     def __init__(
         self,
-        num_timesteps=1000,
-        schedule="linear",
-        beta_start=0.0001,
-        beta_end=0.02,
-    ):
+        num_timesteps: int = 1000,
+        schedule: str = "linear",
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+    ) -> None:
 
+        """Initialize GaussianForwardProcess with configured parameters.
+
+        Args:
+            num_timesteps (int): Step or timestep value.
+            schedule (str): Input value.
+            beta_start (float): Input value.
+            beta_end (float): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__(num_timesteps=num_timesteps, schedule=schedule)
 
         # get process parameters
@@ -75,11 +105,18 @@ class GaussianForwardProcess(ForwardModel):
         self.register_buffer("alphas_sqrt", self.alphas.sqrt())
 
     @torch.no_grad()
-    def forward(self, x_0, t, return_noise=False):
-        """
-        Get noisy sample at t given x_0
+    def forward(
+        self, x_0: torch.Tensor, t: torch.Tensor, return_noise: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Run reverse diffusion and return generated outputs.
 
-        q(x_t | x_0)=N(x_t; alphas_cumprod_sqrt(t)*x_0, 1-alpha_cumprod(t)*I)
+        Args:
+            x_0 (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+            return_noise (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor]: Tensor output produced by this call.
         """
         assert (t < self.num_timesteps).all()
 
@@ -96,11 +133,18 @@ class GaussianForwardProcess(ForwardModel):
             return output, noise
 
     @torch.no_grad()
-    def step(self, x_t, t, return_noise=False):
-        """
-        Get next sample in the process
+    def step(
+        self, x_t: torch.Tensor, t: torch.Tensor, return_noise: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        """Apply one forward-diffusion transition step.
 
-        q(x_t | x_t-1)=N(x_t; alphas_sqrt(t)*x_0,betas(t)*I)
+        Args:
+            x_t (torch.Tensor): Tensor input for the computation.
+            t (torch.Tensor): Tensor input for the computation.
+            return_noise (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor]: Tensor output produced by this call.
         """
         assert (t < self.num_timesteps).all()
 

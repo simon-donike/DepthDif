@@ -14,11 +14,7 @@ from utils.stretching import minmax_stretch
 
 
 class SurfaceTempPatchLightDataset(Dataset):
-    """
-    Lightweight patch dataset that reads pre-saved y patches (.npy) from a CSV.
-    Returns dict with corrupted input `x`, target `y`, `valid_mask`, `land_mask`,
-    and optional metadata `info`.
-    """
+    """Dataset that loads single-band surface temperature patches."""
 
     def __init__(
         self,
@@ -37,6 +33,26 @@ class SurfaceTempPatchLightDataset(Dataset):
         split_seed: int = 7,
         val_fraction: float = 0.2,
     ) -> None:
+        """Initialize SurfaceTempPatchLightDataset with configured parameters.
+
+        Args:
+            csv_path (str | Path): Path to an input or output file.
+            split (str): Input value.
+            mask_fraction (float): Mask tensor controlling valid or known pixels.
+            mask_patch_min (int): Mask tensor controlling valid or known pixels.
+            mask_patch_max (int): Mask tensor controlling valid or known pixels.
+            enable_transform (bool): Boolean flag controlling behavior.
+            x_return_mode (str): Input value.
+            return_info (bool): Boolean flag controlling behavior.
+            return_coords (bool): Boolean flag controlling behavior.
+            nan_fill_value (float): Input value.
+            valid_from_fill_value (bool): Boolean flag controlling behavior.
+            split_seed (int): Input value.
+            val_fraction (float): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         self.csv_path = Path(csv_path)
         self.csv_dir = self.csv_path.parent
         self.split = str(split).strip().lower()
@@ -131,6 +147,15 @@ class SurfaceTempPatchLightDataset(Dataset):
         *,
         split: str = "all",
     ) -> "SurfaceTempPatchLightDataset":
+        """Compute from config and return the result.
+
+        Args:
+            config_path (str): Path to an input or output file.
+            split (str): Input value.
+
+        Returns:
+            'SurfaceTempPatchLightDataset': Computed output value.
+        """
         cfg = cls._load_config(config_path)
         ds_cfg = cfg["dataset"]
         split_cfg = cfg.get("split", {})
@@ -155,14 +180,38 @@ class SurfaceTempPatchLightDataset(Dataset):
 
     @staticmethod
     def _load_config(config_path: str) -> dict[str, Any]:
+        """Load and return config data.
+
+        Args:
+            config_path (str): Path to an input or output file.
+
+        Returns:
+            dict[str, Any]: Dictionary containing computed outputs.
+        """
         with Path(config_path).open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def __len__(self) -> int:
+        """Return the number of available samples.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            int: Computed scalar output.
+        """
         return len(self._rows)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         # Resolve sample file path relative to the CSV folder.
+        """Load and return one sample for the given index.
+
+        Args:
+            idx (int): Zero-based index for selecting a sample or batch.
+
+        Returns:
+            dict[str, Any]: Dictionary containing computed outputs.
+        """
         row = self._rows[int(idx)]
         y_rel_path = Path(str(row["y_npy_path"]))
         y_abs_path = (
@@ -265,6 +314,15 @@ class SurfaceTempPatchLightDataset(Dataset):
 
     @staticmethod
     def _center_lon_deg(lon0: float, lon1: float) -> float:
+        """Helper that computes center lon deg.
+
+        Args:
+            lon0 (float): Input value.
+            lon1 (float): Input value.
+
+        Returns:
+            float: Computed scalar output.
+        """
         lon0_rad = np.deg2rad(lon0)
         lon1_rad = np.deg2rad(lon1)
         sin_sum = np.sin(lon0_rad) + np.sin(lon1_rad)
@@ -273,6 +331,14 @@ class SurfaceTempPatchLightDataset(Dataset):
 
     @staticmethod
     def _parse_date_yyyymmdd(source_file: Any) -> int:
+        """Helper that computes parse date yyyymmdd.
+
+        Args:
+            source_file (Any): Input value.
+
+        Returns:
+            int: Computed scalar output.
+        """
         source = Path(str(source_file))
         suffix = source.stem.rsplit("_", 1)[-1]
         if suffix.isdigit():
@@ -293,6 +359,14 @@ class SurfaceTempPatchLightDataset(Dataset):
 
     @staticmethod
     def _sample_aug_params() -> tuple[int, bool, bool]:
+        """Helper that computes sample aug params.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            tuple[int, bool, bool]: Tuple containing computed outputs.
+        """
         k_rot = int(torch.randint(0, 4, (1,)).item())
         flip_h = bool(torch.randint(0, 2, (1,)).item())
         flip_v = bool(torch.randint(0, 2, (1,)).item())
@@ -302,6 +376,17 @@ class SurfaceTempPatchLightDataset(Dataset):
     def _apply_geometric_augment(
         t: torch.Tensor, k_rot: int, flip_h: bool, flip_v: bool
     ) -> torch.Tensor:
+        """Helper that computes apply geometric augment.
+
+        Args:
+            t (torch.Tensor): Tensor input for the computation.
+            k_rot (int): Input value.
+            flip_h (bool): Boolean flag controlling behavior.
+            flip_v (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         t = torch.rot90(t, k=k_rot, dims=(-2, -1))
         if flip_h:
             t = torch.flip(t, dims=(-1,))
@@ -309,7 +394,15 @@ class SurfaceTempPatchLightDataset(Dataset):
             t = torch.flip(t, dims=(-2,))
         return t
 
-    def _plot_example_image(self, idx=None) -> None:
+    def _plot_example_image(self, idx: int | None = None) -> None:
+        """Helper that computes plot example image.
+
+        Args:
+            idx (int | None): Zero-based index for selecting a sample or batch.
+
+        Returns:
+            None: No value is returned.
+        """
         try:
             import matplotlib.pyplot as plt
 

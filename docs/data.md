@@ -1,43 +1,105 @@
 # Data
-Currently, monthly tiles from 2000 - 2025 from the [Global Ocean Physics Reanalysis dataset](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F) have been downloaded and are manually masked to simulate real sparse observations. Excluding patches with >20% NoData values, ~106k samples are avaialble (128x128, 1/12 °). Download the data by installing the `copernicusmarine` package, then use the CLI like so `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m  --filter "*2021/*"`  
-The of the obstructions and the coverage percentage are selectable in the `data_config.yaml`.
+DepthDif uses monthly ocean reanalysis tiles and converts them into fixed-size patch tensors for fast training.
 
-The validation split is geographically coherent: the same spatial locations/windows across timesteps are assigned to either train or val, not both.
+## Source Data
+The current workflow is built around the Copernicus Marine **Global Ocean Physics Reanalysis** product.
 
-Dataset example for 50% occlusion:  
-![img](assets/dataset_50percMask.png)  
+- Time span used in this project: 2000-2025
+- Typical patch size: `128 x 128`
+- Spatial resolution context in README: `1/12°`
+- Sparse-observation behavior is simulated by synthetic masking
 
-## Implemented dataset/task modes
-There are currently two implemented training tasks:
+Reference dataset link:
+[Global Ocean Physics Reanalysis](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F)
 
-1. **Straight corrupted -> uncorrupted (single-band)**  
-   Uses `SurfaceTempPatchLightDataset` (`temp_v1` style):
-   - `x`: corrupted temperature band
-   - `y`: clean temperature band (ground truth)
-   - optional masks: `valid_mask`, `land_mask`
+Example CLI from README:
+`copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*2021/*"`
 
-2. **EO-conditioned multiband reconstruction**  
-   Uses `SurfaceTempPatch4BandsLightDataset` (`eo_4band` style):
-   - `eo`: first band used as extra condition (surface/EO-like observation)
-   - `x`: corrupted deeper temperature bands
-   - `valid_mask`: mask channel used as additional condition
-   - `y`: clean deeper temperature bands (ground truth)
-   - optional masks: `valid_mask`, `land_mask`
+Dataset example for 50% occlusion:
+![img](assets/dataset_50percMask.png)
 
-EO + multiband dataloader example (`eo` + deeper levels as corrupted/target):
+## On-Disk Export Format
+The data export script is `data/dataset_to_disk.py`.
+
+Core behavior:
+- reads `*.nc` files from `dataset.root_dir`
+- extracts requested depth bands from one variable (default `thetao`)
+- writes each patch to `y_npy/<sample_id>.npy`
+- writes an index CSV with paths and metadata (`patch_index_with_paths.csv`)
+- can enforce nodata filtering via `max_nodata_fraction`
+- assigns a `split` column (`train`/`val`) during export
+
+For EO + 3 deeper-band training, the 4-band layout is expected as:
+- channel 0: EO/surface condition
+- channels 1..3: deeper temperature target bands
+
+## Implemented Dataset Variants
+Variant selection is resolved from `dataset.dataset_variant` in data config.
+
+### 1) `temp_v1` (single-band)
+`SurfaceTempPatchLightDataset` (`data/dataset_temp_v1.py`) returns:
+- `x`: corrupted input (same channels as `y`, after masking)
+- `y`: clean target
+- `valid_mask`: valid/known pixels mask
+- `land_mask`: ocean/land validity mask
+- `date`: parsed integer date (`YYYYMMDD`)
+- optional: `coords`, `info`
+
+### 2) `eo_4band` (EO-conditioned multiband)
+`SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:
+- `eo`: channel 0 condition
+- `x`: corrupted deeper channels (channels 1..3)
+- `y`: clean deeper channels (channels 1..3)
+- `valid_mask`: per-channel validity mask for `y`
+- `land_mask`: per-channel land/ocean mask
+- `date`: parsed integer date (`YYYYMMDD`)
+- optional: `coords`, `info`
+
+EO + multiband example:
 ![img](assets/eo_dataset_example.png)
 
-In config, switch this via `dataset.dataset_variant`:
-- `temp_v1` for single-band corrupted->clean
-- `eo_4band` for EO + multiband conditioning
+## Masking, Validity, and Augmentation
+### Corruption pipeline
+Both dataset variants create sparse `x` by masking random rectangular patches:
+- target masked coverage controlled by `mask_fraction`
+- patch sizes from `mask_patch_min` to `mask_patch_max`
+- corruption is applied spatially; in multiband mode the same 2D hide-mask is shared across deeper bands
 
-## Dataset tweaks
-- Synthetic occlusion pipeline to create sparse observations with configurable `mask_fraction`.
-- Patch-based masking with min/max patch sizes (`mask_patch_min`, `mask_patch_max`) instead of single-pixel drops.
-- Validity/land masks derived from nodata or fill values; invalid pixels are tracked separately from corruption.
-- Optional filtering of tiles by `max_nodata_fraction` to avoid overly invalid patches.
-- Corrupted input + mask channel return modes for conditional modeling (`x_return_mode`).
-- Z-score temperature normalization and optional geometric augmentation (rotations/flips) applied consistently to data and masks.
-- Dataset index build with nodata-fraction metadata for fast filtering.
-- Geographically coherent split support via the index `split` column (same location kept in one split over time).
-- Optional patch-center coordinate return (`return_coords`) using index columns (`lat0/lat1/lon0/lon1`) with dateline-safe longitude center computation.
+### Validity and land masks
+- masks are derived from finite-value checks and configured fill-value logic
+- `valid_mask` is used for both conditioning and masked-loss options in the model
+- `land_mask` is used to suppress land influence in masked loss and optional output post-processing
+
+### EO degradation options (`eo_4band`)
+If enabled in config:
+- `eo_random_scale_enabled`: currently implemented as an additive random EO offset in `[-2.0, 2.0]` temperature units
+- `eo_speckle_noise_enabled`: multiplicative speckle (`1 + 0.01 * eps`) clamped to `[0.9, 1.1]`
+- `eo_dropout_prob`: random EO dropout by setting `eo` to zeros per sample
+
+### Geometric augmentation
+When `enable_transform=true`, random 90° rotations/flips are applied consistently to:
+- data tensors
+- validity masks
+- land masks
+
+## Coordinates and Date
+When `return_coords=true`, dataset returns patch-center coordinates:
+- latitude center: arithmetic mean of `lat0` and `lat1`
+- longitude center: dateline-safe circular midpoint from `lon0` and `lon1`
+
+Date parsing behavior:
+- `YYYYMMDD` suffix in `source_file` -> used directly
+- `YYYYMM` suffix -> converted to mid-month (`YYYYMM15`)
+- invalid/missing -> fallback `19700115`
+
+## Split Behavior in Current Training Runner
+This is an important implementation detail from `train.py` + `data/datamodule.py`:
+
+- `train.py` currently builds dataset with `split="all"`
+- then `DepthTileDataModule` creates a seeded random split using `split.val_fraction`
+- this means precomputed index `split` labels are not automatically enforced by the current runner
+
+If you need strict geographic window splits from index labels, use a custom train/val dataset wiring path (or adapt the runner).
+
+Helper for writing deterministic window-level splits:
+- `data/assign_window_split.py`

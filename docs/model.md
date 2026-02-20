@@ -1,45 +1,91 @@
 # Model
-As a first prototype, a conditional pixel-space Diffuser is modeled after [DiffusionFF](https://github.com/mikonvergence/DiffusionFastForward).  
+DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.
 
-Current implemented conditioning/target setups:
-- Single-band: `x -> y` (corrupted temp to clean temp)
-- EO multiband: `[eo, x, valid_mask] -> y` (EO + corrupted deeper bands + mask to clean deeper bands)
+Core stack:
+- Lightning wrapper: `PixelDiffusionConditional`
+- diffusion core: `DenoisingDiffusionConditionalProcess`
+- denoiser backbone: `UnetConvNextBlock` (ConvNeXt-style U-Net)
 
-Loss can be computed with or without masking by valid pixels (`mask_loss_with_valid_pixels`).
+The model learns to generate `y` while conditioning on observed channels (`x`, optional `eo`, optional mask channels).
 
-## Model Description
-- **Model type**: Conditional diffusion model in pixel space (`PixelDiffusionConditional`) with a **ConvNeXt U-Net denoiser** (`UnetConvNextBlock`). CNN/U-Net-style model.
-- **Architecture (default config in this repo)**:
-  - `dim_mults=[1,2,4,8]` gives 4 encoder stages and 3 decoder stages.
-  - Encoder stage block pattern: `ConvNextBlock -> ConvNextBlock -> LinearAttention -> Downsample` (last encoder stage uses identity downsample).
-  - Bottleneck block pattern: `ConvNextBlock -> LinearAttention -> ConvNextBlock`.
-  - Decoder stage block pattern: `concat skip -> ConvNextBlock -> ConvNextBlock -> LinearAttention -> Upsample` (last decoder stage uses identity upsample).
-  - Output head: final `ConvNextBlock` followed by `1x1 Conv2d` to `generated_channels`.
-- **Parameter count**: current EO config is approximately **57M parameters**.
-- **Backbone I/O**:
-  - Input to denoiser at each reverse/training step: `cat([x_t, condition], dim=1)` with shape `(B, generated_channels + condition_channels, H, W)`.
-  - Output from denoiser: `(B, generated_channels, H, W)` (predicts `epsilon` noise or `x0`, based on `model.parameterization`).
-- **Conditioning construction (EO task)**:
-  - Dataset returns `eo: (B,1,H,W)`, `x: (B,3,H,W)`, `valid_mask: (B,3,H,W)`, `y: (B,3,H,W)`.
-  - With EO config (`condition_include_eo=true`, `condition_mask_channels=1`), condition is:
-    - `condition = cat([eo, x, valid_mask_reduced], dim=1) = (B,5,H,W)`
-    - where `valid_mask_reduced` is `(B,1,H,W)`.
-- **Training flow (EO task)**:
-  - Target `y` is the diffusion sample branch: `(B,3,H,W)`.
-  - Random timestep `t` is sampled per item: `(B,)`.
-  - Forward process adds Gaussian noise to `y` only: `y_t = q(y_t | y_0)` and returns sampled `noise` `(B,3,H,W)`.
-  - Denoiser input becomes `cat([y_t, condition], dim=1) = (B,8,H,W)`.
-  - With `parameterization: "epsilon"` (default), loss compares predicted noise vs sampled noise.
-- **Inference flow**:
-  - Start from random latent `x_T ~ N(0,I)` with shape `(B,3,H,W)`.
-  - Keep `condition` fixed (`(B,5,H,W)` in EO mode) through all reverse steps.
-  - At each step, denoiser input is `cat([x_t, condition], dim=1) = (B,8,H,W)`, output `(B,3,H,W)`.
-  - Sampler update:
-    - DDPM: injects stochastic noise each step for `t>0`.
-    - DDIM: deterministic when `eta=0`, stochastic when `eta>0`.
-- **Where noise is injected**:
-  - Noise is **added to the generated/target branch** (`y` in training, latent `x_t` in inference).
-  - Noise is **not added to conditioning channels** (`eo`, `x`, `valid_mask`).
-  - Conditioning is provided by **channel concatenation**, not by adding noise to condition tensors.
+## Conditioning Setup
+Two conditioning layouts are supported by code/config:
 
-For model/training knobs, see [Model Settings](settings.md) (major + minor settings) and [Date + Coordination Injection](date-coordination-injection.md) (FiLM coordinate injection details).
+- Single-band task: `x -> y`
+- EO multiband task: `[eo, x, valid_mask] -> y`
+
+Condition assembly happens in `_prepare_condition_for_model`:
+- optionally prepend `eo` (`condition_include_eo=true`)
+- append data channels from `x`
+- optionally append valid-mask channels (`condition_use_valid_mask=true`)
+- enforce channel count equals `model.condition_channels`
+
+## Architecture Summary
+`UnetConvNextBlock` follows a U-Net encoder/decoder with ConvNeXt blocks and linear attention.
+
+With default `dim_mults=[1,2,4,8]`:
+- 4 downsampling stages
+- bottleneck block with attention
+- 3 upsampling stages with skip connections
+- final ConvNeXt block + `1x1` output conv to `generated_channels`
+
+Time conditioning:
+- sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks
+
+Coordinate/date conditioning (when enabled):
+- per-channel FiLM scale/shift in ConvNeXt blocks
+- details in [Date + Coordination Injection](date-coordination-injection.md)
+
+## Training Objective
+Training step (`training_step`) calls conditional diffusion `p_loss` on standardized temperature tensors.
+
+Behavior:
+- sample random timestep `t`
+- forward diffuse `y` to noisy target branch
+- predict either:
+  - noise (`epsilon` parameterization), or
+  - clean sample (`x0` parameterization)
+
+Loss options:
+- unmasked MSE (default behavior when masking disabled)
+- masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`
+
+Current EO config (`configs/model_config_eo_4band.yaml`) uses:
+- `parameterization: "x0"`
+- `mask_loss_with_valid_pixels: true`
+
+## Inference Flow
+Prediction entry point is `predict_step`.
+
+At inference:
+- build condition tensor from batch inputs
+- start reverse process from Gaussian latent
+- keep condition fixed during reverse sampling
+- use configured sampler (`ddpm` by default, `ddim` optional)
+- optional known-pixel clamping can overwrite known pixels each step
+
+Output dictionary from `predict_step`:
+- `y_hat`: standardized model output
+- `y_hat_denorm`: denormalized output
+- `denoise_samples`: optional intermediate reverse samples
+- `x0_denoise_samples`: optional per-step `x0` predictions
+- `sampler`: sampler object used
+
+## Post-Processing in Lightning Inference
+After denormalization, inference can apply:
+- optional Gaussian blur (`model.post_process.gaussian_blur.*`)
+- zero invalid pixels using `valid_mask`
+- zero land pixels using `land_mask`
+
+This post-processing is centralized in `predict_step`.
+
+## Validation Diagnostics
+Validation computes two paths:
+- per-batch validation loss (`validation_step`) using the same objective as training
+- one full reverse-diffusion reconstruction per epoch from cached first validation batch (`on_validation_epoch_end`)
+
+When available, full reconstruction logging includes:
+- MSE
+- PSNR/SSIM (if `skimage` is installed)
+- qualitative reconstruction grid
+- denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)

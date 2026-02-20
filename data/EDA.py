@@ -11,11 +11,27 @@ import random
 
 
 def load_yaml(path: str) -> dict[str, Any]:
+    """Load and return yaml data.
+
+    Args:
+        path (str): Path to an input or output file.
+
+    Returns:
+        dict[str, Any]: Dictionary containing computed outputs.
+    """
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def find_default_nc(config_path: str) -> Path:
+    """Compute find default nc and return the result.
+
+    Args:
+        config_path (str): Path to an input or output file.
+
+    Returns:
+        Path: Computed output value.
+    """
     cfg = load_yaml(config_path)
     root_dir = Path(cfg["dataset"]["root_dir"])
     nc_files = sorted(root_dir.glob("*.nc"))
@@ -31,9 +47,16 @@ def load_random_temperature_window(
     depth_index: int = -1,  # -1 = deepest model level
     variable: str = "thetao",
 ) -> torch.Tensor:
-    """
-    Load a random (lat, lon) window of temperature as a torch tensor.
-    Returns shape: (1, H, W)  [channel-first]
+    """Load and return random temperature window data.
+
+    Args:
+        nc_path (Path): Path to an input or output file.
+        window_size (int): Input value.
+        depth_index (int): Input value.
+        variable (str): Input value.
+
+    Returns:
+        torch.Tensor: Tensor output produced by this call.
     """
 
     with xr.open_dataset(nc_path) as ds:
@@ -60,6 +83,14 @@ def load_random_temperature_window(
 
 
 def print_nc_info(nc_path: Path) -> None:
+    """Print nc info for manual inspection.
+
+    Args:
+        nc_path (Path): Path to an input or output file.
+
+    Returns:
+        None: No value is returned.
+    """
     lines: list[str] = [f"Opening: {nc_path}"]
     with xr.open_dataset(nc_path) as ds:
         lines.append("\n=== DATASET SUMMARY ===")
@@ -110,6 +141,14 @@ def print_nc_info(nc_path: Path) -> None:
 
 
 def main() -> None:
+    """Run the script entry point.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        None: No value is returned.
+    """
     parser = argparse.ArgumentParser(description="Inspect a NetCDF (.nc) file.")
     parser.add_argument(
         "--nc-path",

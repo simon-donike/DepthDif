@@ -1,62 +1,91 @@
 # Date + Coordination Injection
+This page explains how location and date features are injected into the denoiser using FiLM-style conditioning.
 
-## A2: FiLM Coordinate Injection Details
+## Where This Happens in Code
+- coordinate/date encoding logic: `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`
+- FiLM application in ConvNeXt block: `models/difFF/DenoisingDiffusionProcess/backbones/unet_convnext.py`
+
+## Enabling It
+Main config flags (model section):
+- `coord_conditioning.enabled`
+- `coord_conditioning.encoding`: `unit_sphere`, `sincos`, `raw`
+- `coord_conditioning.include_date`
+- `coord_conditioning.date_encoding`: currently `day_of_year_sincos`
+- `coord_conditioning.embed_dim`
+
+Data-side requirement:
+- `dataset.return_coords: true` so batches include `coords`
+
+Runtime requirements enforced by code:
+- if coord conditioning is enabled and `coords` is missing, inference/training raises an error
+- if date conditioning is enabled and `date` is missing, inference/training raises an error
 
 ## Coordinate Encoding Options
-Encoding options (set with `model.coord_conditioning.encoding`):
-- `unit_sphere`: Convert lat/lon to a 3D unit vector (x,y,z). This avoids lon wrap discontinuity and is the default.
-- `sincos`: Use sin/cos for lat and lon (4D). Also wrap-safe, slightly higher dimensional.
-- `raw`: Normalize degrees to [-1, 1] (lat/90, lon/180). Simplest but can be discontinuous at +/-180.
+### `unit_sphere` (default)
+Input: latitude/longitude in degrees.
 
-When `model.coord_conditioning.include_date=true`, `batch["date"]` is parsed as `YYYYMMDD`.
-Monthly file names (`YYYYMM`) are mapped to `YYYYMM15` before encoding.
+Transform:
+- convert to radians
+- map to 3D unit sphere
+- output features: `(x, y, z)`
 
-## Date Encoding And Fusion With Coordinates
-Date encoding is controlled by `model.coord_conditioning.date_encoding`.
+Why it is useful:
+- avoids longitude discontinuity at ±180°
 
-Current option:
-- `day_of_year_sincos`: parse `YYYYMMDD` -> compute non-leap `day_of_year` -> encode as:
-  - `sin(2*pi*day_of_year/365)`
-  - `cos(2*pi*day_of_year/365)`
+### `sincos`
+Features:
+- `sin(lat), cos(lat), sin(lon), cos(lon)`
 
-Fusion with coordinate encoding:
-- First encode coordinates using `model.coord_conditioning.encoding`.
-- If `include_date=true`, concatenate date features to the coordinate feature vector:
-  - `fused = concat(coord_features, date_features)`
-- The fused vector is passed through the coordinate MLP to produce one embedding used by FiLM.
+Why it is useful:
+- periodic and wrap-safe representation
 
-## Exact Injection Mechanism (Scale-Shift)
-The coordinate embedding is injected via a per-channel FiLM scale and shift inside each `ConvNextBlock`.
+### `raw`
+Features:
+- `lat / 90`
+- `lon / 180`
 
-Inside `ConvNextBlock`:
+Why it is simple:
+- minimal feature transform, but not wrap-safe at dateline transitions
+
+## Date Encoding
+Current implementation supports one option:
+- `day_of_year_sincos`
+
+Pipeline:
+1. parse date as integer `YYYYMMDD`
+2. validate month/day values
+3. compute non-leap day-of-year using fixed month offsets
+4. encode as:
+   - `sin(2*pi*doy/365)`
+   - `cos(2*pi*doy/365)`
+
+Dataset date parsing convention:
+- monthly source names (`YYYYMM`) are converted to mid-month (`YYYYMM15`)
+
+## Feature Fusion
+When `include_date=true`:
+- encoded date features are concatenated with encoded coordinate features
+- fused vector is passed through a small MLP (`coord_mlp`) to produce a coordinate embedding
+
+## FiLM Injection Mechanism
+Inside each `ConvNextBlock`:
 ```python
 self.coord_mlp = nn.Sequential(nn.GELU(), nn.Linear(coord_emb_dim, dim * 2))
-...
-scale_shift = self.coord_mlp(coord_emb)   # (B, 2*dim)
-scale, shift = scale_shift.chunk(2, dim=1) # each (B, dim)
-
+scale_shift = self.coord_mlp(coord_emb)
+scale, shift = scale_shift.chunk(2, dim=1)
 h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
 ```
 
-That is:
-```
-h[b,c,x,y] <- h[b,c,x,y] * (1 + s[b,c]) + t[b,c]
-```
-
-Notes:
-- `scale` and `shift` are per-sample, per-channel and broadcast to `(B, C, H, W)`.
-- Applied after the depthwise conv (`ds_conv`) and before the main conv stack (`self.net`).
-- This is classic FiLM conditioning: coordinates decide how strongly each channel is amplified/suppressed and offset.
-- Why `1 + scale`? It keeps the identity map easy: if `scale=0` and `shift=0`, coords do nothing. This is more stable than multiplying by `scale` directly.
+Interpretation:
+- per-sample, per-channel scale and shift
+- values are broadcast across spatial dimensions
+- `1 + scale` keeps identity behavior easy (`scale=0`, `shift=0` -> no change)
 
 ## Interaction With Time Conditioning
-Time conditioning is additive:
-```python
-condition = self.mlp(time_emb)   # (B, dim)
-h = h + condition[:, :, None, None]
-```
+Time embedding and coordinate conditioning are complementary:
+- time embedding is additive per channel
+- coordinate/date conditioning is scale-and-shift per channel
 
-So:
-- Time adds a bias per channel.
-- Coords do a scale-and-shift per channel.
-- These are compatible: time tells the block where it is in diffusion, coords tell it where on Earth the sample belongs.
+So each block receives:
+- diffusion-step context from timestep embeddings
+- geophysical context from location/date embeddings

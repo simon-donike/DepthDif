@@ -9,9 +9,15 @@ def minmax_stretch(
     mask: torch.Tensor | None = None,
     nodata_value: float | None = None,
 ) -> torch.Tensor:
-    """
-    Linearly stretch tensor values to [0, 1] based on min and max values in the tensor.
-    Optionally exclude a nodata value (default: 0.0) from the min/max computation.
+    """Compute minmax stretch and return the result.
+
+    Args:
+        tensor (torch.Tensor): Tensor input for the computation.
+        mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        nodata_value (float | None): Input value.
+
+    Returns:
+        torch.Tensor: Tensor output produced by this call.
     """
     t = tensor.detach()
     finite = torch.isfinite(t)

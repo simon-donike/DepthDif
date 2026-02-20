@@ -16,6 +16,15 @@ def build_capture_indices(
     total_steps: int,
     intermediate_step_indices: list[int] | None,
 ) -> set[int]:
+    """Build and return capture indices.
+
+    Args:
+        total_steps (int): Step or timestep value.
+        intermediate_step_indices (list[int] | None): Input value.
+
+    Returns:
+        set[int]: Computed output value.
+    """
     if total_steps < 0:
         return set()
     if intermediate_step_indices is None:
@@ -28,6 +37,15 @@ def build_capture_indices(
 
 
 def build_evenly_spaced_capture_steps(total_steps: int, num_frames: int) -> list[int]:
+    """Build and return evenly spaced capture steps.
+
+    Args:
+        total_steps (int): Step or timestep value.
+        num_frames (int): Size/count parameter.
+
+    Returns:
+        list[int]: List containing computed outputs.
+    """
     if total_steps <= 0 or num_frames <= 0:
         return []
     # Include start-noise (step 0) and final sample (step total_steps).
@@ -50,6 +68,16 @@ def step_to_sampler_timestep_label(
     total_steps: int,
     sampler: Any,
 ) -> int:
+    """Compute step to sampler timestep label and return the result.
+
+    Args:
+        step_index (int): Input value.
+        total_steps (int): Step or timestep value.
+        sampler (Any): Sampler instance used for reverse diffusion.
+
+    Returns:
+        int: Computed scalar output.
+    """
     if total_steps <= 0:
         return 0
     step_index = int(max(0, min(step_index, total_steps)))
@@ -87,6 +115,28 @@ def log_wandb_denoise_timestep_grid(
     tile_size_px: int = 128,
     tile_pad_px: int = 2,
 ) -> None:
+    """Log wandb denoise timestep grid for monitoring.
+
+    Args:
+        logger (Any): Logger instance used for experiment tracking.
+        denoise_samples (list[tuple[int, torch.Tensor]]): Tensor input for the computation.
+        mae_samples (list[tuple[int, torch.Tensor]] | None): Tensor input for the computation.
+        total_steps (int): Step or timestep value.
+        sampler (Any): Sampler instance used for reverse diffusion.
+        conditioning_image (torch.Tensor | None): Tensor input for the computation.
+        eo_conditioning_image (torch.Tensor | None): Tensor input for the computation.
+        ground_truth (torch.Tensor | None): Tensor input for the computation.
+        valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        prefix (str): Input value.
+        cmap (str): Input value.
+        nrows (int): Input value.
+        ncols (int): Input value.
+        tile_size_px (int): Input value.
+        tile_pad_px (int): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
     if not denoise_samples:
         return
     if logger is None or not hasattr(logger, "experiment"):
@@ -275,6 +325,18 @@ def log_wandb_diffusion_schedule_profile(
     prefix: str = "val_imgs",
     eps: float = 1e-12,
 ) -> None:
+    """Log wandb diffusion schedule profile for monitoring.
+
+    Args:
+        logger (Any): Logger instance used for experiment tracking.
+        sampler (Any): Sampler instance used for reverse diffusion.
+        total_steps (int): Step or timestep value.
+        prefix (str): Input value.
+        eps (float): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
     if total_steps <= 0:
         return
     if sampler is None:
@@ -319,6 +381,14 @@ def log_wandb_diffusion_schedule_profile(
     )
 
     def _schedule_terms(t_idx: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """Helper that computes schedule terms.
+
+        Args:
+            t_idx (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            tuple[torch.Tensor, ...]: Tuple containing computed outputs.
+        """
         alpha_bar_t = alpha_cumprod[t_idx]
         beta_t = betas[t_idx]
         sqrt_alpha_bar_t = torch.sqrt(torch.clamp(alpha_bar_t, min=0.0))
@@ -360,6 +430,21 @@ def log_wandb_diffusion_schedule_profile(
         title: str,
         xlabel: str,
     ) -> None:
+        """Helper that computes plot panel.
+
+        Args:
+            ax (Any): Input value.
+            x_vals (np.ndarray): Input value.
+            sqrt_ab (torch.Tensor): Tensor input for the computation.
+            sqrt_1mab (torch.Tensor): Tensor input for the computation.
+            beta_tilde (torch.Tensor): Tensor input for the computation.
+            log_snr (torch.Tensor): Tensor input for the computation.
+            title (str): Input value.
+            xlabel (str): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         l_sqrt_ab = ax.plot(
             x_vals,
             sqrt_ab.numpy(),
@@ -439,6 +524,15 @@ def _mask_for_sample(
     mask: torch.Tensor | None,
     sample_idx: int,
 ) -> torch.Tensor | None:
+    """Helper that computes mask for sample.
+
+    Args:
+        mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        sample_idx (int): Input value.
+
+    Returns:
+        torch.Tensor | None: Tensor output produced by this call.
+    """
     if mask is None:
         return None
     if mask.ndim == 4:
@@ -461,6 +555,17 @@ def _plot_band_image(
     band_idx: int = 0,
     mask: torch.Tensor | None = None,
 ) -> np.ndarray:
+    """Helper that computes plot band image.
+
+    Args:
+        tensor (torch.Tensor): Tensor input for the computation.
+        sample_idx (int): Input value.
+        band_idx (int): Input value.
+        mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+
+    Returns:
+        np.ndarray: Computed output value.
+    """
     if tensor.ndim == 4:
         channel_idx = int(max(0, min(int(band_idx), int(tensor.size(1)) - 1)))
         image_t = tensor[sample_idx, channel_idx].detach().float()
@@ -490,6 +595,23 @@ def log_wandb_conditional_reconstruction_grid(
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
 ) -> None:
+    """Log wandb conditional reconstruction grid for monitoring.
+
+    Args:
+        logger (Any): Logger instance used for experiment tracking.
+        x (torch.Tensor): Tensor input for the computation.
+        y_hat (torch.Tensor): Tensor input for the computation.
+        y_target (torch.Tensor): Tensor input for the computation.
+        valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        eo (torch.Tensor | None): Tensor input for the computation.
+        prefix (str): Input value.
+        image_key (str): Input value.
+        cmap (str): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
     if logger is None or not hasattr(logger, "experiment"):
         return
     experiment = logger.experiment

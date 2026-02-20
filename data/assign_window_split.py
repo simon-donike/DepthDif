@@ -7,6 +7,15 @@ from pathlib import Path
 
 
 def _window_key(row: dict[str, str], row_index: int) -> tuple[str, ...]:
+    """Helper that computes window key.
+
+    Args:
+        row (dict[str, str]): Input value.
+        row_index (int): Input value.
+
+    Returns:
+        tuple[str, ...]: Tuple containing computed outputs.
+    """
     has_grid = all(k in row and row[k] != "" for k in ("y0", "x0", "edge_size"))
     if has_grid:
         return ("grid", row["y0"], row["x0"], row["edge_size"])
@@ -20,6 +29,15 @@ def _window_key(row: dict[str, str], row_index: int) -> tuple[str, ...]:
 
 
 def _val_count(n_windows: int, val_fraction: float) -> int:
+    """Helper that computes val count.
+
+    Args:
+        n_windows (int): Input value.
+        val_fraction (float): Input value.
+
+    Returns:
+        int: Computed scalar output.
+    """
     val_len = int(round(n_windows * val_fraction))
     if n_windows > 1:
         lower = 1 if val_fraction > 0.0 else 0
@@ -36,6 +54,17 @@ def assign_split(
     val_fraction: float,
     seed: int,
 ) -> None:
+    """Assign split according to configured rules.
+
+    Args:
+        input_csv (Path): Input value.
+        output_csv (Path): Input value.
+        val_fraction (float): Input value.
+        seed (int): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
     if not input_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {input_csv}")
 
@@ -94,6 +123,14 @@ def assign_split(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Helper that computes build parser.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        argparse.ArgumentParser: Computed output value.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Assign a deterministic train/val split by unique spatial window and "
@@ -132,6 +169,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Run the script entry point.
+
+    Args:
+        None: This callable takes no explicit input arguments.
+
+    Returns:
+        None: No value is returned.
+    """
     parser = _build_parser()
     args = parser.parse_args()
 

@@ -32,20 +32,7 @@ except Exception:
 
 
 class EMA(Callback):
-    """
-    Implements Exponential Moving Averaging (EMA).
-    When training a model, this callback will maintain moving averages of the trained parameters.
-    When evaluating, we use the moving averages copy of the trained parameters.
-    When saving, we save an additional set of parameters with the prefix `ema`.
-    Args:
-        decay: The exponential decay used when calculating the moving average. Has to be between 0-1.
-        apply_ema_every_n_steps: Apply EMA every n global steps.
-        start_step: Start applying EMA from ``start_step`` global step onwards.
-        evaluate_ema_weights_instead: Validate the EMA weights instead of the original weights.
-            Note this means that when saving the model, the validation metrics are calculated with the EMA weights.
-        save_ema_weights_in_callback_state: Enable saving ema weights in callback state.
-            This is not required when using NeMo as the experiment manager handles saving weights.
-    """
+    """Callback that maintains exponential moving-average model weights."""
 
     def __init__(
         self,
@@ -54,7 +41,19 @@ class EMA(Callback):
         start_step: int = 0,
         save_ema_weights_in_callback_state: bool = False,
         evaluate_ema_weights_instead: bool = False,
-    ):
+    ) -> None:
+        """Initialize EMA with configured parameters.
+
+        Args:
+            decay (float): Input value.
+            apply_ema_every_n_steps (int): Step or timestep value.
+            start_step (int): Step or timestep value.
+            save_ema_weights_in_callback_state (bool): Boolean flag controlling behavior.
+            evaluate_ema_weights_instead (bool): Boolean flag controlling behavior.
+
+        Returns:
+            None: No value is returned.
+        """
         if not apex_available:
             rank_zero_warn(
                 "EMA has better performance when Apex is installed: https://github.com/NVIDIA/apex#installation."
@@ -74,6 +73,15 @@ class EMA(Callback):
     def on_train_start(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
+        """Compute on train start and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self._ema_model_weights is None:
             self._ema_model_weights = [
                 p.detach().clone() for p in pl_module.state_dict().values()
@@ -85,11 +93,27 @@ class EMA(Callback):
         self._overflow_buf = torch.IntTensor([0]).to(pl_module.device)
 
     def ema(self, pl_module: "pl.LightningModule") -> None:
+        """Compute ema and return the result.
+
+        Args:
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if apex_available and pl_module.device.type == "cuda":
             return self.apply_multi_tensor_ema(pl_module)
         return self.apply_ema(pl_module)
 
     def apply_multi_tensor_ema(self, pl_module: "pl.LightningModule") -> None:
+        """Compute apply multi tensor ema and return the result.
+
+        Args:
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         model_weights = list(pl_module.state_dict().values())
         amp_C.multi_tensor_axpby(
             65536,  # todo (sean): chunk size, should we expose?
@@ -101,6 +125,14 @@ class EMA(Callback):
         )
 
     def apply_ema(self, pl_module: "pl.LightningModule") -> None:
+        """Compute apply ema and return the result.
+
+        Args:
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         for orig_weight, ema_weight in zip(
             list(pl_module.state_dict().values()), self._ema_model_weights
         ):
@@ -111,6 +143,14 @@ class EMA(Callback):
                 ema_weight.sub_(diff)
 
     def should_apply_ema(self, step: int) -> bool:
+        """Compute should apply ema and return the result.
+
+        Args:
+            step (int): Step or timestep value.
+
+        Returns:
+            bool: Computed scalar output.
+        """
         return (
             step != self._cur_step
             and step >= self.start_step
@@ -125,16 +165,44 @@ class EMA(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
+        """Compute on train batch end and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+            outputs (STEP_OUTPUT): Input value.
+            batch (Any): Input value.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+
+        Returns:
+            None: No value is returned.
+        """
         if self.should_apply_ema(trainer.global_step):
             self._cur_step = trainer.global_step
             self.ema(pl_module)
 
     def state_dict(self) -> Dict[str, Any]:
+        """Return the serializable state for this object.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            Dict[str, Any]: Computed output value.
+        """
         if self.save_ema_weights_in_callback_state:
             return dict(cur_step=self._cur_step, ema_weights=self._ema_model_weights)
         return dict(cur_step=self._cur_step)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Load checkpoint weights into the current module.
+
+        Args:
+            state_dict (Dict[str, Any]): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         self._cur_step = state_dict["cur_step"]
         # when loading using NeMo, ema weights will be loaded by the experiment manager separately.
         if self._ema_model_weights is None:
@@ -146,6 +214,16 @@ class EMA(Callback):
         pl_module: "pl.LightningModule",
         checkpoint: Dict[str, Any],
     ) -> None:
+        """Compute on load checkpoint and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+            checkpoint (Dict[str, Any]): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         checkpoint_callback = trainer.checkpoint_callback
 
         if (
@@ -169,6 +247,14 @@ class EMA(Callback):
                 )
 
     def replace_model_weights(self, pl_module: "pl.LightningModule") -> None:
+        """Compute replace model weights and return the result.
+
+        Args:
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         self._weights_buffer = [
             p.detach().clone().to("cpu") for p in pl_module.state_dict().values()
         ]
@@ -178,6 +264,14 @@ class EMA(Callback):
         pl_module.load_state_dict(new_state_dict)
 
     def restore_original_weights(self, pl_module: "pl.LightningModule") -> None:
+        """Compute restore original weights and return the result.
+
+        Args:
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         state_dict = pl_module.state_dict()
         new_state_dict = {k: v for k, v in zip(state_dict.keys(), self._weights_buffer)}
         pl_module.load_state_dict(new_state_dict)
@@ -185,28 +279,72 @@ class EMA(Callback):
 
     @property
     def ema_initialized(self) -> bool:
+        """Compute ema initialized and return the result.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            bool: Computed scalar output.
+        """
         return self._ema_model_weights is not None
 
     def on_validation_start(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
+        """Compute on validation start and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self.ema_initialized and self.evaluate_ema_weights_instead:
             self.replace_model_weights(pl_module)
 
     def on_validation_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
+        """Compute on validation end and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self.ema_initialized and self.evaluate_ema_weights_instead:
             self.restore_original_weights(pl_module)
 
     def on_test_start(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
+        """Compute on test start and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self.ema_initialized and self.evaluate_ema_weights_instead:
             self.replace_model_weights(pl_module)
 
     def on_test_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
     ) -> None:
+        """Compute on test end and return the result.
+
+        Args:
+            trainer ('pl.Trainer'): Input value.
+            pl_module ('pl.LightningModule'): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self.ema_initialized and self.evaluate_ema_weights_instead:
             self.restore_original_weights(pl_module)

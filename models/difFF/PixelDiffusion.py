@@ -28,6 +28,7 @@ from utils.validation_denoise import (
 class PixelDiffusionConditional(pl.LightningModule):
     # Prefixes that are allowed to differ between checkpoints when only the
     # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
+    """Lightning module that trains and samples conditional pixel diffusion."""
     _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
 
     def __init__(
@@ -83,6 +84,63 @@ class PixelDiffusionConditional(pl.LightningModule):
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
     ) -> None:
+        """Initialize PixelDiffusionConditional with configured parameters.
+
+        Args:
+            datamodule (pl.LightningDataModule | None): Input value.
+            generated_channels (int): Input value.
+            condition_channels (int): Input value.
+            condition_mask_channels (int): Mask tensor controlling valid or known pixels.
+            condition_include_eo (bool): Boolean flag controlling behavior.
+            condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
+            clamp_known_pixels (bool): Boolean flag controlling behavior.
+            mask_loss_with_valid_pixels (bool): Mask tensor controlling valid or known pixels.
+            parameterization (str): Input value.
+            num_timesteps (int): Step or timestep value.
+            noise_schedule (str): Input value.
+            noise_beta_start (float): Input value.
+            noise_beta_end (float): Input value.
+            unet_dim (int): Input value.
+            unet_dim_mults (tuple[int, ...]): Input value.
+            unet_with_time_emb (bool): Boolean flag controlling behavior.
+            unet_output_mean_scale (bool): Boolean flag controlling behavior.
+            unet_residual (bool): Boolean flag controlling behavior.
+            coord_conditioning_enabled (bool): Boolean flag controlling behavior.
+            coord_encoding (str): Input value.
+            date_conditioning_enabled (bool): Boolean flag controlling behavior.
+            date_encoding (str): Input value.
+            coord_embed_dim (int | None): Input value.
+            batch_size (int): Size/count parameter.
+            lr (float): Input value.
+            lr_scheduler_enabled (bool): Boolean flag controlling behavior.
+            lr_scheduler_monitor (str): Input value.
+            lr_scheduler_mode (str): Input value.
+            lr_scheduler_factor (float): Input value.
+            lr_scheduler_patience (int): Input value.
+            lr_scheduler_threshold (float): Input value.
+            lr_scheduler_threshold_mode (str): Input value.
+            lr_scheduler_cooldown (int): Input value.
+            lr_scheduler_min_lr (float): Input value.
+            lr_scheduler_eps (float): Input value.
+            lr_warmup_enabled (bool): Boolean flag controlling behavior.
+            lr_warmup_steps (int): Step or timestep value.
+            lr_warmup_start_ratio (float): Input value.
+            val_inference_sampler (str): Input value.
+            val_ddim_num_timesteps (int): Input value.
+            val_ddim_eta (float): Input value.
+            log_intermediates (bool): Boolean flag controlling behavior.
+            skip_full_reconstruction_in_sanity_check (bool): Boolean flag controlling behavior.
+            max_full_reconstruction_samples (int): Input value.
+            postprocess_gaussian_blur_enabled (bool): Boolean flag controlling behavior.
+            postprocess_gaussian_blur_sigma (float): Input value.
+            postprocess_gaussian_blur_kernel_size (int): Input value.
+            wandb_verbose (bool): Boolean flag controlling behavior.
+            log_stats_every_n_steps (int): Step or timestep value.
+            log_images_every_n_steps (int): Step or timestep value.
+
+        Returns:
+            None: No value is returned.
+        """
         pl.LightningModule.__init__(self)
         self.save_hyperparameters(ignore=["datamodule"])
 
@@ -182,6 +240,17 @@ class PixelDiffusionConditional(pl.LightningModule):
         training_config_path: str = "configs/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
+        """Compute from config and return the result.
+
+        Args:
+            model_config_path (str): Path to an input or output file.
+            data_config_path (str): Path to an input or output file.
+            training_config_path (str): Path to an input or output file.
+            datamodule (pl.LightningDataModule | None): Input value.
+
+        Returns:
+            'PixelDiffusionConditional': Computed output value.
+        """
         model_cfg = cls._load_yaml(model_config_path)
         data_cfg = cls._load_yaml(data_config_path)
         training_cfg = cls._load_yaml(training_config_path)
@@ -279,11 +348,27 @@ class PixelDiffusionConditional(pl.LightningModule):
 
     @staticmethod
     def _load_yaml(path: str) -> dict[str, Any]:
+        """Load and return yaml data.
+
+        Args:
+            path (str): Path to an input or output file.
+
+        Returns:
+            dict[str, Any]: Dictionary containing computed outputs.
+        """
         with Path(path).open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     @staticmethod
     def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:
+        """Helper that computes parse unet dim mults.
+
+        Args:
+            value (Any): Input value.
+
+        Returns:
+            tuple[int, ...]: Tuple containing computed outputs.
+        """
         if isinstance(value, str):
             parts = [p.strip() for p in value.split(",") if p.strip()]
             value = parts if parts else [1, 2, 4, 8]
@@ -299,6 +384,14 @@ class PixelDiffusionConditional(pl.LightningModule):
 
     @classmethod
     def _parse_unet_config(cls, model_section: dict[str, Any]) -> dict[str, Any]:
+        """Helper that computes parse unet config.
+
+        Args:
+            model_section (dict[str, Any]): Input value.
+
+        Returns:
+            dict[str, Any]: Dictionary containing computed outputs.
+        """
         unet = model_section.get("unet", {})
         return {
             "unet_dim": int(unet.get("dim", 64)),
@@ -313,14 +406,38 @@ class PixelDiffusionConditional(pl.LightningModule):
     def input_T(self, value: torch.Tensor) -> torch.Tensor:
         # Dataset already provides standardized temperatures (z-score), so keep identity here.
         # This avoids a second normalization pass and preserves the training target distribution.
+        """Compute input T and return the result.
+
+        Args:
+            value (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         return value
 
     def output_T(self, value: torch.Tensor) -> torch.Tensor:
         # Return samples in the same standardized space used by the dataset.
+        """Compute output T and return the result.
+
+        Args:
+            value (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         return value
 
     @staticmethod
     def _should_sync_dist() -> bool:
+        """Helper that computes should sync dist.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            bool: Computed scalar output.
+        """
         return torch.distributed.is_available() and torch.distributed.is_initialized()
 
     def _log_common_batch_stats(
@@ -332,6 +449,18 @@ class PixelDiffusionConditional(pl.LightningModule):
         on_step: bool = True,
         on_epoch: bool = False,
     ) -> None:
+        """Helper that computes log common batch stats.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+            prefix (str): Input value.
+            batch_size (int | None): Size/count parameter.
+            on_step (bool): Step or timestep value.
+            on_epoch (bool): Boolean flag controlling behavior.
+
+        Returns:
+            None: No value is returned.
+        """
         if not self.wandb_verbose:
             return
         if self.global_step % self.log_stats_every_n_steps != 0:
@@ -378,6 +507,16 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _log_pre_diffusion_stats(
         self, tensor: torch.Tensor, prefix: str, batch_size: int | None = None
     ) -> None:
+        """Helper that computes log pre diffusion stats.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+            prefix (str): Input value.
+            batch_size (int | None): Size/count parameter.
+
+        Returns:
+            None: No value is returned.
+        """
         if not self.wandb_verbose:
             return
         if self.global_step % self.log_stats_every_n_steps != 0:
@@ -411,6 +550,17 @@ class PixelDiffusionConditional(pl.LightningModule):
         *,
         use_minmax: bool = False,
     ) -> None:
+        """Helper that computes maybe log wandb images.
+
+        Args:
+            batch (Any): Input value.
+            output (torch.Tensor): Tensor input for the computation.
+            prefix (str): Input value.
+            use_minmax (bool): Boolean flag controlling behavior.
+
+        Returns:
+            None: No value is returned.
+        """
         if not self.wandb_verbose:
             return
         if self.trainer is not None and not self.trainer.is_global_zero:
@@ -444,18 +594,44 @@ class PixelDiffusionConditional(pl.LightningModule):
         mask: torch.Tensor | None = None,
         nodata_value: float | None = 0.0,
     ) -> np.ndarray:
+        """Helper that computes minmax stretch.
+
+        Args:
+            image (torch.Tensor): Tensor input for the computation.
+            mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            nodata_value (float | None): Input value.
+
+        Returns:
+            np.ndarray: Computed output value.
+        """
         image = image.detach().float()
         image = torch.nan_to_num(image, nan=0.0, posinf=0.0, neginf=0.0)
         # image = temperature_normalize(mode="denorm", tensor=image)
         stretched = minmax_stretch(image, mask=mask, nodata_value=nodata_value)
         return stretched.cpu().numpy().astype(np.float32)
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> torch.utils.data.DataLoader[Any]:
+        """Return the training dataloader from the attached datamodule.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            torch.utils.data.DataLoader[Any]: Computed output value.
+        """
         if self.datamodule is None:
             raise RuntimeError("No datamodule was provided to the model.")
         return self.datamodule.train_dataloader()
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> torch.utils.data.DataLoader[Any] | None:
+        """Return the validation dataloader from the attached datamodule.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            torch.utils.data.DataLoader[Any] | None: Computed output value.
+        """
         if self.datamodule is None:
             return None
         return self.datamodule.val_dataloader()
@@ -464,6 +640,14 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _tensor_stats(
         tensor: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Helper that computes tensor stats.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing computed outputs.
+        """
         return tensor.min(), tensor.mean(), tensor.std(unbiased=False)
 
     def _build_validation_sampler(
@@ -472,6 +656,14 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Validation can use either:
         # - DDPM (full stochastic chain, faithful to training dynamics)
         # - DDIM (fewer deterministic/stochastic steps, faster previews).
+        """Helper that computes build validation sampler.
+
+        Args:
+            train_betas (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            DDIM_Sampler | None: Computed output value.
+        """
         if self.val_inference_sampler == "ddpm":
             return None
         if self.val_inference_sampler == "ddim":
@@ -499,6 +691,15 @@ class PixelDiffusionConditional(pl.LightningModule):
     ) -> bool:
         # Accept fallback only when every mismatched key belongs to an
         # explicitly whitelisted sampler namespace.
+        """Helper that computes is sampler only state mismatch.
+
+        Args:
+            missing_keys (set[str]): Input value.
+            unexpected_keys (set[str]): Input value.
+
+        Returns:
+            bool: Computed scalar output.
+        """
         mismatched_keys = missing_keys | unexpected_keys
         if not mismatched_keys:
             return False
@@ -507,10 +708,21 @@ class PixelDiffusionConditional(pl.LightningModule):
             for key in mismatched_keys
         )
 
-    def load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
+    def load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ) -> Any:
         # Keep default PyTorch/Lightning behavior unless we can prove the
         # mismatch is sampler-only. This preserves strictness for all learned
         # weights and model architecture changes.
+        """Load checkpoint weights into the current module.
+
+        Args:
+            state_dict (dict[str, torch.Tensor]): Tensor input for the computation.
+            strict (bool): Boolean flag controlling behavior.
+
+        Returns:
+            Any: Computed output value.
+        """
         if not strict:
             return super().load_state_dict(state_dict, strict=False)
 
@@ -545,6 +757,17 @@ class PixelDiffusionConditional(pl.LightningModule):
         height: int,
         width: int,
     ) -> torch.Tensor | None:
+        """Helper that computes prepare condition mask.
+
+        Args:
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            batch_size (int): Size/count parameter.
+            height (int): Size/count parameter.
+            width (int): Size/count parameter.
+
+        Returns:
+            torch.Tensor | None: Tensor output produced by this call.
+        """
         if not self.condition_use_valid_mask or self.condition_mask_channels <= 0:
             return None
         if valid_mask is None:
@@ -581,6 +804,16 @@ class PixelDiffusionConditional(pl.LightningModule):
         eo: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # Keep conditioning data in the same normalized range as diffusion targets.
+        """Helper that computes prepare condition for model.
+
+        Args:
+            x (torch.Tensor): Tensor input for the computation.
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            eo (torch.Tensor | None): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         condition_parts: list[torch.Tensor] = []
         if self.condition_include_eo:
             if eo is None:
@@ -618,6 +851,15 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _extract_known_values_and_mask(
         self, data: torch.Tensor, valid_mask: torch.Tensor | None
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Helper that computes extract known values and mask.
+
+        Args:
+            data (torch.Tensor): Tensor input for the computation.
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+
+        Returns:
+            tuple[torch.Tensor | None, torch.Tensor | None]: Tuple containing computed outputs.
+        """
         if valid_mask is None:
             return None, None
 
@@ -662,7 +904,7 @@ class PixelDiffusionConditional(pl.LightningModule):
     def forward(
         self,
         condition: torch.Tensor,
-        sampler=None,
+        sampler: torch.nn.Module | None = None,
         verbose: bool = False,
         clamp_known_pixels: bool | None = None,
         *,
@@ -682,6 +924,24 @@ class PixelDiffusionConditional(pl.LightningModule):
             list[tuple[int, torch.Tensor]],
         ]
     ):
+        """Run the module forward computation.
+
+        Args:
+            condition (torch.Tensor): Tensor input for the computation.
+            sampler (torch.nn.Module | None): Sampler instance used for reverse diffusion.
+            verbose (bool): Boolean flag controlling behavior.
+            clamp_known_pixels (bool | None): Boolean flag controlling behavior.
+            known_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            known_values (torch.Tensor | None): Tensor input for the computation.
+            coords (torch.Tensor | None): Coordinate conditioning values.
+            date (torch.Tensor | None): Date conditioning values.
+            return_intermediates (bool): Boolean flag controlling behavior.
+            intermediate_step_indices (list[int] | None): Input value.
+            return_x0_intermediates (bool): Boolean flag controlling behavior.
+
+        Returns:
+            torch.Tensor | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]] | tuple[torch.Tensor, list[tuple[int, torch.Tensor]], list[tuple[int, torch.Tensor]]]: Tensor output produced by this call.
+        """
         if not self.log_intermediates:
             return_intermediates = False
             intermediate_step_indices = None
@@ -729,11 +989,27 @@ class PixelDiffusionConditional(pl.LightningModule):
         return self.output_T(final_sample), out_intermediates
 
     def _masked_fraction(self, valid_mask: torch.Tensor | None) -> torch.Tensor:
+        """Helper that computes masked fraction.
+
+        Args:
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if valid_mask is None:
             return torch.as_tensor(0.0, device=self.device)
         return (valid_mask < 0.5).float().mean()
 
     def _apply_postprocess_gaussian_blur(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Helper that computes apply postprocess gaussian blur.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if not self.postprocess_gaussian_blur_enabled:
             return tensor
         if self.postprocess_gaussian_blur_sigma <= 0.0:
@@ -757,6 +1033,15 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _apply_postprocess_zero_land_pixels(
         self, tensor: torch.Tensor, land_mask: torch.Tensor | None
     ) -> torch.Tensor:
+        """Helper that computes apply postprocess zero land pixels.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if land_mask is None:
             return tensor
         if tensor.ndim not in (3, 4):
@@ -767,6 +1052,15 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _apply_postprocess_zero_invalid_pixels(
         self, tensor: torch.Tensor, valid_mask: torch.Tensor | None
     ) -> torch.Tensor:
+        """Helper that computes apply postprocess zero invalid pixels.
+
+        Args:
+            tensor (torch.Tensor): Tensor input for the computation.
+            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         if valid_mask is None:
             return tensor
         if tensor.ndim not in (3, 4):
@@ -795,6 +1089,16 @@ class PixelDiffusionConditional(pl.LightningModule):
     def predict_step(
         self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
     ) -> dict[str, Any]:
+        """Compute predict step and return the result.
+
+        Args:
+            batch (dict[str, Any]): Input value.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+            dataloader_idx (int): Input value.
+
+        Returns:
+            dict[str, Any]: Dictionary containing computed outputs.
+        """
         x = batch["x"]
         eo = batch.get("eo")
         valid_mask = batch.get("valid_mask")
@@ -856,6 +1160,16 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _log_validation_triplet_stats(
         self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
     ) -> None:
+        """Helper that computes log validation triplet stats.
+
+        Args:
+            x (torch.Tensor): Tensor input for the computation.
+            y (torch.Tensor): Tensor input for the computation.
+            y_hat (torch.Tensor): Tensor input for the computation.
+
+        Returns:
+            None: No value is returned.
+        """
         x_min, x_mean, x_std = self._tensor_stats(x)
         y_min, y_mean, y_std = self._tensor_stats(y)
         y_hat_min, y_hat_mean, y_hat_std = self._tensor_stats(y_hat)
@@ -945,6 +1259,14 @@ class PixelDiffusionConditional(pl.LightningModule):
 
     def on_validation_epoch_start(self) -> None:
         # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
+        """Compute on validation epoch start and return the result.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            None: No value is returned.
+        """
         self._cached_val_example = None
         if (
             self.trainer is not None
@@ -967,6 +1289,14 @@ class PixelDiffusionConditional(pl.LightningModule):
     def _run_single_image_full_reconstruction_and_log(self) -> None:
         # Expensive diagnostic path: run full reverse diffusion only once per epoch
         # on a small cached validation mini-batch.
+        """Helper that computes run single image full reconstruction and log.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            None: No value is returned.
+        """
         if self._cached_val_example is None:
             return
         # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
@@ -1144,10 +1474,27 @@ class PixelDiffusionConditional(pl.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         # Run one full-reconstruction pass after cheap validation metrics are accumulated.
+        """Compute on validation epoch end and return the result.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            None: No value is returned.
+        """
         self._run_single_image_full_reconstruction_and_log()
         self._cached_val_example = None
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+        """Compute training step and return the result.
+
+        Args:
+            batch (dict[str, Any]): Input value.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         x = batch["x"]
         y = batch["y"]
         eo = batch.get("eo")
@@ -1201,6 +1548,15 @@ class PixelDiffusionConditional(pl.LightningModule):
         return loss
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+        """Compute validation step and return the result.
+
+        Args:
+            batch (dict[str, Any]): Input value.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
         x = batch["x"]
         y = batch["y"]
         eo = batch.get("eo")
@@ -1287,7 +1643,15 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
+        """Create optimizer and optional scheduler configuration.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            torch.optim.Optimizer | dict[str, Any]: Computed output value.
+        """
         optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=self.lr,
@@ -1324,6 +1688,17 @@ class PixelDiffusionConditional(pl.LightningModule):
         optimizer_closure: Any | None = None,
     ) -> None:
         # Keep warmup in optimizer-step space so schedule is stable across epoch lengths.
+        """Perform one optimizer step with optional learning-rate warmup.
+
+        Args:
+            epoch (int): Step or timestep value.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+            optimizer (torch.optim.Optimizer): Optimizer used for parameter updates.
+            optimizer_closure (Any | None): Optimizer used for parameter updates.
+
+        Returns:
+            None: No value is returned.
+        """
         if (
             self.lr_warmup_enabled
             and self.lr_warmup_steps > 0

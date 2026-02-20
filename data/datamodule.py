@@ -8,10 +8,7 @@ from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 
 class DepthTileDataModule(pl.LightningDataModule):
-    """
-    Thin wrapper that turns an existing Dataset into train/val DataLoaders.
-    Dataset-agnostic; splitting is handled here unless val_dataset is provided.
-    """
+    """Lightning DataModule that builds train and validation dataloaders."""
 
     def __init__(
         self,
@@ -22,6 +19,18 @@ class DepthTileDataModule(pl.LightningDataModule):
         val_fraction: float = 0.2,
         seed: int = 7,
     ) -> None:
+        """Initialize DepthTileDataModule with configured parameters.
+
+        Args:
+            dataset (Dataset): Input value.
+            val_dataset (Dataset | None): Input value.
+            dataloader_cfg (dict[str, Any] | None): Configuration dictionary or section.
+            val_fraction (float): Input value.
+            seed (int): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         super().__init__()
         self.dataset = dataset
         self.val_dataset = val_dataset
@@ -34,6 +43,14 @@ class DepthTileDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         # Reuse existing split when a dedicated val_dataset was provided.
+        """Compute setup and return the result.
+
+        Args:
+            stage (str | None): Input value.
+
+        Returns:
+            None: No value is returned.
+        """
         if self._train_val_split_done:
             return
 
@@ -59,6 +76,15 @@ class DepthTileDataModule(pl.LightningDataModule):
         self._train_val_split_done = True
 
     def _build_loader(self, dataset: Dataset, is_val: bool = False) -> DataLoader:
+        """Helper that computes build loader.
+
+        Args:
+            dataset (Dataset): Input value.
+            is_val (bool): Boolean flag controlling behavior.
+
+        Returns:
+            DataLoader: Computed output value.
+        """
         cfg = self.dataloader_cfg
         # Resolve train/val-specific overrides with sensible defaults.
         batch_size = int(cfg.get("val_batch_size" if is_val else "batch_size", 16))
@@ -88,11 +114,27 @@ class DepthTileDataModule(pl.LightningDataModule):
         return DataLoader(**kwargs)
 
     def train_dataloader(self) -> DataLoader:
+        """Return the training dataloader from the attached datamodule.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            DataLoader: Computed output value.
+        """
         if not self._train_val_split_done:
             self.setup("fit")
         return self._build_loader(self.train_dataset, is_val=False)
 
     def val_dataloader(self) -> DataLoader:
+        """Return the validation dataloader from the attached datamodule.
+
+        Args:
+            None: This callable takes no explicit input arguments.
+
+        Returns:
+            DataLoader: Computed output value.
+        """
         if not self._train_val_split_done:
             self.setup("fit")
         # Lightning sanity checking: force single-worker if trainer requests it (handled in trainer configs)
