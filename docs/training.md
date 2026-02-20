@@ -5,7 +5,7 @@ Training is launched via `train.py` and is fully config-driven.
 Use explicit config paths to avoid ambiguity:
 
 ```bash
-python3 train.py \
+/work/envs/depth/bin/python train.py \
   --data-config configs/data_config_eo_4band.yaml \
   --train-config configs/training_config_eo_4band.yaml \
   --model-config configs/model_config_eo_4band.yaml
@@ -14,12 +14,26 @@ python3 train.py \
 CLI aliases:
 - `--train-config` and `--training-config` are equivalent
 - `--model-config` also accepts the typo alias `--mdoel-config`
+- `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)
+
+Override example:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config configs/data_config_eo_4band.yaml \
+  --train-config configs/training_config_eo_4band.yaml \
+  --model-config configs/model_config_eo_4band.yaml \
+  --set data.dataset.mask_fraction=0.99 \
+  --set data.dataset.eo_dropout_prob=0.0 \
+  --set training.trainer.max_epochs=100 \
+  --set training.wandb.run_name=null
+```
 
 ## Single-Band (Legacy Config Set)
 For the single-band setup in this repo, use `configs/older_configs/*`:
 
 ```bash
-python3 train.py \
+/work/envs/depth/bin/python train.py \
   --data-config configs/older_configs/data_config.yaml \
   --train-config configs/older_configs/training_config.yaml \
   --model-config configs/older_configs/model_config.yaml
@@ -77,3 +91,27 @@ Notable behavior:
 - gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`
 - periodic scalar/image logging intervals are configurable
 - config files are uploaded to W&B run files (when experiment handle is available)
+
+## W&B Occlusion Sweep (EO Always Available)
+Sweep config:
+- `configs/sweeps/eo_occlusion_grid_no_eodrop.yaml`
+
+This sweep runs grid values:
+- `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`
+- fixed overrides:
+  - `data.dataset.eo_dropout_prob=0.0`
+  - `training.trainer.max_epochs=100`
+  - `training.wandb.run_name=null` (auto-generated run names)
+
+Launch:
+
+```bash
+./scripts/start_occlusion_sweep.sh
+```
+
+Equivalent manual steps:
+
+```bash
+/work/envs/depth/bin/wandb sweep configs/sweeps/eo_occlusion_grid_no_eodrop.yaml
+/work/envs/depth/bin/wandb agent <entity/project/sweep_id>
+```

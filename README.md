@@ -110,7 +110,7 @@ Train with `train.py`. You can now choose which config files to use from CLI.
 
 ### CLI config selection
 ```bash
-python3 train.py --data-config configs/data_config_eo_4band.yaml --train-config configs/training_config_eo_4band.yaml --model-config configs/model_config_eo_4band.yaml
+/work/envs/depth/bin/python train.py --data-config configs/data_config_eo_4band.yaml --train-config configs/training_config_eo_4band.yaml --model-config configs/model_config_eo_4band.yaml
 ```
 
 Notes:
@@ -128,7 +128,7 @@ Use the EO/4-band config set to train with:
   - reasoning: this reduces EO shortcut learning so the model does not over-rely on EO and still reconstructs from the actual corrupted `x` (+ mask context).
 
 ```bash
-python3 train.py \
+/work/envs/depth/bin/python train.py \
   --data-config configs/data_config_eo_4band.yaml \
   --train-config configs/training_config_eo_4band.yaml \
   --model-config configs/model_config_eo_4band.yaml
@@ -138,11 +138,32 @@ python3 train.py \
 Use the default single-band setup:
 
 ```bash
-python3 train.py \
+/work/envs/depth/bin/python train.py \
   --data-config configs/data_config.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml
 ```
+
+### W&B sweep for occlusion rates (EO always available)
+Use the provided sweep file to run a fixed grid over
+`mask_fraction = [0.95, 0.96, 0.97, 0.98, 0.99, 0.995]` while forcing:
+- `data.dataset.eo_dropout_prob=0.0`
+- `training.trainer.max_epochs=100`
+- `training.wandb.run_name=null`
+
+```bash
+./scripts/start_occlusion_sweep.sh
+```
+
+Equivalent manual steps:
+
+```bash
+/work/envs/depth/bin/wandb sweep configs/sweeps/eo_occlusion_grid_no_eodrop.yaml
+/work/envs/depth/bin/wandb agent <entity/project/sweep_id>
+```
+
+`train.py` supports repeatable strict overrides via:
+`--set <data|training|model>.<nested.path>=<yaml_value>`
 
 ### What happens during training
 - A timestamped run folder is created under `logs/`.

@@ -34,6 +34,77 @@ def load_yaml(path: str) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def dump_yaml(path: str | Path, payload: dict[str, Any]) -> None:
+    """Write yaml data to disk preserving key order."""
+    with Path(path).open("w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, sort_keys=False)
+
+
+def parse_config_override(raw_override: str) -> tuple[str, list[str], Any]:
+    """Parse one CLI config override expression.
+
+    Expected format: <config_root>.<nested.path>=<yaml_value>
+    where config_root is one of: data, training, model.
+    """
+    if "=" not in raw_override:
+        raise ValueError(
+            f"Invalid override '{raw_override}'. Expected format: "
+            "<data|training|model>.<path>=<yaml_value>."
+        )
+
+    lhs, rhs = raw_override.split("=", 1)
+    lhs = lhs.strip()
+    rhs = rhs.strip()
+    if "." not in lhs:
+        raise ValueError(
+            f"Invalid override '{raw_override}'. Missing nested key path after root."
+        )
+
+    root, *keys = [part.strip() for part in lhs.split(".")]
+    if root not in {"data", "training", "model"}:
+        raise ValueError(
+            f"Invalid override root '{root}' in '{raw_override}'. "
+            "Allowed roots: data, training, model."
+        )
+    if any(not key for key in keys):
+        raise ValueError(
+            f"Invalid override '{raw_override}'. Key path contains empty segment(s)."
+        )
+
+    return root, keys, yaml.safe_load(rhs)
+
+
+def apply_config_overrides(
+    overrides: list[str],
+    configs_by_root: dict[str, dict[str, Any]],
+) -> None:
+    """Apply strict nested config overrides in-place.
+
+    All path segments must already exist; this prevents silent typos.
+    """
+    for raw_override in overrides:
+        root, keys, value = parse_config_override(raw_override)
+        target: dict[str, Any] = configs_by_root[root]
+        for key in keys[:-1]:
+            if key not in target:
+                raise KeyError(
+                    f"Invalid override '{raw_override}': key '{key}' does not exist."
+                )
+            nested = target[key]
+            if not isinstance(nested, dict):
+                raise TypeError(
+                    f"Invalid override '{raw_override}': '{key}' is not a mapping."
+                )
+            target = nested
+
+        leaf_key = keys[-1]
+        if leaf_key not in target:
+            raise KeyError(
+                f"Invalid override '{raw_override}': key '{leaf_key}' does not exist."
+            )
+        target[leaf_key] = value
+
+
 # Resolve an optional resume checkpoint path and validate it early.
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     # Accept false/null to start fresh; otherwise require a valid checkpoint path string.
@@ -253,6 +324,7 @@ def main(
     model_config_path: str = "configs/model_config.yaml",
     data_config_path: str = "configs/data_config.yaml",
     training_config_path: str = "configs/training_config.yaml",
+    overrides: list[str] | None = None,
 ) -> None:
     # Determine rank before creating any run-scoped folders/files.
     """Run the script entry point.
@@ -261,6 +333,7 @@ def main(
         model_config_path (str): Path to an input or output file.
         data_config_path (str): Path to an input or output file.
         training_config_path (str): Path to an input or output file.
+        overrides (list[str] | None): Optional config overrides from CLI.
 
     Returns:
         None: No value is returned.
@@ -288,6 +361,52 @@ def main(
     model_cfg = load_yaml(model_config_path)
     training_cfg = load_yaml(training_config_path)
     data_cfg = load_yaml(data_config_path)
+    override_list = list(overrides or [])
+    apply_config_overrides(
+        overrides=override_list,
+        configs_by_root={
+            "model": model_cfg,
+            "training": training_cfg,
+            "data": data_cfg,
+        },
+    )
+
+    # Model/dataset builders load YAML files from paths, so write effective runtime
+    # configs when overrides are present and route all path-based constructors there.
+    effective_model_config_path = model_config_path
+    effective_data_config_path = data_config_path
+    effective_training_config_path = training_config_path
+    if override_list:
+        runtime_cfg_dir = (
+            Path("/tmp/depthdif_runtime_configs")
+            / f"{run_stamp}_{os.getpid()}_{global_rank}"
+        )
+        runtime_cfg_dir.mkdir(parents=True, exist_ok=True)
+        effective_model_config_path = str(runtime_cfg_dir / Path(model_config_path).name)
+        effective_data_config_path = str(runtime_cfg_dir / Path(data_config_path).name)
+        effective_training_config_path = str(
+            runtime_cfg_dir / Path(training_config_path).name
+        )
+        dump_yaml(effective_model_config_path, model_cfg)
+        dump_yaml(effective_data_config_path, data_cfg)
+        dump_yaml(effective_training_config_path, training_cfg)
+
+    uploaded_config_paths = [model_config_path, data_config_path, training_config_path]
+    if is_global_zero and override_list:
+        model_effective_snapshot = run_dir / f"{Path(model_config_path).stem}_effective.yaml"
+        data_effective_snapshot = run_dir / f"{Path(data_config_path).stem}_effective.yaml"
+        training_effective_snapshot = (
+            run_dir / f"{Path(training_config_path).stem}_effective.yaml"
+        )
+        dump_yaml(model_effective_snapshot, model_cfg)
+        dump_yaml(data_effective_snapshot, data_cfg)
+        dump_yaml(training_effective_snapshot, training_cfg)
+        uploaded_config_paths = [
+            str(model_effective_snapshot),
+            str(data_effective_snapshot),
+            str(training_effective_snapshot),
+        ]
+
     # Resolve resume path once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
@@ -322,7 +441,7 @@ def main(
         )
     # Instantiate dataset variant and inject EO dropout probability from data config.
     # Train/val subsets share the same base dataset object, so this applies to both.
-    dataset = build_dataset(data_config_path=data_config_path, ds_cfg=ds_cfg)
+    dataset = build_dataset(data_config_path=effective_data_config_path, ds_cfg=ds_cfg)
     if hasattr(dataset, "eo_dropout_prob"):
         dataset.eo_dropout_prob = float(
             max(0.0, min(1.0, float(ds_cfg.get("eo_dropout_prob", 0.0))))
@@ -336,9 +455,9 @@ def main(
 
     # Instantiate the conditional model from config.
     model = PixelDiffusionConditional.from_config(
-        model_config_path=model_config_path,
-        data_config_path=data_config_path,
-        training_config_path=training_config_path,
+        model_config_path=effective_model_config_path,
+        data_config_path=effective_data_config_path,
+        training_config_path=effective_training_config_path,
         datamodule=datamodule,
     )
 
@@ -348,7 +467,7 @@ def main(
         # Avoid duplicate uploads from DDP worker ranks.
         upload_configs_to_wandb(
             logger,
-            [model_config_path, data_config_path, training_config_path],
+            uploaded_config_paths,
         )
     # Save the best checkpoint by monitored validation metric and always keep the latest checkpoint.
     checkpoint_callback = ModelCheckpoint(
@@ -435,6 +554,18 @@ def parse_args() -> argparse.Namespace:
         dest="model_config",
         help="Path to model config yaml.",
     )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="config_overrides",
+        metavar="TARGET=VALUE",
+        help=(
+            "Override config values. Format: "
+            "<data|training|model>.<nested.path>=<yaml_value>. "
+            "Repeat --set for multiple overrides."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -444,4 +575,8 @@ if __name__ == "__main__":
         model_config_path=args.model_config,
         data_config_path=args.data_config,
         training_config_path=args.training_config,
+        overrides=args.config_overrides,
     )
+
+# Sweep quick start (single command):
+# ./scripts/start_occlusion_sweep.sh

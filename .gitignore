@@ -8,6 +8,8 @@ wandb/
 *.ckpt
 *.ckp
 *.parquet
+site/
+site/*
 
 # AI
 AGENTS.md
