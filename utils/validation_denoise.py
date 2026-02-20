@@ -540,6 +540,11 @@ def log_wandb_conditional_reconstruction_grid(
                 y_target_img = _plot_band_image(
                     y_target, i, band_idx=band_idx, mask=mask_band
                 )
+                if land_band is not None:
+                    # Zero land pixels right before rendering full reconstruction panels.
+                    land_np = land_band.detach().cpu().numpy().astype(bool)
+                    y_hat_img[land_np] = 0.0
+                    y_target_img[land_np] = 0.0
 
                 col = 0
                 axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
