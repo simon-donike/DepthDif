@@ -165,8 +165,13 @@ def build_random_batch(
         x_channels = generated_channels
 
     x = torch.randn(batch_size, x_channels, height, width, device=device)
-    valid_mask = (torch.rand(batch_size, 1, height, width, device=device) > 0.25).float()
-    land_mask = torch.ones(batch_size, 1, height, width, device=device)
+    mask_channels = max(1, generated_channels)
+    valid_mask = torch.rand(
+        batch_size, mask_channels, height, width, device=device
+    ) > 0.25
+    land_mask = torch.ones(
+        batch_size, mask_channels, height, width, device=device, dtype=torch.bool
+    )
 
     batch: dict[str, Any] = {
         "x": x,

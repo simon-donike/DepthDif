@@ -599,6 +599,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             width=int(data_t.size(-1)),
         )
         if mask_t is not None:
+            # Keep mask numeric and device-aligned for concatenation with data channels.
+            mask_t = mask_t.to(device=data_t.device, dtype=data_t.dtype)
             # Mask channel remains as-is; it is a semantic conditioning signal.
             condition_parts.append(mask_t)
 
@@ -622,12 +624,23 @@ class PixelDiffusionConditional(pl.LightningModule):
         known_mask = (valid_mask > 0.5).float()
         if known_mask.ndim == 3:
             known_mask = known_mask.unsqueeze(1)
-        if known_mask.ndim == 4 and known_mask.size(1) > 1:
-            known_mask = known_mask.amax(dim=1, keepdim=True)
 
         data_t = self.input_T(data)
         data_channels = int(data_t.size(1))
         generated_channels = int(self.model.generated_channels)
+        if known_mask.ndim == 4:
+            # Preserve per-channel known masks when they already match generated channels.
+            if int(known_mask.size(1)) == generated_channels:
+                pass
+            elif int(known_mask.size(1)) == 1 and generated_channels > 1:
+                known_mask = known_mask.expand(-1, generated_channels, -1, -1)
+            elif generated_channels == 1 and int(known_mask.size(1)) > 1:
+                known_mask = known_mask.amax(dim=1, keepdim=True)
+            else:
+                known_mask = known_mask.amax(dim=1, keepdim=True)
+                if generated_channels > 1:
+                    known_mask = known_mask.expand(-1, generated_channels, -1, -1)
+
         if data_channels == generated_channels:
             known_values = data_t
         elif data_channels == 1 and generated_channels > 1:
@@ -751,6 +764,33 @@ class PixelDiffusionConditional(pl.LightningModule):
         ocean_mask = (land_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
         return tensor * ocean_mask
 
+    def _apply_postprocess_zero_invalid_pixels(
+        self, tensor: torch.Tensor, valid_mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        if valid_mask is None:
+            return tensor
+        if tensor.ndim not in (3, 4):
+            return tensor
+        keep_mask = (valid_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
+        if keep_mask.ndim == 3:
+            keep_mask = keep_mask.unsqueeze(1)
+        if (
+            keep_mask.ndim == 4
+            and keep_mask.size(1) == 1
+            and tensor.ndim == 4
+            and tensor.size(1) > 1
+        ):
+            keep_mask = keep_mask.expand(-1, tensor.size(1), -1, -1)
+        if (
+            keep_mask.ndim == 4
+            and tensor.ndim == 4
+            and keep_mask.size(1) != tensor.size(1)
+        ):
+            keep_mask = keep_mask.amax(dim=1, keepdim=True).expand(
+                -1, tensor.size(1), -1, -1
+            )
+        return tensor * keep_mask
+
     @torch.no_grad()
     def predict_step(
         self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
@@ -798,6 +838,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Keep all post-processing centralized in Lightning inference.
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
         y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
+        y_hat_denorm = self._apply_postprocess_zero_invalid_pixels(
+            y_hat_denorm, valid_mask
+        )
         y_hat_denorm = self._apply_postprocess_zero_land_pixels(
             y_hat_denorm, land_mask
         )

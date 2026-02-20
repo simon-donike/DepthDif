@@ -302,8 +302,16 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             known_values = known_values.to(device=device, dtype=x_t.dtype)
             if known_mask.ndim == 3:
                 known_mask = known_mask.unsqueeze(1)
-            if known_mask.ndim == 4 and known_mask.size(1) != 1:
-                known_mask = known_mask.amax(dim=1, keepdim=True)
+            if known_mask.ndim == 4:
+                # Preserve per-channel masks when they already match generated channels.
+                if known_mask.size(1) == x_t.size(1):
+                    pass
+                elif known_mask.size(1) == 1 and x_t.size(1) > 1:
+                    known_mask = known_mask.expand(-1, x_t.size(1), -1, -1)
+                else:
+                    known_mask = known_mask.amax(dim=1, keepdim=True)
+                    if x_t.size(1) > 1:
+                        known_mask = known_mask.expand(-1, x_t.size(1), -1, -1)
             if known_values.ndim == 3:
                 known_values = known_values.unsqueeze(1)
             if (
@@ -391,11 +399,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = (valid_mask > 0.5).float()
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
-        if mask.ndim == 4 and mask.size(1) != 1:
-            mask = mask.amax(dim=1, keepdim=True)
-        if mask.ndim == 4 and mask.size(1) == 1 and reference.ndim == 4:
-            if reference.size(1) > 1:
+        if mask.ndim == 4 and reference.ndim == 4:
+            if mask.size(1) == reference.size(1):
+                pass
+            elif mask.size(1) == 1 and reference.size(1) > 1:
                 mask = mask.expand(-1, reference.size(1), -1, -1)
+            elif reference.size(1) == 1 and mask.size(1) > 1:
+                mask = mask.amax(dim=1, keepdim=True)
+            else:
+                mask = mask.amax(dim=1, keepdim=True)
+                if reference.size(1) > 1:
+                    mask = mask.expand(-1, reference.size(1), -1, -1)
         mask = 1.0 - mask  # now 1 = missing
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
@@ -409,11 +423,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = (land_mask > 0.5).float()
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
-        if mask.ndim == 4 and mask.size(1) != 1:
-            mask = mask.amax(dim=1, keepdim=True)
-        if mask.ndim == 4 and mask.size(1) == 1 and reference.ndim == 4:
-            if reference.size(1) > 1:
+        if mask.ndim == 4 and reference.ndim == 4:
+            if mask.size(1) == reference.size(1):
+                pass
+            elif mask.size(1) == 1 and reference.size(1) > 1:
                 mask = mask.expand(-1, reference.size(1), -1, -1)
+            elif reference.size(1) == 1 and mask.size(1) > 1:
+                mask = mask.amax(dim=1, keepdim=True)
+            else:
+                mask = mask.amax(dim=1, keepdim=True)
+                if reference.size(1) > 1:
+                    mask = mask.expand(-1, reference.size(1), -1, -1)
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 

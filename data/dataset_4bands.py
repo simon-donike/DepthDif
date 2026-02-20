@@ -199,16 +199,11 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         eo_np = y_np_all[0:1]
         y_np = y_np_all[1:4]
 
-        # Build one shared spatial water-valid mask and broadcast to all target bands.
-        # Pixels are valid only if all bands are finite and not zero; zeros are treated as land.
-        finite_all = np.isfinite(y_np).all(axis=0)
-        non_zero_all = (~np.isclose(y_np, 0.0, atol=1e-8)).all(axis=0)
-        land_mask_spatial_np = (finite_all & non_zero_all).astype(
-            np.float32, copy=False
-        )
-        land_mask_np = np.repeat(
-            land_mask_spatial_np[None, ...], repeats=y_np.shape[0], axis=0
-        )
+        # Keep a per-depth structural mask so shallow valid bands are preserved
+        # even when deeper bands are invalid at the same pixel.
+        land_mask_np = (
+            np.isfinite(y_np) & (~np.isclose(y_np, 0.0, atol=1e-8))
+        ).astype(np.float32, copy=False)
 
         # to Torch
         eo = torch.from_numpy(eo_np)
@@ -231,16 +226,19 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         eo = temperature_normalize(mode="norm", tensor=eo)
         y = temperature_normalize(mode="norm", tensor=y)
 
-        # Compute per-pixel training validity from fill values, then combine with land/water mask.
+        # Compute validity per depth channel so mask shape matches y exactly.
+        # A pixel is valid only when that specific channel is finite and non-zero.
+        zero = torch.zeros((), dtype=y.dtype, device=y.device)
+        valid_from_values = torch.isfinite(y) & (
+            ~torch.isclose(y, zero, atol=1e-6, rtol=0.0)
+        )
         if self.valid_from_fill_value:
-            # Keep a shared spatial validity mask across all bands.
-            v_per_band = ~torch.isclose(
+            v_fill = ~torch.isclose(
                 y, self._normalized_fill_value, atol=1e-6, rtol=0.0
             )
-            v_spatial = v_per_band.all(dim=0, keepdim=True).to(dtype=torch.float32)
-            v = v_spatial.expand_as(y) * land_mask
+            v = valid_from_values & v_fill
         else:
-            v = land_mask.clone()
+            v = valid_from_values
 
         # Apply the same geometric transform to data and masks to keep them aligned.
         if self.enable_transform:
@@ -279,7 +277,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
                     patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
                     covered = int(patch_mask.sum().item())
                 # Apply the same 2D spatial hide-mask to all channels.
-                valid_mask[:, patch_mask] = 0.0
+                valid_mask[:, patch_mask] = False
                 y_corrupt[:, patch_mask] = 0.0
 
         # Keep tensors finite before returning a batch dict.

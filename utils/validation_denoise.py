@@ -445,7 +445,8 @@ def _mask_for_sample(
         sample_mask = mask[sample_idx]
         if sample_mask.size(0) == 1:
             return sample_mask[0]
-        return sample_mask.amax(dim=0)
+        # Keep per-band masks so caller can pick the plotted channel explicitly.
+        return sample_mask
     if mask.ndim == 3:
         return mask[sample_idx]
     if mask.ndim == 2:
