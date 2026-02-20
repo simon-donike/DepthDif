@@ -1,2 +1,4 @@
 mkdocs
 mkdocstrings[python]
+# Ensure the Python handler package is present even if extras resolution is skipped.
+mkdocstrings-python

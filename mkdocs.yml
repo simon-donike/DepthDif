@@ -10,6 +10,8 @@ theme:
 plugins:
   - search
   - mkdocstrings:
+      # Allow local builds to run even when mkdocstrings handler deps are unavailable.
+      enabled: !ENV [ENABLE_MKDOCSTRINGS, false]
       handlers:
         python:
           paths:
