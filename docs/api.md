@@ -49,8 +49,9 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 ### `models.difFF.DenoisingDiffusionProcess.samplers.DDIM`
 ::: models.difFF.DenoisingDiffusionProcess.samplers.DDIM
 
-### `models.difFF.DenoisingDiffusionProcess.backbones.unet_convnext`
-::: models.difFF.DenoisingDiffusionProcess.backbones.unet_convnext
+### `models.difFF.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock`
+<!-- Use the class symbol path because mkdocstrings in CI fails to collect this submodule path directly. -->
+::: models.difFF.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock
 
 ## Utilities
 
