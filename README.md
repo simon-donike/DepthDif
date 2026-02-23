@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/banner_depthdif.png" width="70%" style="border-radius: 12px;" />
+  <img src="docs/assets/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
 </p>
 
 <p align="center">
-  <a href="https://simon-donike.github.io/DepthDif/">
+  <a href="https://depthdif.donike.net/">
     <img src="https://img.shields.io/badge/Visit-Documentation-0b2e4f?style=for-the-badge" alt="Open Documentation" />
   </a>
-  <a href="https://simon-donike.github.io/DepthDif/experiments/">
+  <a href="https://depthdif.donike.net/experiments/">
     <img src="https://img.shields.io/badge/Open-Experiments-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
 </p>

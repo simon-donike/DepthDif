@@ -1,5 +1,5 @@
 <p align="center">  
-  <img src="assets/banner_depthdif.png" width="70%" style="border-radius: 12px;" />
+  <img src="assets/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
 </p>
 
 # Densifying Sparse Ocean Depth Observations
@@ -10,21 +10,11 @@ The repository currently supports:
 - EO-conditioned multi-band reconstruction (surface condition + deeper target bands)
 
 ## Model Description
-DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input.  
-It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.  
-See the full model details in [Model](model.md).  
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
 ![depthdif_schema](assets/depthdif_schema.png)
 
-## Environment & Dependencies
-- Python: **3.12.3**
-- Dependencies: `requirements.txt` in repository root
-- Install:
-
-```bash
-pip install -r requirements.txt
-```
-
 ## Documentation Map
+- [Quick Start](quickstart.md): environment setup + fastest train/infer path
 - [Data](data.md): dataset source, export format, masking pipeline, split behavior
 - [Model](model.md): architecture and diffusion conditioning flow
 - [Date + Coordination Injection](date-coordination-injection.md): coordinate/date FiLM conditioning details

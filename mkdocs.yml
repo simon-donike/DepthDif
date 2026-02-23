@@ -44,6 +44,7 @@ markdown_extensions:
 
 nav:
   # Keep primary content layered under the Home tab.
+  - Quick Start: quickstart.md
   - Home:
       - Overview: index.md
       - Data: data.md
