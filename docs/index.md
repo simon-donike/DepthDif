@@ -20,6 +20,7 @@ DepthDif is a conditional diffusion model: it reconstructs dense depth fields fr
 - [Date + Coordination Injection](date-coordination-injection.md): coordinate/date FiLM conditioning details
 - [Training](training.md): CLI usage, run outputs, logging, checkpoints
 - [Inference](inference.md): script and direct `predict_step` workflows
+- [Configs](configs.md): per-file config keys, defaults, and explanations
 - [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling
 - [Experiments](experiments.md): qualitative test results
 - [Model Settings](settings.md): key config knobs and where they are used

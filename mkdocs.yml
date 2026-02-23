@@ -47,13 +47,14 @@ nav:
   - Home:
       - Overview: index.md
       - Sampling Diagnostics: sampling-diagnostics.md
-      - Experiments: experiments.md
       - Data: data.md
       - Model: model.md
       - Date + Coordination Injection: date-coordination-injection.md
       - Training: training.md
       - Inference: inference.md
+      - Configs: configs.md
       - Model Settings: settings.md
       - Development: development.md
+  - Experiments: experiments.md
   - Quickstart: quickstart.md
   - API Reference: api.md
