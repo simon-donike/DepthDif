@@ -59,6 +59,12 @@ EO + multiband example:
 ![img](assets/eo_dataset_example.png)
 
 ## Masking, Validity, and Augmentation
+### Normalization and units
+Temperature tensors are loaded in degrees Celsius and normalized through `utils.normalizations.temperature_normalize`:
+- `norm`: convert Celsius to Kelvin (`T_K = T_C + 273.15`), then apply Z-score with dataset stats (`Y_MEAN=289.74267177946783`, `Y_STD=10.933397487585731`)
+- `denorm`: invert Z-score in Kelvin space, then convert back to Celsius
+- plotting ranges (`PLOT_TEMP_MIN`, `PLOT_TEMP_MAX`) remain defined in Celsius space
+
 ### Corruption pipeline
 Both dataset variants create sparse `x` by masking random rectangular patches:
 - target masked coverage controlled by `mask_fraction`
