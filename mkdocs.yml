@@ -53,7 +53,6 @@ nav:
       - Date + Coordination Injection: date-coordination-injection.md
       - Training: training.md
       - Inference: inference.md
-      - Configs: configs.md
       - Model Settings: settings.md
       - Development: development.md
   - Experiments: experiments.md
