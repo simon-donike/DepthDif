@@ -52,12 +52,12 @@ dataloader: # DataLoader Settings
   val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
   num_workers: 6 # Number of DataLoader worker processes.
   val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
-  persistent_workers: false # Keep train workers alive across epochs; false is safer when host RAM keeps growing.
+  persistent_workers: true # Keep train workers alive across epochs; false is safer when host RAM keeps growing.
   val_persistent_workers: false # Validation workers persistence (effective only when val_num_workers > 0).
-  prefetch_factor: 4 # Batches prefetched per worker (used only when num_workers > 0).
+  prefetch_factor: 8 # Batches prefetched per worker (used only when num_workers > 0).
   shuffle: true # Shuffle training data each epoch.
   val_shuffle: true # Shuffle validation data each epoch (use with limit_val_batches for random subsets).
-  pin_memory: false # Pin host memory for faster host->GPU transfer.
+  pin_memory: true # Pin host memory for faster host->GPU transfer.
 
 scheduler: # Learning Rate Scheduler Settings
   warmup:
