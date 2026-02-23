@@ -34,12 +34,12 @@ Why it is useful:
 
 This 3D view shows one example coordinate encoded as `(x, y, z)` on the sphere. Red/green/blue arrows are the `x/y/z` components, and the black arrow is the resulting encoded vector.  
 <p align="center">
-  <img src="assets/single_coord_encoding_3d.png" width="40%" />
+  <img src="../assets/single_coord_encoding_3d.png" width="50%" />
 </p>
 
 This image evaluates all integer `(lat, lon)` combinations and maps the 3D unit-sphere encoding `(x, y, z)` to RGB. It visualizes how each coordinate is transformed into a 3-value vector before FiLM embedding, showing smooth transitions and proper wrap-around from -90 to +90 and -180 to +180.
 <p align="center">
-  <img src="assets/coord_encoding_unit_sphere_rgb.png" width="60%" />
+  <img src="../assets/coord_encoding_unit_sphere_rgb.png" width="50%" />
 </p>
 
 
@@ -77,7 +77,7 @@ Dataset date parsing convention:
 This plot shows all 365 day-of-year embeddings as points in the sin/cos plane. Each day maps to one point on the unit circle, which makes the representation periodic and year-wrap safe.  
 
 <p align="center">
-  <img src="assets/time_encodings_365.png" width="50%" />
+  <img src="../assets/time_encodings_365.png" width="50%" />
 </p>
 
 ## Feature Fusion
