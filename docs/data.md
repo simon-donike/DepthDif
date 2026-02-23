@@ -1,19 +1,5 @@
-# Data
-DepthDif uses monthly ocean reanalysis tiles and converts them into fixed-size patch tensors for fast training.
-
-## Source Data
-The current workflow is built around the Copernicus Marine **Global Ocean Physics Reanalysis** product.
-
-- Time span used in this project: 2000-2025
-- Typical patch size: `128 x 128`
-- Spatial resolution context in README: `1/12°`
-- Sparse-observation behavior is simulated by synthetic masking
-
-Reference dataset link:
-[Global Ocean Physics Reanalysis](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F)
-
-Example CLI from README:
-`copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*2021/*"`
+# Synthetic Dataset
+This page documents the synthetic dataset used by DepthDif after preprocessing the raw Copernicus source files.
 
 Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)
@@ -22,30 +8,22 @@ Dataset example for 50% occlusion:
 The data export script is `data/dataset_to_disk.py`.
 
 Core behavior:
-- reads `*.nc` files from `dataset.root_dir`
-- extracts requested depth bands from one variable (default `thetao`)
+- reads `*.nc` files from `dataset.source.root_dir`
+- extracts any configured number of depth levels (`bands`) from any selected 3D variable (`variable`, default `thetao`)
 - writes each patch to `y_npy/<sample_id>.npy`
 - writes an index CSV with paths and metadata (`patch_index_with_paths.csv`)
 - can enforce nodata filtering via `max_nodata_fraction`
-- assigns a `split` column (`train`/`val`) during export
+- includes geographic bounds per patch (`lat0`, `lat1`, `lon0`, `lon1`) in the CSV
+- supports writing a geo-location-based `train`/`val` split CSV via `data/assign_window_split.py` (window-level split)
 
 For EO + 3 deeper-band training, the 4-band layout is expected as:
 - channel 0: EO/surface condition
 - channels 1..3: deeper temperature target bands
 
-## Implemented Dataset Variants
-Variant selection is resolved from `dataset.dataset_variant` in data config.
+## Implemented Dataset
+Current training uses `eo_4band`.
 
-### 1) `temp_v1` (single-band)
-`SurfaceTempPatchLightDataset` (`data/dataset_temp_v1.py`) returns:
-- `x`: corrupted input (same channels as `y`, after masking)
-- `y`: clean target
-- `valid_mask`: valid/known pixels mask
-- `land_mask`: ocean/land validity mask
-- `date`: parsed integer date (`YYYYMMDD`)
-- optional: `coords`, `info`
-
-### 2) `eo_4band` (EO-conditioned multiband)
+### `eo_4band` (EO-conditioned multiband)
 `SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:
 - `eo`: channel 0 condition
 - `x`: corrupted deeper channels (channels 1..3)
@@ -58,6 +36,7 @@ Variant selection is resolved from `dataset.dataset_variant` in data config.
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)
 
+## Synthetic Transformations
 ## Masking, Validity, and Augmentation
 ### Normalization and units
 Temperature tensors are loaded in degrees Celsius and normalized through `utils.normalizations.temperature_normalize`:
@@ -66,12 +45,20 @@ Temperature tensors are loaded in degrees Celsius and normalized through `utils.
 - plotting ranges (`PLOT_TEMP_MIN`, `PLOT_TEMP_MAX`) remain defined in Celsius space
 
 ### Corruption pipeline
-Both dataset variants create sparse `x` by masking random rectangular patches:
-- target masked coverage controlled by `mask_fraction`
-- patch sizes from `mask_patch_min` to `mask_patch_max`
-- corruption is applied spatially
-- in `temp_v1`, corruption is effectively a single-band spatial mask
-- in `eo_4band`, corruption is now per-band, so `valid_mask` semantics are fully 3D (`band x H x W`)
+The dataset creates sparse `x` using stochastic trajectory-style corruption:
+- this simulates a submarine moving through the patch and sampling along its path
+- target hidden coverage is controlled by `mask_fraction`
+- each track is built in flattened 1D index space and rasterized back to 2D
+- each line starts from a random location and is extended as a continuous curved streak
+- when a line reaches the edge, a new line starts from another random location
+- new streaks are added in a loop until the configured corruption percentage is reached
+- implementation target: observed-line budget reaches `(1 - mask_fraction)` of pixels, then hidden area is the complement
+- the final hidden region is the complement of those observed lines
+- in `eo_4band`, one shared spatial track mask is applied across all depth bands
+- legacy rectangular masking remains available via `mask_strategy="rectangles"`
+
+Continuous submarine-like streak example (`mask_strategy="tracks"`):  
+![img](assets/dataset_streaks.png)
 
 ### Validity and land masks
 - masks are derived from finite-value checks and configured fill-value logic
@@ -110,5 +97,7 @@ This is an important implementation detail from `train.py` + `data/datamodule.py
 
 If you need strict geographic window splits from index labels, use a custom train/val dataset wiring path (or adapt the runner).
 
-Helper for writing deterministic window-level splits:
+Helper for writing deterministic geo-location window-level splits:
 - `data/assign_window_split.py`
+
+See [Data Source](data-source.md) for provenance and download instructions.

@@ -2,28 +2,32 @@
 This page documents the default configuration files in `configs/` using key paths, default values, and short explanations aligned with comments in each file.
 
 ## `configs/data_config.yaml`
+Dataset settings are grouped by intent (`core`, `source`, `validity`, `degradation`, `conditioning`, `augmentation`, `output`, `runtime`).  
+
 | Config key | Default value | Explanation |
 |---|---|---|
-| `dataset.dataset_variant` | `"eo_4band"` | Selects `SurfaceTempPatch4BandsLightDataset` in `train.py`. |
-| `dataset.dataloader_type` | `"light"` | `"raw"` loads NetCDF on-the-fly, `"light"` uses CSV + saved patch paths. |
-| `dataset.light_index_csv` | `"/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv"` | Index CSV used when `dataloader_type="light"`. |
-| `dataset.bands` | `["thetao"]` | Variables/bands to extract and write (order preserved). |
-| `dataset.edge_size` | `128` | Patch size in pixels; also used as stride for non-overlapping tiles. |
-| `dataset.max_nodata_fraction` | `0.15` | Maximum invalid/nodata ratio per tile when validity filtering is enabled. |
-| `dataset.nan_fill_value` | `0.0` | Fill value used for invalid/land pixels before tensor conversion. |
-| `dataset.valid_from_fill_value` | `true` | In light mode, infer valid mask from standardized fill value. |
-| `dataset.mask_fraction` | `0.975` | Fraction of pixels hidden to create sparse conditioning input. |
-| `dataset.mask_patch_min` | `2` | Minimum corruption patch side length (pixels). |
-| `dataset.mask_patch_max` | `5` | Maximum corruption patch side length (pixels). |
-| `dataset.eo_dropout_prob` | `0.50` | Probability of zeroing EO conditioning per sample (train and val). |
-| `dataset.eo_random_scale_enabled` | `false` | If enabled, multiplies EO by random scale in `[0.9, 1.1]`. |
-| `dataset.eo_speckle_noise_enabled` | `true` | If enabled, applies multiplicative EO speckle noise clamped to `[0.9, 1.1]`. |
-| `dataset.enable_transform` | `false` | Enables random geometric augmentation. |
-| `dataset.x_return_mode` | `"currupted_plus_mask"` | Return mode for `x` (`"corrputed"` or `"currupted_plus_mask"` in file comments). |
-| `dataset.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |
-| `dataset.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |
-| `dataset.rebuild_index` | `false` | Rebuilds tile index from raw files on startup. |
-| `dataset.enforce_validity` | `true` | Drops indexed tiles with too much nodata using `max_nodata_fraction`. |
+| `dataset.core.dataset_variant` | `"eo_4band"` | Selects `SurfaceTempPatch4BandsLightDataset` in `train.py`. |
+| `dataset.core.dataloader_type` | `"light"` | `"raw"` loads NetCDF on-the-fly, `"light"` uses CSV + saved patch paths. |
+| `dataset.source.light_index_csv` | `"/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv"` | Index CSV used when `dataloader_type="light"`. |
+| `dataset.source.bands` | `["thetao"]` | Variables/bands to extract and write (order preserved). |
+| `dataset.source.edge_size` | `128` | Patch size in pixels; also used as stride for non-overlapping tiles. |
+| `dataset.validity.max_nodata_fraction` | `0.15` | Maximum invalid/nodata ratio per tile when validity filtering is enabled. |
+| `dataset.validity.nan_fill_value` | `0.0` | Fill value used for invalid/land pixels before tensor conversion. |
+| `dataset.validity.valid_from_fill_value` | `true` | In light mode, infer valid mask from standardized fill value. |
+| `dataset.validity.enforce_validity` | `true` | Drops indexed tiles with too much nodata using `max_nodata_fraction`. |
+| `dataset.degradation.mask_fraction` | `0.975` | Fraction of pixels hidden in `x`; streak generation continues until this corruption target is reached. |
+| `dataset.degradation.mask_strategy` | `"tracks"` | Corruption strategy (`"tracks"` = continuous curved submarine-like streaks, `"rectangles"` = legacy fallback). |
+| `dataset.degradation.mask_patch_min` | `2` | Minimum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
+| `dataset.degradation.mask_patch_max` | `5` | Maximum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
+| `dataset.conditioning.eo_dropout_prob` | `0.50` | Probability of zeroing EO conditioning per sample (train and val). |
+| `dataset.conditioning.eo_random_scale_enabled` | `false` | If enabled, applies additive EO offset in `[-2.0, 2.0]` (temperature units). |
+| `dataset.conditioning.eo_speckle_noise_enabled` | `true` | If enabled, applies multiplicative EO speckle noise clamped to `[0.9, 1.1]`. |
+| `dataset.augmentation.enable_transform` | `false` | Enables random geometric augmentation. |
+| `dataset.output.x_return_mode` | `"currupted_plus_mask"` | Return mode for `x` (`"corrputed"` or `"currupted_plus_mask"` in file comments). |
+| `dataset.output.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |
+| `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |
+| `dataset.runtime.rebuild_index` | `false` | Rebuilds tile index from raw files on startup. |
+| `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |
 | `split.val_fraction` | `0.2` | Fraction of dataset reserved for validation. |
 
 ## `configs/model_config.yaml`

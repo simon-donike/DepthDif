@@ -24,8 +24,7 @@ At the top of `inference.py`, set:
 
 ### Note on default paths
 The script constants should be set explicitly. In this repository, the actively used configs are:
-- EO setup: `configs/*_eo_4band.yaml`
-- legacy single-band setup: `configs/older_configs/*.yaml`
+- EO setup: `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry point is:
@@ -61,9 +60,9 @@ from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from models.difFF import PixelDiffusionConditional
 
-model_config = "configs/model_config_eo_4band.yaml"
-data_config = "configs/data_config_eo_4band.yaml"
-train_config = "configs/training_config_eo_4band.yaml"
+model_config = "configs/model_config.yaml"
+data_config = "configs/data_config.yaml"
+train_config = "configs/training_config.yaml"
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"
 
 dataset = SurfaceTempPatch4BandsLightDataset.from_config(data_config, split="all")

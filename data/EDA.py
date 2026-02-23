@@ -33,7 +33,12 @@ def find_default_nc(config_path: str) -> Path:
         Path: Computed output value.
     """
     cfg = load_yaml(config_path)
-    root_dir = Path(cfg["dataset"]["root_dir"])
+    ds_cfg = cfg.get("dataset", {})
+    source_cfg = ds_cfg.get("source", {})
+    root_dir_value = source_cfg.get("root_dir", None)
+    if root_dir_value is None:
+        raise KeyError("Missing dataset source root dir in config (dataset.source.root_dir).")
+    root_dir = Path(root_dir_value)
     nc_files = sorted(root_dir.glob("*.nc"))
     if not nc_files:
         raise FileNotFoundError(f"No .nc files found in {root_dir}")

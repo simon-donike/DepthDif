@@ -14,9 +14,6 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 ### `data.datamodule`
 ::: data.datamodule
 
-### `data.dataset_temp_v1`
-::: data.dataset_temp_v1
-
 ### `data.dataset_4bands`
 ::: data.dataset_4bands
 

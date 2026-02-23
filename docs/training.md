@@ -6,9 +6,9 @@ Use explicit config paths to avoid ambiguity:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config_eo_4band.yaml \
-  --train-config configs/training_config_eo_4band.yaml \
-  --model-config configs/model_config_eo_4band.yaml
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml
 ```
 
 CLI aliases:
@@ -20,33 +20,20 @@ Override example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config_eo_4band.yaml \
-  --train-config configs/training_config_eo_4band.yaml \
-  --model-config configs/model_config_eo_4band.yaml \
-  --set data.dataset.mask_fraction=0.99 \
-  --set data.dataset.eo_dropout_prob=0.0 \
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml \
+  --set data.dataset.degradation.mask_fraction=0.99 \
+  --set data.dataset.conditioning.eo_dropout_prob=0.0 \
   --set training.trainer.max_epochs=100 \
   --set training.wandb.run_name=null
 ```
 
-## Single-Band (Legacy Config Set)
-For the single-band setup in this repo, use `configs/older_configs/*`:
-
-```bash
-/work/envs/depth/bin/python train.py \
-  --data-config configs/older_configs/data_config.yaml \
-  --train-config configs/older_configs/training_config.yaml \
-  --model-config configs/older_configs/model_config.yaml
-```
-
-Before launching a fresh run with this legacy set, set
-`model.resume_checkpoint: false` (or `null`) in `configs/older_configs/model_config.yaml`.
-
 ## Important Config Notes
 - `train.py` currently supports only:
-  - `dataset.dataloader_type: "light"`
+  - `dataset.core.dataloader_type: "light"`
   - `model.model_type: "cond_px_dif"`
-- dataset variant is selected by `dataset.dataset_variant` (or inferred from data config filename)
+- dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)
 - EO dropout from data config is injected into dataset object for both train and val
 - parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended
 
@@ -99,7 +86,7 @@ Sweep config:
 This sweep runs grid values:
 - `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`
 - fixed overrides:
-  - `data.dataset.eo_dropout_prob=0.0`
+  - `data.dataset.conditioning.eo_dropout_prob=0.0`
   - `training.trainer.max_epochs=100`
   - `training.wandb.run_name=null` (auto-generated run names)
 

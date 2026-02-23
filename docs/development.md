@@ -37,9 +37,9 @@ Potential mitigation directions already identified:
 ### Tier 1
 - [x] Aux priors via patch-level FiLM conditioning from coordinates (and optional date)
 - [ ] Increase sparse-input stress test to `mask_fraction=0.99` as a standard comparison setting
-- [ ] Implement trajectory-style corruption ("walk" masks) to better simulate submarine-like movement across each patch
-- [ ] Simulate EO observation + sparse in-situ depth profile setup more systematically
-- [ ] Evaluate lower-resolution setups aligned with expected Argo-like profile density
+- [x] Implement trajectory-style corruption ("walk" masks) to better simulate submarine-like movement across each patch
+- [ ] Simulate EO observation + sparse in-situ measurement setup more systematically
+- [ ] Evaluate lower-resolution setups aligned with expected sparse in-situ measurement density
 
 ### Tier 2
 - [ ] Evaluate additional Copernicus Marine products (for example ARMOR3D)

@@ -597,6 +597,7 @@ def log_wandb_conditional_reconstruction_grid(
     prefix: str = "val_imgs",
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
+    show_valid_mask_panel: bool = True,
 ) -> None:
     """Log wandb conditional reconstruction grid for monitoring.
 
@@ -611,6 +612,7 @@ def log_wandb_conditional_reconstruction_grid(
         prefix (str): Input value.
         image_key (str): Input value.
         cmap (str): Input value.
+        show_valid_mask_panel (bool): Controls whether valid mask is shown as a panel.
 
     Returns:
         None: No value is returned.
@@ -636,10 +638,11 @@ def log_wandb_conditional_reconstruction_grid(
     fig = None
     try:
         total_rows = num_to_plot * channels_to_plot
+        show_valid_panel = bool(show_valid_mask_panel and valid_mask is not None)
         ncols = 3
         if eo is not None:
             ncols += 1
-        if valid_mask is not None:
+        if show_valid_panel:
             ncols += 1
         if land_mask is not None:
             ncols += 1
@@ -648,7 +651,7 @@ def log_wandb_conditional_reconstruction_grid(
         )
 
         for i in range(num_to_plot):
-            valid_mask_i = _mask_for_sample(valid_mask, i)
+            valid_mask_i = _mask_for_sample(valid_mask, i) if show_valid_panel else None
             land_mask_i = _mask_for_sample(land_mask, i)
             for band_idx in range(channels_to_plot):
                 row_idx = (i * channels_to_plot) + band_idx
@@ -703,7 +706,7 @@ def log_wandb_conditional_reconstruction_grid(
                     axes[row_idx, col].set_title("Target")
                 col += 1
 
-                if valid_mask is not None:
+                if show_valid_panel:
                     if valid_band is not None:
                         axes[row_idx, col].imshow(
                             valid_band.detach().float().cpu().numpy(),
