@@ -5,11 +5,11 @@ Use this page for raw-source provenance and download details. See [Synthetic Dat
 
 
 ## Product
-- Provider: Copernicus Marine Service
-- Product family: Global Ocean Physics Reanalysis
-- Dataset used in this project: `global-reanalysis-001-030-monthly`
-- Source model: `MERCATOR GLORYS12V1`
-- Typical files: monthly NetCDF (`*.nc`)
+- Provider: Copernicus Marine Service  
+- Product family: Global Ocean Physics Reanalysis  
+- Dataset used in this project: `global-reanalysis-001-030-monthly`  
+- Source model: `MERCATOR GLORYS12V1`  
+- Typical files: monthly NetCDF (`*.nc`)  
 
 Reference dataset link:  
 [Global Ocean Physics Reanalysis](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F)
@@ -36,10 +36,10 @@ The raw source file contains the following data variables (NetCDF variables):
 | `vo` | `(time, depth, latitude, longitude)` | Northward velocity | `m s-1` |
 
 ## Core Input Axes
-- `time`: monthly timestamp (single monthly slice per file in the inspected sample)
-- `latitude`: from `-80` to `90`
-- `longitude`: from `-180` to `179.9167`
-- `depth`: 50 vertical levels
+- `time`: monthly timestamp (single monthly slice per file in the inspected sample)  
+- `latitude`: from `-80` to `90`  
+- `longitude`: from `-180` to `179.9167`  
+- `depth`: 50 vertical levels  
 
 
 ## Depth Levels (Meters)

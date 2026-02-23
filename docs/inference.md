@@ -1,56 +1,56 @@
 # Inference
 There are two practical inference workflows in this repository:
-- run the standalone script `inference.py`
-- call `PixelDiffusionConditional.predict_step(...)` directly
+- run the standalone script `inference.py`  
+- call `PixelDiffusionConditional.predict_step(...)` directly  
 
 ## Workflow 1: Use `inference.py`
 `inference.py` is a configurable script for quick prediction sanity checks.
 
 ### What it supports
-- load config files and instantiate model/datamodule
-- load checkpoint (explicit override or `model.resume_checkpoint`)
-- run from:
-  - dataloader sample (`MODE="dataloader"`)
-  - synthetic random batch (`MODE="random"`)
-- optional intermediate sample capture
+- load config files and instantiate model/datamodule  
+- load checkpoint (explicit override or `model.resume_checkpoint`)  
+- run from:  
+  - dataloader sample (`MODE="dataloader"`)  
+  - synthetic random batch (`MODE="random"`)  
+- optional intermediate sample capture  
 
 ### Important script settings
 At the top of `inference.py`, set:
-- `MODEL_CONFIG_PATH`
-- `DATA_CONFIG_PATH`
-- `TRAIN_CONFIG_PATH`
-- `CHECKPOINT_PATH` (or keep `None` to use config resume path)
-- `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`
+- `MODEL_CONFIG_PATH`  
+- `DATA_CONFIG_PATH`  
+- `TRAIN_CONFIG_PATH`  
+- `CHECKPOINT_PATH` (or keep `None` to use config resume path)  
+- `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`  
 
 ### Note on default paths
 The script constants should be set explicitly. In this repository, the actively used configs are:
-- EO setup: `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`
+- EO setup: `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`  
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry point is:
-- `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`
+- `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`  
 
 Minimum required batch key:
-- `x`
+- `x`  
 
 Common optional keys:
-- `eo`
-- `valid_mask`
-- `land_mask`
-- `coords`
-- `date`
-- `sampler`
-- `clamp_known_pixels`
-- `return_intermediates`
-- `intermediate_step_indices`
+- `eo`  
+- `valid_mask`  
+- `land_mask`  
+- `coords`  
+- `date`  
+- `sampler`  
+- `clamp_known_pixels`  
+- `return_intermediates`  
+- `intermediate_step_indices`  
 
 ### Returned outputs
 `predict_step` returns a dictionary containing:
-- `y_hat`: standardized prediction
-- `y_hat_denorm`: temperature-denormalized prediction
-- `denoise_samples`: reverse samples (if requested)
-- `x0_denoise_samples`: per-step x0 predictions (if requested)
-- `sampler`: sampler used for prediction
+- `y_hat`: standardized prediction  
+- `y_hat_denorm`: temperature-denormalized prediction  
+- `denoise_samples`: reverse samples (if requested)  
+- `x0_denoise_samples`: per-step x0 predictions (if requested)  
+- `sampler`: sampler used for prediction  
 
 ## Example (EO config)
 ```python
@@ -91,9 +91,9 @@ y_hat_denorm = pred["y_hat_denorm"]
 
 ## Sampler Choice
 Validation/inference sampler can be switched via training config:
-- `training.validation_sampling.sampler: "ddpm"` or `"ddim"`
-- DDIM controls:
-  - `ddim_num_timesteps`
-  - `ddim_eta`
+- `training.validation_sampling.sampler: "ddpm"` or `"ddim"`  
+- DDIM controls:  
+  - `ddim_num_timesteps`  
+  - `ddim_eta`  
 
 The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.

@@ -12,9 +12,9 @@ Use explicit config paths to avoid ambiguity:
 ```
 
 CLI aliases:
-- `--train-config` and `--training-config` are equivalent
-- `--model-config` also accepts the typo alias `--mdoel-config`
-- `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)
+- `--train-config` and `--training-config` are equivalent  
+- `--model-config` also accepts the typo alias `--mdoel-config`  
+- `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)  
 
 Override example:
 
@@ -30,65 +30,65 @@ Override example:
 ```
 
 ## Important Config Notes
-- `train.py` currently supports only:
-  - `dataset.core.dataloader_type: "light"`
-  - `model.model_type: "cond_px_dif"`
-- dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)
-- EO dropout from data config is injected into dataset object for both train and val
-- parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended
+- `train.py` currently supports only:  
+  - `dataset.core.dataloader_type: "light"`  
+  - `model.model_type: "cond_px_dif"`  
+- dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)  
+- EO dropout from data config is injected into dataset object for both train and val  
+- parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended  
 
 ## What `train.py` Does During Startup
-1. Resolves distributed rank and creates a run directory under `logs/<timestamp>` on global rank 0.
-2. Copies exact config files into the run directory for reproducibility.
-3. Loads configs and validates `model.resume_checkpoint` early.
-4. Builds dataset and datamodule.
-5. Instantiates `PixelDiffusionConditional.from_config(...)`.
-6. Sets up W&B logger and callbacks.
+1. Resolves distributed rank and creates a run directory under `logs/<timestamp>` on global rank 0.  
+2. Copies exact config files into the run directory for reproducibility.  
+3. Loads configs and validates `model.resume_checkpoint` early.  
+4. Builds dataset and datamodule.  
+5. Instantiates `PixelDiffusionConditional.from_config(...)`.  
+6. Sets up W&B logger and callbacks.  
 
 ## Checkpointing and Resume
 ModelCheckpoint behavior:
-- best checkpoint: `best-epoch{epoch:03d}.ckpt` (monitor from `trainer.ckpt_monitor`)
-- always saved: `last.ckpt`
-- location: current run folder under `logs/`
+- best checkpoint: `best-epoch{epoch:03d}.ckpt` (monitor from `trainer.ckpt_monitor`)  
+- always saved: `last.ckpt`  
+- location: current run folder under `logs/`  
 
 Resume behavior:
-- set `model.resume_checkpoint` to a valid `.ckpt` path
-- invalid path fails early before trainer start
+- set `model.resume_checkpoint` to a valid `.ckpt` path  
+- invalid path fails early before trainer start  
 
 ## Device, Precision, and Validation Controls
 From `training_config` trainer section:
-- accelerator/devices strategy (`accelerator`, `devices`, optional legacy `num_gpus`)
-- mixed precision (`precision`)
-- optional validation cap via `val_batches_per_epoch` or `limit_val_batches`
-- gradient clipping (`gradient_clip_val`)
+- accelerator/devices strategy (`accelerator`, `devices`, optional legacy `num_gpus`)  
+- mixed precision (`precision`)  
+- optional validation cap via `val_batches_per_epoch` or `limit_val_batches`  
+- gradient clipping (`gradient_clip_val`)  
 
 ## Learning Rate Behavior
 `PixelDiffusionConditional` supports:
-- step-based linear warmup in `optimizer_step`
-- `ReduceLROnPlateau` scheduler when enabled
+- step-based linear warmup in `optimizer_step`  
+- `ReduceLROnPlateau` scheduler when enabled  
 
 Warmup and scheduler are configured via:
-- `scheduler.warmup.*`
-- `scheduler.reduce_on_plateau.*`
+- `scheduler.warmup.*`  
+- `scheduler.reduce_on_plateau.*`  
 
 ## Logging
 W&B logging is configured in `training_config.wandb`.
 
 Notable behavior:
-- gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`
-- periodic scalar/image logging intervals are configurable
-- config files are uploaded to W&B run files (when experiment handle is available)
+- gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`  
+- periodic scalar/image logging intervals are configurable  
+- config files are uploaded to W&B run files (when experiment handle is available)  
 
 ## W&B Occlusion Sweep (EO Always Available)
 Sweep config:
-- `configs/sweeps/eo_occlusion_grid_no_eodrop.yaml`
+- `configs/sweeps/eo_occlusion_grid_no_eodrop.yaml`  
 
 This sweep runs grid values:
-- `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`
-- fixed overrides:
-  - `data.dataset.conditioning.eo_dropout_prob=0.0`
-  - `training.trainer.max_epochs=100`
-  - `training.wandb.run_name=null` (auto-generated run names)
+- `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`  
+- fixed overrides:  
+  - `data.dataset.conditioning.eo_dropout_prob=0.0`  
+  - `training.trainer.max_epochs=100`  
+  - `training.wandb.run_name=null` (auto-generated run names)  
 
 Launch:
 

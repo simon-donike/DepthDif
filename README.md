@@ -31,10 +31,10 @@ For docs tooling:
 
 ## Model Overview
 
-- Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
-- Main task modes:
-  - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).
-- Default configs live in `configs/` and are selected via CLI.
+- Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).  
+- Main task modes:  
+  - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).  
+- Default configs live in `configs/` and are selected via CLI.  
 
 DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement, adding streaks until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.
 
@@ -52,18 +52,18 @@ EO + multiband training:
 ```
 
 Notes:
-- `--train-config` and `--training-config` are equivalent.
-- Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.
+- `--train-config` and `--training-config` are equivalent.  
+- Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.  
 
 ## Inference
 
 Use `inference.py`:
 
-1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).
+1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:
    `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`.
-2. Choose `MODE` (`"dataloader"` or `"random"`).
-3. Run:
+2. Choose `MODE` (`"dataloader"` or `"random"`).  
+3. Run:  
 
 ```bash
 /work/envs/depth/bin/python inference.py
@@ -71,5 +71,5 @@ Use `inference.py`:
 
 ## Documentation
 
-- Full documentation: `docs/` (or build/serve with MkDocs).
-- Experiments page: `docs/experiments.md`.
+- Full documentation: `docs/` (or build/serve with MkDocs).  
+- Experiments page: `docs/experiments.md`.  
