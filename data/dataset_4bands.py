@@ -299,33 +299,33 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         valid_mask = v.clone()
         y_corrupt = y_clean.clone()
 
-        # Corrupt x by masking random spatial patches that are shared across all target channels.
+        # Corrupt x with a per-band mask so validity is truly 3D: (band, H, W).
         if self.mask_fraction > 0.0:
-            _, h, w = y_corrupt.shape
+            channels, h, w = y_corrupt.shape
             target = int(round(self.mask_fraction * h * w))
             if target > 0:
-                patch_mask = torch.zeros(
-                    (h, w), dtype=torch.bool, device=y_corrupt.device
-                )
-                covered = 0
-                while covered < target:
-                    ph = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
+                for band_idx in range(channels):
+                    patch_mask = torch.zeros(
+                        (h, w), dtype=torch.bool, device=y_corrupt.device
                     )
-                    pw = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
-                    )
-                    y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
-                    x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
-                    patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
-                    covered = int(patch_mask.sum().item())
-                # Apply the same 2D spatial hide-mask to all channels.
-                valid_mask[:, patch_mask] = False
-                y_corrupt[:, patch_mask] = 0.0
+                    covered = 0
+                    while covered < target:
+                        ph = int(
+                            torch.randint(
+                                self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                            ).item()
+                        )
+                        pw = int(
+                            torch.randint(
+                                self.mask_patch_min, self.mask_patch_max + 1, (1,)
+                            ).item()
+                        )
+                        y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
+                        x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
+                        patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
+                        covered = int(patch_mask.sum().item())
+                    valid_mask[band_idx, patch_mask] = False
+                    y_corrupt[band_idx, patch_mask] = 0.0
 
         # Keep tensors finite before returning a batch dict.
         x = y_corrupt

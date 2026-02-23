@@ -1049,41 +1049,62 @@ class PixelDiffusionConditional(pl.LightningModule):
         ocean_mask = (land_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
         return tensor * ocean_mask
 
-    def _apply_postprocess_zero_invalid_pixels(
-        self, tensor: torch.Tensor, valid_mask: torch.Tensor | None
+    def _apply_postprocess_merge_observed_pixels(
+        self,
+        generated: torch.Tensor,
+        observed: torch.Tensor,
+        valid_mask: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Helper that computes apply postprocess zero invalid pixels.
+        """Helper that computes apply postprocess merge observed pixels.
 
         Args:
-            tensor (torch.Tensor): Tensor input for the computation.
+            generated (torch.Tensor): Tensor input for the computation.
+            observed (torch.Tensor): Tensor input for the computation.
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
 
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
         if valid_mask is None:
-            return tensor
-        if tensor.ndim not in (3, 4):
-            return tensor
-        keep_mask = (valid_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
+            return generated
+        if generated.ndim != 4 or observed.ndim != 4:
+            return generated
+        keep_mask = (valid_mask > 0.5).to(
+            dtype=generated.dtype, device=generated.device
+        )
         if keep_mask.ndim == 3:
             keep_mask = keep_mask.unsqueeze(1)
-        if (
-            keep_mask.ndim == 4
-            and keep_mask.size(1) == 1
-            and tensor.ndim == 4
-            and tensor.size(1) > 1
-        ):
-            keep_mask = keep_mask.expand(-1, tensor.size(1), -1, -1)
-        if (
-            keep_mask.ndim == 4
-            and tensor.ndim == 4
-            and keep_mask.size(1) != tensor.size(1)
-        ):
-            keep_mask = keep_mask.amax(dim=1, keepdim=True).expand(
-                -1, tensor.size(1), -1, -1
+        if keep_mask.ndim != 4:
+            raise RuntimeError(
+                "valid_mask must be shaped as (B,C,H,W) or (B,H,W) in predict_step."
             )
-        return tensor * keep_mask
+        if keep_mask.shape[0] != generated.shape[0] or keep_mask.shape[2:] != generated.shape[2:]:
+            raise RuntimeError(
+                f"valid_mask shape {tuple(keep_mask.shape)} does not match generated "
+                f"shape {tuple(generated.shape)}."
+            )
+        if keep_mask.size(1) == 1 and generated.size(1) > 1:
+            keep_mask = keep_mask.expand(-1, generated.size(1), -1, -1)
+        elif keep_mask.size(1) != generated.size(1):
+            raise RuntimeError(
+                "valid_mask channels must match generated channels or be 1 "
+                f"(got mask={int(keep_mask.size(1))}, generated={int(generated.size(1))})."
+            )
+        if observed.shape != generated.shape:
+            if (
+                observed.shape[0] == generated.shape[0]
+                and observed.shape[2:] == generated.shape[2:]
+                and observed.size(1) == 1
+                and generated.size(1) > 1
+            ):
+                observed = observed.expand(-1, generated.size(1), -1, -1)
+            else:
+                raise RuntimeError(
+                    f"Observed tensor shape {tuple(observed.shape)} does not match "
+                    f"generated shape {tuple(generated.shape)}."
+                )
+        # Keep known observations from x and only use model predictions on missing pixels.
+        return (generated * (1.0 - keep_mask)) + (observed * keep_mask)
 
     @torch.no_grad()
     def predict_step(
@@ -1142,8 +1163,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Keep all post-processing centralized in Lightning inference.
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
         y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
-        y_hat_denorm = self._apply_postprocess_zero_invalid_pixels(
-            y_hat_denorm, valid_mask
+        x_denorm = temperature_normalize(mode="denorm", tensor=x)
+        y_hat_denorm = self._apply_postprocess_merge_observed_pixels(
+            generated=y_hat_denorm,
+            observed=x_denorm,
+            valid_mask=valid_mask,
         )
         y_hat_denorm = self._apply_postprocess_zero_land_pixels(
             y_hat_denorm, land_mask
@@ -1464,6 +1488,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 conditioning_image=x,
                 ground_truth=y,
                 valid_mask=valid_mask,
+                land_mask=land_mask,
                 prefix="val_imgs",
                 cmap=PLOT_CMAP,
             )

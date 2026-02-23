@@ -516,6 +516,45 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         return (x_t - one_minus_alpha_sqrt * prediction) / alpha_cumprod_sqrt
 
     @staticmethod
+    def _align_mask_to_reference(
+        mask: torch.Tensor,
+        reference: torch.Tensor,
+        *,
+        mask_name: str,
+    ) -> torch.Tensor:
+        """Helper that computes align mask to reference.
+
+        Args:
+            mask (torch.Tensor): Mask tensor controlling valid or known pixels.
+            reference (torch.Tensor): Tensor input for the computation.
+            mask_name (str): Input value.
+
+        Returns:
+            torch.Tensor: Tensor output produced by this call.
+        """
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim != reference.ndim:
+            raise RuntimeError(
+                f"{mask_name} must have ndim {reference.ndim} or {reference.ndim - 1}; "
+                f"got {mask.ndim}."
+            )
+        if mask.shape[0] != reference.shape[0] or mask.shape[2:] != reference.shape[2:]:
+            raise RuntimeError(
+                f"{mask_name} shape {tuple(mask.shape)} is incompatible with "
+                f"reference {tuple(reference.shape)}."
+            )
+        if mask.size(1) == reference.size(1):
+            return mask
+        if mask.size(1) == 1 and reference.size(1) > 1:
+            # Keep 3D band masks when provided; only broadcast when a single shared mask is explicit.
+            return mask.expand(-1, reference.size(1), -1, -1)
+        raise RuntimeError(
+            f"{mask_name} channels ({int(mask.size(1))}) must match reference channels "
+            f"({int(reference.size(1))}) or be 1."
+        )
+
+    @staticmethod
     def _build_valid_mask(
         valid_mask: torch.Tensor | None, reference: torch.Tensor
     ) -> torch.Tensor | None:
@@ -531,19 +570,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if valid_mask is None:
             return None
         mask = (valid_mask > 0.5).float()
-        if mask.ndim == 3:
-            mask = mask.unsqueeze(1)
-        if mask.ndim == 4 and reference.ndim == 4:
-            if mask.size(1) == reference.size(1):
-                pass
-            elif mask.size(1) == 1 and reference.size(1) > 1:
-                mask = mask.expand(-1, reference.size(1), -1, -1)
-            elif reference.size(1) == 1 and mask.size(1) > 1:
-                mask = mask.amax(dim=1, keepdim=True)
-            else:
-                mask = mask.amax(dim=1, keepdim=True)
-                if reference.size(1) > 1:
-                    mask = mask.expand(-1, reference.size(1), -1, -1)
+        mask = DenoisingDiffusionConditionalProcess._align_mask_to_reference(
+            mask, reference, mask_name="valid_mask"
+        )
         mask = 1.0 - mask  # now 1 = missing
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
@@ -564,19 +593,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if land_mask is None:
             return None
         mask = (land_mask > 0.5).float()
-        if mask.ndim == 3:
-            mask = mask.unsqueeze(1)
-        if mask.ndim == 4 and reference.ndim == 4:
-            if mask.size(1) == reference.size(1):
-                pass
-            elif mask.size(1) == 1 and reference.size(1) > 1:
-                mask = mask.expand(-1, reference.size(1), -1, -1)
-            elif reference.size(1) == 1 and mask.size(1) > 1:
-                mask = mask.amax(dim=1, keepdim=True)
-            else:
-                mask = mask.amax(dim=1, keepdim=True)
-                if reference.size(1) > 1:
-                    mask = mask.expand(-1, reference.size(1), -1, -1)
+        mask = DenoisingDiffusionConditionalProcess._align_mask_to_reference(
+            mask, reference, mask_name="land_mask"
+        )
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
@@ -627,17 +646,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if not mask_loss:
             return self.loss_fn(target, prediction)
 
-        mask = self._build_valid_mask(valid_mask, target)
-        if mask is None:
+        generated_mask = self._build_valid_mask(valid_mask, target)
+        if generated_mask is None:
             return self.loss_fn(target, prediction)
         ocean_mask = self._build_land_mask(land_mask, target)
         if ocean_mask is not None:
-            mask = mask * ocean_mask
+            generated_mask = generated_mask * ocean_mask
 
         # manually computes MSE loss over masked pixels
         diff = (target - prediction) ** 2
-        masked_diff = diff * mask
-        denom = mask.sum()
+        masked_diff = diff * generated_mask
+        denom = generated_mask.sum()
         if denom.item() <= 0:
             return torch.zeros((), device=diff.device, dtype=diff.dtype)
         return masked_diff.sum() / denom

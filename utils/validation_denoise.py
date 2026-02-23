@@ -108,6 +108,7 @@ def log_wandb_denoise_timestep_grid(
     eo_conditioning_image: torch.Tensor | None = None,
     ground_truth: torch.Tensor | None = None,
     valid_mask: torch.Tensor | None = None,
+    land_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     cmap: str = "turbo",
     nrows: int = 4,
@@ -127,6 +128,7 @@ def log_wandb_denoise_timestep_grid(
         eo_conditioning_image (torch.Tensor | None): Tensor input for the computation.
         ground_truth (torch.Tensor | None): Tensor input for the computation.
         valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
         prefix (str): Input value.
         cmap (str): Input value.
         nrows (int): Input value.
@@ -202,18 +204,19 @@ def log_wandb_denoise_timestep_grid(
             continue
 
         entry_kind, step_idx, sample_t = plot_entries[plot_idx]
-        mask_i: torch.Tensor | None = None
-        if valid_mask is not None:
-            if valid_mask.ndim == 4:
-                mask_i = valid_mask[0, 0]
-            elif valid_mask.ndim == 3:
-                mask_i = valid_mask[0]
-            elif valid_mask.ndim == 2:
-                mask_i = valid_mask
+        # valid_mask is intentionally not applied here so generated and observed pixels
+        # remain visible together in denoising previews.
+        _ = valid_mask
+        mask_i: torch.Tensor | None = _mask_for_sample(land_mask, 0)
+        if mask_i is not None and mask_i.ndim == 3:
+            mask_i = mask_i[0]
 
         image_t = sample_t[0, 0].detach().float()
         image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
         image_t = temperature_normalize(mode="denorm", tensor=image_t)
+        if mask_i is not None:
+            ocean_mask = (mask_i > 0.5).to(dtype=image_t.dtype, device=image_t.device)
+            image_t = image_t * ocean_mask
         image_plot = minmax_stretch(image_t, mask=mask_i, nodata_value=None)
         image_plot = F.interpolate(
             image_plot.unsqueeze(0).unsqueeze(0),
@@ -649,25 +652,26 @@ def log_wandb_conditional_reconstruction_grid(
             land_mask_i = _mask_for_sample(land_mask, i)
             for band_idx in range(channels_to_plot):
                 row_idx = (i * channels_to_plot) + band_idx
-                mask_band = valid_mask_i
-                if mask_band is not None and mask_band.ndim == 3:
-                    mask_band = mask_band[min(band_idx, int(mask_band.size(0)) - 1)]
+                valid_band = valid_mask_i
+                if valid_band is not None and valid_band.ndim == 3:
+                    valid_band = valid_band[min(band_idx, int(valid_band.size(0)) - 1)]
                 land_band = land_mask_i
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=mask_band)
+                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=land_band)
                 y_hat_img = _plot_band_image(
-                    y_hat, i, band_idx=band_idx, mask=mask_band
+                    y_hat, i, band_idx=band_idx, mask=land_band
                 )
                 y_target_img = _plot_band_image(
-                    y_target, i, band_idx=band_idx, mask=mask_band
+                    y_target, i, band_idx=band_idx, mask=land_band
                 )
                 if land_band is not None:
                     # Zero land pixels right before rendering full reconstruction panels.
-                    land_np = land_band.detach().cpu().numpy().astype(bool)
-                    y_hat_img[land_np] = 0.0
-                    y_target_img[land_np] = 0.0
+                    ocean_np = land_band.detach().cpu().numpy() > 0.5
+                    x_img[~ocean_np] = 0.0
+                    y_hat_img[~ocean_np] = 0.0
+                    y_target_img[~ocean_np] = 0.0
 
                 col = 0
                 axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
@@ -677,7 +681,10 @@ def log_wandb_conditional_reconstruction_grid(
                 col += 1
 
                 if eo is not None:
-                    eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=mask_band)
+                    eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=land_band)
+                    if land_band is not None:
+                        ocean_np = land_band.detach().cpu().numpy() > 0.5
+                        eo_img[~ocean_np] = 0.0
                     axes[row_idx, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
@@ -697,9 +704,9 @@ def log_wandb_conditional_reconstruction_grid(
                 col += 1
 
                 if valid_mask is not None:
-                    if mask_band is not None:
+                    if valid_band is not None:
                         axes[row_idx, col].imshow(
-                            mask_band.detach().float().cpu().numpy(),
+                            valid_band.detach().float().cpu().numpy(),
                             cmap="gray",
                             vmin=0.0,
                             vmax=1.0,

@@ -578,5 +578,12 @@ if __name__ == "__main__":
         overrides=args.config_overrides,
     )
 
-# Sweep quick start (single command):
-# ./scripts/start_occlusion_sweep.sh
+"""
+Training quick start (single command):
+python train.py --model-config configs/model_config.yaml \
+    --data-config configs/data_config.yaml \
+    --training-config configs/training_config.yaml
+
+Sweep quick start (single command):
+./scripts/start_occlusion_sweep.sh
+"""

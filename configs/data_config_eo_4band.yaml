@@ -9,7 +9,7 @@ dataset:
   max_nodata_fraction: 0.15 # Max invalid/nodata ratio allowed per tile when enforce_validity=true.
   nan_fill_value: 0.0 # Fill value for invalid/land pixels before tensor conversion.
   valid_from_fill_value: true # Light mode: infer validity mask from standardized fill value.
-  mask_fraction: 0.95 # Fraction of pixels hidden to create sparse conditioning input.
+  mask_fraction: 0.975 # Fraction of pixels hidden to create sparse conditioning input.
   mask_patch_min: 2 # Minimum patch side length for corruption (pixels).
   mask_patch_max: 5 # Maximum patch side length for corruption (pixels).
   eo_dropout_prob: 0.50 # Probability to zero EO conditioning per sample (applies to train and val).
