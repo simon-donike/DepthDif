@@ -6,9 +6,9 @@ Use explicit config paths to avoid ambiguity:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config_eo_4band.yaml \
-  --train-config configs/training_config_eo_4band.yaml \
-  --model-config configs/model_config_eo_4band.yaml
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml
 ```
 
 CLI aliases:
@@ -20,27 +20,14 @@ Override example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config_eo_4band.yaml \
-  --train-config configs/training_config_eo_4band.yaml \
-  --model-config configs/model_config_eo_4band.yaml \
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml \
   --set data.dataset.degradation.mask_fraction=0.99 \
   --set data.dataset.conditioning.eo_dropout_prob=0.0 \
   --set training.trainer.max_epochs=100 \
   --set training.wandb.run_name=null
 ```
-
-## Single-Band (Legacy Config Set)
-For the single-band setup in this repo, use `configs/older_configs/*`:
-
-```bash
-/work/envs/depth/bin/python train.py \
-  --data-config configs/older_configs/data_config.yaml \
-  --train-config configs/older_configs/training_config.yaml \
-  --model-config configs/older_configs/model_config.yaml
-```
-
-Before launching a fresh run with this legacy set, set
-`model.resume_checkpoint: false` (or `null`) in `configs/older_configs/model_config.yaml`.
 
 ## Important Config Notes
 - `train.py` currently supports only:

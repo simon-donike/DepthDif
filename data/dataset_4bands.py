@@ -26,15 +26,6 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         mask_patch_min: int = 3,
         mask_patch_max: int = 9,
         mask_strategy: str = "tracks",
-        track_count_min: int = 2,
-        track_count_max: int = 8,
-        track_width_min: int = 1,
-        track_width_max: int = 4,
-        track_step_min: int = 1,
-        track_step_max: int = 3,
-        track_turn_std_deg: float = 18.0,
-        track_heading_persistence: float = 0.85,
-        track_seed_mode: str = "per_sample_random",
         enable_transform: bool = False,
         x_return_mode: str = "currupted_plus_mask",
         return_info: bool = False,
@@ -84,34 +75,6 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             raise ValueError(
                 f"Invalid mask_strategy '{self.mask_strategy}'. "
                 f"Choose one of: {sorted(valid_mask_strategies)}"
-            )
-        self.track_count_min = int(track_count_min)
-        self.track_count_max = int(track_count_max)
-        self.track_width_min = int(track_width_min)
-        self.track_width_max = int(track_width_max)
-        self.track_step_min = int(track_step_min)
-        self.track_step_max = int(track_step_max)
-        self.track_turn_std_deg = float(track_turn_std_deg)
-        self.track_turn_std_rad = math.radians(self.track_turn_std_deg)
-        self.track_heading_persistence = float(
-            np.clip(track_heading_persistence, 0.0, 1.0)
-        )
-        self.track_seed_mode = str(track_seed_mode).strip().lower()
-        if self.track_count_min < 1 or self.track_count_max < 1:
-            raise ValueError("track_count_min and track_count_max must be >= 1.")
-        if self.track_count_min > self.track_count_max:
-            raise ValueError("track_count_min must be <= track_count_max.")
-        if self.track_width_min < 1 or self.track_width_max < 1:
-            raise ValueError("track_width_min and track_width_max must be >= 1.")
-        if self.track_width_min > self.track_width_max:
-            raise ValueError("track_width_min must be <= track_width_max.")
-        if self.track_step_min < 1 or self.track_step_max < 1:
-            raise ValueError("track_step_min and track_step_max must be >= 1.")
-        if self.track_step_min > self.track_step_max:
-            raise ValueError("track_step_min must be <= track_step_max.")
-        if self.track_seed_mode != "per_sample_random":
-            raise ValueError(
-                "track_seed_mode currently supports only 'per_sample_random'."
             )
         self.enable_transform = bool(enable_transform)
         self.return_info = bool(return_info)
@@ -232,48 +195,6 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
             ),
             mask_strategy=str(
                 cls._cfg_get(ds_cfg, "degradation.mask_strategy", "mask_strategy", default="tracks")
-            ),
-            track_count_min=int(
-                cls._cfg_get(ds_cfg, "degradation.track_count_min", "track_count_min", default=2)
-            ),
-            track_count_max=int(
-                cls._cfg_get(ds_cfg, "degradation.track_count_max", "track_count_max", default=8)
-            ),
-            track_width_min=int(
-                cls._cfg_get(ds_cfg, "degradation.track_width_min", "track_width_min", default=1)
-            ),
-            track_width_max=int(
-                cls._cfg_get(ds_cfg, "degradation.track_width_max", "track_width_max", default=4)
-            ),
-            track_step_min=int(
-                cls._cfg_get(ds_cfg, "degradation.track_step_min", "track_step_min", default=1)
-            ),
-            track_step_max=int(
-                cls._cfg_get(ds_cfg, "degradation.track_step_max", "track_step_max", default=3)
-            ),
-            track_turn_std_deg=float(
-                cls._cfg_get(
-                    ds_cfg,
-                    "degradation.track_turn_std_deg",
-                    "track_turn_std_deg",
-                    default=18.0,
-                )
-            ),
-            track_heading_persistence=float(
-                cls._cfg_get(
-                    ds_cfg,
-                    "degradation.track_heading_persistence",
-                    "track_heading_persistence",
-                    default=0.85,
-                )
-            ),
-            track_seed_mode=str(
-                cls._cfg_get(
-                    ds_cfg,
-                    "degradation.track_seed_mode",
-                    "track_seed_mode",
-                    default="per_sample_random",
-                )
             ),
             enable_transform=bool(
                 cls._cfg_get(
@@ -455,18 +376,27 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         y_corrupt = y_clean.clone()
 
         # Corrupt x with one shared spatial trajectory mask across all depth bands.
+        # For track masks, the generated lines are the observed samples; everything else is hidden.
         if self.mask_fraction > 0.0:
             channels, h, w = y_corrupt.shape
-            target = int(round(self.mask_fraction * h * w))
-            if target > 0:
+            target_hidden = int(round(self.mask_fraction * h * w))
+            target_hidden = max(0, min(target_hidden, h * w))
+            if target_hidden > 0:
                 preferred = ((valid_mask > 0.5) & (land_mask > 0.5)).any(dim=0)
                 if self.mask_strategy == "tracks":
-                    patch_mask = self._generate_track_mask((h, w), target, preferred)
+                    target_observed = max(0, (h * w) - target_hidden)
+                    if target_observed <= 0:
+                        hide_mask = torch.ones((h, w), dtype=torch.bool)
+                    else:
+                        observed_mask = self._generate_track_mask(
+                            (h, w), target_observed, preferred
+                        )
+                        hide_mask = ~observed_mask
                 else:
-                    patch_mask = self._generate_rectangle_mask((h, w), target)
+                    hide_mask = self._generate_rectangle_mask((h, w), target_hidden)
                 for band_idx in range(channels):
-                    valid_mask[band_idx, patch_mask] = False
-                    y_corrupt[band_idx, patch_mask] = 0.0
+                    valid_mask[band_idx, hide_mask] = False
+                    y_corrupt[band_idx, hide_mask] = 0.0
 
         # Keep tensors finite before returning a batch dict.
         x = y_corrupt
@@ -557,22 +487,70 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         return int(yx[0].item()), int(yx[1].item())
 
     @staticmethod
-    def _stamp_disk(mask_2d: torch.Tensor, cy: int, cx: int, radius: int) -> None:
-        """Paint a filled disk into the boolean mask in-place."""
-        if radius <= 0:
-            mask_2d[cy, cx] = True
-            return
-        h, w = mask_2d.shape
-        y0 = max(0, cy - radius)
-        y1 = min(h, cy + radius + 1)
-        x0 = max(0, cx - radius)
-        x1 = min(w, cx + radius + 1)
-        yy = torch.arange(y0, y1, device=mask_2d.device, dtype=torch.int64)
-        xx = torch.arange(x0, x1, device=mask_2d.device, dtype=torch.int64)
-        # Disk stamping avoids rectangular artifacts and better approximates track width.
-        yy_grid, xx_grid = torch.meshgrid(yy, xx, indexing="ij")
-        disk = (yy_grid - cy) ** 2 + (xx_grid - cx) ** 2 <= radius * radius
-        mask_2d[y0:y1, x0:x1] |= disk
+    def _line_segment_to_flat_indices(
+        y0: int, x0: int, y1: int, x1: int, width: int
+    ) -> torch.Tensor:
+        """Rasterize a 2D line segment and return corresponding flattened indices."""
+        dy = y1 - y0
+        dx = x1 - x0
+        n_steps = max(abs(dy), abs(dx))
+        if n_steps == 0:
+            return torch.tensor([y0 * width + x0], dtype=torch.long)
+        coords: list[int] = []
+        # Linear interpolation keeps streaks continuous when step > 1.
+        for i in range(n_steps + 1):
+            frac = float(i) / float(n_steps)
+            yi = int(round(y0 + dy * frac))
+            xi = int(round(x0 + dx * frac))
+            coords.append(yi * width + xi)
+        return torch.tensor(coords, dtype=torch.long)
+
+    def _curved_track_flat_indices(
+        self,
+        y_start: int,
+        x_start: int,
+        height: int,
+        width: int,
+    ) -> torch.Tensor:
+        """Generate one continuous curved track and return flattened pixel indices."""
+        y = float(y_start)
+        x = float(x_start)
+        heading = float(torch.empty(()).uniform_(0.0, 2.0 * math.pi).item())
+        turn_state = 0.0
+        # Small turning noise with momentum yields smooth bends, not jagged wiggles.
+        turn_std = 0.06
+        turn_momentum = 0.94
+        max_steps = max(height, width) * 4
+
+        coords: list[int] = [int(round(y)) * width + int(round(x))]
+        for _ in range(max_steps):
+            turn_noise = float(torch.randn(()).item()) * turn_std
+            turn_state = turn_momentum * turn_state + (1.0 - turn_momentum) * turn_noise
+            heading = heading + turn_state
+
+            y_next = y + math.sin(heading)
+            x_next = x + math.cos(heading)
+            if not (0.0 <= y_next <= float(height - 1) and 0.0 <= x_next <= float(width - 1)):
+                break
+
+            y0 = int(round(y))
+            x0 = int(round(x))
+            y1 = int(round(y_next))
+            x1 = int(round(x_next))
+            seg = self._line_segment_to_flat_indices(y0, x0, y1, x1, width)
+            coords.extend(seg.tolist())
+            y = y_next
+            x = x_next
+
+        # Deduplicate while preserving order so coverage accounting stays exact.
+        seen: set[int] = set()
+        coords_unique: list[int] = []
+        for idx in coords:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            coords_unique.append(idx)
+        return torch.tensor(coords_unique, dtype=torch.long)
 
     def _generate_rectangle_mask(
         self, spatial_shape: tuple[int, int], target: int
@@ -600,88 +578,66 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
         target: int,
         preferred_start_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Generate a trajectory-style mask with smooth random heading updates."""
+        """Generate continuous curved 1-pixel streaks across the patch until target coverage."""
         h, w = spatial_shape
-        patch_mask = torch.zeros((h, w), dtype=torch.bool)
+        flat_mask = torch.zeros(h * w, dtype=torch.bool)
         if target <= 0:
-            return patch_mask
+            return flat_mask.view(h, w)
 
         max_pixels = h * w
         target = max(1, min(target, max_pixels))
-        preferred = (
-            preferred_start_mask.bool()
+        preferred_flat = (
+            preferred_start_mask.bool().reshape(-1)
             if preferred_start_mask is not None
-            else torch.zeros((h, w), dtype=torch.bool)
+            else torch.zeros((h * w), dtype=torch.bool)
         )
         covered = 0
-        track_count = int(
-            torch.randint(self.track_count_min, self.track_count_max + 1, (1,)).item()
-        )
-        max_steps_per_track = max(16, int((h + w) * 2))
-
-        for _ in range(track_count):
-            start = self._sample_point_from_mask(preferred)
-            if start is None:
-                start = (
-                    int(torch.randint(0, h, (1,)).item()),
-                    int(torch.randint(0, w, (1,)).item()),
-                )
-            y, x = start
-            heading = float(torch.empty(()).uniform_(-math.pi, math.pi).item())
-            turn_state = 0.0
-            for _ in range(max_steps_per_track):
-                brush_width = int(
-                    torch.randint(
-                        self.track_width_min, self.track_width_max + 1, (1,)
-                    ).item()
-                )
-                brush_radius = max(0, int(round((brush_width - 1) * 0.5)))
-                self._stamp_disk(patch_mask, y, x, brush_radius)
-                covered = int(patch_mask.sum().item())
-                if covered >= target:
-                    return patch_mask
-
-                turn_noise = float(torch.randn(()).item()) * self.track_turn_std_rad
-                # Keep turns correlated to avoid jagged random-walk artifacts.
-                turn_state = (
-                    self.track_heading_persistence * turn_state
-                    + (1.0 - self.track_heading_persistence) * turn_noise
-                )
-                heading = heading + turn_state
-                step_len = int(
-                    torch.randint(self.track_step_min, self.track_step_max + 1, (1,)).item()
-                )
-                new_y = int(round(y + step_len * math.sin(heading)))
-                new_x = int(round(x + step_len * math.cos(heading)))
-                new_y = min(max(new_y, 0), h - 1)
-                new_x = min(max(new_x, 0), w - 1)
-
-                interp_steps = max(1, step_len)
-                for s in range(1, interp_steps + 1):
-                    frac = float(s) / float(interp_steps)
-                    yi = int(round(y + (new_y - y) * frac))
-                    xi = int(round(x + (new_x - x) * frac))
-                    self._stamp_disk(patch_mask, yi, xi, brush_radius)
-                y, x = new_y, new_x
-
-        # Top-up ensures final masked coverage remains close to the requested fraction.
-        top_up_budget = max(32, target * 2)
         attempts = 0
-        while covered < target and attempts < top_up_budget:
-            start = self._sample_point_from_mask(preferred)
+        max_attempts = max(256, h * w * 8)
+
+        while covered < target and attempts < max_attempts:
+            start = self._sample_point_from_mask(preferred_flat.view(h, w))
             if start is None:
                 start = (
                     int(torch.randint(0, h, (1,)).item()),
                     int(torch.randint(0, w, (1,)).item()),
                 )
-            brush_width = int(
-                torch.randint(self.track_width_min, self.track_width_max + 1, (1,)).item()
+            segment_flat = self._curved_track_flat_indices(
+                y_start=int(start[0]),
+                x_start=int(start[1]),
+                height=h,
+                width=w,
             )
-            brush_radius = max(0, int(round((brush_width - 1) * 0.5)))
-            self._stamp_disk(patch_mask, start[0], start[1], brush_radius)
-            covered = int(patch_mask.sum().item())
+            new_pixels = ~flat_mask[segment_flat]
+            newly_observed = segment_flat[new_pixels]
+            needed = target - covered
+            if newly_observed.numel() > 0 and needed > 0:
+                if int(newly_observed.numel()) > needed:
+                    # Clip only the tail line so total observed coverage matches target exactly.
+                    newly_observed = newly_observed[:needed]
+                flat_mask[newly_observed] = True
+                covered += int(newly_observed.numel())
             attempts += 1
-        return patch_mask
+
+        # Fallback still adds full continuous lines (rows/cols), never isolated points.
+        fallback_axis = 0
+        while covered < target:
+            if fallback_axis == 0:
+                y = int(torch.randint(0, h, (1,)).item())
+                seg = self._line_segment_to_flat_indices(y, 0, y, w - 1, w)
+            else:
+                x = int(torch.randint(0, w, (1,)).item())
+                seg = self._line_segment_to_flat_indices(0, x, h - 1, x, w)
+            new_pixels = ~flat_mask[seg]
+            newly_observed = seg[new_pixels]
+            needed = target - covered
+            if newly_observed.numel() > 0 and needed > 0:
+                if int(newly_observed.numel()) > needed:
+                    newly_observed = newly_observed[:needed]
+                flat_mask[newly_observed] = True
+                covered += int(newly_observed.numel())
+            fallback_axis = 1 - fallback_axis
+        return flat_mask.view(h, w)
 
     @staticmethod
     def _sample_aug_params() -> tuple[int, bool, bool]:
@@ -793,7 +749,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = SurfaceTempPatch4BandsLightDataset.from_config(
-        "configs/data_config_eo_4band.yaml"
+        "configs/data_config.yaml"
     )
     dataset._plot_example_image()
 

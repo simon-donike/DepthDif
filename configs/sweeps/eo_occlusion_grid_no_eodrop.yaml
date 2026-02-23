@@ -18,11 +18,11 @@ command:
   - /work/envs/depth/bin/python
   - train.py
   - --data-config
-  - configs/data_config_eo_4band.yaml
+  - configs/data_config.yaml
   - --train-config
-  - configs/training_config_eo_4band.yaml
+  - configs/training_config.yaml
   - --model-config
-  - configs/model_config_eo_4band.yaml
+  - configs/model_config.yaml
   - --set
   - data.dataset.conditioning.eo_dropout_prob=0.0
   - --set

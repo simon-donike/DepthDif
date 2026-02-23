@@ -1,8 +1,8 @@
 # Experiments
 This page summarizes qualitative experiments from the README, with the same scenarios preserved and clarified.
 
-## Experiment 1 (1-band corruption, 50%)
-Preliminary sub-surface reconstruction with the single-band setup and 50% clustered occlusion after ~24h training.
+## Experiment 1 (Early baseline, 50% corruption)
+Preliminary sub-surface reconstruction baseline with 50% clustered occlusion after ~24h training.
 
 Notes from the original run:
 - valid masks were used in training
@@ -58,6 +58,12 @@ Training setup: 95% corruption, 50% EO dropout, EO degradation.
 
 Reported outcome: quality remained comparable on these depth levels.  
 ![img](assets/deeper.png)
+
+## Experiment 6 (99% occlusion)
+... currently runninng...
+
+## Experiment 7 (97.5% occlusion with streak corruption)
+... currently runninng...
 
 ## Next Experiments (Roadmap)
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test.

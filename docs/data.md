@@ -39,14 +39,19 @@ EO + multiband example:
 ## Synthetic Transformations
 ### Corruption pipeline
 The dataset creates sparse `x` using stochastic trajectory-style corruption:
-- target masked coverage controlled by `mask_fraction`
-- random number of tracks from `track_count_min` to `track_count_max`
-- random brush width from `track_width_min` to `track_width_max`
-- random step length from `track_step_min` to `track_step_max`
-- smooth random heading updates via `track_turn_std_deg` and `track_heading_persistence`
-- start points prefer valid ocean pixels; fallback to random pixels if needed
+- this simulates a submarine moving through the patch and sampling along its path
+- target hidden coverage is controlled by `mask_fraction`
+- each track is built in flattened 1D index space and rasterized back to 2D
+- each line starts from a random location and is extended as a continuous curved streak
+- when a line reaches the edge, a new line starts from another random location
+- new streaks are added in a loop until the configured corruption percentage is reached
+- implementation target: observed-line budget reaches `(1 - mask_fraction)` of pixels, then hidden area is the complement
+- the final hidden region is the complement of those observed lines
 - in `eo_4band`, one shared spatial track mask is applied across all depth bands
 - legacy rectangular masking remains available via `mask_strategy="rectangles"`
+
+Continuous submarine-like streak example (`mask_strategy="tracks"`):  
+![img](assets/dataset_streaks.png)
 
 ### Validity and land masks
 - masks are derived from finite-value checks and configured fill-value logic

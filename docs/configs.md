@@ -15,21 +15,12 @@ Dataset settings are grouped by intent (`core`, `source`, `validity`, `degradati
 | `dataset.validity.nan_fill_value` | `0.0` | Fill value used for invalid/land pixels before tensor conversion. |
 | `dataset.validity.valid_from_fill_value` | `true` | In light mode, infer valid mask from standardized fill value. |
 | `dataset.validity.enforce_validity` | `true` | Drops indexed tiles with too much nodata using `max_nodata_fraction`. |
-| `dataset.degradation.mask_fraction` | `0.975` | Fraction of pixels hidden to create sparse conditioning input. |
-| `dataset.degradation.mask_strategy` | `"tracks"` | Corruption strategy (`"tracks"` default, `"rectangles"` legacy fallback). |
-| `dataset.degradation.mask_patch_min` | `2` | Minimum corruption patch side length (pixels). |
-| `dataset.degradation.mask_patch_max` | `5` | Maximum corruption patch side length (pixels). |
-| `dataset.degradation.track_count_min` | `2` | Minimum number of trajectory tracks sampled per patch. |
-| `dataset.degradation.track_count_max` | `8` | Maximum number of trajectory tracks sampled per patch. |
-| `dataset.degradation.track_width_min` | `1` | Minimum trajectory brush width in pixels. |
-| `dataset.degradation.track_width_max` | `4` | Maximum trajectory brush width in pixels. |
-| `dataset.degradation.track_step_min` | `1` | Minimum trajectory step length in pixels. |
-| `dataset.degradation.track_step_max` | `3` | Maximum trajectory step length in pixels. |
-| `dataset.degradation.track_turn_std_deg` | `18.0` | Stddev of random trajectory turn angle in degrees. |
-| `dataset.degradation.track_heading_persistence` | `0.85` | Heading inertia in `[0,1]`; higher means smoother track turns. |
-| `dataset.degradation.track_seed_mode` | `"per_sample_random"` | Current supported trajectory randomness mode. |
+| `dataset.degradation.mask_fraction` | `0.975` | Fraction of pixels hidden in `x`; streak generation continues until this corruption target is reached. |
+| `dataset.degradation.mask_strategy` | `"tracks"` | Corruption strategy (`"tracks"` = continuous curved submarine-like streaks, `"rectangles"` = legacy fallback). |
+| `dataset.degradation.mask_patch_min` | `2` | Minimum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
+| `dataset.degradation.mask_patch_max` | `5` | Maximum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
 | `dataset.conditioning.eo_dropout_prob` | `0.50` | Probability of zeroing EO conditioning per sample (train and val). |
-| `dataset.conditioning.eo_random_scale_enabled` | `false` | If enabled, applies random EO offset perturbation. |
+| `dataset.conditioning.eo_random_scale_enabled` | `false` | If enabled, applies additive EO offset in `[-2.0, 2.0]` (temperature units). |
 | `dataset.conditioning.eo_speckle_noise_enabled` | `true` | If enabled, applies multiplicative EO speckle noise clamped to `[0.9, 1.1]`. |
 | `dataset.augmentation.enable_transform` | `false` | Enables random geometric augmentation. |
 | `dataset.output.x_return_mode` | `"currupted_plus_mask"` | Return mode for `x` (`"corrputed"` or `"currupted_plus_mask"` in file comments). |

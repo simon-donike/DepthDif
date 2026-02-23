@@ -8,7 +8,6 @@ import yaml
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
-from data.dataset_temp_v1 import SurfaceTempPatchLightDataset
 from models.difFF import PixelDiffusionConditional
 
 # ----------------------------
@@ -73,7 +72,7 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
         stem = Path(data_config_path).stem.lower()
         if "4band" in stem or "eo" in stem:
             return "eo_4band"
-        return "temp_v1"
+        return "eo_4band"
     return str(variant).strip().lower()
 
 
@@ -99,7 +98,7 @@ def ds_cfg_value(
 
 def build_dataset(
     data_config_path: str, ds_cfg: dict[str, Any]
-) -> SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset:
+) -> SurfaceTempPatch4BandsLightDataset:
     """Build and return dataset.
 
     Args:
@@ -107,15 +106,13 @@ def build_dataset(
         ds_cfg (dict[str, Any]): Configuration dictionary or section.
 
     Returns:
-        SurfaceTempPatchLightDataset | SurfaceTempPatch4BandsLightDataset: Computed output value.
+        SurfaceTempPatch4BandsLightDataset: Computed output value.
     """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
-    if dataset_variant in {"temp_v1", "single_band", "1band", "default"}:
-        return SurfaceTempPatchLightDataset.from_config(data_config_path, split="all")
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
         return SurfaceTempPatch4BandsLightDataset.from_config(data_config_path, split="all")
     raise ValueError(
-        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['temp_v1', 'eo_4band']."
+        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band']."
     )
 
 

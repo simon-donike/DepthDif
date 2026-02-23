@@ -2,14 +2,9 @@
 This page maps key configuration flags to their runtime behavior in code.
 
 Primary config files used in current EO setup:
-- `configs/data_config_eo_4band.yaml`
-- `configs/model_config_eo_4band.yaml`
-- `configs/training_config_eo_4band.yaml`
-
-Legacy single-band configs:
-- `configs/older_configs/data_config.yaml`
-- `configs/older_configs/model_config.yaml`
-- `configs/older_configs/training_config.yaml`
+- `configs/data_config.yaml`
+- `configs/model_config.yaml`
+- `configs/training_config.yaml`
 
 ## Major Settings
 ### Conditioning channels

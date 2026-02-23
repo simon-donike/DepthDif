@@ -20,18 +20,9 @@ EO-conditioned multiband training:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config_eo_4band.yaml \
-  --train-config configs/training_config_eo_4band.yaml \
-  --model-config configs/model_config_eo_4band.yaml
-```
-
-Legacy single-band training:
-
-```bash
-/work/envs/depth/bin/python train.py \
-  --data-config configs/older_configs/data_config.yaml \
-  --train-config configs/older_configs/training_config.yaml \
-  --model-config configs/older_configs/model_config.yaml
+  --data-config configs/data_config.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml
 ```
 
 ## Quick Inference
@@ -42,6 +33,6 @@ Set config/checkpoint constants at the top of `inference.py`, then run:
 ```
 
 For EO multiband runs, use:
-- `MODEL_CONFIG_PATH = "configs/model_config_eo_4band.yaml"`
-- `DATA_CONFIG_PATH = "configs/data_config_eo_4band.yaml"`
-- `TRAIN_CONFIG_PATH = "configs/training_config_eo_4band.yaml"`
+- `MODEL_CONFIG_PATH = "configs/model_config.yaml"`
+- `DATA_CONFIG_PATH = "configs/data_config.yaml"`
+- `TRAIN_CONFIG_PATH = "configs/training_config.yaml"`

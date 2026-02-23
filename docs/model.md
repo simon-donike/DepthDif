@@ -53,7 +53,7 @@ Loss options:
 - unmasked MSE (default behavior when masking disabled)
 - masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`
 
-Current EO config (`configs/model_config_eo_4band.yaml`) uses:
+Current EO config (`configs/model_config.yaml`) uses:
 - `parameterization: "x0"`
 - `mask_loss_with_valid_pixels: true`
 
