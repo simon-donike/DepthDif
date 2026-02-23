@@ -37,7 +37,7 @@ For docs tooling:
   - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).
 - Default configs live in `configs/` and are selected via CLI.
 
-DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with trajectory-style track masking to mimic moving in-situ sampling paths. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.
 
 ![depthdif_schema](docs/assets/depthdif_schema.png)
 

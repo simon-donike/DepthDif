@@ -60,7 +60,7 @@ Illustration:
 
 ### Coordinate/date FiLM conditioning
 Config:
-- data: `dataset.return_coords`
+- data: `dataset.output.return_coords`
 - model:
   - `coord_conditioning.enabled`
   - `coord_conditioning.encoding`

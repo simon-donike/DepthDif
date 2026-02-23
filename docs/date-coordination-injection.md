@@ -14,7 +14,7 @@ Main config flags (model section):
 - `coord_conditioning.embed_dim`
 
 Data-side requirement:
-- `dataset.return_coords: true` so batches include `coords`
+- `dataset.output.return_coords: true` so batches include `coords`
 
 Runtime requirements enforced by code:
 - if coord conditioning is enabled and `coords` is missing, inference/training raises an error

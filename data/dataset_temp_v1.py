@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import warnings
 from typing import Any
@@ -24,6 +25,16 @@ class SurfaceTempPatchLightDataset(Dataset):
         mask_fraction: float = 0.0,
         mask_patch_min: int = 3,
         mask_patch_max: int = 9,
+        mask_strategy: str = "tracks",
+        track_count_min: int = 2,
+        track_count_max: int = 8,
+        track_width_min: int = 1,
+        track_width_max: int = 4,
+        track_step_min: int = 1,
+        track_step_max: int = 3,
+        track_turn_std_deg: float = 18.0,
+        track_heading_persistence: float = 0.85,
+        track_seed_mode: str = "per_sample_random",
         enable_transform: bool = False,
         x_return_mode: str = "currupted_plus_mask",
         return_info: bool = False,
@@ -63,6 +74,41 @@ class SurfaceTempPatchLightDataset(Dataset):
             raise ValueError("mask_patch_min and mask_patch_max must be >= 1.")
         if self.mask_patch_min > self.mask_patch_max:
             raise ValueError("mask_patch_min must be <= mask_patch_max.")
+        self.mask_strategy = str(mask_strategy).strip().lower()
+        valid_mask_strategies = {"tracks", "rectangles"}
+        if self.mask_strategy not in valid_mask_strategies:
+            raise ValueError(
+                f"Invalid mask_strategy '{self.mask_strategy}'. "
+                f"Choose one of: {sorted(valid_mask_strategies)}"
+            )
+        self.track_count_min = int(track_count_min)
+        self.track_count_max = int(track_count_max)
+        self.track_width_min = int(track_width_min)
+        self.track_width_max = int(track_width_max)
+        self.track_step_min = int(track_step_min)
+        self.track_step_max = int(track_step_max)
+        self.track_turn_std_deg = float(track_turn_std_deg)
+        self.track_turn_std_rad = math.radians(self.track_turn_std_deg)
+        self.track_heading_persistence = float(
+            np.clip(track_heading_persistence, 0.0, 1.0)
+        )
+        self.track_seed_mode = str(track_seed_mode).strip().lower()
+        if self.track_count_min < 1 or self.track_count_max < 1:
+            raise ValueError("track_count_min and track_count_max must be >= 1.")
+        if self.track_count_min > self.track_count_max:
+            raise ValueError("track_count_min must be <= track_count_max.")
+        if self.track_width_min < 1 or self.track_width_max < 1:
+            raise ValueError("track_width_min and track_width_max must be >= 1.")
+        if self.track_width_min > self.track_width_max:
+            raise ValueError("track_width_min must be <= track_width_max.")
+        if self.track_step_min < 1 or self.track_step_max < 1:
+            raise ValueError("track_step_min and track_step_max must be >= 1.")
+        if self.track_step_min > self.track_step_max:
+            raise ValueError("track_step_min must be <= track_step_max.")
+        if self.track_seed_mode != "per_sample_random":
+            raise ValueError(
+                "track_seed_mode currently supports only 'per_sample_random'."
+            )
         self.enable_transform = bool(enable_transform)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
@@ -159,24 +205,121 @@ class SurfaceTempPatchLightDataset(Dataset):
         cfg = cls._load_config(config_path)
         ds_cfg = cfg["dataset"]
         split_cfg = cfg.get("split", {})
-        csv_path = ds_cfg.get(
-            "light_index_csv", "data/exported_patches/patch_index_with_paths.csv"
+        csv_path = cls._cfg_get(
+            ds_cfg,
+            "source.light_index_csv",
+            "light_index_csv",
+            default="data/exported_patches/patch_index_with_paths.csv",
         )
         return cls(
             csv_path=csv_path,
             split=split,
-            mask_fraction=float(ds_cfg.get("mask_fraction", 0.0)),
-            mask_patch_min=int(ds_cfg.get("mask_patch_min", 3)),
-            mask_patch_max=int(ds_cfg.get("mask_patch_max", 9)),
-            enable_transform=bool(ds_cfg.get("enable_transform", False)),
-            x_return_mode=str(ds_cfg.get("x_return_mode", "currupted_plus_mask")),
-            return_info=bool(ds_cfg.get("return_info", False)),
-            return_coords=bool(ds_cfg.get("return_coords", False)),
-            nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
-            valid_from_fill_value=bool(ds_cfg.get("valid_from_fill_value", True)),
-            split_seed=int(ds_cfg.get("random_seed", 7)),
+            mask_fraction=float(
+                cls._cfg_get(ds_cfg, "degradation.mask_fraction", "mask_fraction", default=0.0)
+            ),
+            mask_patch_min=int(
+                cls._cfg_get(ds_cfg, "degradation.mask_patch_min", "mask_patch_min", default=3)
+            ),
+            mask_patch_max=int(
+                cls._cfg_get(ds_cfg, "degradation.mask_patch_max", "mask_patch_max", default=9)
+            ),
+            mask_strategy=str(
+                cls._cfg_get(ds_cfg, "degradation.mask_strategy", "mask_strategy", default="tracks")
+            ),
+            track_count_min=int(
+                cls._cfg_get(ds_cfg, "degradation.track_count_min", "track_count_min", default=2)
+            ),
+            track_count_max=int(
+                cls._cfg_get(ds_cfg, "degradation.track_count_max", "track_count_max", default=8)
+            ),
+            track_width_min=int(
+                cls._cfg_get(ds_cfg, "degradation.track_width_min", "track_width_min", default=1)
+            ),
+            track_width_max=int(
+                cls._cfg_get(ds_cfg, "degradation.track_width_max", "track_width_max", default=4)
+            ),
+            track_step_min=int(
+                cls._cfg_get(ds_cfg, "degradation.track_step_min", "track_step_min", default=1)
+            ),
+            track_step_max=int(
+                cls._cfg_get(ds_cfg, "degradation.track_step_max", "track_step_max", default=3)
+            ),
+            track_turn_std_deg=float(
+                cls._cfg_get(
+                    ds_cfg,
+                    "degradation.track_turn_std_deg",
+                    "track_turn_std_deg",
+                    default=18.0,
+                )
+            ),
+            track_heading_persistence=float(
+                cls._cfg_get(
+                    ds_cfg,
+                    "degradation.track_heading_persistence",
+                    "track_heading_persistence",
+                    default=0.85,
+                )
+            ),
+            track_seed_mode=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "degradation.track_seed_mode",
+                    "track_seed_mode",
+                    default="per_sample_random",
+                )
+            ),
+            enable_transform=bool(
+                cls._cfg_get(
+                    ds_cfg, "augmentation.enable_transform", "enable_transform", default=False
+                )
+            ),
+            x_return_mode=str(
+                cls._cfg_get(
+                    ds_cfg, "output.x_return_mode", "x_return_mode", default="currupted_plus_mask"
+                )
+            ),
+            return_info=bool(
+                cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=False)
+            ),
+            return_coords=bool(
+                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=False)
+            ),
+            nan_fill_value=float(
+                cls._cfg_get(ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0)
+            ),
+            valid_from_fill_value=bool(
+                cls._cfg_get(
+                    ds_cfg,
+                    "validity.valid_from_fill_value",
+                    "valid_from_fill_value",
+                    default=True,
+                )
+            ),
+            split_seed=int(
+                cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
+            ),
             val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         )
+
+    @staticmethod
+    def _cfg_get(
+        cfg: dict[str, Any],
+        nested_key: str,
+        flat_key: str,
+        *,
+        default: Any,
+    ) -> Any:
+        """Read nested config keys."""
+        node: Any = cfg
+        for part in nested_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                node = None
+                break
+            node = node[part]
+        if node is not None:
+            return node
+        _ = flat_key
+        return default
 
     @staticmethod
     def _load_config(config_path: str) -> dict[str, Any]:
@@ -258,30 +401,16 @@ class SurfaceTempPatchLightDataset(Dataset):
         valid_mask = v.clone()
         y_corrupt = y_clean.clone()
 
-        # Generate sparse-observation inputs by masking random spatial patches in x.
+        # Generate sparse-observation inputs from trajectory-like sampling tracks.
         if self.mask_fraction > 0.0:
             _, h, w = y_corrupt.shape
             target = int(round(self.mask_fraction * h * w))
             if target > 0:
-                patch_mask = torch.zeros(
-                    (h, w), dtype=torch.bool, device=y_corrupt.device
-                )
-                covered = 0
-                while covered < target:
-                    ph = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
-                    )
-                    pw = int(
-                        torch.randint(
-                            self.mask_patch_min, self.mask_patch_max + 1, (1,)
-                        ).item()
-                    )
-                    y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
-                    x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
-                    patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
-                    covered = int(patch_mask.sum().item())
+                preferred = ((valid_mask > 0.5) & (land_mask > 0.5)).any(dim=0)
+                if self.mask_strategy == "tracks":
+                    patch_mask = self._generate_track_mask((h, w), target, preferred)
+                else:
+                    patch_mask = self._generate_rectangle_mask((h, w), target)
                 hide = patch_mask.unsqueeze(0)
                 valid_mask[hide] = 0.0
                 y_corrupt[hide] = 0.0
@@ -356,6 +485,143 @@ class SurfaceTempPatchLightDataset(Dataset):
                     return year * 10000 + month * 100 + 15
         # Keep invalid/missing source dates deterministic so batches remain collate-friendly.
         return 19700115
+
+    @staticmethod
+    def _sample_point_from_mask(mask_2d: torch.Tensor) -> tuple[int, int] | None:
+        """Sample one pixel location from a 2D boolean mask."""
+        coords = torch.nonzero(mask_2d, as_tuple=False)
+        if coords.numel() == 0:
+            return None
+        pick = int(torch.randint(0, coords.size(0), (1,)).item())
+        yx = coords[pick]
+        return int(yx[0].item()), int(yx[1].item())
+
+    @staticmethod
+    def _stamp_disk(mask_2d: torch.Tensor, cy: int, cx: int, radius: int) -> None:
+        """Paint a filled disk into the boolean mask in-place."""
+        if radius <= 0:
+            mask_2d[cy, cx] = True
+            return
+        h, w = mask_2d.shape
+        y0 = max(0, cy - radius)
+        y1 = min(h, cy + radius + 1)
+        x0 = max(0, cx - radius)
+        x1 = min(w, cx + radius + 1)
+        yy = torch.arange(y0, y1, device=mask_2d.device, dtype=torch.int64)
+        xx = torch.arange(x0, x1, device=mask_2d.device, dtype=torch.int64)
+        # Disk stamping avoids blocky corruption and creates track-like footprints.
+        yy_grid, xx_grid = torch.meshgrid(yy, xx, indexing="ij")
+        disk = (yy_grid - cy) ** 2 + (xx_grid - cx) ** 2 <= radius * radius
+        mask_2d[y0:y1, x0:x1] |= disk
+
+    def _generate_rectangle_mask(
+        self, spatial_shape: tuple[int, int], target: int
+    ) -> torch.Tensor:
+        """Generate a rectangle mask (legacy fallback strategy)."""
+        h, w = spatial_shape
+        patch_mask = torch.zeros((h, w), dtype=torch.bool)
+        covered = 0
+        while covered < target:
+            ph = int(
+                torch.randint(self.mask_patch_min, self.mask_patch_max + 1, (1,)).item()
+            )
+            pw = int(
+                torch.randint(self.mask_patch_min, self.mask_patch_max + 1, (1,)).item()
+            )
+            y0 = int(torch.randint(0, max(1, h - ph + 1), (1,)).item())
+            x0 = int(torch.randint(0, max(1, w - pw + 1), (1,)).item())
+            patch_mask[y0 : y0 + ph, x0 : x0 + pw] = True
+            covered = int(patch_mask.sum().item())
+        return patch_mask
+
+    def _generate_track_mask(
+        self,
+        spatial_shape: tuple[int, int],
+        target: int,
+        preferred_start_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Generate a trajectory-style mask with smooth random heading updates."""
+        h, w = spatial_shape
+        patch_mask = torch.zeros((h, w), dtype=torch.bool)
+        if target <= 0:
+            return patch_mask
+
+        max_pixels = h * w
+        target = max(1, min(target, max_pixels))
+        preferred = (
+            preferred_start_mask.bool()
+            if preferred_start_mask is not None
+            else torch.zeros((h, w), dtype=torch.bool)
+        )
+        covered = 0
+        track_count = int(
+            torch.randint(self.track_count_min, self.track_count_max + 1, (1,)).item()
+        )
+        max_steps_per_track = max(16, int((h + w) * 2))
+
+        for _ in range(track_count):
+            start = self._sample_point_from_mask(preferred)
+            if start is None:
+                start = (
+                    int(torch.randint(0, h, (1,)).item()),
+                    int(torch.randint(0, w, (1,)).item()),
+                )
+            y, x = start
+            heading = float(torch.empty(()).uniform_(-math.pi, math.pi).item())
+            turn_state = 0.0
+            for _ in range(max_steps_per_track):
+                brush_width = int(
+                    torch.randint(
+                        self.track_width_min, self.track_width_max + 1, (1,)
+                    ).item()
+                )
+                brush_radius = max(0, int(round((brush_width - 1) * 0.5)))
+                self._stamp_disk(patch_mask, y, x, brush_radius)
+                covered = int(patch_mask.sum().item())
+                if covered >= target:
+                    return patch_mask
+
+                turn_noise = float(torch.randn(()).item()) * self.track_turn_std_rad
+                # Keep turns correlated to avoid jagged random-walk artifacts.
+                turn_state = (
+                    self.track_heading_persistence * turn_state
+                    + (1.0 - self.track_heading_persistence) * turn_noise
+                )
+                heading = heading + turn_state
+                step_len = int(
+                    torch.randint(self.track_step_min, self.track_step_max + 1, (1,)).item()
+                )
+                new_y = int(round(y + step_len * math.sin(heading)))
+                new_x = int(round(x + step_len * math.cos(heading)))
+                new_y = min(max(new_y, 0), h - 1)
+                new_x = min(max(new_x, 0), w - 1)
+
+                interp_steps = max(1, step_len)
+                for s in range(1, interp_steps + 1):
+                    frac = float(s) / float(interp_steps)
+                    yi = int(round(y + (new_y - y) * frac))
+                    xi = int(round(x + (new_x - x) * frac))
+                    self._stamp_disk(patch_mask, yi, xi, brush_radius)
+                y, x = new_y, new_x
+
+        # Top-up ensures final masked coverage remains close to the requested fraction.
+        top_up_budget = max(32, target * 2)
+        attempts = 0
+        while covered < target and attempts < top_up_budget:
+            start = self._sample_point_from_mask(preferred)
+            if start is None:
+                start = (
+                    int(torch.randint(0, h, (1,)).item()),
+                    int(torch.randint(0, w, (1,)).item()),
+                )
+            brush_width = int(
+                torch.randint(self.track_width_min, self.track_width_max + 1, (1,)).item()
+            )
+            brush_radius = max(0, int(round((brush_width - 1) * 0.5)))
+            self._stamp_disk(patch_mask, start[0], start[1], brush_radius)
+            covered = int(patch_mask.sum().item())
+            attempts += 1
+        return patch_mask
 
     @staticmethod
     def _sample_aug_params() -> tuple[int, bool, bool]:

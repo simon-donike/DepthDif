@@ -251,7 +251,7 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
 
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
-    # Prefer explicit dataset variant from config, with filename-based fallback for old configs.
+    # Prefer explicit dataset variant from grouped config, with filename-based fallback.
     """Resolve and validate dataset variant.
 
     Args:
@@ -261,14 +261,39 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
     Returns:
         str: Computed scalar output.
     """
-    variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
+    variant = ds_cfg_value(
+        ds_cfg,
+        "core.dataset_variant",
+        "dataset_variant",
+        default=None,
+    )
     if variant is None:
-        # Backward-compatible fallback: infer from config filename if explicit variant is absent.
+        # Fallback: infer from config filename if explicit variant is absent.
         stem = Path(data_config_path).stem.lower()
         if "4band" in stem or "eo" in stem:
             return "eo_4band"
         return "temp_v1"
     return str(variant).strip().lower()
+
+
+def ds_cfg_value(
+    ds_cfg: dict[str, Any],
+    nested_key: str,
+    flat_key: str,
+    *,
+    default: Any,
+) -> Any:
+    """Read nested dataset config."""
+    node: Any = ds_cfg
+    for part in nested_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            node = None
+            break
+        node = node[part]
+    if node is not None:
+        return node
+    _ = flat_key
+    return default
 
 
 def build_dataset(
@@ -434,7 +459,9 @@ def main(
     data_dataloader_cfg = data_cfg.get("dataloader", {})
     if "val_shuffle" in data_dataloader_cfg:
         dataloader_cfg["val_shuffle"] = bool(data_dataloader_cfg["val_shuffle"])
-    dataloader_type = str(ds_cfg.get("dataloader_type", "light")).strip().lower()
+    dataloader_type = str(
+        ds_cfg_value(ds_cfg, "core.dataloader_type", "dataloader_type", default="light")
+    ).strip().lower()
     if dataloader_type != "light":
         raise ValueError(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
@@ -444,13 +471,26 @@ def main(
     dataset = build_dataset(data_config_path=effective_data_config_path, ds_cfg=ds_cfg)
     if hasattr(dataset, "eo_dropout_prob"):
         dataset.eo_dropout_prob = float(
-            max(0.0, min(1.0, float(ds_cfg.get("eo_dropout_prob", 0.0))))
+            max(
+                0.0,
+                min(
+                    1.0,
+                    float(
+                        ds_cfg_value(
+                            ds_cfg,
+                            "conditioning.eo_dropout_prob",
+                            "eo_dropout_prob",
+                            default=0.0,
+                        )
+                    ),
+                ),
+            )
         )
     datamodule = DepthTileDataModule(
         dataset=dataset,
         dataloader_cfg=dataloader_cfg,
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
-        seed=int(ds_cfg.get("random_seed", 7)),
+        seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
 
     # Instantiate the conditional model from config.

@@ -23,8 +23,8 @@ Override example:
   --data-config configs/data_config_eo_4band.yaml \
   --train-config configs/training_config_eo_4band.yaml \
   --model-config configs/model_config_eo_4band.yaml \
-  --set data.dataset.mask_fraction=0.99 \
-  --set data.dataset.eo_dropout_prob=0.0 \
+  --set data.dataset.degradation.mask_fraction=0.99 \
+  --set data.dataset.conditioning.eo_dropout_prob=0.0 \
   --set training.trainer.max_epochs=100 \
   --set training.wandb.run_name=null
 ```
@@ -44,9 +44,9 @@ Before launching a fresh run with this legacy set, set
 
 ## Important Config Notes
 - `train.py` currently supports only:
-  - `dataset.dataloader_type: "light"`
+  - `dataset.core.dataloader_type: "light"`
   - `model.model_type: "cond_px_dif"`
-- dataset variant is selected by `dataset.dataset_variant` (or inferred from data config filename)
+- dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)
 - EO dropout from data config is injected into dataset object for both train and val
 - parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended
 
@@ -99,7 +99,7 @@ Sweep config:
 This sweep runs grid values:
 - `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`
 - fixed overrides:
-  - `data.dataset.eo_dropout_prob=0.0`
+  - `data.dataset.conditioning.eo_dropout_prob=0.0`
   - `training.trainer.max_epochs=100`
   - `training.wandb.run_name=null` (auto-generated run names)
 

@@ -7,12 +7,12 @@ metric:
 parameters:
   set:
     values:
-      - data.dataset.mask_fraction=0.95
-      - data.dataset.mask_fraction=0.96
-      - data.dataset.mask_fraction=0.97
-      - data.dataset.mask_fraction=0.98
-      - data.dataset.mask_fraction=0.99
-      - data.dataset.mask_fraction=0.995
+      - data.dataset.degradation.mask_fraction=0.95
+      - data.dataset.degradation.mask_fraction=0.96
+      - data.dataset.degradation.mask_fraction=0.97
+      - data.dataset.degradation.mask_fraction=0.98
+      - data.dataset.degradation.mask_fraction=0.99
+      - data.dataset.degradation.mask_fraction=0.995
 
 command:
   - /work/envs/depth/bin/python
@@ -24,7 +24,7 @@ command:
   - --model-config
   - configs/model_config_eo_4band.yaml
   - --set
-  - data.dataset.eo_dropout_prob=0.0
+  - data.dataset.conditioning.eo_dropout_prob=0.0
   - --set
   - training.trainer.max_epochs=100
   - --set

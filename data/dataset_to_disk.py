@@ -460,6 +460,26 @@ def _load_config(config_path: str = "configs/data_config.yaml") -> dict[str, Any
         return yaml.safe_load(f)
 
 
+def _ds_cfg_value(
+    ds_cfg: dict[str, Any],
+    nested_key: str,
+    flat_key: str,
+    *,
+    default: Any,
+) -> Any:
+    """Read nested dataset config."""
+    node: Any = ds_cfg
+    for part in nested_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            node = None
+            break
+        node = node[part]
+    if node is not None:
+        return node
+    _ = flat_key
+    return default
+
+
 if __name__ == "__main__":
     cfg = _load_config("configs/data_config.yaml")
     ds_cfg = cfg.get("dataset", {})
@@ -468,10 +488,21 @@ if __name__ == "__main__":
         root_dir="/data1/datasets/depth/monthy/",
         output_dir="/work/data/depth/25_bands",
         bands=[2,4,6,8,10,12,14,16,18,20,22,24,26,28,30],
-        variable=str(ds_cfg.get("bands", ["thetao"])[0]),
-        edge_size=int(ds_cfg.get("edge_size", 128)),
-        enforce_validity=bool(ds_cfg.get("enforce_validity", True)),
-        max_nodata_fraction=float(ds_cfg.get("max_nodata_fraction", 0.25)),
-        nan_fill_value=float(ds_cfg.get("nan_fill_value", 0.0)),
+        variable=str(_ds_cfg_value(ds_cfg, "source.bands", "bands", default=["thetao"])[0]),
+        edge_size=int(_ds_cfg_value(ds_cfg, "source.edge_size", "edge_size", default=128)),
+        enforce_validity=bool(
+            _ds_cfg_value(ds_cfg, "validity.enforce_validity", "enforce_validity", default=True)
+        ),
+        max_nodata_fraction=float(
+            _ds_cfg_value(
+                ds_cfg,
+                "validity.max_nodata_fraction",
+                "max_nodata_fraction",
+                default=0.25,
+            )
+        ),
+        nan_fill_value=float(
+            _ds_cfg_value(ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0)
+        ),
     )
     print(f"Wrote CSV index: {csv_path}")

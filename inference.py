@@ -63,13 +63,38 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
     Returns:
         str: Computed scalar output.
     """
-    variant = ds_cfg.get("dataset_variant", ds_cfg.get("variant", None))
+    variant = ds_cfg_value(
+        ds_cfg,
+        "core.dataset_variant",
+        "dataset_variant",
+        default=None,
+    )
     if variant is None:
         stem = Path(data_config_path).stem.lower()
         if "4band" in stem or "eo" in stem:
             return "eo_4band"
         return "temp_v1"
     return str(variant).strip().lower()
+
+
+def ds_cfg_value(
+    ds_cfg: dict[str, Any],
+    nested_key: str,
+    flat_key: str,
+    *,
+    default: Any,
+) -> Any:
+    """Read nested dataset config."""
+    node: Any = ds_cfg
+    for part in nested_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            node = None
+            break
+        node = node[part]
+    if node is not None:
+        return node
+    _ = flat_key
+    return default
 
 
 def build_dataset(
@@ -137,7 +162,14 @@ def build_datamodule(
         dataset=dataset,
         dataloader_cfg=dataloader_cfg,
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
-        seed=int(data_cfg.get("dataset", {}).get("random_seed", 7)),
+        seed=int(
+            ds_cfg_value(
+                data_cfg.get("dataset", {}),
+                "runtime.random_seed",
+                "random_seed",
+                default=7,
+            )
+        ),
     )
 
 
@@ -280,7 +312,14 @@ def build_random_batch(
         batch["eo"] = torch.randn(batch_size, 1, height, width, device=device)
 
     # Provide coords if coordinate conditioning is enabled.
-    if coord_enabled or bool(data_cfg.get("dataset", {}).get("return_coords", False)):
+    if coord_enabled or bool(
+        ds_cfg_value(
+            data_cfg.get("dataset", {}),
+            "output.return_coords",
+            "return_coords",
+            default=False,
+        )
+    ):
         lat = -90.0 + 180.0 * torch.rand(batch_size, 1, device=device)
         lon = -180.0 + 360.0 * torch.rand(batch_size, 1, device=device)
         batch["coords"] = torch.cat([lat, lon], dim=1)
@@ -385,7 +424,14 @@ def main() -> None:
         batch = next(iter(loader))
         batch = to_device(batch, device)
     else:
-        edge_size = int(data_cfg.get("dataset", {}).get("edge_size", 128))
+        edge_size = int(
+            ds_cfg_value(
+                data_cfg.get("dataset", {}),
+                "source.edge_size",
+                "edge_size",
+                default=128,
+            )
+        )
         h = int(RANDOM_HEIGHT) if RANDOM_HEIGHT is not None else edge_size
         w = int(RANDOM_WIDTH) if RANDOM_WIDTH is not None else edge_size
         batch = build_random_batch(
