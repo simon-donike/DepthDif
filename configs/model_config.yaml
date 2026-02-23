@@ -25,7 +25,7 @@ model: # Model Settings
     embed_dim: null # If null, defaults to unet.dim.
 
   unet: # Denoiser backbone (ConvNeXt U-Net) settings.
-    dim: 64 # Base channel width of U-Net.
+    dim: 64 # Base channel width of U-Net. Use soemthing like dim=96 with more input bands
     dim_mults: [1, 2, 4, 8] # Per-stage width multipliers; length controls U-Net depth.
     with_time_emb: true # Enable timestep embeddings in the denoiser.
     output_mean_scale: false # Optional output mean correction used by some diffusion variants.
