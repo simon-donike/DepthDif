@@ -1163,6 +1163,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Keep all post-processing centralized in Lightning inference.
         y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
         y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
+        # Keep an unmerged version for visualization so reconstruction panels
+        # show model output (plus land masking) rather than observed-pixel copy-in.
+        y_hat_denorm_for_plot = self._apply_postprocess_zero_land_pixels(
+            y_hat_denorm, land_mask
+        )
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
         y_hat_denorm = self._apply_postprocess_merge_observed_pixels(
             generated=y_hat_denorm,
@@ -1176,6 +1181,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         return {
             "y_hat": y_hat,
             "y_hat_denorm": y_hat_denorm,
+            "y_hat_denorm_for_plot": y_hat_denorm_for_plot,
             "denoise_samples": denoise_samples,
             "x0_denoise_samples": x0_denoise_samples,
             "sampler": sampler,
@@ -1360,6 +1366,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         pred = self.predict_step(pred_batch, batch_idx=0)
         y_hat = pred["y_hat"]
         y_hat_denorm = pred["y_hat_denorm"]
+        y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
         denoise_samples = pred["denoise_samples"]
         x0_denoise_samples = pred.get("x0_denoise_samples", [])
 
@@ -1470,13 +1477,14 @@ class PixelDiffusionConditional(pl.LightningModule):
             logger=self.logger,
             x=x_denorm,
             eo=eo_denorm,
-            y_hat=y_hat_denorm,
+            y_hat=y_hat_denorm_for_plot,
             y_target=y_denorm,
             valid_mask=valid_mask,
             land_mask=land_mask,
             prefix="val_imgs",
             image_key="x_y_full_reconstruction",
             cmap=PLOT_CMAP,
+            show_valid_mask_panel=False,
         )
         if self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
@@ -1494,7 +1502,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, pred, pred_batch, y, x
-        del y_denorm, y_hat_denorm, x_denorm, eo_denorm
+        del y_denorm, y_hat_denorm, y_hat_denorm_for_plot, x_denorm, eo_denorm
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:

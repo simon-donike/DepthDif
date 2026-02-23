@@ -92,4 +92,4 @@ When available, full reconstruction logging includes:
 - PSNR/SSIM (if `skimage` is installed)
 - qualitative reconstruction grid
 - denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)
-- plotting applies `land_mask` for visualization (land set to zero) but does not hide generated regions with `valid_mask`
+- reconstruction plotting applies `land_mask` and does not copy observed `valid_mask` pixels into the displayed prediction panel
