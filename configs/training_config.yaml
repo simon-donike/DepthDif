@@ -26,7 +26,7 @@ trainer: # PL Trainer Settings
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
   ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
   lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor ("step" or "epoch").
-  log_every_n_steps: 1 # Trainer logging interval (steps).
+  log_every_n_steps: 50 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.
   val_batches_per_epoch: 200 # Absolute cap on validation batches/epoch (int). Each batch computes 1-step denoising validation loss.
   limit_val_batches: 4 # Number/fraction of validation batches per epoch.
@@ -44,11 +44,11 @@ wandb: # Logging Settings
   watch_parameters: false # Log parameter histories via wandb.watch (both false disables watch).
   watch_log_freq: 100 # How often (steps) to log watched gradients/params.
   watch_log_graph: false # Whether to log the computational graph.
-  log_stats_every_n_steps: 100 # Step interval for lightweight scalar debug stats.
+  log_stats_every_n_steps: 500 # Step interval for lightweight scalar debug stats.
   log_images_every_n_steps: 10 # Step interval for validation preview images.
 
 dataloader: # DataLoader Settings
-  batch_size: 24 # Training batch size.
+  batch_size: 32 # Training batch size.
   val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
   num_workers: 6 # Number of DataLoader worker processes.
   val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
