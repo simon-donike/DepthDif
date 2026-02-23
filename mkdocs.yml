@@ -44,9 +44,10 @@ markdown_extensions:
 
 nav:
   # Keep primary content layered under the Home tab.
-  - Quick Start: quickstart.md
   - Home:
       - Overview: index.md
+      - Sampling Diagnostics: sampling-diagnostics.md
+      - Experiments: experiments.md
       - Data: data.md
       - Model: model.md
       - Date + Coordination Injection: date-coordination-injection.md
@@ -54,6 +55,5 @@ nav:
       - Inference: inference.md
       - Model Settings: settings.md
       - Development: development.md
-  - Sampling Diagnostics: sampling-diagnostics.md
-  - Experiments: experiments.md
+  - Quickstart: quickstart.md
   - API Reference: api.md

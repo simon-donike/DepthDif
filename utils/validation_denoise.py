@@ -734,3 +734,93 @@ def log_wandb_conditional_reconstruction_grid(
     finally:
         if fig is not None:
             plt.close(fig)
+
+    # Log denormalized reconstruction L1 (in degrees) over generated pixels only.
+    try:
+        y_hat_t = y_hat.detach().float()
+        y_target_t = y_target.detach().float()
+        if y_hat_t.ndim == 3:
+            y_hat_t = y_hat_t.unsqueeze(1)
+        if y_target_t.ndim == 3:
+            y_target_t = y_target_t.unsqueeze(1)
+        if y_hat_t.ndim != 4 or y_target_t.ndim != 4:
+            return
+        if y_hat_t.shape != y_target_t.shape:
+            return
+
+        if valid_mask is None:
+            return
+        generated_mask = (valid_mask.detach().float() <= 0.5).to(device=y_hat_t.device)
+        if generated_mask.ndim == 3:
+            generated_mask = generated_mask.unsqueeze(1)
+        if generated_mask.ndim != 4:
+            return
+        if (
+            generated_mask.shape[0] != y_hat_t.shape[0]
+            or generated_mask.shape[2:] != y_hat_t.shape[2:]
+        ):
+            return
+        if generated_mask.size(1) == 1 and y_hat_t.size(1) > 1:
+            generated_mask = generated_mask.expand(-1, y_hat_t.size(1), -1, -1)
+        elif generated_mask.size(1) != y_hat_t.size(1):
+            return
+
+        if land_mask is not None:
+            ocean_mask = (land_mask.detach().float() > 0.5).to(device=y_hat_t.device)
+            if ocean_mask.ndim == 3:
+                ocean_mask = ocean_mask.unsqueeze(1)
+            if ocean_mask.ndim != 4:
+                return
+            if (
+                ocean_mask.shape[0] != y_hat_t.shape[0]
+                or ocean_mask.shape[2:] != y_hat_t.shape[2:]
+            ):
+                return
+            if ocean_mask.size(1) == 1 and y_hat_t.size(1) > 1:
+                ocean_mask = ocean_mask.expand(-1, y_hat_t.size(1), -1, -1)
+            elif ocean_mask.size(1) != y_hat_t.size(1):
+                return
+            generated_mask = generated_mask * ocean_mask
+
+        abs_diff = torch.abs(y_hat_t - y_target_t)
+        numer_per_band = (abs_diff * generated_mask).sum(dim=(0, 2, 3))
+        denom_per_band = generated_mask.sum(dim=(0, 2, 3))
+        valid_bands = denom_per_band > 0
+        if not bool(torch.any(valid_bands)):
+            return
+
+        l1_per_band = torch.zeros_like(numer_per_band)
+        l1_per_band[valid_bands] = (
+            numer_per_band[valid_bands] / denom_per_band[valid_bands]
+        )
+
+        l1_logs: dict[str, float] = {}
+        band_x: list[int] = []
+        band_y: list[float] = []
+        for band_idx in range(int(l1_per_band.numel())):
+            if not bool(valid_bands[band_idx].item()):
+                continue
+            band_val = float(l1_per_band[band_idx].item())
+            l1_logs[f"{prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = band_val
+            band_x.append(int(band_idx))
+            band_y.append(band_val)
+
+        if not l1_logs:
+            return
+        # One scalar per depth level for standard W&B metric tracking.
+        experiment.log(l1_logs)
+        # Optional compact view: all bands in a single plot panel for this validation pass.
+        experiment.log(
+            {
+                f"{prefix}/recon_l1_generated_deg_by_band": wandb.plot.line_series(
+                    xs=band_x,
+                    ys=[band_y],
+                    keys=["L1 (deg)"],
+                    title="Generated-Pixel L1 by Band",
+                    xname="Band index",
+                )
+            }
+        )
+    except Exception:
+        # Auxiliary scalar logging must never block validation image logging.
+        pass

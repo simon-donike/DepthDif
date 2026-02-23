@@ -3,11 +3,12 @@ from __future__ import annotations
 import torch
 
 # Dataset-level statistics provided by user.
-Y_MEAN = 16.592671779467846
+CELSIUS_TO_KELVIN_OFFSET = 273.15
+Y_MEAN = 289.74267177946783
 Y_STD = 10.933397487585731
 PLOT_STD_MULTIPLIER = 2.5
-PLOT_TEMP_MIN = Y_MEAN - (PLOT_STD_MULTIPLIER * Y_STD)
-PLOT_TEMP_MAX = Y_MEAN + (PLOT_STD_MULTIPLIER * Y_STD)
+PLOT_TEMP_MIN = -10.740821939496481
+PLOT_TEMP_MAX = 43.92616549843217
 PLOT_CMAP = "turbo"
 
 
@@ -26,10 +27,16 @@ def temperature_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
 
     mean = torch.as_tensor(Y_MEAN, dtype=tensor.dtype, device=tensor.device)
     std = torch.as_tensor(Y_STD, dtype=tensor.dtype, device=tensor.device)
+    kelvin_offset = torch.as_tensor(
+        CELSIUS_TO_KELVIN_OFFSET, dtype=tensor.dtype, device=tensor.device
+    )
 
     if mode == "norm":
-        return (tensor - mean) / std
-    return tensor * std + mean
+        tensor_kelvin = tensor + kelvin_offset
+        return (tensor_kelvin - mean) / std
+    denorm_kelvin = tensor * std + mean
+    # Convert back to Celsius so callers keep receiving physical temperatures in C.
+    return denorm_kelvin - kelvin_offset
 
 
 def temperature_to_plot_unit(
@@ -55,4 +62,3 @@ def temperature_to_plot_unit(
     t_max = torch.as_tensor(PLOT_TEMP_MAX, dtype=temp.dtype, device=temp.device)
     denom = torch.clamp(t_max - t_min, min=torch.finfo(temp.dtype).eps)
     return ((temp - t_min) / denom).clamp(0.0, 1.0)
-
