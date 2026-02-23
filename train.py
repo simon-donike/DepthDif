@@ -579,11 +579,11 @@ if __name__ == "__main__":
     )
 
 """
-Training quick start (single command):
+# Training quick start (single command):
 python train.py --model-config configs/model_config.yaml \
     --data-config configs/data_config.yaml \
     --training-config configs/training_config.yaml
 
-Sweep quick start (single command):
+# Sweep quick start (single command):
 ./scripts/start_occlusion_sweep.sh
 """
