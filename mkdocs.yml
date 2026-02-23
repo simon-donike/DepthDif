@@ -47,7 +47,8 @@ nav:
   - Home:
       - Overview: index.md
       - Sampling Diagnostics: sampling-diagnostics.md
-      - Data: data.md
+      - Data Source: data-source.md
+      - Synthetic Dataset: data.md
       - Model: model.md
       - Date + Coordination Injection: date-coordination-injection.md
       - Training: training.md

@@ -1,19 +1,5 @@
-# Data
-DepthDif uses monthly ocean reanalysis tiles and converts them into fixed-size patch tensors for fast training.
-
-## Source Data
-The current workflow is built around the Copernicus Marine **Global Ocean Physics Reanalysis** product.
-
-- Time span used in this project: 2000-2025
-- Typical patch size: `128 x 128`
-- Spatial resolution context in README: `1/12°`
-- Sparse-observation behavior is simulated by synthetic masking
-
-Reference dataset link:
-[Global Ocean Physics Reanalysis](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F)
-
-Example CLI from README:
-`copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*2021/*"`
+# Synthetic Dataset
+This page documents the synthetic dataset used by DepthDif after preprocessing the raw Copernicus source files.
 
 Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)
@@ -58,14 +44,14 @@ Variant selection is resolved from `dataset.dataset_variant` in data config.
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)
 
-## Masking, Validity, and Augmentation
+## Synthetic Transformations
 ### Corruption pipeline
 Both dataset variants create sparse `x` by masking random rectangular patches:
 - target masked coverage controlled by `mask_fraction`
 - patch sizes from `mask_patch_min` to `mask_patch_max`
 - corruption is applied spatially
 - in `temp_v1`, corruption is effectively a single-band spatial mask
-- in `eo_4band`, corruption is now per-band, so `valid_mask` semantics are fully 3D (`band x H x W`)
+- in `eo_4band`, corruption is per-band, so `valid_mask` semantics are fully 3D (`band x H x W`)
 
 ### Validity and land masks
 - masks are derived from finite-value checks and configured fill-value logic
@@ -106,3 +92,5 @@ If you need strict geographic window splits from index labels, use a custom trai
 
 Helper for writing deterministic window-level splits:
 - `data/assign_window_split.py`
+
+See [Data Source](data-source.md) for provenance and download instructions.

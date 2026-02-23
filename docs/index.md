@@ -15,7 +15,8 @@ DepthDif is a conditional diffusion model: it reconstructs dense depth fields fr
 
 ## Documentation Map
 - [Quick Start](quickstart.md): environment setup + fastest train/infer path
-- [Data](data.md): dataset source, export format, masking pipeline, split behavior
+- [Data Source](data-source.md): source product, download, and raw variable tables
+- [Synthetic Dataset](data.md): preprocessing, synthetic corruption, and split behavior
 - [Model](model.md): architecture and diffusion conditioning flow
 - [Date + Coordination Injection](date-coordination-injection.md): coordinate/date FiLM conditioning details
 - [Training](training.md): CLI usage, run outputs, logging, checkpoints
