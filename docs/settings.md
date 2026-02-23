@@ -39,6 +39,13 @@ Config:
 Runtime effect:
 - if enabled, loss is computed on missing pixels (`1 - valid_mask`)
 - optionally gated by `land_mask` to focus on ocean pixels
+- mask alignment preserves per-band semantics (`B x C x H x W`) unless a single shared mask channel is explicitly used
+
+### Inference output composition
+Runtime effect:
+- final output keeps observed pixels from `x` where `valid_mask=1`
+- model predictions are used where `valid_mask=0`
+- `land_mask` is then applied to zero land pixels
 
 ### Known-pixel clamping during sampling
 Config:
@@ -48,7 +55,7 @@ Runtime effect:
 - if enabled and known masks/values are available, known pixels are overwritten each reverse step
 - useful for inpainting-style stability
 
-Illustration:
+Illustration:  
 ![img](assets/clamped_pixels.png)
 
 ### Coordinate/date FiLM conditioning

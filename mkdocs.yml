@@ -53,5 +53,6 @@ nav:
       - Inference: inference.md
       - Model Settings: settings.md
       - Development: development.md
+  - Sampling Diagnostics: sampling-diagnostics.md
   - Experiments: experiments.md
   - API Reference: api.md

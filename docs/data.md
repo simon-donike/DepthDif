@@ -15,7 +15,7 @@ Reference dataset link:
 Example CLI from README:
 `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*2021/*"`
 
-Dataset example for 50% occlusion:
+Dataset example for 50% occlusion:  
 ![img](assets/dataset_50percMask.png)
 
 ## On-Disk Export Format
@@ -55,7 +55,7 @@ Variant selection is resolved from `dataset.dataset_variant` in data config.
 - `date`: parsed integer date (`YYYYMMDD`)
 - optional: `coords`, `info`
 
-EO + multiband example:
+EO + multiband example:  
 ![img](assets/eo_dataset_example.png)
 
 ## Masking, Validity, and Augmentation
@@ -63,12 +63,15 @@ EO + multiband example:
 Both dataset variants create sparse `x` by masking random rectangular patches:
 - target masked coverage controlled by `mask_fraction`
 - patch sizes from `mask_patch_min` to `mask_patch_max`
-- corruption is applied spatially; in multiband mode the same 2D hide-mask is shared across deeper bands
+- corruption is applied spatially
+- in `temp_v1`, corruption is effectively a single-band spatial mask
+- in `eo_4band`, corruption is now per-band, so `valid_mask` semantics are fully 3D (`band x H x W`)
 
 ### Validity and land masks
 - masks are derived from finite-value checks and configured fill-value logic
 - `valid_mask` is used for both conditioning and masked-loss options in the model
 - `land_mask` is used to suppress land influence in masked loss and optional output post-processing
+- masked loss is computed over generated pixels (`1 - valid_mask`), optionally ocean-gated by `land_mask`
 
 ### EO degradation options (`eo_4band`)
 If enabled in config:

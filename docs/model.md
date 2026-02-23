@@ -1,6 +1,9 @@
 # Model
 DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.
 
+Model schema:  
+![depthdif_schema](assets/depthdif_schema.png)
+
 Core stack:
 - Lightning wrapper: `PixelDiffusionConditional`
 - diffusion core: `DenoisingDiffusionConditionalProcess`
@@ -74,7 +77,7 @@ Output dictionary from `predict_step`:
 ## Post-Processing in Lightning Inference
 After denormalization, inference can apply:
 - optional Gaussian blur (`model.post_process.gaussian_blur.*`)
-- zero invalid pixels using `valid_mask`
+- merge observed pixels from `x` (where `valid_mask=1`) with generated pixels (where `valid_mask=0`)
 - zero land pixels using `land_mask`
 
 This post-processing is centralized in `predict_step`.
@@ -89,3 +92,4 @@ When available, full reconstruction logging includes:
 - PSNR/SSIM (if `skimage` is installed)
 - qualitative reconstruction grid
 - denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)
+- plotting applies `land_mask` for visualization (land set to zero) but does not hide generated regions with `valid_mask`

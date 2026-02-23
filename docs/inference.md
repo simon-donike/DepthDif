@@ -23,7 +23,7 @@ At the top of `inference.py`, set:
 - `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`
 
 ### Note on default paths
-The script defaults still point to `configs/model_config.yaml` / `configs/data_config.yaml` / `configs/training_config.yaml`. In this repository, the actively used configs are:
+The script constants should be set explicitly. In this repository, the actively used configs are:
 - EO setup: `configs/*_eo_4band.yaml`
 - legacy single-band setup: `configs/older_configs/*.yaml`
 
