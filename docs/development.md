@@ -5,7 +5,7 @@ This page tracks current limitations, implementation status, and roadmap items.
 - Outputs can still look somewhat speckled/noisy.  
 - Patches with large land coverage can degrade generation quality across the full patch.  
 
-Potential mitigation directions already identified:
+Potential mitigation directions already identified:  
 - DDIM sampling for better compute/fidelity tradeoff  
 - structure-aware or frequency-aware losses  
 - parameterization/schedule tuning  

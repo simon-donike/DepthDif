@@ -44,14 +44,14 @@ This image evaluates all integer `(lat, lon)` combinations and maps the 3D unit-
 
 
 ### `sincos`
-Features:
+Features:  
 - `sin(lat), cos(lat), sin(lon), cos(lon)`  
 
-Why it is useful:
+Why it is useful:  
 - periodic and wrap-safe representation  
 
 ### `raw`
-Features:
+Features:  
 - `lat / 90`  
 - `lon / 180`  
 
@@ -71,7 +71,7 @@ Pipeline:
    - `sin(2*pi*doy/365)`  
    - `cos(2*pi*doy/365)`  
 
-Dataset date parsing convention:
+Dataset date parsing convention:  
 - monthly source names (`YYYYMM`) are converted to mid-month (`YYYYMM15`)  
 
 This plot shows all 365 day-of-year embeddings as points in the sin/cos plane. Each day maps to one point on the unit circle, which makes the representation periodic and year-wrap safe.  
@@ -81,12 +81,12 @@ This plot shows all 365 day-of-year embeddings as points in the sin/cos plane. E
 </p>
 
 ## Feature Fusion
-When `include_date=true`:
+When `include_date=true`:  
 - encoded date features are concatenated with encoded coordinate features  
 - fused vector is passed through a small MLP (`coord_mlp`) to produce a coordinate embedding  
 
 ## FiLM Injection Mechanism
-Inside each `ConvNextBlock`:
+Inside each `ConvNextBlock`:  
 ```python
 self.coord_mlp = nn.Sequential(nn.GELU(), nn.Linear(coord_emb_dim, dim * 2))
 scale_shift = self.coord_mlp(coord_emb)
@@ -94,12 +94,12 @@ scale, shift = scale_shift.chunk(2, dim=1)
 h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
 ```
 
-Interpretation:
+Interpretation:  
 - per-sample, per-channel scale and shift.  
 - values are broadcast across spatial dimensions.  
 - `1 + scale` keeps identity behavior easy (`scale=0`, `shift=0` -> no change).  
 
-## Interaction With Time Conditioning
+## Interaction With Time Conditioning. 
 Time embedding and coordinate conditioning are complementary:  
 - time embedding is additive per channel  
 - coordinate/date conditioning is scale-and-shift per channel  

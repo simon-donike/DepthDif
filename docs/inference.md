@@ -1,5 +1,5 @@
 # Inference
-There are two practical inference workflows in this repository:
+There are two practical inference workflows in this repository:  
 - run the standalone script `inference.py`  
 - call `PixelDiffusionConditional.predict_step(...)` directly  
 
@@ -15,7 +15,7 @@ There are two practical inference workflows in this repository:
 - optional intermediate sample capture  
 
 ### Important script settings
-At the top of `inference.py`, set:
+At the top of `inference.py`, set:  
 - `MODEL_CONFIG_PATH`  
 - `DATA_CONFIG_PATH`  
 - `TRAIN_CONFIG_PATH`  
@@ -27,7 +27,7 @@ The script constants should be set explicitly. In this repository, the actively 
 - EO setup: `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`  
 
 ## Workflow 2: Direct `predict_step`
-The model inference entry point is:
+The model inference entry point is:  
 - `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`  
 
 Minimum required batch key:

@@ -5,7 +5,7 @@
 # Densifying Sparse Ocean Depth Observations
 DepthDif explores conditional diffusion for reconstructing dense subsurface ocean temperature fields from sparse, masked observations.
 
-The repository currently supports:
+The repository currently supports:  
 - EO-conditioned multi-band reconstruction (surface condition + deeper target bands)  
 
 ## Model Description

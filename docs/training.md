@@ -2,7 +2,7 @@
 Training is launched via `train.py` and is fully config-driven.
 
 ## Recommended CLI Usage
-Use explicit config paths to avoid ambiguity:
+Use explicit config paths to avoid ambiguity:  
 
 ```bash
 /work/envs/depth/bin/python train.py \
@@ -11,12 +11,12 @@ Use explicit config paths to avoid ambiguity:
   --model-config configs/model_config.yaml
 ```
 
-CLI aliases:
+CLI aliases:  
 - `--train-config` and `--training-config` are equivalent  
 - `--model-config` also accepts the typo alias `--mdoel-config`  
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)  
 
-Override example:
+Override example:  
 
 ```bash
 /work/envs/depth/bin/python train.py \
@@ -46,57 +46,57 @@ Override example:
 6. Sets up W&B logger and callbacks.  
 
 ## Checkpointing and Resume
-ModelCheckpoint behavior:
+ModelCheckpoint behavior:  
 - best checkpoint: `best-epoch{epoch:03d}.ckpt` (monitor from `trainer.ckpt_monitor`)  
 - always saved: `last.ckpt`  
 - location: current run folder under `logs/`  
 
-Resume behavior:
+Resume behavior:  
 - set `model.resume_checkpoint` to a valid `.ckpt` path  
 - invalid path fails early before trainer start  
 
 ## Device, Precision, and Validation Controls
-From `training_config` trainer section:
+From `training_config` trainer section:  
 - accelerator/devices strategy (`accelerator`, `devices`, optional legacy `num_gpus`)  
 - mixed precision (`precision`)  
 - optional validation cap via `val_batches_per_epoch` or `limit_val_batches`  
 - gradient clipping (`gradient_clip_val`)  
 
 ## Learning Rate Behavior
-`PixelDiffusionConditional` supports:
+`PixelDiffusionConditional` supports:  
 - step-based linear warmup in `optimizer_step`  
 - `ReduceLROnPlateau` scheduler when enabled  
 
-Warmup and scheduler are configured via:
+Warmup and scheduler are configured via:  
 - `scheduler.warmup.*`  
 - `scheduler.reduce_on_plateau.*`  
 
 ## Logging
 W&B logging is configured in `training_config.wandb`.
 
-Notable behavior:
+Notable behavior:  
 - gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`  
 - periodic scalar/image logging intervals are configurable  
 - config files are uploaded to W&B run files (when experiment handle is available)  
 
 ## W&B Occlusion Sweep (EO Always Available)
-Sweep config:
+Sweep config:  
 - `configs/sweeps/eo_occlusion_grid_no_eodrop.yaml`  
 
-This sweep runs grid values:
+This sweep runs grid values:  
 - `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`  
 - fixed overrides:  
   - `data.dataset.conditioning.eo_dropout_prob=0.0`  
   - `training.trainer.max_epochs=100`  
   - `training.wandb.run_name=null` (auto-generated run names)  
 
-Launch:
+Launch:  
 
 ```bash
 ./scripts/start_occlusion_sweep.sh
 ```
 
-Equivalent manual steps:
+Equivalent manual steps:  
 
 ```bash
 /work/envs/depth/bin/wandb sweep configs/sweeps/eo_occlusion_grid_no_eodrop.yaml

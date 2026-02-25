@@ -3,7 +3,7 @@ Use this page for the shortest path from setup to first train/inference run.
 
 ## Environment & Dependencies
 - Python: **3.12.3**  
-- Install runtime dependencies:  
+- Install runtime dependencies:   
 
 ```bash
 /work/envs/depth/bin/python -m pip install -r requirements.txt
@@ -16,7 +16,7 @@ Use this page for the shortest path from setup to first train/inference run.
 ```
 
 ## Quick Training
-EO-conditioned multiband training:
+EO-conditioned multiband training:  
 
 ```bash
 /work/envs/depth/bin/python train.py \
@@ -26,7 +26,7 @@ EO-conditioned multiband training:
 ```
 
 ## Quick Inference
-Set config/checkpoint constants at the top of `inference.py`, then run:
+Set config/checkpoint constants at the top of `inference.py`, then run:  
 
 ```bash
 /work/envs/depth/bin/python inference.py

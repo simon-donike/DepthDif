@@ -16,7 +16,7 @@ Core behavior:
 - includes geographic bounds per patch (`lat0`, `lat1`, `lon0`, `lon1`) in the CSV  
 - supports writing a geo-location-based `train`/`val` split CSV via `data/assign_window_split.py` (window-level split)  
 
-For EO + 3 deeper-band training, the 4-band layout is expected as:
+For EO + 3 deeper-band training, the 4-band layout is expected as:  
 - channel 0: EO/surface condition  
 - channels 1..3: deeper temperature target bands  
 
@@ -24,7 +24,7 @@ For EO + 3 deeper-band training, the 4-band layout is expected as:
 Current training uses `eo_4band`.
 
 ### `eo_4band` (EO-conditioned multiband)
-`SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:
+`SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:  
 - `eo`: channel 0 condition  
 - `x`: corrupted deeper channels (channels 1..3)  
 - `y`: clean deeper channels (channels 1..3)  
@@ -39,13 +39,13 @@ EO + multiband example:
 ## Synthetic Transformations
 ## Masking, Validity, and Augmentation
 ### Normalization and units
-Temperature tensors are loaded in degrees Celsius and normalized through `utils.normalizations.temperature_normalize`:
+Temperature tensors are loaded in degrees Celsius and normalized through `utils.normalizations.temperature_normalize`:  
 - `norm`: convert Celsius to Kelvin (`T_K = T_C + 273.15`), then apply Z-score with dataset stats (`Y_MEAN=289.74267177946783`, `Y_STD=10.933397487585731`)  
 - `denorm`: invert Z-score in Kelvin space, then convert back to Celsius  
 - plotting ranges (`PLOT_TEMP_MIN`, `PLOT_TEMP_MAX`) remain defined in Celsius space  
 
 ### Corruption pipeline
-The dataset creates sparse `x` using stochastic trajectory-style corruption:
+The dataset creates sparse `x` using stochastic trajectory-style corruption:  
 - this simulates a submarine moving through the patch and sampling along its path  
 - target hidden coverage is controlled by `mask_fraction`  
 - each track is built in flattened 1D index space and rasterized back to 2D  
@@ -67,7 +67,7 @@ Continuous submarine-like streak example (`mask_strategy="tracks"`):
 - masked loss is computed over generated pixels (`1 - valid_mask`), optionally ocean-gated by `land_mask`  
 
 ### EO degradation options (`eo_4band`)
-If enabled in config:
+If enabled in config:  
 - `eo_random_scale_enabled`: currently implemented as an additive random EO offset in `[-2.0, 2.0]` temperature units  
 - `eo_speckle_noise_enabled`: multiplicative speckle (`1 + 0.01 * eps`) clamped to `[0.9, 1.1]`  
 - `eo_dropout_prob`: random EO dropout by setting `eo` to zeros per sample  
@@ -79,17 +79,17 @@ When `enable_transform=true`, random 90° rotations/flips are applied consistent
 - land masks  
 
 ## Coordinates and Date
-When `return_coords=true`, dataset returns patch-center coordinates:
+When `return_coords=true`, dataset returns patch-center coordinates:  
 - latitude center: arithmetic mean of `lat0` and `lat1`  
 - longitude center: dateline-safe circular midpoint from `lon0` and `lon1`  
 
-Date parsing behavior:
+Date parsing behavior:  
 - `YYYYMMDD` suffix in `source_file` -> used directly  
 - `YYYYMM` suffix -> converted to mid-month (`YYYYMM15`)  
 - invalid/missing -> fallback `19700115`  
 
 ## Split Behavior in Current Training Runner
-This is an important implementation detail from `train.py` + `data/datamodule.py`:
+This is an important implementation detail from `train.py` + `data/datamodule.py`:  
 
 - `train.py` currently builds dataset with `split="all"`  
 - then `DepthTileDataModule` creates a seeded random split using `split.val_fraction`  
@@ -97,7 +97,7 @@ This is an important implementation detail from `train.py` + `data/datamodule.py
 
 If you need strict geographic window splits from index labels, use a custom train/val dataset wiring path (or adapt the runner).
 
-Helper for writing deterministic geo-location window-level splits:
+Helper for writing deterministic geo-location window-level splits:  
 - `data/assign_window_split.py`  
 
 See [Data Source](data-source.md) for provenance and download instructions.
