@@ -47,7 +47,7 @@ Observation:
 - model still performs plausible `x -> y` reconstruction when EO is absent or weak  
 ![img](assets/eo_x0_maskedLoss_95perc_50percDO_EOdegradation.png)
 
-## Experiment 5 (Lower temperature levels)
+## Experiment 5 (Deeper temperature levels)
 Harder target depths were tested with levels:
 - 0 (EO)  
 - 4 (5m)  
@@ -59,8 +59,9 @@ Training setup: 95% corruption, 50% EO dropout, EO degradation.
 Reported outcome: quality remained comparable on these depth levels.  
 ![img](assets/deeper.png)
 
-## Experiment 6 (99% occlusion)
-... currently runninng...
+## Experiment 6 (97.5% occlusion)  
+Good reconstruction, moving on.
+![img](assets/97_5p.png)
 
 ## Experiment 7 (97.5% occlusion with streak corruption)
 ... currently runninng...
