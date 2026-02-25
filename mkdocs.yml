@@ -50,7 +50,7 @@ nav:
       - Data Source: data-source.md
       - Synthetic Dataset: data.md
       - Model: model.md
-      - Date + Coordination Injection: date-coordination-injection.md
+      - Data + Coordinate Injection: data-coordinate-injection.md
       - Training: training.md
       - Inference: inference.md
       - Model Settings: settings.md

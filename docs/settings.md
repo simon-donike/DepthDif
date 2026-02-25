@@ -65,7 +65,7 @@ Config:
 
 Runtime effect:  
 - creates a coordinate/date embedding and injects it via FiLM in ConvNeXt blocks  
-- details: [Date + Coordination Injection](date-coordination-injection.md)  
+- details: [Data + Coordinate Injection](data-coordinate-injection.md)  
 
 ## Training and Optimization Settings
 ### Noise schedule and diffusion steps

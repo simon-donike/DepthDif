@@ -60,10 +60,13 @@ Reported outcome: quality remained comparable on these depth levels.
 ![img](assets/deeper.png)
 
 ## Experiment 6 (97.5% occlusion)  
-Good reconstruction, moving on.
+Same depth levels as Exp. 5. Good reconstruction, moving on.
 ![img](assets/97_5p.png)
 
 ## Experiment 7 (97.5% occlusion with 'streak' corruption)
+... currently runninng...
+
+## Experiment 7 (99% occlusion with 'streak' corruption)
 ... currently runninng...
 
 ## Next Experiments (Roadmap)

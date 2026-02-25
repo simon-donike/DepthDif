@@ -1,5 +1,5 @@
-# Date + Coordination Injection
-This page explains how location and date features are injected into the denoiser using FiLM-style conditioning.
+# Data + Coordinate Injection
+This page explains how location and date features are fused and injected into the denoiser using one FiLM-style conditioning path.
 
 ## Where This Happens in Code
 - coordinate/date encoding logic: `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
@@ -39,7 +39,7 @@ This 3D view shows one example coordinate encoded as `(x, y, z)` on the sphere. 
 
 This image evaluates all integer `(lat, lon)` combinations and maps the 3D unit-sphere encoding `(x, y, z)` to RGB. It visualizes how each coordinate is transformed into a 3-value vector before FiLM embedding, showing smooth transitions and proper wrap-around from -90 to +90 and -180 to +180.
 <p align="center">
-  <img src="../assets/coord_encoding_unit_sphere_rgb.png" width="50%" />
+  <img src="../assets/coord_encoding_unit_sphere_rgb.png" width="80%" />
 </p>
 
 
@@ -60,7 +60,7 @@ Why it is simple:
 
 
 ## Date Encoding
-Current implementation supports one option:
+Current implementation supports one option:  
 - `day_of_year_sincos`  
 
 Pipeline:
@@ -83,7 +83,7 @@ This plot shows all 365 day-of-year embeddings as points in the sin/cos plane. E
 ## Feature Fusion
 When `include_date=true`:  
 - encoded date features are concatenated with encoded coordinate features  
-- fused vector is passed through a small MLP (`coord_mlp`) to produce a coordinate embedding  
+- the concatenated vector is passed through a small MLP (`coord_mlp`) to produce one joint conditioning embedding  
 
 ## FiLM Injection Mechanism
 Inside each `ConvNextBlock`:  
@@ -95,6 +95,7 @@ h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
 ```
 
 Interpretation:  
+- date and coordinate features are not injected separately; they first become one joint embedding (`coord_emb`) and are applied together in the same FiLM transform  
 - per-sample, per-channel scale and shift.  
 - values are broadcast across spatial dimensions.  
 - `1 + scale` keeps identity behavior easy (`scale=0`, `shift=0` -> no change).  

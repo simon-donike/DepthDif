@@ -37,7 +37,7 @@ Time conditioning:
 
 Coordinate/date conditioning (when enabled):  
 - per-channel FiLM scale/shift in ConvNeXt blocks  
-- details in [Date + Coordination Injection](date-coordination-injection.md)  
+- details in [Data + Coordinate Injection](data-coordinate-injection.md)  
 
 ## Training Objective
 Training step (`training_step`) calls conditional diffusion `p_loss` on standardized temperature tensors.
