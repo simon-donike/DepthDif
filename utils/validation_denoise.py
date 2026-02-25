@@ -651,7 +651,7 @@ def log_wandb_conditional_reconstruction_grid(
         )
 
         for i in range(num_to_plot):
-            valid_mask_i = _mask_for_sample(valid_mask, i) if show_valid_panel else None
+            valid_mask_i = _mask_for_sample(valid_mask, i)
             land_mask_i = _mask_for_sample(land_mask, i)
             for band_idx in range(channels_to_plot):
                 row_idx = (i * channels_to_plot) + band_idx
@@ -669,6 +669,10 @@ def log_wandb_conditional_reconstruction_grid(
                 y_target_img = _plot_band_image(
                     y_target, i, band_idx=band_idx, mask=land_band
                 )
+                if valid_band is not None:
+                    # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
+                    valid_np = valid_band.detach().cpu().numpy() > 0.5
+                    x_img[~valid_np] = 0.0
                 if land_band is not None:
                     # Zero land pixels right before rendering full reconstruction panels.
                     ocean_np = land_band.detach().cpu().numpy() > 0.5
