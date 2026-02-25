@@ -13,7 +13,9 @@
 
 # DepthDif
 
-DepthDif is a conditional diffusion project for densifying sparse ocean temperature observations.
+DepthDif is a conditional diffusion project for densifying sparse ocean temperature observations. Visit the [Documentation](https://depthdif.donike.net/) for more info on the models, datasets, and auxiliary data - or follow along with the [Experiments](https://depthdif.donike.net/experiments/).
+
+
 
 ## Installation
 
