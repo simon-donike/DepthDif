@@ -120,7 +120,7 @@ If enabled in config:
 - `eo_speckle_noise_enabled`: multiplicative speckle (`1 + 0.01 * eps`) clamped to `[0.9, 1.1]`  
 - `eo_dropout_prob`: random EO dropout by setting `eo` to zeros per sample  
 
-For `ostia`, EO degradation is intentionally disabled in `SurfaceTempPatchOstiaLightDataset` to preserve observed OSTIA surface structure.
+For `ostia`, EO degradation is intentionally disabled in `SurfaceTempPatchOstiaLightDataset` to preserve observed OSTIA surface structure. At return time, EO is additionally zeroed over land using the depth-tile `land_mask`.
 
 ### Geometric augmentation
 When `enable_transform=true`, random 90° rotations/flips are applied consistently to:

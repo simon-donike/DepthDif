@@ -48,6 +48,13 @@ class SurfaceTempPatchOstiaLightDataset(SurfaceTempPatchBaseLightDataset):
             align_corners=False,
         ).squeeze(0)
 
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        sample = super().__getitem__(idx)
+        # Use the depth-derived land mask so OSTIA EO is zeroed at land locations.
+        ocean_mask = (sample["land_mask"] > 0.5).any(dim=0, keepdim=True)
+        sample["eo"] = sample["eo"] * ocean_mask.to(dtype=sample["eo"].dtype)
+        return sample
+
 
 if __name__ == "__main__":
     dataset = SurfaceTempPatchOstiaLightDataset.from_config("configs/data_ostia.yaml")
