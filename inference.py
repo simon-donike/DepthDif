@@ -18,7 +18,7 @@ MODEL_CONFIG_PATH = "configs/model_config.yaml"
 DATA_CONFIG_PATH = "configs/data_ostia.yaml"
 TRAIN_CONFIG_PATH = "configs/training_config.yaml"
 
-# Optional explicit checkpoint path. If None, uses model.resume_checkpoint from model config.
+# Optional explicit checkpoint path. If None, uses model.load_checkpoint then model.resume_checkpoint from model config.
 CHECKPOINT_PATH: str | None = None
 
 # "dataloader" or "random"
@@ -219,7 +219,17 @@ def resolve_checkpoint_path(ckpt_override: str | None, model_cfg: dict[str, Any]
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         return str(ckpt_path)
 
-    resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
+    model_section = model_cfg.get("model", {})
+    load_cfg = model_section.get("load_checkpoint", False)
+    if load_cfg not in (False, None):
+        ckpt_path = Path(str(load_cfg)).expanduser()
+        if not ckpt_path.is_file():
+            raise FileNotFoundError(
+                f"Checkpoint from config model.load_checkpoint not found: {ckpt_path}"
+            )
+        return str(ckpt_path)
+
+    resume_cfg = model_section.get("resume_checkpoint", False)
     if resume_cfg in (False, None):
         return None
     ckpt_path = Path(str(resume_cfg)).expanduser()

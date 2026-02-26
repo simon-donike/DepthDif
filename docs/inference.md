@@ -8,7 +8,7 @@ There are two practical inference workflows in this repository:
 
 ### What it supports
 - load config files and instantiate model/datamodule  
-- load checkpoint (explicit override or `model.resume_checkpoint`)  
+- load checkpoint (explicit override or `model.load_checkpoint` / `model.resume_checkpoint`)  
 - run from:  
   - dataloader sample (`MODE="dataloader"`)  
   - synthetic random batch (`MODE="random"`)  
@@ -19,7 +19,7 @@ At the top of `inference.py`, set:
 - `MODEL_CONFIG_PATH`  
 - `DATA_CONFIG_PATH`  
 - `TRAIN_CONFIG_PATH`  
-- `CHECKPOINT_PATH` (or keep `None` to use config resume path)  
+- `CHECKPOINT_PATH` (or keep `None` to use `model.load_checkpoint` then `model.resume_checkpoint`)  
 - `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`  
 
 ### Note on default paths

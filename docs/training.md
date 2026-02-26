@@ -44,7 +44,7 @@ Override example:
 ## What `train.py` Does During Startup
 1. Resolves distributed rank and creates a run directory under `logs/<timestamp>` on global rank 0.  
 2. Copies exact config files into the run directory for reproducibility.  
-3. Loads configs and validates `model.resume_checkpoint` early.  
+3. Loads configs and validates `model.resume_checkpoint` / `model.load_checkpoint` early.  
 4. Builds dataset and datamodule.  
 5. Instantiates `PixelDiffusionConditional.from_config(...)`.  
 6. Sets up W&B logger and callbacks.  
@@ -55,8 +55,10 @@ ModelCheckpoint behavior:
 - always saved: `last.ckpt`  
 - location: current run folder under `logs/`  
 
-Resume behavior:  
-- set `model.resume_checkpoint` to a valid `.ckpt` path  
+Resume and warm-start behavior:  
+- set `model.resume_checkpoint` to a valid `.ckpt` path to resume full Lightning state (model + optimizer/scheduler/trainer state)  
+- set `model.load_checkpoint` to a valid `.ckpt` path to load only model `state_dict` before training starts (optimizer/scheduler state is re-initialized)  
+- `model.resume_checkpoint` and `model.load_checkpoint` are mutually exclusive  
 - invalid path fails early before trainer start  
 
 ## Device, Precision, and Validation Controls

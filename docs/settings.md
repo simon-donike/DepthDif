@@ -162,6 +162,7 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 |---|---|---|
 | `model.model_type` | `"cond_px_dif"` | Model type (conditional diffusion). |
 | `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path resumes training. |
+| `model.load_checkpoint` | `false` | `false/null` disables warm start; checkpoint path loads model `state_dict` only (no Lightning optimizer/trainer resume). |
 | `model.generated_channels` | `3` | Number of predicted target channels. |
 | `model.condition_channels` | `5` | Condition channel count: EO + corrupted target + valid mask. |
 | `model.condition_mask_channels` | `1` | Number of valid-mask condition channels. |

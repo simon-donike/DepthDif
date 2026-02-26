@@ -28,7 +28,7 @@ DEVICE = "auto"
 SEED = 7
 CHECKPOINT_PATH: str | None = None
 # Optional explicit checkpoint override loaded right after model instantiation.
-# Set to None to fall back to model.resume_checkpoint from model config.
+# Set to None to fall back to model.load_checkpoint then model.resume_checkpoint from model config.
 CHECKPOINT_OVERRIDE_PATH: str | None = "logs/2026-02-25_12-32-00/last.ckpt"
 STRICT_LOAD = False
 OUTPUT_DIR = Path("temp/images")

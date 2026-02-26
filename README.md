@@ -58,6 +58,7 @@ Legacy same-source EO config: `configs/data.yaml`
 Notes:
 - `--train-config` and `--training-config` are equivalent.  
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.  
+- `model.resume_checkpoint` resumes full Lightning state; `model.load_checkpoint` warm-starts by loading only model weights.  
 
 ## Inference
 
