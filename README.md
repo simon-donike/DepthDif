@@ -22,13 +22,7 @@ DepthDif is a conditional diffusion project for densifying sparse ocean temperat
 This project uses Python 3.12.3.
 
 ```bash
-/work/envs/depth/bin/python -m pip install -r requirements.txt
-```
-
-For docs tooling:
-
-```bash
-/work/envs/depth/bin/python -m pip install -r docs/requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Model Overview
@@ -47,7 +41,7 @@ DepthDif is a conditional diffusion model: it reconstructs dense depth fields fr
 EO + multiband training:
 
 ```bash
-/work/envs/depth/bin/python train.py \
+python train.py \
   --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml
@@ -72,7 +66,7 @@ Use `inference.py`:
 3. Run:  
 
 ```bash
-/work/envs/depth/bin/python inference.py
+python inference.py
 ```
 
 ## Documentation

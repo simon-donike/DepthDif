@@ -68,30 +68,26 @@ Corruption uses track-style streaks with one kept measurement every few pixels a
 Same depth levels as Exp. 5. Good reconstruction, moving on.
 ![img](assets/97_5__streaks.png)
 
-## Experiment 8
+## Experiment 8 (Modality Ablation)
 This quick experiment is not directly related to the roadmap, but it is interesting to see the reliance of the model on the different modalities. The graph shows the two standard modality combinations that were present in all previous experiments (X + EO w/ potential dropout), and also removes the X to test the reliance on the date/coord. In theory, if the model would mindlessly reconstruct the spatio-temporal patterns, it would recreate a plausible structure from only that. Since this doesn't happen, it can be assumed that the model correctly relies on the input modalities. While it might be possible to make this an unconditional task, it might not be actually beneficial to the downstream task. (tbd)  
 ![img](assets/date_coord_only.png)
 
 
-## Experiment 9 (99% occlusion with 'streak' corruption)
-Same sparse track sampling as Exp. 7 (one kept measurement every few pixels along each path, random 2-8 pixel stride).
-... currently runninng...
-
-## Experiment 10: OSTIA Surface -> 3 Deeper Reanalysis Levels (first results)
-Setup:
+## Experiment 9: OSTIA Surface -> 3 Deeper Reanalysis Levels (first results)
+Setup:  
 - condition `eo`: OSTIA sea-surface temperature tiles (`analysed_sst`)  
 - `x`: sparse/corrupted deeper reanalysis channels  
 - `y`: clean deeper reanalysis channels  
 - overlap-only months where both depth and OSTIA are available  
-- continued from the previous Experiment 6 checkpoint, while keeping the same train/val separation  
+- continued from the previous Experiment 7 checkpoint, while keeping the same train/val separation  
 
-Observation:
+Observation:  
 - good reconstruction quality in the first OSTIA run  
 - no clear over-reliance on EO condition patterns  
 - reconstructions are closer to the actual target than to the EO map where EO and target differ  
 ![img](assets/ostia_exp1.png)
 
 ## Next Experiments (Roadmap)
-- Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test.  
-- Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation).  
-- Run the OSTIA cross-source conditioning experiment (`surface OSTIA -> deeper reanalysis`) and compare against the legacy same-source `eo_4band` setup.  
+- Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test ✅  
+- Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation) ✅  
+- Run the OSTIA cross-source conditioning experiment (`surface OSTIA -> deeper reanalysis`) and compare against the legacy same-source `eo_4band` setup ✅  
