@@ -77,24 +77,19 @@ This quick experiment is not directly related to the roadmap, but it is interest
 Same sparse track sampling as Exp. 7 (one kept measurement every few pixels along each path, random 2-8 pixel stride).
 ... currently runninng...
 
-## Experiment 10 (Next): OSTIA Surface -> 3 Deeper Reanalysis Levels
-Planned next run:
+## Experiment 10: OSTIA Surface -> 3 Deeper Reanalysis Levels (first results)
+Setup:
 - condition `eo`: OSTIA sea-surface temperature tiles (`analysed_sst`)  
 - `x`: sparse/corrupted deeper reanalysis channels  
 - `y`: clean deeper reanalysis channels  
 - overlap-only months where both depth and OSTIA are available  
+- continued from the previous Experiment 6 checkpoint, while keeping the same train/val separation  
 
-Temporal setup for this experiment:
-- depth source remains monthly reanalysis files (`YYYYMM`)  
-- EO source is the OSTIA mid-month timestamp (`YYYYMM15120000`) for each overlapping month  
-
-Dataset preview for this run:
-![img](assets/dataset_ostia.png)
-
-Hypothesis to test:
-- OSTIA surface is more turbulent than reanalysis surface composites.
-- Broad structures often align, but mismatch varies by region/time.
-- Divergence is expected to increase for deeper target levels.
+Observation:
+- good reconstruction quality in the first OSTIA run  
+- no clear over-reliance on EO condition patterns  
+- reconstructions are closer to the actual target than to the EO map where EO and target differ  
+![img](assets/ostia_exp1.png)
 
 ## Next Experiments (Roadmap)
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test.  

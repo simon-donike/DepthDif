@@ -87,25 +87,63 @@ When `include_date=true`:
 - the concatenated vector is passed through a small MLP (`coord_mlp`) to produce one joint conditioning embedding  
 
 ## FiLM Injection Mechanism
-Inside each `ConvNextBlock`:  
+### Exact Injection Path (Code)
+- embedding creation: `DenoisingDiffusionConditionalProcess._maybe_embed_coords(...)` in `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
+- U-Net call site: `DenoisingDiffusionConditionalProcess.forward(...)` and `p_loss(...)` pass `coord_emb` to `self.model(..., coord_emb=coord_emb)`  
+- injection site: `ConvNextBlock.forward(...)` in `models/difFF/DenoisingDiffusionProcess/backbones/unet_convnext.py`  
+
+### End-to-End Pseudocode (What Happens, In Order)
 ```python
-self.coord_mlp = nn.Sequential(nn.GELU(), nn.Linear(coord_emb_dim, dim * 2))
-scale_shift = self.coord_mlp(coord_emb)
-scale, shift = scale_shift.chunk(2, dim=1)
-h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
+# in DenoisingDiffusionConditionalProcess.forward(...) and p_loss(...)
+coord_emb = None
+if coord_conditioning_enabled:
+    # 1) Encode lat/lon -> encoded_coord (unit_sphere | sincos | raw)
+    encoded_coord = _encode_coords(coord)  # shape: (B, coord_feat_dim)
+
+    # 2) Optionally encode date and concatenate
+    if date_conditioning_enabled:
+        encoded_date = _encode_date(date)  # shape: (B, 2) for day_of_year_sincos
+        encoded_coord = concat(encoded_coord, encoded_date, dim=1)
+
+    # 3) Project to one shared conditioning vector used by all blocks
+    #    coord_mlp: Linear(enc_dim -> 4*E) -> GELU -> Linear(4*E -> E)
+    coord_emb = coord_mlp(encoded_coord)  # shape: (B, E)
+
+# reverse/training pass
+prediction = unet(model_input, t, coord_emb=coord_emb)
 ```
 
-Interpretation:  
-- date and coordinate features are not injected separately; they first become one joint embedding (`coord_emb`) and are applied together in the same FiLM transform  
-- per-sample, per-channel scale and shift.  
-- values are broadcast across spatial dimensions.  
-- `1 + scale` keeps identity behavior easy (`scale=0`, `shift=0` -> no change).  
+```python
+# in UnetConvNextBlock.forward(...)
+t_emb = time_mlp(t)  # diffusion-step embedding (if enabled)
 
-## Interaction With Time Conditioning. 
-Time embedding and coordinate conditioning are complementary:  
-- time embedding is additive per channel  
-- coordinate/date conditioning is scale-and-shift per channel  
+# pass the same coord_emb to every ConvNext block in down, mid, up, and final block
+for each ConvNextBlock in model:
+    x = block(x, time_emb=t_emb, coord_emb=coord_emb)
+```
 
-So each block receives:  
-- diffusion-step context from timestep embeddings  
-- geophysical context from location/date embeddings  
+```python
+# in ConvNextBlock.forward(...)
+h = depthwise_conv7x7(x)
+
+if time_emb is available:
+    # additive timestep conditioning
+    h = h + time_mlp_block(time_emb)[:, :, None, None]
+
+if coord_emb is available:
+    # FiLM parameters from shared coord/date embedding
+    # block-specific coord_mlp: GELU -> Linear(E -> 2*C)
+    scale_shift = coord_mlp_block(coord_emb)      # shape: (B, 2*C)
+    scale, shift = split(scale_shift, 2, dim=1)   # each: (B, C)
+    h = h * (1 + scale[:, :, None, None]) + shift[:, :, None, None]
+
+# then regular ConvNeXt transform + residual
+h = convnext_subnet(h)
+out = h + residual_projection(x)
+```
+
+### What This Means Practically
+- coord/date are fused once into a single `coord_emb`, then reused everywhere in the U-Net  
+- FiLM is applied per sample and per channel, with spatial broadcasting over `H x W`  
+- injection is multiplicative + additive (`1 + scale`, `shift`), so near-zero FiLM output behaves close to identity  
+- timestep context and geo/date context are both active in each conditioned block, but with different operations (additive time, FiLM coord/date)  
