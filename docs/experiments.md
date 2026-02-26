@@ -64,9 +64,15 @@ Same depth levels as Exp. 5. Good reconstruction, moving on.
 ![img](assets/97_5p.png)
 
 ## Experiment 7 (97.5% occlusion with 'streak' corruption)
-... currently runninng...
+Same depth levels as Exp. 5. Good reconstruction, moving on.
+![img](assets/97_5__streaks.png)
 
-## Experiment 7 (99% occlusion with 'streak' corruption)
+## Experiment 8
+This quick experiment is not directly related to the roadmap, but it is interesting to see the reliance of the model on the different modalities. The graph shows the two standard modality combinations that were present in all previous experiments (X + EO w/ potential dropout), and also removes the X to test the reliance on the date/coord. In theory, if the model would mindlessly reconstruct the spatio-temporal patterns, it would recreate a plausible structure from only that. Since this doesn't happen, it can be assumed that the model correctly relies on the input modalities. While it might be possible to make this an unconditional task, it might not be actually beneficial to the downstream task. (tbd)  
+![img](assets/date_coord_only.png)
+
+
+## Experiment 9 (99% occlusion with 'streak' corruption)
 ... currently runninng...
 
 ## Next Experiments (Roadmap)

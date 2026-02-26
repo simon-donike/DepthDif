@@ -8,6 +8,7 @@ import yaml
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
+from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
 
 # ----------------------------
@@ -70,6 +71,8 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
     )
     if variant is None:
         stem = Path(data_config_path).stem.lower()
+        if "ostia" in stem:
+            return "ostia"
         if "4band" in stem or "eo" in stem:
             return "eo_4band"
         return "eo_4band"
@@ -98,7 +101,7 @@ def ds_cfg_value(
 
 def build_dataset(
     data_config_path: str, ds_cfg: dict[str, Any]
-) -> SurfaceTempPatch4BandsLightDataset:
+) -> torch.utils.data.Dataset:
     """Build and return dataset.
 
     Args:
@@ -106,13 +109,15 @@ def build_dataset(
         ds_cfg (dict[str, Any]): Configuration dictionary or section.
 
     Returns:
-        SurfaceTempPatch4BandsLightDataset: Computed output value.
+        torch.utils.data.Dataset: Computed output value.
     """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
         return SurfaceTempPatch4BandsLightDataset.from_config(data_config_path, split="all")
+    if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
+        return SurfaceTempPatchOstiaLightDataset.from_config(data_config_path, split="all")
     raise ValueError(
-        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band']."
+        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band', 'ostia']."
     )
 
 

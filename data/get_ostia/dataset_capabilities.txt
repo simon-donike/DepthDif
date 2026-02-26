@@ -1,0 +1,493 @@
+{
+  "products": [
+    {
+      "title": "Global Ocean OSTIA Sea Surface Temperature and Sea Ice Analysis",
+      "product_id": "SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001",
+      "thumbnail_url": "https://mdl-metadata.s3.waw3-1.cloudferro.com/metadata/thumbnails/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001.jpg",
+      "description": "For the Global Ocean- the OSTIA global foundation Sea Surface Temperature product provides daily gap-free maps of: Foundation Sea Surface Temperature at 0.05° x 0.05° horizontal grid resolution, using in-situ and satellite data from both infrared and microwave radiometers. \n\nThe Operational Sea Surface Temperature and Ice Analysis (OSTIA) system is run by the UK's Met Office. OSTIA uses satellite data provided by the GHRSST project together with in-situ observations to determine the sea surface temperature.\nA high resolution (1/20° - approx. 6 km) daily analysis of sea surface temperature (SST) is produced for the global ocean and some lakes. \n\n**DOI (product):**   \nhttps://doi.org/10.48670/moi-00165\n\n**References:**\n\n* Good, S.; Fiedler, E.; Mao, C.; Martin, M.J.; Maycock, A.; Reid, R.; Roberts-Jones, J.; Searle, T.; Waters, J.; While, J.; Worsfold, M. The Current Configuration of the OSTIA System for Operational Production of Foundation Sea Surface Temperature and Ice Concentration Analyses. Remote Sens. 2020, 12, 720. doi: 10.3390/rs12040720\n* Donlon, C.J., Martin, M., Stark, J., Roberts-Jones, J., Fiedler, E., and Wimmer, W., 2012, The Operational Sea Surface Temperature and Sea Ice Analysis (OSTIA) system. Remote Sensing of the Environment. doi: 10.1016/j.rse.2010.10.017 2011.\n* John D. Stark, Craig J. Donlon, Matthew J. Martin and Michael E. McCulloch, 2007, OSTIA : An operational, high resolution, real time, global sea surface temperature analysis system., Oceans 07 IEEE Aberdeen, conference proceedings. Marine challenges: coastline to deep sea. Aberdeen, Scotland.IEEE.\n",
+      "digital_object_identifier": "10.48670/moi-00165",
+      "sources": [
+        "Satellite observations"
+      ],
+      "processing_level": "Level 4",
+      "production_center": "Met Office (UK)",
+      "keywords": [
+        "target-application#seaiceforecastingapplication",
+        "oceanographic-geographical-features",
+        "satellite-observation",
+        "sea-ice-area-fraction",
+        "sea-surface-temperature",
+        "near-real-time",
+        "coastal-marine-environment",
+        "marine-resources",
+        "marine-safety",
+        "weather-climate-and-seasonal-forecasting",
+        "global-ocean",
+        "level-4"
+      ],
+      "datasets": [
+        {
+          "dataset_id": "METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2",
+          "dataset_name": "Global SST & Sea Ice Analysis, L4 OSTIA, 0.05 deg daily (METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2)",
+          "digital_object_identifier": "10.48670/moi-00165",
+          "versions": [
+            {
+              "label": "default",
+              "parts": [
+                {
+                  "name": "default",
+                  "services": [
+                    {
+                      "service_name": "original-files",
+                      "service_short_name": "files",
+                      "uri": "https://s3.waw3-1.cloudferro.com/mdl-native-06/native/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2",
+                      "variables": [
+                        {
+                          "short_name": "analysed_sst",
+                          "standard_name": "sea_surface_foundation_temperature",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "analysis_error",
+                          "standard_name": "sea_surface_foundation_temperature standard_error",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "mask",
+                          "units": "",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "sea_ice_fraction",
+                          "standard_name": "sea_ice_area_fraction",
+                          "units": "1",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        }
+                      ]
+                    },
+                    {
+                      "service_name": "wmts",
+                      "service_short_name": "wmts",
+                      "uri": "https://wmts.marine.copernicus.eu/teroWmts/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2?service=WMTS&request=GetCapabilities",
+                      "variables": [
+                        {
+                          "short_name": "analysed_sst",
+                          "standard_name": "sea_surface_foundation_temperature",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "analysis_error",
+                          "standard_name": "sea_surface_foundation_temperature standard_error",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "mask",
+                          "units": "",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        },
+                        {
+                          "short_name": "sea_ice_fraction",
+                          "standard_name": "sea_ice_area_fraction",
+                          "units": "1",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": []
+                        }
+                      ]
+                    },
+                    {
+                      "service_name": "arco-geo-series",
+                      "service_short_name": "geoseries",
+                      "service_format": "zarr",
+                      "uri": "https://s3.waw3-1.cloudferro.com/mdl-arco-time-045/arco/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2/timeChunked.zarr",
+                      "variables": [
+                        {
+                          "short_name": "analysed_sst",
+                          "standard_name": "sea_surface_foundation_temperature",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 1024,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 1024,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "analysis_error",
+                          "standard_name": "sea_surface_foundation_temperature standard_error",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 1024,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 1024,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "mask",
+                          "units": "",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 1024,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 1024,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "sea_ice_fraction",
+                          "standard_name": "sea_ice_area_fraction",
+                          "units": "1",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 1024,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 1024,
+                              "axis": "x"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "service_name": "arco-time-series",
+                      "service_short_name": "timeseries",
+                      "service_format": "zarr",
+                      "uri": "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-045/arco/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2/geoChunked.zarr",
+                      "variables": [
+                        {
+                          "short_name": "analysed_sst",
+                          "standard_name": "sea_surface_foundation_temperature",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1245,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 16,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 32,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "analysis_error",
+                          "standard_name": "sea_surface_foundation_temperature standard_error",
+                          "units": "kelvin",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1245,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 16,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 32,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "mask",
+                          "units": "",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1245,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 16,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 32,
+                              "axis": "x"
+                            }
+                          ]
+                        },
+                        {
+                          "short_name": "sea_ice_fraction",
+                          "standard_name": "sea_ice_area_fraction",
+                          "units": "1",
+                          "bbox": [
+                            -179.97500610351562,
+                            -89.9749984741211,
+                            179.97500610351562,
+                            89.9749984741211
+                          ],
+                          "coordinates": [
+                            {
+                              "coordinate_id": "time",
+                              "coordinate_unit": "milliseconds since 1970-01-01 00:00:00Z (no leap seconds)",
+                              "minimum_value": 1705449600000.0,
+                              "maximum_value": 1771977600000.0,
+                              "step": 86400000.0,
+                              "chunking_length": 1245,
+                              "axis": "t"
+                            },
+                            {
+                              "coordinate_id": "latitude",
+                              "coordinate_unit": "degrees_north",
+                              "minimum_value": -89.9749984741211,
+                              "maximum_value": 89.9749984741211,
+                              "step": 0.049999999152053956,
+                              "chunking_length": 16,
+                              "axis": "y"
+                            },
+                            {
+                              "coordinate_id": "longitude",
+                              "coordinate_unit": "degrees_east",
+                              "minimum_value": -179.97500610351562,
+                              "maximum_value": 179.97500610351562,
+                              "step": 0.050000001695656514,
+                              "chunking_length": 32,
+                              "axis": "x"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "arco_updated_date": "2026-02-26T06:58:35.151Z",
+                  "url_metadata": "https://s3.waw3-1.cloudferro.com/mdl-metadata/metadata/SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2/dataset.stac.json"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

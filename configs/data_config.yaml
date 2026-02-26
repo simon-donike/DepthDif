@@ -1,11 +1,11 @@
 dataset:
   core:
-    dataset_variant: "eo_4band" # Selects SurfaceTempPatch4BandsLightDataset in train.py.
+    dataset_variant: "ostia" # Options: "eo_4band" (legacy EO from band-0 in y_npy) or "ostia" (EO from OSTIA tiles).
     dataloader_type: "light" # "raw" (NetCDF on-the-fly) or "light" (CSV + saved y_npy patches).
   source:
     #root_dir: "/data1/datasets/depth/monthy/" # Directory containing source .nc files.
     #index_path: "data/patch_index.parquet" # Cached tile index path (.parquet or .csv).
-    light_index_csv: "/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv" # Used when dataloader_type="light".
+    light_index_csv: "/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv" # For "ostia": use OSTIA overlap CSV in /work/data/depth/4_bands_v2 (with sibling ostia_npy/). For "eo_4band": use patch_index_with_paths_split.csv.
     bands: ["thetao"] # Variables/bands to extract and write when exporting patches to disk (order is preserved).
     edge_size: 128 # Patch size (pixels) for each tile, also used as stride (non-overlapping tiles).
   validity:

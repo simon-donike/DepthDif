@@ -21,7 +21,7 @@ For EO + 3 deeper-band training, the 4-band layout is expected as:
 - channels 1..3: deeper temperature target bands  
 
 ## Implemented Dataset
-Current training uses `eo_4band`.
+Current configs support `eo_4band` and `ostia`.
 
 ### `eo_4band` (EO-conditioned multiband)
 `SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:  
@@ -32,6 +32,9 @@ Current training uses `eo_4band`.
 - `land_mask`: per-channel land/ocean mask  
 - `date`: parsed integer date (`YYYYMMDD`)  
 - optional: `coords`, `info`  
+
+### `ostia` (OSTIA-conditioned multiband)
+`SurfaceTempPatchOstiaLightDataset` (`data/dataset_ostia.py`) keeps the same output contract as `eo_4band`, but loads `eo` from `ostia_npy_path` in the overlap CSV produced by `data/get_ostia/overlap_ostia_depth.py`.
 
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)

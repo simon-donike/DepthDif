@@ -131,9 +131,9 @@ Dataset settings are grouped by intent (`core`, `source`, `validity`, `degradati
 
 | Config key | Default value | Explanation |
 |---|---|---|
-| `dataset.core.dataset_variant` | `"eo_4band"` | Selects `SurfaceTempPatch4BandsLightDataset` in `train.py`. |
+| `dataset.core.dataset_variant` | `"ostia"` | Selects dataset in `train.py` (`"eo_4band"` -> `SurfaceTempPatch4BandsLightDataset`, `"ostia"` -> `SurfaceTempPatchOstiaLightDataset`). |
 | `dataset.core.dataloader_type` | `"light"` | `"raw"` loads NetCDF on-the-fly, `"light"` uses CSV + saved patch paths. |
-| `dataset.source.light_index_csv` | `"/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv"` | Index CSV used when `dataloader_type="light"`. |
+| `dataset.source.light_index_csv` | `"/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv"` | Index CSV used when `dataloader_type="light"` (`"eo_4band"`: depth index, `"ostia"`: overlap index with `ostia_npy_path`). |
 | `dataset.source.bands` | `["thetao"]` | Variables/bands to extract and write (order preserved). |
 | `dataset.source.edge_size` | `128` | Patch size in pixels; also used as stride for non-overlapping tiles. |
 | `dataset.validity.max_nodata_fraction` | `0.15` | Maximum invalid/nodata ratio per tile when validity filtering is enabled. |
