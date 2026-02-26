@@ -1,6 +1,8 @@
 site_name: DepthDif
 site_description: Densifying sparse ocean depth observations with conditional diffusion.
 repo_name: DepthDif
+repo_url: https://github.com/simon-donike/DepthDif
+edit_uri: edit/main/docs/
 
 docs_dir: docs
 
@@ -14,10 +16,17 @@ theme:
     - navigation.expand
     - navigation.top
     - toc.integrate
+    - content.action.edit
+    - content.action.view
   palette:
     scheme: slate
     primary: blue
     accent: light blue
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/simon-donike/DepthDif
 
 extra_css:
   - stylesheets/extra.css
