@@ -24,7 +24,8 @@ At the top of `inference.py`, set:
 
 ### Note on default paths
 The script constants should be set explicitly. In this repository, the actively used configs are:
-- EO setup: `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`  
+- EO/OSTIA setup: `configs/model_config.yaml`, `configs/data_ostia.yaml`, `configs/training_config.yaml`  
+- legacy same-source EO setup: swap to `configs/data.yaml`  
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry point is:  
@@ -52,7 +53,7 @@ Common optional keys:
 - `x0_denoise_samples`: per-step x0 predictions (if requested)  
 - `sampler`: sampler used for prediction  
 
-## Example (EO config)
+## Example (`eo_4band` config)
 ```python
 import torch
 
@@ -61,7 +62,7 @@ from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from models.difFF import PixelDiffusionConditional
 
 model_config = "configs/model_config.yaml"
-data_config = "configs/data_config.yaml"
+data_config = "configs/data_ostia.yaml"
 train_config = "configs/training_config.yaml"
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"
 
@@ -88,6 +89,8 @@ with torch.no_grad():
 y_hat = pred["y_hat"]
 y_hat_denorm = pred["y_hat_denorm"]
 ```
+
+For `dataset_variant="ostia"`, use `SurfaceTempPatchOstiaLightDataset` instead and point `data_config.dataset.source.light_index_csv` to the OSTIA overlap CSV with `ostia_npy_path`.
 
 ## Sampler Choice
 Validation/inference sampler can be switched via training config:

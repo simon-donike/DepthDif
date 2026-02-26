@@ -15,7 +15,7 @@ from models.difFF import PixelDiffusionConditional
 # In-script settings
 # ----------------------------
 MODEL_CONFIG_PATH = "configs/model_config.yaml"
-DATA_CONFIG_PATH = "configs/data_config.yaml"
+DATA_CONFIG_PATH = "configs/data_ostia.yaml"
 TRAIN_CONFIG_PATH = "configs/training_config.yaml"
 
 # Optional explicit checkpoint path. If None, uses model.resume_checkpoint from model config.

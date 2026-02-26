@@ -6,10 +6,12 @@ Use explicit config paths to avoid ambiguity:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config.yaml \
+  --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml
 ```
+
+For legacy same-source EO (`eo_4band`), use `--data-config configs/data.yaml`.
 
 CLI aliases:  
 - `--train-config` and `--training-config` are equivalent  
@@ -20,7 +22,7 @@ Override example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config.yaml \
+  --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml \
   --set data.dataset.degradation.mask_fraction=0.99 \
@@ -34,6 +36,8 @@ Override example:
   - `dataset.core.dataloader_type: "light"`  
   - `model.model_type: "cond_px_dif"`  
 - dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)  
+- for `dataset_variant="ostia"`, set `dataset.source.light_index_csv` to the overlap index (with `ostia_npy_path`) and ensure sibling `ostia_npy/` tiles exist  
+- `SurfaceTempPatchOstiaLightDataset` does not apply EO degradation (no EO dropout/random-scale/speckle)  
 - EO dropout from data config is injected into dataset object for both train and val  
 - parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended  
 

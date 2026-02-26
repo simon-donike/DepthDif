@@ -1,10 +1,12 @@
 # Data Source
-DepthDif uses Copernicus Marine monthly ocean reanalysis as its raw input source for the current synthetic data experiments.
+DepthDif now uses two raw upstream sources:
+- Copernicus Marine monthly reanalysis for sub-surface temperatures (targets and sparse inputs)
+- OSTIA L4 SST for sea-surface EO conditioning
 
 Use this page for raw-source provenance and download details. See [Synthetic Dataset](data.md) for project-specific preprocessing and transformations.
 
 
-## Product
+## Product A: Sub-Surface Reanalysis (Copernicus)
 - Provider: Copernicus Marine Service  
 - Product family: Global Ocean Physics Reanalysis  
 - Dataset used in this project: `global-reanalysis-001-030-monthly`  
@@ -18,7 +20,18 @@ Reference dataset link:
 Example CLI from this project:
 `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*YYYY/*"`
 
-## Data Contents (`data/data_info.txt`)
+## Product B: Surface EO SST (OSTIA)
+- Provider: Copernicus Marine Service / UKMO OSTIA stream  
+- Dataset used in this project: `SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001`  
+- Files used here: monthly folders containing one selected file at `YYYYMM15120000`  
+- Variable used for conditioning: `analysed_sst` (sea-surface temperature)
+
+Temporal note for current OSTIA overlap workflow:
+- previous depth workflow was monthly reanalysis composites
+- EO now comes from OSTIA mid-month snapshots (15th day at 12:00 UTC), not monthly mean composites
+- overlap dataset keeps only months where both sources are available
+
+## Data Contents (`data/data_info.txt`, Reanalysis Sample)
 The raw source file contains the following data variables (NetCDF variables):
 
 | Variable | Dimensions | Description | Units |
@@ -35,7 +48,7 @@ The raw source file contains the following data variables (NetCDF variables):
 | `uo` | `(time, depth, latitude, longitude)` | Eastward velocity | `m s-1` |
 | `vo` | `(time, depth, latitude, longitude)` | Northward velocity | `m s-1` |
 
-## Core Input Axes
+## Core Input Axes (Reanalysis Product)
 - `time`: monthly timestamp (single monthly slice per file in the inspected sample)  
 - `latitude`: from `-80` to `90`  
 - `longitude`: from `-180` to `179.9167`  

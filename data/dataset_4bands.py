@@ -159,7 +159,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
     @classmethod
     def from_config(
         cls,
-        config_path: str = "configs/data_config.yaml",
+        config_path: str = "configs/data.yaml",
         *,
         split: str = "all",
     ) -> "SurfaceTempPatch4BandsLightDataset":
@@ -749,7 +749,7 @@ class SurfaceTempPatch4BandsLightDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = SurfaceTempPatch4BandsLightDataset.from_config(
-        "configs/data_config.yaml"
+        "configs/data.yaml"
     )
     dataset._plot_example_image()
 

@@ -73,6 +73,7 @@ Pipeline:
 
 Dataset date parsing convention:  
 - monthly source names (`YYYYMM`) are converted to mid-month (`YYYYMM15`)  
+- in the OSTIA overlap setup, depth files still provide `source_file` while OSTIA timestamps are stored separately (`ostia_timestamp_utc`), so model date conditioning remains mid-month aligned
 
 This plot shows all 365 day-of-year embeddings as points in the sin/cos plane. Each day maps to one point on the unit circle, which makes the representation periodic and year-wrap safe.  
 

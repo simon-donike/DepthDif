@@ -16,14 +16,16 @@ Use this page for the shortest path from setup to first train/inference run.
 ```
 
 ## Quick Training
-EO-conditioned multiband training:  
+EO-conditioned multiband training (`eo_4band` or `ostia`, depending on `dataset.core.dataset_variant`):  
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config.yaml \
+  --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml
 ```
+
+Legacy same-source EO setup: use `--data-config configs/data.yaml`.
 
 ## Quick Inference
 Set config/checkpoint constants at the top of `inference.py`, then run:  
@@ -34,5 +36,5 @@ Set config/checkpoint constants at the top of `inference.py`, then run:
 
 For EO multiband runs, use:
 - `MODEL_CONFIG_PATH = "configs/model_config.yaml"`  
-- `DATA_CONFIG_PATH = "configs/data_config.yaml"`  
+- `DATA_CONFIG_PATH = "configs/data_ostia.yaml"`  
 - `TRAIN_CONFIG_PATH = "configs/training_config.yaml"`  

@@ -18,7 +18,7 @@ command:
   - /work/envs/depth/bin/python
   - train.py
   - --data-config
-  - configs/data_config.yaml
+  - configs/data.yaml
   - --train-config
   - configs/training_config.yaml
   - --model-config

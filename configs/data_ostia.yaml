@@ -1,11 +1,11 @@
 dataset:
   core:
-    dataset_variant: "ostia" # Compatibility alias config; prefer configs/data_ostia.yaml for OSTIA runs.
+    dataset_variant: "ostia" # Selects SurfaceTempPatchOstiaLightDataset in train.py.
     dataloader_type: "light" # "raw" (NetCDF on-the-fly) or "light" (CSV + saved y_npy patches).
   source:
     #root_dir: "/data1/datasets/depth/monthy/" # Directory containing source .nc files.
     #index_path: "data/patch_index.parquet" # Cached tile index path (.parquet or .csv).
-    light_index_csv: "/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv" # For "ostia": use OSTIA overlap CSV in /work/data/depth/4_bands_v2 (with sibling ostia_npy/). For "eo_4band": use patch_index_with_paths_split.csv.
+    light_index_csv: "/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv" # Overlap CSV with original depth metadata plus ostia_npy_path.
     bands: ["thetao"] # Variables/bands to extract and write when exporting patches to disk (order is preserved).
     edge_size: 128 # Patch size (pixels) for each tile, also used as stride (non-overlapping tiles).
   validity:
@@ -19,7 +19,7 @@ dataset:
     mask_patch_min: 2 # Minimum rectangle patch side length for legacy "rectangles" strategy (pixels).
     mask_patch_max: 5 # Maximum rectangle patch side length for legacy "rectangles" strategy (pixels).
   conditioning:
-    eo_dropout_prob: 0.0 # OSTIA dataset keeps EO undegraded; keep this at zero.
+    eo_dropout_prob: 0.0 # OSTIA dataset keeps EO undegraded; this is kept at zero.
     eo_random_scale_enabled: false # OSTIA dataset keeps EO undegraded.
     eo_speckle_noise_enabled: false # OSTIA dataset keeps EO undegraded.
   augmentation:

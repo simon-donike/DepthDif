@@ -48,10 +48,12 @@ EO + multiband training:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_config.yaml \
+  --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml
 ```
+
+Legacy same-source EO config: `configs/data.yaml`  
 
 Notes:
 - `--train-config` and `--training-config` are equivalent.  
@@ -63,7 +65,8 @@ Use `inference.py`:
 
 1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:
-   `configs/model_config.yaml`, `configs/data_config.yaml`, `configs/training_config.yaml`.
+   `configs/model_config.yaml`, `configs/data_ostia.yaml`, `configs/training_config.yaml`  
+   (legacy same-source EO uses `configs/data.yaml`).
 2. Choose `MODE` (`"dataloader"` or `"random"`).  
 3. Run:  
 

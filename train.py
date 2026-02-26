@@ -349,7 +349,7 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
 
 def main(
     model_config_path: str = "configs/model_config.yaml",
-    data_config_path: str = "configs/data_config.yaml",
+    data_config_path: str = "configs/data.yaml",
     training_config_path: str = "configs/training_config.yaml",
     overrides: list[str] | None = None,
 ) -> None:
@@ -579,7 +579,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",
-        default="configs/data_config.yaml",
+        default="configs/data.yaml",
         help="Path to data config yaml.",
     )
     parser.add_argument(
@@ -623,7 +623,7 @@ if __name__ == "__main__":
 """
 # Training quick start (single command):
 python train.py --model-config configs/model_config.yaml \
-    --data-config configs/data_config.yaml \
+    --data-config configs/data.yaml \
     --training-config configs/training_config.yaml
 
 # Sweep quick start (single command):

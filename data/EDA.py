@@ -164,7 +164,7 @@ def main() -> None:
     parser.add_argument(
         "--data-config",
         type=str,
-        default="configs/data_config.yaml",
+        default="configs/data.yaml",
         help="Path to data config yaml (used when --nc-path is omitted).",
     )
     args = parser.parse_args()

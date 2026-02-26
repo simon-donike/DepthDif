@@ -81,8 +81,9 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
         self.valid_from_fill_value = bool(valid_from_fill_value)
-        self.eo_random_scale_enabled = bool(eo_random_scale_enabled)
-        self.eo_speckle_noise_enabled = bool(eo_speckle_noise_enabled)
+        # OSTIA setup keeps EO conditioning physically faithful: no EO-side degradation.
+        self.eo_random_scale_enabled = False
+        self.eo_speckle_noise_enabled = False
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
         self.eo_dropout_prob = 0.0
@@ -160,7 +161,7 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
     @classmethod
     def from_config(
         cls,
-        config_path: str = "configs/data_config.yaml",
+        config_path: str = "configs/data_ostia.yaml",
         *,
         split: str = "all",
     ) -> "SurfaceTempPatchOstiaLightDataset":
@@ -347,27 +348,14 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
         eo = torch.from_numpy(eo_np)
         y = torch.from_numpy(y_np)
         land_mask = torch.from_numpy(land_mask_np)
-        if eo.shape[-2:] != y.shape[-2:]:
-            # OSTIA and depth can differ in native grid size; resize EO for channel-aligned batching.
-            eo = F.interpolate(
-                eo.unsqueeze(0),
-                size=(int(y.shape[-2]), int(y.shape[-1])),
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(0)
+        # Always align OSTIA EO to the exact target grid before further processing.
+        eo = F.interpolate(
+            eo.unsqueeze(0),
+            size=(int(y.shape[-2]), int(y.shape[-1])),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)
         
-        # Add random scale or speckle noise
-        if self.eo_random_scale_enabled:
-            deg_offset = 2.0 # offset in degrees
-            offset = torch.empty((), device=eo.device, dtype=eo.dtype).uniform_(-deg_offset, deg_offset)
-            eo = eo + offset
-        if self.eo_speckle_noise_enabled:
-            noise_std = 0.01  # 1% local variation            
-            eps = torch.randn_like(eo)
-            multiplier = 1.0 + noise_std * eps
-            multiplier = multiplier.clamp(0.9, 1.1)  # allow at most ±10% scaling
-            eo = eo * multiplier
-            
         # Normalize inputs
         eo = temperature_normalize(mode="norm", tensor=eo)
         y = temperature_normalize(mode="norm", tensor=y)
@@ -426,10 +414,6 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
-        # Random dropout of EO conditioning for ablation/testing (after all other processing to keep it simple).
-        if self.eo_dropout_prob > 0.0 and bool(torch.rand(()) < self.eo_dropout_prob):
-            eo = torch.zeros_like(eo)
-
         date = self._parse_date_yyyymmdd(row.get("source_file"))
 
         sample: dict[str, Any] = {
@@ -721,7 +705,6 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
             x_t = sample["x"]
             y_t = sample["y"]
             valid_mask_t = sample["valid_mask"]
-            land_mask_t = sample["land_mask"]
 
             eo = temperature_normalize(mode="denorm", tensor=eo_t)
             x = temperature_normalize(mode="denorm", tensor=x_t)
@@ -731,11 +714,10 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
 
             num_bands = int(x.shape[0])
             fig, axes = plt.subplots(
-                num_bands, 5, figsize=(17, 4 * num_bands), squeeze=False
+                num_bands, 4, figsize=(14, 4 * num_bands), squeeze=False
             )
             for band_idx in range(num_bands):
                 mask_band = valid_mask_t[band_idx]
-                land_band = land_mask_t[band_idx]
                 x_img = minmax_stretch(
                     x[band_idx], mask=mask_band, nodata_value=None
                 ).numpy()
@@ -743,25 +725,20 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
                     y[band_idx], mask=mask_band, nodata_value=None
                 ).numpy()
 
-                axes[band_idx, 0].imshow(eo_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[band_idx, 1].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[band_idx, 2].imshow(y_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[band_idx, 3].imshow(
-                    mask_band.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0
-                )
-                axes[band_idx, 4].imshow(
-                    land_band.cpu().numpy(), cmap="gray", vmin=0.0, vmax=1.0
-                )
+                # Requested display order: Input X, EO, X, Y.
+                axes[band_idx, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 1].imshow(eo_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 2].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 3].imshow(y_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
 
                 if band_idx == 0:
-                    axes[band_idx, 0].set_title("EO (band 0)")
-                    axes[band_idx, 1].set_title("Input x")
-                    axes[band_idx, 2].set_title("Target y")
-                    axes[band_idx, 3].set_title("Valid mask")
-                    axes[band_idx, 4].set_title("Land mask")
+                    axes[band_idx, 0].set_title("Input X")
+                    axes[band_idx, 1].set_title("EO (OSTIA Surface Temp)")
+                    axes[band_idx, 2].set_title("X")
+                    axes[band_idx, 3].set_title("Y")
                 axes[band_idx, 0].set_ylabel(f"Band {band_idx + 1}")
 
-                for col in range(5):
+                for col in range(4):
                     axes[band_idx, col].set_axis_off()
             plt.tight_layout()
             plt.savefig("temp/example_depth_tile_ostia.png")
@@ -772,7 +749,7 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
 
 if __name__ == "__main__":
     dataset = SurfaceTempPatchOstiaLightDataset.from_config(
-        "configs/data_config.yaml"
+        "configs/data_ostia.yaml"
     )
     dataset._plot_example_image()
 

@@ -75,6 +75,18 @@ This quick experiment is not directly related to the roadmap, but it is interest
 ## Experiment 9 (99% occlusion with 'streak' corruption)
 ... currently runninng...
 
+## Experiment 10 (Next): OSTIA Surface -> 3 Deeper Reanalysis Levels
+Planned next run:
+- condition `eo`: OSTIA sea-surface temperature tiles (`analysed_sst`)  
+- `x`: sparse/corrupted deeper reanalysis channels  
+- `y`: clean deeper reanalysis channels  
+- overlap-only months where both depth and OSTIA are available  
+
+Temporal setup for this experiment:
+- depth source remains monthly reanalysis files (`YYYYMM`)  
+- EO source is the OSTIA mid-month timestamp (`YYYYMM15120000`) for each overlapping month  
+
 ## Next Experiments (Roadmap)
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test.  
 - Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation).  
+- Run the OSTIA cross-source conditioning experiment (`surface OSTIA -> deeper reanalysis`) and compare against the legacy same-source `eo_4band` setup.  

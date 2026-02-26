@@ -447,7 +447,7 @@ def to_disk(
 
 
 
-def _load_config(config_path: str = "configs/data_config.yaml") -> dict[str, Any]:
+def _load_config(config_path: str = "configs/data.yaml") -> dict[str, Any]:
     """Load and return config data.
 
     Args:
@@ -481,7 +481,7 @@ def _ds_cfg_value(
 
 
 if __name__ == "__main__":
-    cfg = _load_config("configs/data_config.yaml")
+    cfg = _load_config("configs/data.yaml")
     ds_cfg = cfg.get("dataset", {})
 
     csv_path = to_disk(

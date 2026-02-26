@@ -236,7 +236,7 @@ class PixelDiffusionConditional(pl.LightningModule):
     def from_config(
         cls,
         model_config_path: str = "configs/model_config.yaml",
-        data_config_path: str = "configs/data_config.yaml",
+        data_config_path: str = "configs/data.yaml",
         training_config_path: str = "configs/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
