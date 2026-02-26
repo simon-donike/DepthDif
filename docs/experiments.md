@@ -86,6 +86,14 @@ Temporal setup for this experiment:
 - depth source remains monthly reanalysis files (`YYYYMM`)  
 - EO source is the OSTIA mid-month timestamp (`YYYYMM15120000`) for each overlapping month  
 
+Dataset preview for this run:
+![img](assets/dataset_ostia.png)
+
+Hypothesis to test:
+- OSTIA surface is more turbulent than reanalysis surface composites.
+- Broad structures often align, but mismatch varies by region/time.
+- Divergence is expected to increase for deeper target levels.
+
 ## Next Experiments (Roadmap)
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test.  
 - Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation).  

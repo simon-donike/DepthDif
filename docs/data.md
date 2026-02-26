@@ -48,6 +48,9 @@ Temporal resolution/alignment note:
 - OSTIA overlap uses one mid-month product timestamp (`YYYYMM15 12:00:00 UTC`) per month
 - compared to prior monthly composite-only workflow, EO is now a fixed 15th-day snapshot for each overlapping month
 
+Visual reference of the OSTIA-conditioned dataset:
+![img](assets/dataset_ostia.png)
+
 ## Implemented Dataset
 Current configs support `eo_4band` and `ostia`.
 - `configs/data.yaml`: legacy same-source `eo_4band`
@@ -71,6 +74,11 @@ Important behavior:
 - model targets remain the deeper three channels (`1..3`)
 - OSTIA EO is loaded as condition and interpolated to the exact spatial resolution of `x`/`y` per sample
 - EO normalization and geometric transforms follow the same pipeline; EO degradation is disabled for OSTIA (`no dropout`, `no random scale`, `no speckle`)
+
+Cross-source structure notes (OSTIA surface vs reanalysis depth):
+- OSTIA sea surface appears visibly more turbulent and less smooth than the reanalysis-derived surface channel used in legacy `eo_4band`.
+- Large-scale spatial structures and fronts are often similar between sources, but agreement is not exact and varies by region/time.
+- Divergence between OSTIA surface patterns and deeper reanalysis targets generally increases with depth, so correspondence weakens for deeper levels.
 
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)

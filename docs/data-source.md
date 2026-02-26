@@ -26,6 +26,9 @@ Example CLI from this project:
 - Files used here: monthly folders containing one selected file at `YYYYMM15120000`  
 - Variable used for conditioning: `analysed_sst` (sea-surface temperature)
 
+OSTIA dataset sample used in this project:
+![img](assets/dataset_ostia.png)
+
 Temporal note for current OSTIA overlap workflow:
 - previous depth workflow was monthly reanalysis composites
 - EO now comes from OSTIA mid-month snapshots (15th day at 12:00 UTC), not monthly mean composites

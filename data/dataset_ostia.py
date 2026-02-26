@@ -714,7 +714,7 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
 
             num_bands = int(x.shape[0])
             fig, axes = plt.subplots(
-                num_bands, 4, figsize=(14, 4 * num_bands), squeeze=False
+                num_bands, 3, figsize=(11, 4 * num_bands), squeeze=False
             )
             for band_idx in range(num_bands):
                 mask_band = valid_mask_t[band_idx]
@@ -725,20 +725,18 @@ class SurfaceTempPatchOstiaLightDataset(Dataset):
                     y[band_idx], mask=mask_band, nodata_value=None
                 ).numpy()
 
-                # Requested display order: Input X, EO, X, Y.
+                # Requested display order with one X only: Input X, EO, Y.
                 axes[band_idx, 0].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
                 axes[band_idx, 1].imshow(eo_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[band_idx, 2].imshow(x_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
-                axes[band_idx, 3].imshow(y_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
+                axes[band_idx, 2].imshow(y_img, cmap=PLOT_CMAP, vmin=0.0, vmax=1.0)
 
                 if band_idx == 0:
                     axes[band_idx, 0].set_title("Input X")
                     axes[band_idx, 1].set_title("EO (OSTIA Surface Temp)")
-                    axes[band_idx, 2].set_title("X")
-                    axes[band_idx, 3].set_title("Y")
+                    axes[band_idx, 2].set_title("Y")
                 axes[band_idx, 0].set_ylabel(f"Band {band_idx + 1}")
 
-                for col in range(4):
+                for col in range(3):
                     axes[band_idx, col].set_axis_off()
             plt.tight_layout()
             plt.savefig("temp/example_depth_tile_ostia.png")
@@ -768,12 +766,12 @@ if __name__ == "__main__":
     print(f"Coords: {sample.get('coords', 'N/A')}")
 
     # testing images
-    if False:
+    if True:
         import time
 
         for i in range(5):
             dataset._plot_example_image()
-            time.sleep(4)
+            time.sleep(15)
 
     # looking at values
     if False:
