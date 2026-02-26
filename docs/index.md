@@ -10,7 +10,7 @@ The repository currently supports:
 - cross-source conditioning where EO surface SST can come from OSTIA while deeper targets remain Copernicus reanalysis  
 
 ## Model Description
-DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement, adding streaks until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
 In the OSTIA setup, EO surface conditioning comes from mid-month OSTIA SST snapshots (15th, 12:00 UTC), while subsurface targets remain monthly Copernicus reanalysis.
 ![depthdif_schema](assets/depthdif_schema.png)
 

@@ -143,7 +143,7 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 | `dataset.validity.valid_from_fill_value` | `true` | In light mode, infer valid mask from standardized fill value. |
 | `dataset.validity.enforce_validity` | `true` | Drops indexed tiles with too much nodata using `max_nodata_fraction`. |
 | `dataset.degradation.mask_fraction` | `0.975` | Fraction of pixels hidden in `x`; streak generation continues until this corruption target is reached. |
-| `dataset.degradation.mask_strategy` | `"tracks"` | Corruption strategy (`"tracks"` = continuous curved submarine-like streaks, `"rectangles"` = legacy fallback). |
+| `dataset.degradation.mask_strategy` | `"tracks"` | Corruption strategy (`"tracks"` = curved submarine-like paths where the current dataset version keeps one measurement every few pixels via a random 2-8 pixel stride, `"rectangles"` = legacy fallback). |
 | `dataset.degradation.mask_patch_min` | `2` | Minimum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
 | `dataset.degradation.mask_patch_max` | `5` | Maximum rectangle patch side length (pixels) for legacy `mask_strategy="rectangles"`. |
 | `dataset.conditioning.eo_dropout_prob` | `0.0` | In `data_ostia.yaml`, kept at `0.0`; OSTIA dataset keeps EO undegraded in code. |

@@ -64,6 +64,7 @@ Same depth levels as Exp. 5. Good reconstruction, moving on.
 ![img](assets/97_5p.png)
 
 ## Experiment 7 (97.5% occlusion with 'streak' corruption)
+Corruption uses track-style streaks with one kept measurement every few pixels along each path (random 2-8 pixel stride).
 Same depth levels as Exp. 5. Good reconstruction, moving on.
 ![img](assets/97_5__streaks.png)
 
@@ -73,6 +74,7 @@ This quick experiment is not directly related to the roadmap, but it is interest
 
 
 ## Experiment 9 (99% occlusion with 'streak' corruption)
+Same sparse track sampling as Exp. 7 (one kept measurement every few pixels along each path, random 2-8 pixel stride).
 ... currently runninng...
 
 ## Experiment 10 (Next): OSTIA Surface -> 3 Deeper Reanalysis Levels

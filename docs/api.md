@@ -17,6 +17,12 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 ### `data.dataset_4bands`
 ::: data.dataset_4bands
 
+### `data.dataset_ostia`
+::: data.dataset_ostia
+
+### `data.dataset_utils`
+::: data.dataset_utils
+
 ### `data.dataset_to_disk`
 ::: data.dataset_to_disk
 

@@ -97,6 +97,7 @@ The dataset creates sparse `x` using stochastic trajectory-style corruption:
 - target hidden coverage is controlled by `mask_fraction`  
 - each track is built in flattened 1D index space and rasterized back to 2D  
 - each line starts from a random location and is extended as a continuous curved streak  
+- in the current dataset version, observations along each track are sparsified to one point every few pixels (random 2-8 pixel stride)  
 - when a line reaches the edge, a new line starts from another random location  
 - new streaks are added in a loop until the configured corruption percentage is reached  
 - implementation target: observed-line budget reaches `(1 - mask_fraction)` of pixels, then hidden area is the complement  
