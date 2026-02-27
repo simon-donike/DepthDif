@@ -87,7 +87,11 @@ Observation:
 - reconstructions are closer to the actual target than to the EO map where EO and target differ  
 ![img](assets/ostia_exp1.png)
 
+It doesn't seem possible to train the model on the OSTIA data from scratch, presumably due to the very few samples (~2k).  
+![img](assets/ostia_scratch.png)
+
 ## Next Experiments (Roadmap)
+- DL daily reanalysis and OSTIA data to have a larger corpus
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test ✅  
 - Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation) ✅  
 - Run the OSTIA cross-source conditioning experiment (`surface OSTIA -> deeper reanalysis`) and compare against the legacy same-source `eo_4band` setup ✅  
