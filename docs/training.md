@@ -17,6 +17,7 @@ CLI aliases:
 - `--train-config` and `--training-config` are equivalent  
 - `--model-config` also accepts the typo alias `--mdoel-config`  
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)  
+- because `configs/model_config.yaml` itself is nested under top-level `model:`, model overrides must use `model.model.*` (example below)
 
 Override example:  
 
@@ -38,8 +39,9 @@ Ambient-occlusion objective example (paper-faithful):
   --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.1
+  --set model.model.ambient_occlusion.enabled=true \
+  --set model.model.ambient_occlusion.further_drop_prob=0.1 \
+  --set training.wandb.run_name=ambient_synth_v1
 ```
 
 When enabled, training logs:
@@ -51,6 +53,7 @@ When enabled, training logs:
 See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full derivation, figure walkthrough, and paper citation.
 
 Note: turning `model.ambient_occlusion.enabled` back to `false` does not switch to full-image loss. With `model.mask_loss_with_valid_pixels=true`, loss falls back to missing pixels (`1 - valid_mask`).
+For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enabled=false`.
 
 ## Important Config Notes
 - `train.py` currently supports only:  

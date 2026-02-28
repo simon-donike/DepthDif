@@ -59,8 +59,9 @@ python train.py \
   --data-config configs/data_ostia.yaml \
   --train-config configs/training_config.yaml \
   --model-config configs/model_config.yaml \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.1
+  --set model.model.ambient_occlusion.enabled=true \
+  --set model.model.ambient_occlusion.further_drop_prob=0.1 \
+  --set training.wandb.run_name=ambient_synth_v1
 ```
 
 Notes:
