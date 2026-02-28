@@ -106,6 +106,15 @@ Observation:
 - held-out sparse targets are recovered well while global structure stays coherent  
 ![img](assets/sparse_targets.png)
 
+### Experiment 10.2 (Continuation on OSTIA -> Reanalysis)
+Setup:  
+- continued training on the OSTIA -> reanalysis dataset  
+- initialized from the previous checkpoint (no restart from scratch)  
+
+Observation:  
+- continuation on OSTIA -> reanalysis also works with the sparse-target setup  
+![img](assets/ostia_sparse.png)
+
 ## Next Experiments (Roadmap)
 - DL daily reanalysis and OSTIA data to have a larger corpus
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test ✅  
