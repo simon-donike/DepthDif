@@ -10,6 +10,7 @@ wandb/
 *.parquet
 site/
 site/*
+docs/assets/ambient_diffusion.pdf
 
 # AI
 AGENTS.md
