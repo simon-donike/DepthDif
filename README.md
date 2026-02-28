@@ -1,3 +1,6 @@
+# Deprecated
+The branch is depricated in favor of the "ambient" branch
+
 <p align="center">
   <img src="docs/assets/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
 </p>
