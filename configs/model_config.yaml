@@ -12,7 +12,7 @@ model: # Model Settings
   mask_loss_with_valid_pixels: true # If true, loss is computed over missing pixels (1-valid_mask), with optional land/ocean gating.
   training_objective:
     mode: "x_holdout_sparse" # "standard" keeps y-supervision; "x_holdout_sparse" hides holdout_fraction of observed x and supervises only those held-out pixels.
-    holdout_fraction: 0.15 # Fraction of observed x pixels held out from condition input in x_holdout_sparse mode.
+    holdout_fraction: 0.2 # Fraction of observed x pixels held out from condition input in x_holdout_sparse mode.
     deterministic_val_mask: true # If true, validation holdout masks are deterministic per sample (from date/coords).
     dump_val_reconstruction:
       enabled: false # If true, writes full per-step validation reconstruction images to output_dir.

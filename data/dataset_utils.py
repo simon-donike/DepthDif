@@ -431,12 +431,15 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         # Optional X-only sparse objective: hide a subset of already observed x pixels and
         # expose that subset as the masked-loss supervision region.
         loss_mask: torch.Tensor | None = None
+        x_supervision_target: torch.Tensor | None = None
         objective_mode = self._normalize_training_objective_mode(
             str(self.training_objective_mode)
         )
         if objective_mode == "x_holdout_sparse":
             holdout_fraction = float(np.clip(self.training_objective_holdout_fraction, 0.0, 1.0))
             self.training_objective_holdout_fraction = holdout_fraction
+            # Keep the pre-holdout sparse observation tensor as supervision target.
+            x_supervision_target = y_corrupt.clone()
             loss_mask = self._build_x_holdout_loss_mask(
                 valid_mask, sample_idx=int(idx)
             )
@@ -451,6 +454,10 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        if x_supervision_target is not None:
+            x_supervision_target = torch.nan_to_num(
+                x_supervision_target, nan=0.0, posinf=0.0, neginf=0.0
+            )
         if loss_mask is not None:
             loss_mask = torch.nan_to_num(
                 loss_mask, nan=0.0, posinf=0.0, neginf=0.0
@@ -472,6 +479,8 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         }
         if loss_mask is not None:
             sample["loss_mask"] = loss_mask
+        if x_supervision_target is not None:
+            sample["x_supervision_target"] = x_supervision_target
         if self.return_coords:
             lat0 = float(row["lat0"])
             lat1 = float(row["lat1"])

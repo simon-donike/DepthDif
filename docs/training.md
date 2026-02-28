@@ -50,7 +50,7 @@ Sparse X-only objective override example (`eo_4band` only):
 - for `dataset_variant="ostia"`, set `dataset.source.light_index_csv` to the overlap index (with `ostia_npy_path`) and ensure sibling `ostia_npy/` tiles exist  
 - `SurfaceTempPatchOstiaLightDataset` does not apply EO degradation (no EO dropout/random-scale/speckle)  
 - EO dropout from data config is injected into dataset object for both train and val  
-- `model.training_objective.mode="x_holdout_sparse"` keeps EO conditioning and trains against held-out observed `x` pixels only (no `y` required for the loss path); dataset returns `batch["loss_mask"]` for supervision
+- `model.training_objective.mode="x_holdout_sparse"` keeps EO conditioning and trains against held-out observed `x` pixels only (no `y` required for the loss path); dataset returns `batch["loss_mask"]` + `batch["x_supervision_target"]`
 - `x_holdout_sparse` currently targets non-OSTIA `eo_4band`; unsupported variants fall back to `standard` objective with a warning
 - with current shared dataset object, `training_objective.deterministic_val_mask=true` makes dataset-side holdout masks deterministic for both train and val
 - Epoch-end validation reconstruction logging to W&B includes `x`, `eo`, reconstruction, `y`, context valid mask, and the sparse loss mask panel

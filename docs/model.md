@@ -56,9 +56,10 @@ Loss options:
 
 `x_holdout_sparse` objective (non-OSTIA `eo_4band`):
 - starts from observed `x` pixels (`valid_mask=1`)
-- dataset applies holdout (`training_objective.holdout_fraction`, default `0.15`) and returns `loss_mask`
+- dataset applies holdout (`training_objective.holdout_fraction`, default `0.15`) and returns:
+  `loss_mask` (where loss is reduced) + `x_supervision_target` (pre-holdout sparse target)
 - keeps EO conditioning unchanged
-- uses original observed `x` as pseudo-target
+- uses dataset-provided `x_supervision_target` as pseudo-target (not zeroed holdout context)
 - computes loss only on held-out pixels via an explicit `supervision_mask`
 - does not require `y` in this objective path
 

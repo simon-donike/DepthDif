@@ -1129,7 +1129,11 @@ class PixelDiffusionConditional(pl.LightningModule):
                 raise RuntimeError(
                     "x_holdout_sparse requires batch['loss_mask'] from dataset."
                 )
-            target = x
+            target = batch.get("x_supervision_target")
+            if target is None:
+                raise RuntimeError(
+                    "x_holdout_sparse requires batch['x_supervision_target'] from dataset."
+                )
             x_context = x
             valid_mask_context = valid_mask
             mask_loss = True

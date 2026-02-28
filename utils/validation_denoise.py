@@ -673,17 +673,29 @@ def log_wandb_conditional_reconstruction_grid(
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=land_band)
+                # Stretch sparse X using observed pixels only; otherwise broad ocean
+                # masking can hide sparse observations by collapsing contrast.
+                x_plot_mask = land_band
+                if valid_band is not None and land_band is not None:
+                    x_plot_mask = (
+                        (valid_band > 0.5) & (land_band > 0.5)
+                    ).to(dtype=land_band.dtype)
+                elif valid_band is not None:
+                    x_plot_mask = (valid_band > 0.5).to(dtype=valid_band.dtype)
+
+                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=x_plot_mask)
                 y_hat_img = _plot_band_image(
                     y_hat, i, band_idx=band_idx, mask=land_band
                 )
                 y_target_img = _plot_band_image(
                     y_target, i, band_idx=band_idx, mask=land_band
                 )
+                obs_count = None
                 if valid_band is not None:
                     # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
                     valid_np = valid_band.detach().cpu().numpy() > 0.5
                     x_img[~valid_np] = 0.0
+                    obs_count = int(valid_np.sum())
                 if land_band is not None:
                     # Zero land pixels right before rendering full reconstruction panels.
                     ocean_np = land_band.detach().cpu().numpy() > 0.5
@@ -696,6 +708,18 @@ def log_wandb_conditional_reconstruction_grid(
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
                     axes[row_idx, col].set_title("Input")
+                if obs_count is not None:
+                    axes[row_idx, col].text(
+                        0.02,
+                        0.98,
+                        f"obs={obs_count}",
+                        transform=axes[row_idx, col].transAxes,
+                        ha="left",
+                        va="top",
+                        color="white",
+                        fontsize=8,
+                        bbox=dict(facecolor="black", alpha=0.45, edgecolor="none", pad=1.5),
+                    )
                 col += 1
 
                 if eo is not None:
