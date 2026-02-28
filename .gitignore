@@ -10,6 +10,8 @@ wandb/
 *.parquet
 site/
 site/*
+ambient_diffusion.pdf
+docs/assets/ambient_diffusion.pdf
 docs/assets/ambient_diffusion.pdf
 
 # AI

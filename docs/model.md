@@ -53,9 +53,18 @@ Loss options:
 - unmasked MSE (default behavior when masking disabled)  
 - masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`  
 
+Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):  
+- sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)  
+- feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask  
+- optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)  
+- compute masked MSE on the originally observed subset (`A`, not `~A`)  
+- detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
+
 Current EO config (`configs/model_config.yaml`) uses:
 - `parameterization: "x0"`  
 - `mask_loss_with_valid_pixels: true`  
+
+This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`), not over the full `y` image.
 
 ## Inference Flow
 Prediction entry point is `predict_step`.

@@ -172,6 +172,12 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 | `model.mask_loss_with_valid_pixels` | `true` | Computes loss on missing pixels (`1-valid_mask`) with optional gating. |
 | `model.parameterization` | `"x0"` | Diffusion training target (`"epsilon"` or `"x0"`). |
 | `model.log_intermediates` | `true` | Default validation intermediate logging behavior. |
+| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise on original observed pixels). |
+| `model.ambient_occlusion.further_drop_prob` | `0.1` | Additional drop probability `delta` applied on already observed pixels during training. |
+| `model.ambient_occlusion.apply_to_noisy_branch` | `true` | Applies the further mask to the noisy target branch in `p_loss` (`~A x_t`). |
+| `model.ambient_occlusion.shared_spatial_mask` | `true` | Uses one spatial further-mask per sample and shares it across channels. |
+| `model.ambient_occlusion.min_kept_observed_pixels` | `1` | Guarantees a minimum number of observed pixels kept after further corruption. |
+| `model.ambient_occlusion.require_x0_parameterization` | `true` | Enforces `model.parameterization == "x0"` when ambient objective is enabled. |
 | `model.post_process.gaussian_blur.enabled` | `false` | Enables final denormalized Gaussian blur post-process. |
 | `model.post_process.gaussian_blur.sigma` | `0.5` | Gaussian blur sigma in pixels. |
 | `model.post_process.gaussian_blur.kernel_size` | `3` | Blur kernel size; even values are adjusted to odd. |
@@ -185,6 +191,8 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 | `model.unet.with_time_emb` | `true` | Enables timestep embeddings in denoiser. |
 | `model.unet.output_mean_scale` | `false` | Optional output mean correction for diffusion variants. |
 | `model.unet.residual` | `false` | If enabled, predicts residual added to input. |
+
+Detailed objective math, implementation mapping, visualization, and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md).
 
 ### `configs/training_config.yaml`
 | Config key | Default value | Explanation |

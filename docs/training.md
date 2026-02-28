@@ -31,6 +31,27 @@ Override example:
   --set training.wandb.run_name=null
 ```
 
+Ambient-occlusion objective example (paper-faithful):  
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config configs/data_ostia.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml \
+  --set model.ambient_occlusion.enabled=true \
+  --set model.ambient_occlusion.further_drop_prob=0.1
+```
+
+When enabled, training logs:
+- `train/ambient_further_drop_fraction`
+- `train/ambient_observed_fraction_original`
+- `train/ambient_observed_fraction_further`
+- same metrics under `val/*` on validation epochs
+
+See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full derivation, figure walkthrough, and paper citation.
+
+Note: turning `model.ambient_occlusion.enabled` back to `false` does not switch to full-image loss. With `model.mask_loss_with_valid_pixels=true`, loss falls back to missing pixels (`1 - valid_mask`).
+
 ## Important Config Notes
 - `train.py` currently supports only:  
   - `dataset.core.dataloader_type: "light"`  

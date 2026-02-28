@@ -90,6 +90,31 @@ Observation:
 It doesn't seem possible to train the model on the OSTIA data from scratch, presumably due to the very few samples (~2k).  
 ![img](assets/ostia_scratch.png)
 
+## Experiment 10 (Sparse-target supervision with EO + degradation)
+Setup:  
+- condition `x`: sparse/degraded observations (track-style corruption)  
+- condition `eo`: always available, with the same EO degradation pipeline as previous runs  
+- target supervision: only a held-out subset of observed `x` pixels (sparse target), while reconstructing the full field  
+
+How sparse target works in this experiment:  
+- start from valid observed `x` pixels  
+- randomly hide a fraction of those observed pixels from model input  
+- compute loss only on the hidden subset (not on the full image)  
+
+Observation:  
+- reconstruction quality remains strong on the synthetic setup with EO + degradation  
+- held-out sparse targets are recovered well while global structure stays coherent  
+![img](assets/sparse_targets.png)
+
+### Experiment 10.2 (Continuation on OSTIA -> Reanalysis)
+Setup:  
+- continued training on the OSTIA -> reanalysis dataset  
+- initialized from the previous checkpoint (no restart from scratch)  
+
+Observation:  
+- continuation on OSTIA -> reanalysis also works with the sparse-target setup  
+![img](assets/ostia_sparse.png)
+
 ## Next Experiments (Roadmap)
 - Sparse Targets for Reanalysis data (from scratch & from pretrained)
 - 99 or more perc. occlusion rates for OSTIA - do that later since it requires data download and handling
