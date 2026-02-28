@@ -184,16 +184,3 @@ The old setup primarily asked the model to reconstruct hidden regions given fixe
 
 The new setup introduces random context removal during training while preserving supervision on the original observed support. This makes the learning problem closer to the ambient objective: robustly estimate clean content under stochastic measurement degradation, not only under one fixed missingness pattern per sample.
 
-## Citation
-
-If you use this objective adaptation, please cite:
-
-```bibtex
-@article{daras2023ambient,
-  title={Ambient Diffusion: Learning Clean Distributions from Corrupted Data},
-  author={Daras, Giannis and Shah, Kulin and Dagan, Yuval and Gollakota, Aravind and Dimakis, Alexandros G. and Klivans, Adam},
-  journal={arXiv preprint arXiv:2305.19256},
-  year={2023},
-  url={https://arxiv.org/abs/2305.19256}
-}
-```
