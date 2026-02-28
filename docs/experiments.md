@@ -91,6 +91,8 @@ It doesn't seem possible to train the model on the OSTIA data from scratch, pres
 ![img](assets/ostia_scratch.png)
 
 ## Next Experiments (Roadmap)
+- Sparse Targets for Reanalysis data (from scratch & from pretrained)
+- 99 or more perc. occlusion rates for OSTIA - do that later since it requires data download and handling
 - DL daily reanalysis and OSTIA data to have a larger corpus
 - Crank sparse corruption to `mask_fraction=0.99` in EO multiband runs as the next baseline stress test ✅  
 - Add more realistic corruption trajectories by replacing/augmenting random rectangles with "walk"-style masks that trace a path across each patch (submarine-like motion simulation) ✅  
