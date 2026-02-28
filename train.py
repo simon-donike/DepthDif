@@ -534,10 +534,13 @@ def main(
             "eo_4band",
             "4band_eo",
             "4bands",
+            "ostia",
+            "ostia_4band",
+            "4band_ostia",
         }:
             warnings.warn(
                 "model.training_objective.mode='x_holdout_sparse' is only supported "
-                "for non-OSTIA eo_4band datasets. Falling back to 'standard'.",
+                "for eo_4band/ostia dataset variants. Falling back to 'standard'.",
                 stacklevel=2,
             )
             objective_mode = "standard"

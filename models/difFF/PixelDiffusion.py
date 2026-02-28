@@ -33,7 +33,14 @@ class PixelDiffusionConditional(pl.LightningModule):
     # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
     """Lightning module that trains and samples conditional pixel diffusion."""
     _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
-    _SUPPORTED_X_HOLDOUT_VARIANTS: tuple[str, ...] = ("eo_4band", "4band_eo", "4bands")
+    _SUPPORTED_X_HOLDOUT_VARIANTS: tuple[str, ...] = (
+        "eo_4band",
+        "4band_eo",
+        "4bands",
+        "ostia",
+        "ostia_4band",
+        "4band_ostia",
+    )
 
     def __init__(
         self,
@@ -242,7 +249,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         ):
             warnings.warn(
                 "model.training_objective.mode='x_holdout_sparse' is only supported "
-                "for non-OSTIA eo_4band datasets. Falling back to 'standard'.",
+                "for eo_4band/ostia dataset variants. Falling back to 'standard'.",
                 stacklevel=2,
             )
             self.training_objective_mode = "standard"

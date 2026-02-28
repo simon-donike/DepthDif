@@ -54,7 +54,7 @@ Loss options:
 - masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`  
 - explicit supervision-mask MSE (used by `training_objective.mode="x_holdout_sparse"`)
 
-`x_holdout_sparse` objective (non-OSTIA `eo_4band`):
+`x_holdout_sparse` objective (`eo_4band` and `ostia`):
 - starts from observed `x` pixels (`valid_mask=1`)
 - dataset applies holdout (`training_objective.holdout_fraction`, default `0.15`) and returns:
   `loss_mask` (where loss is reduced) + `x_supervision_target` (pre-holdout sparse target)

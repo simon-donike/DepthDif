@@ -53,7 +53,7 @@ Notes:
 - `--train-config` and `--training-config` are equivalent.  
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.  
 - `model.resume_checkpoint` resumes full Lightning state; `model.load_checkpoint` warm-starts by loading only model weights.  
-- Sparse X-only objective toggle (non-OSTIA `eo_4band`):
+- Sparse X-only objective toggle (`eo_4band` and `ostia`):
   `--set model.training_objective.mode=x_holdout_sparse --set model.training_objective.holdout_fraction=0.15`
 - Epoch-end validation reconstruction is logged to W&B with input, EO, reconstruction, target `y`, context valid mask, and sparse loss mask panels.
 
