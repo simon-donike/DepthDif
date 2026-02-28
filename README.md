@@ -34,6 +34,9 @@ python -m pip install -r requirements.txt
 
 DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.
 
+Ambient-occlusion training (paper-faithful objective for occluded tasks) is available via `model.ambient_occlusion.*`: the model receives a further-corrupted mask/input during training while loss is evaluated on the originally observed pixels.
+See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
+
 ![depthdif_schema](docs/assets/depthdif_schema.png)
 
 ## Training
@@ -48,6 +51,17 @@ python train.py \
 ```
 
 Legacy same-source EO config: `configs/data.yaml`  
+
+Ambient-occlusion objective example:
+
+```bash
+python train.py \
+  --data-config configs/data_ostia.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml \
+  --set model.ambient_occlusion.enabled=true \
+  --set model.ambient_occlusion.further_drop_prob=0.1
+```
 
 Notes:
 - `--train-config` and `--training-config` are equivalent.  

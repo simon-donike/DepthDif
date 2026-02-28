@@ -12,6 +12,13 @@ model: # Model Settings
   mask_loss_with_valid_pixels: true # If true, loss is computed over missing pixels (1-valid_mask), with optional land/ocean gating.
   parameterization: "x0" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
+  ambient_occlusion:
+    enabled: false # Enables ambient-diffusion style objective for occlusion tasks.
+    further_drop_prob: 0.1 # Additional drop probability delta applied to already observed pixels.
+    apply_to_noisy_branch: true # If true, applies the further mask to the noisy target branch (~A x_t).
+    shared_spatial_mask: true # If true, samples one spatial further-mask per sample and shares it across channels.
+    min_kept_observed_pixels: 1 # Guarantees at least this many originally-observed pixels remain after further corruption.
+    require_x0_parameterization: true # If true, ambient objective requires model.parameterization == "x0".
   post_process:
     gaussian_blur:
       enabled: false # If true, apply a small Gaussian blur to denormalized predictions at final post-process.

@@ -556,24 +556,34 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
     @staticmethod
     def _build_valid_mask(
-        valid_mask: torch.Tensor | None, reference: torch.Tensor
+        valid_mask: torch.Tensor | None,
+        reference: torch.Tensor,
+        *,
+        mode: str,
     ) -> torch.Tensor | None:
         """Helper that computes build valid mask.
 
         Args:
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             reference (torch.Tensor): Tensor input for the computation.
+            mode (str): Input value.
 
         Returns:
             torch.Tensor | None: Tensor output produced by this call.
         """
         if valid_mask is None:
             return None
+        if mode not in {"missing", "observed"}:
+            raise ValueError(
+                "mode must be one of {'missing', 'observed'} "
+                f"(got '{mode}')."
+            )
         mask = (valid_mask > 0.5).float()
         mask = DenoisingDiffusionConditionalProcess._align_mask_to_reference(
             mask, reference, mask_name="valid_mask"
         )
-        mask = 1.0 - mask  # now 1 = missing
+        if mode == "missing":
+            mask = 1.0 - mask
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
@@ -605,8 +615,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         condition: torch.Tensor,
         *,
         valid_mask: torch.Tensor | None = None,
+        further_valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
+        apply_further_corruption_to_noisy_branch: bool = False,
+        loss_mask_mode: str = "missing",
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -616,8 +629,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             output (torch.Tensor): Tensor input for the computation.
             condition (torch.Tensor): Tensor input for the computation.
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            further_valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
+            apply_further_corruption_to_noisy_branch (bool): Boolean flag controlling behavior.
+            loss_mask_mode (str): Input value.
             coord (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
 
@@ -635,6 +651,13 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             0, self.forward_process.num_timesteps, (b,), device=device
         ).long()
         output_noisy, noise = self.forward_process(output, t, return_noise=True)
+        if apply_further_corruption_to_noisy_branch:
+            further_mask = self._build_valid_mask(
+                further_valid_mask, output_noisy, mode="observed"
+            )
+            if further_mask is not None:
+                # Ambient objective: feed the denoiser a further-corrupted noisy sample (~A x_t).
+                output_noisy = output_noisy * further_mask
 
         # reverse pass
         model_input = torch.cat([output_noisy, condition], 1).to(device)
@@ -645,8 +668,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         # apply loss
         if not mask_loss:
             return self.loss_fn(target, prediction)
+        if loss_mask_mode not in {"missing", "observed", "none"}:
+            raise ValueError(
+                "loss_mask_mode must be one of {'missing', 'observed', 'none'} "
+                f"(got '{loss_mask_mode}')."
+            )
+        if loss_mask_mode == "none":
+            return self.loss_fn(target, prediction)
 
-        generated_mask = self._build_valid_mask(valid_mask, target)
+        generated_mask = self._build_valid_mask(
+            valid_mask, target, mode=loss_mask_mode
+        )
         if generated_mask is None:
             return self.loss_fn(target, prediction)
         ocean_mask = self._build_land_mask(land_mask, target)

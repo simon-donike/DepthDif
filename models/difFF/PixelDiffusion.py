@@ -75,6 +75,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         val_ddim_num_timesteps: int = 200,
         val_ddim_eta: float = 0.0,
         log_intermediates: bool = True,
+        ambient_occlusion_enabled: bool = False,
+        ambient_further_drop_prob: float = 0.1,
+        ambient_apply_to_noisy_branch: bool = True,
+        ambient_shared_spatial_mask: bool = True,
+        ambient_min_kept_observed_pixels: int = 1,
+        ambient_require_x0_parameterization: bool = True,
         skip_full_reconstruction_in_sanity_check: bool = True,
         max_full_reconstruction_samples: int = 4,
         postprocess_gaussian_blur_enabled: bool = False,
@@ -129,6 +135,12 @@ class PixelDiffusionConditional(pl.LightningModule):
             val_ddim_num_timesteps (int): Input value.
             val_ddim_eta (float): Input value.
             log_intermediates (bool): Boolean flag controlling behavior.
+            ambient_occlusion_enabled (bool): Boolean flag controlling behavior.
+            ambient_further_drop_prob (float): Input value.
+            ambient_apply_to_noisy_branch (bool): Boolean flag controlling behavior.
+            ambient_shared_spatial_mask (bool): Boolean flag controlling behavior.
+            ambient_min_kept_observed_pixels (int): Input value.
+            ambient_require_x0_parameterization (bool): Boolean flag controlling behavior.
             skip_full_reconstruction_in_sanity_check (bool): Boolean flag controlling behavior.
             max_full_reconstruction_samples (int): Input value.
             postprocess_gaussian_blur_enabled (bool): Boolean flag controlling behavior.
@@ -168,6 +180,18 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
         self.val_ddim_eta = float(val_ddim_eta)
         self.log_intermediates = bool(log_intermediates)
+        self.ambient_occlusion_enabled = bool(ambient_occlusion_enabled)
+        self.ambient_further_drop_prob = float(ambient_further_drop_prob)
+        if not 0.0 <= self.ambient_further_drop_prob <= 1.0:
+            raise ValueError("ambient_further_drop_prob must be in [0.0, 1.0].")
+        self.ambient_apply_to_noisy_branch = bool(ambient_apply_to_noisy_branch)
+        self.ambient_shared_spatial_mask = bool(ambient_shared_spatial_mask)
+        self.ambient_min_kept_observed_pixels = max(
+            0, int(ambient_min_kept_observed_pixels)
+        )
+        self.ambient_require_x0_parameterization = bool(
+            ambient_require_x0_parameterization
+        )
         self.skip_full_reconstruction_in_sanity_check = bool(
             skip_full_reconstruction_in_sanity_check
         )
@@ -214,6 +238,15 @@ class PixelDiffusionConditional(pl.LightningModule):
             date_encoding=date_encoding,
             coord_embed_dim=coord_embed_dim,
         )
+        if (
+            self.ambient_occlusion_enabled
+            and self.ambient_require_x0_parameterization
+            and str(getattr(self.model, "parameterization", "epsilon")) != "x0"
+        ):
+            raise ValueError(
+                "ambient_occlusion.enabled=true requires model.parameterization='x0' "
+                "when ambient_occlusion.require_x0_parameterization=true."
+            )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
         # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords, date)
@@ -268,6 +301,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         warmup_cfg = scheduler_cfg.get("warmup", {})
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
+        ambient_cfg = m.get("ambient_occlusion", {})
         postprocess_cfg = m.get("post_process", m.get("post-process", {}))
         gaussian_blur_cfg = postprocess_cfg.get("gaussian_blur", {})
         unet_kwargs = cls._parse_unet_config(m)
@@ -327,6 +361,20 @@ class PixelDiffusionConditional(pl.LightningModule):
                 val_sampling_cfg.get(
                     "log_intermediates", m.get("log_intermediates", True)
                 )
+            ),
+            ambient_occlusion_enabled=bool(ambient_cfg.get("enabled", False)),
+            ambient_further_drop_prob=float(ambient_cfg.get("further_drop_prob", 0.1)),
+            ambient_apply_to_noisy_branch=bool(
+                ambient_cfg.get("apply_to_noisy_branch", True)
+            ),
+            ambient_shared_spatial_mask=bool(
+                ambient_cfg.get("shared_spatial_mask", True)
+            ),
+            ambient_min_kept_observed_pixels=int(
+                ambient_cfg.get("min_kept_observed_pixels", 1)
+            ),
+            ambient_require_x0_parameterization=bool(
+                ambient_cfg.get("require_x0_parameterization", True)
             ),
             skip_full_reconstruction_in_sanity_check=bool(
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
@@ -796,6 +844,91 @@ class PixelDiffusionConditional(pl.LightningModule):
             f"(mask={int(mask.size(1))}, expected={int(self.condition_mask_channels)})."
         )
 
+    @staticmethod
+    def _align_valid_mask_to_reference(
+        valid_mask: torch.Tensor,
+        reference: torch.Tensor,
+        *,
+        mask_name: str,
+    ) -> torch.Tensor:
+        """Align a validity mask to the shape/channels of a reference tensor."""
+        mask = valid_mask
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim != 4:
+            raise RuntimeError(f"{mask_name} must be shaped as (B,C,H,W) or (B,H,W).")
+        if int(mask.size(0)) != int(reference.size(0)):
+            raise RuntimeError(f"{mask_name} batch size does not match reference batch size.")
+        if int(mask.size(-2)) != int(reference.size(-2)) or int(mask.size(-1)) != int(
+            reference.size(-1)
+        ):
+            raise RuntimeError(
+                f"{mask_name} spatial shape does not match reference tensor."
+            )
+        if int(mask.size(1)) == int(reference.size(1)):
+            return mask
+        if int(mask.size(1)) == 1 and int(reference.size(1)) > 1:
+            return mask.expand(-1, int(reference.size(1)), -1, -1)
+        if int(reference.size(1)) == 1 and int(mask.size(1)) > 1:
+            return mask.amax(dim=1, keepdim=True)
+        raise RuntimeError(
+            f"{mask_name} channels ({int(mask.size(1))}) do not match reference "
+            f"channels ({int(reference.size(1))}) and cannot be broadcast."
+        )
+
+    def _build_ambient_further_valid_mask(
+        self,
+        valid_mask: torch.Tensor | None,
+        *,
+        reference: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """Sample ~A from A by dropping additional observed pixels with probability delta."""
+        if valid_mask is None:
+            return None
+
+        base_mask = (valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+        base_mask = self._align_valid_mask_to_reference(
+            base_mask, reference, mask_name="valid_mask"
+        )
+        if not self.ambient_occlusion_enabled:
+            return base_mask
+        if self.ambient_further_drop_prob <= 0.0:
+            return base_mask
+
+        keep_prob = 1.0 - self.ambient_further_drop_prob
+        bsz, channels, height, width = base_mask.shape
+        if self.ambient_shared_spatial_mask:
+            keep_draw = (
+                torch.rand((bsz, 1, height, width), device=base_mask.device) < keep_prob
+            ).to(dtype=base_mask.dtype)
+            if channels > 1:
+                keep_draw = keep_draw.expand(-1, channels, -1, -1)
+        else:
+            keep_draw = (torch.rand_like(base_mask) < keep_prob).to(dtype=base_mask.dtype)
+
+        # Further corruption only removes existing observations; it cannot add new ones.
+        further_mask = base_mask * keep_draw
+        if self.ambient_min_kept_observed_pixels <= 0:
+            return further_mask
+
+        flat_base = base_mask.reshape(bsz, -1)
+        flat_further = further_mask.reshape(bsz, -1)
+        for batch_idx in range(bsz):
+            observed_idx = torch.nonzero(flat_base[batch_idx] > 0.5, as_tuple=False).squeeze(1)
+            if observed_idx.numel() == 0:
+                continue
+            min_keep = min(self.ambient_min_kept_observed_pixels, int(observed_idx.numel()))
+            kept = int((flat_further[batch_idx] > 0.5).sum().item())
+            if kept >= min_keep:
+                continue
+            # Keep random originally-observed positions so ambient supervision is never degenerate.
+            needed = min_keep - kept
+            choose = torch.randperm(int(observed_idx.numel()), device=observed_idx.device)[
+                :needed
+            ]
+            flat_further[batch_idx, observed_idx[choose]] = 1.0
+        return flat_further.view_as(further_mask)
+
     def _prepare_condition_for_model(
         self,
         x: torch.Tensor,
@@ -1000,6 +1133,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         if valid_mask is None:
             return torch.as_tensor(0.0, device=self.device)
         return (valid_mask < 0.5).float().mean()
+
+    def _observed_fraction(self, valid_mask: torch.Tensor | None) -> torch.Tensor:
+        """Helper that computes observed fraction."""
+        if valid_mask is None:
+            return torch.as_tensor(0.0, device=self.device)
+        return (valid_mask > 0.5).float().mean()
 
     def _apply_postprocess_gaussian_blur(self, tensor: torch.Tensor) -> torch.Tensor:
         """Helper that computes apply postprocess gaussian blur.
@@ -1535,7 +1674,30 @@ class PixelDiffusionConditional(pl.LightningModule):
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
-        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
+        condition_x = x
+        condition_valid_mask = valid_mask
+        original_valid_mask = valid_mask
+        further_valid_mask: torch.Tensor | None = None
+        loss_mask_mode = "missing"
+        apply_further_corruption_to_noisy_branch = False
+        if self.ambient_occlusion_enabled:
+            further_valid_mask = self._build_ambient_further_valid_mask(
+                valid_mask, reference=x
+            )
+            if further_valid_mask is None:
+                raise RuntimeError(
+                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                )
+            condition_x = x * further_valid_mask
+            condition_valid_mask = further_valid_mask
+            loss_mask_mode = "observed"
+            apply_further_corruption_to_noisy_branch = (
+                self.ambient_apply_to_noisy_branch
+            )
+
+        model_condition = self._prepare_condition_for_model(
+            condition_x, condition_valid_mask, eo=eo
+        )
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -1548,9 +1710,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         loss = self.model.p_loss(
             y_t,
             model_condition,
-            valid_mask=valid_mask,
+            valid_mask=original_valid_mask,
             land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
+            further_valid_mask=further_valid_mask,
+            apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
+            loss_mask_mode=loss_mask_mode,
             coord=coords,
             date=date,
         )
@@ -1566,8 +1731,43 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
 
+        if self.ambient_occlusion_enabled and further_valid_mask is not None:
+            observed_fraction_original = self._observed_fraction(original_valid_mask)
+            observed_fraction_further = self._observed_fraction(further_valid_mask)
+            drop_denom = torch.clamp(observed_fraction_original, min=1e-8)
+            further_drop_fraction = torch.clamp(
+                observed_fraction_original - observed_fraction_further, min=0.0
+            ) / drop_denom
+            self.log(
+                "train/ambient_further_drop_fraction",
+                further_drop_fraction,
+                on_step=True,
+                on_epoch=False,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+            self.log(
+                "train/ambient_observed_fraction_original",
+                observed_fraction_original,
+                on_step=True,
+                on_epoch=False,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+            self.log(
+                "train/ambient_observed_fraction_further",
+                observed_fraction_further,
+                on_step=True,
+                on_epoch=False,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(valid_mask)
+            masked_fraction = self._masked_fraction(original_valid_mask)
             self.log(
                 "train/masked_fraction",
                 masked_fraction,
@@ -1597,7 +1797,30 @@ class PixelDiffusionConditional(pl.LightningModule):
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
-        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
+        condition_x = x
+        condition_valid_mask = valid_mask
+        original_valid_mask = valid_mask
+        further_valid_mask: torch.Tensor | None = None
+        loss_mask_mode = "missing"
+        apply_further_corruption_to_noisy_branch = False
+        if self.ambient_occlusion_enabled:
+            further_valid_mask = self._build_ambient_further_valid_mask(
+                valid_mask, reference=x
+            )
+            if further_valid_mask is None:
+                raise RuntimeError(
+                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                )
+            condition_x = x * further_valid_mask
+            condition_valid_mask = further_valid_mask
+            loss_mask_mode = "observed"
+            apply_further_corruption_to_noisy_branch = (
+                self.ambient_apply_to_noisy_branch
+            )
+
+        model_condition = self._prepare_condition_for_model(
+            condition_x, condition_valid_mask, eo=eo
+        )
         y_t = self.input_T(y)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
@@ -1610,9 +1833,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         loss = self.model.p_loss(
             y_t,
             model_condition,
-            valid_mask=valid_mask,
+            valid_mask=original_valid_mask,
             land_mask=land_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
+            further_valid_mask=further_valid_mask,
+            apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
+            loss_mask_mode=loss_mask_mode,
             coord=coords,
             date=date,
         )
@@ -1639,8 +1865,43 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
 
+        if self.ambient_occlusion_enabled and further_valid_mask is not None:
+            observed_fraction_original = self._observed_fraction(original_valid_mask)
+            observed_fraction_further = self._observed_fraction(further_valid_mask)
+            drop_denom = torch.clamp(observed_fraction_original, min=1e-8)
+            further_drop_fraction = torch.clamp(
+                observed_fraction_original - observed_fraction_further, min=0.0
+            ) / drop_denom
+            self.log(
+                "val/ambient_further_drop_fraction",
+                further_drop_fraction,
+                on_step=False,
+                on_epoch=True,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+            self.log(
+                "val/ambient_observed_fraction_original",
+                observed_fraction_original,
+                on_step=False,
+                on_epoch=True,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+            self.log(
+                "val/ambient_observed_fraction_further",
+                observed_fraction_further,
+                on_step=False,
+                on_epoch=True,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
+
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(valid_mask)
+            masked_fraction = self._masked_fraction(original_valid_mask)
             self.log(
                 "val/masked_fraction",
                 masked_fraction,
