@@ -23,6 +23,9 @@ from utils.validation_denoise import (
     log_wandb_conditional_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
 )
+from utils.validation_step_reconstruction_dump import (
+    dump_validation_reconstruction_sequence,
+)
 
 
 class PixelDiffusionConditional(pl.LightningModule):
@@ -30,6 +33,7 @@ class PixelDiffusionConditional(pl.LightningModule):
     # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
     """Lightning module that trains and samples conditional pixel diffusion."""
     _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
+    _SUPPORTED_X_HOLDOUT_VARIANTS: tuple[str, ...] = ("eo_4band", "4band_eo", "4bands")
 
     def __init__(
         self,
@@ -41,6 +45,14 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_use_valid_mask: bool = True,
         clamp_known_pixels: bool = True,
         mask_loss_with_valid_pixels: bool = False,
+        training_objective_mode: str = "standard",
+        training_objective_holdout_fraction: float = 0.15,
+        training_objective_deterministic_val_mask: bool = True,
+        training_objective_dataset_variant: str = "eo_4band",
+        training_objective_dump_val_reconstruction_enabled: bool = False,
+        training_objective_dump_val_reconstruction_output_dir: str = "temp/val_step_reconstruction",
+        training_objective_dump_val_reconstruction_max_samples: int = 1,
+        training_objective_dump_val_reconstruction_only_first_batch: bool = True,
         parameterization: str = "epsilon",
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
@@ -95,6 +107,14 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
             clamp_known_pixels (bool): Boolean flag controlling behavior.
             mask_loss_with_valid_pixels (bool): Mask tensor controlling valid or known pixels.
+            training_objective_mode (str): Input value.
+            training_objective_holdout_fraction (float): Input value.
+            training_objective_deterministic_val_mask (bool): Boolean flag controlling behavior.
+            training_objective_dataset_variant (str): Input value.
+            training_objective_dump_val_reconstruction_enabled (bool): Boolean flag controlling behavior.
+            training_objective_dump_val_reconstruction_output_dir (str): Path to an input or output file.
+            training_objective_dump_val_reconstruction_max_samples (int): Size/count parameter.
+            training_objective_dump_val_reconstruction_only_first_batch (bool): Boolean flag controlling behavior.
             parameterization (str): Input value.
             num_timesteps (int): Step or timestep value.
             noise_schedule (str): Input value.
@@ -189,6 +209,43 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.condition_use_valid_mask = bool(condition_use_valid_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
+        self.training_objective_mode_requested = self._normalize_training_objective_mode(
+            training_objective_mode
+        )
+        self.training_objective_dataset_variant = str(
+            training_objective_dataset_variant
+        ).strip().lower()
+        holdout_fraction = float(training_objective_holdout_fraction)
+        if holdout_fraction < 0.0 or holdout_fraction > 1.0:
+            raise ValueError("training_objective_holdout_fraction must be in [0.0, 1.0].")
+        self.training_objective_holdout_fraction = holdout_fraction
+        self.training_objective_deterministic_val_mask = bool(
+            training_objective_deterministic_val_mask
+        )
+        self.training_objective_dump_val_reconstruction_enabled = bool(
+            training_objective_dump_val_reconstruction_enabled
+        )
+        self.training_objective_dump_val_reconstruction_output_dir = str(
+            training_objective_dump_val_reconstruction_output_dir
+        ).strip()
+        self.training_objective_dump_val_reconstruction_max_samples = max(
+            1, int(training_objective_dump_val_reconstruction_max_samples)
+        )
+        self.training_objective_dump_val_reconstruction_only_first_batch = bool(
+            training_objective_dump_val_reconstruction_only_first_batch
+        )
+        self.training_objective_mode = self.training_objective_mode_requested
+        if (
+            self.training_objective_mode_requested == "x_holdout_sparse"
+            and self.training_objective_dataset_variant
+            not in self._SUPPORTED_X_HOLDOUT_VARIANTS
+        ):
+            warnings.warn(
+                "model.training_objective.mode='x_holdout_sparse' is only supported "
+                "for non-OSTIA eo_4band datasets. Falling back to 'standard'.",
+                stacklevel=2,
+            )
+            self.training_objective_mode = "standard"
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
@@ -216,12 +273,14 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords, date)
+        # Cached validation mini-batch
+        # (x_context, y, eo, valid_mask_context, land_mask, coords, date, loss_mask)
         # used for one epoch-end full reverse-diffusion reconstruction pass.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
                 torch.Tensor,
+                torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
@@ -268,6 +327,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         warmup_cfg = scheduler_cfg.get("warmup", {})
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
+        objective_cfg = m.get("training_objective", {})
+        objective_dump_cfg = objective_cfg.get("dump_val_reconstruction", {})
+        dataset_variant = cls._resolve_dataset_variant_from_data_cfg(
+            data_cfg, data_config_path
+        )
         postprocess_cfg = m.get("post_process", m.get("post-process", {}))
         gaussian_blur_cfg = postprocess_cfg.get("gaussian_blur", {})
         unet_kwargs = cls._parse_unet_config(m)
@@ -285,6 +349,26 @@ class PixelDiffusionConditional(pl.LightningModule):
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
+            ),
+            training_objective_mode=str(objective_cfg.get("mode", "standard")),
+            training_objective_holdout_fraction=float(
+                objective_cfg.get("holdout_fraction", 0.15)
+            ),
+            training_objective_deterministic_val_mask=bool(
+                objective_cfg.get("deterministic_val_mask", True)
+            ),
+            training_objective_dataset_variant=dataset_variant,
+            training_objective_dump_val_reconstruction_enabled=bool(
+                objective_dump_cfg.get("enabled", False)
+            ),
+            training_objective_dump_val_reconstruction_output_dir=str(
+                objective_dump_cfg.get("output_dir", "temp/val_step_reconstruction")
+            ),
+            training_objective_dump_val_reconstruction_max_samples=int(
+                objective_dump_cfg.get("max_samples", 1)
+            ),
+            training_objective_dump_val_reconstruction_only_first_batch=bool(
+                objective_dump_cfg.get("only_first_batch", True)
             ),
             parameterization=str(m.get("parameterization", "epsilon")),
             num_timesteps=int(
@@ -358,6 +442,32 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         with Path(path).open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
+
+    @staticmethod
+    def _resolve_dataset_variant_from_data_cfg(
+        data_cfg: dict[str, Any], data_config_path: str
+    ) -> str:
+        dataset_cfg = data_cfg.get("dataset", {})
+        core_cfg = dataset_cfg.get("core", {})
+        value = core_cfg.get("dataset_variant", dataset_cfg.get("dataset_variant"))
+        if value is not None:
+            return str(value).strip().lower()
+        stem = Path(data_config_path).stem.lower()
+        if "ostia" in stem:
+            return "ostia"
+        return "eo_4band"
+
+    @staticmethod
+    def _normalize_training_objective_mode(mode: str) -> str:
+        value = str(mode).strip().lower().replace("-", "_")
+        if value in {"standard", "default"}:
+            return "standard"
+        if value in {"x_holdout_sparse", "x_holdout", "x_only_holdout"}:
+            return "x_holdout_sparse"
+        raise ValueError(
+            "model.training_objective.mode must be one of "
+            "{'standard', 'x_holdout_sparse'}."
+        )
 
     @staticmethod
     def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:
@@ -1001,6 +1111,141 @@ class PixelDiffusionConditional(pl.LightningModule):
             return torch.as_tensor(0.0, device=self.device)
         return (valid_mask < 0.5).float().mean()
 
+    def _prepare_objective_batch(
+        self, batch: dict[str, Any], *, is_validation: bool, batch_idx: int
+    ) -> dict[str, Any]:
+        _ = is_validation
+        _ = batch_idx
+        x = batch["x"]
+        eo = batch.get("eo")
+        valid_mask = batch.get("valid_mask")
+        land_mask = batch.get("land_mask")
+        coords = batch.get("coords")
+        date = batch.get("date")
+
+        if self.training_objective_mode == "x_holdout_sparse":
+            supervision_mask = batch.get("loss_mask")
+            if supervision_mask is None:
+                raise RuntimeError(
+                    "x_holdout_sparse requires batch['loss_mask'] from dataset."
+                )
+            target = x
+            x_context = x
+            valid_mask_context = valid_mask
+            mask_loss = True
+        else:
+            target = batch.get("y")
+            if target is None:
+                raise RuntimeError("Standard objective requires batch['y'].")
+            x_context = x
+            valid_mask_context = valid_mask
+            supervision_mask = None
+            mask_loss = self.mask_loss_with_valid_pixels
+
+        model_condition = self._prepare_condition_for_model(
+            x_context, valid_mask_context, eo=eo
+        )
+        return {
+            "x_raw": x,
+            "x_context": x_context,
+            "target": target,
+            "target_t": self.input_T(target),
+            "condition": model_condition,
+            "valid_mask_context": valid_mask_context,
+            "supervision_mask": supervision_mask,
+            "mask_loss": mask_loss,
+            "eo": eo,
+            "land_mask": land_mask,
+            "coords": coords,
+            "date": date,
+        }
+
+    @staticmethod
+    def _loss_mask_for_logging(
+        *,
+        supervision_mask: torch.Tensor | None,
+        valid_mask_context: torch.Tensor | None,
+        mask_loss: bool,
+    ) -> torch.Tensor | None:
+        # Keep logging mask aligned with the exact region used for masked-loss reduction.
+        if supervision_mask is not None:
+            return supervision_mask
+        if mask_loss and valid_mask_context is not None:
+            return (valid_mask_context <= 0.5).to(dtype=valid_mask_context.dtype)
+        return None
+
+    def _maybe_dump_validation_reconstruction(
+        self,
+        *,
+        batch_idx: int,
+        objective_batch: dict[str, Any],
+        y_target: torch.Tensor | None,
+    ) -> None:
+        if not self.training_objective_dump_val_reconstruction_enabled:
+            return
+        if (
+            self.training_objective_dump_val_reconstruction_only_first_batch
+            and int(batch_idx) != 0
+        ):
+            return
+        trainer = getattr(self, "_trainer", None)
+        if trainer is not None and trainer.sanity_checking:
+            return
+
+        x_context = objective_batch["x_context"]
+        eo = objective_batch["eo"]
+        valid_mask_context = objective_batch["valid_mask_context"]
+        land_mask = objective_batch["land_mask"]
+        coords = objective_batch["coords"]
+        date = objective_batch["date"]
+        supervision_mask = objective_batch["supervision_mask"]
+        mask_loss = bool(objective_batch["mask_loss"])
+
+        valid_mask_for_loss = self._loss_mask_for_logging(
+            supervision_mask=supervision_mask,
+            valid_mask_context=valid_mask_context,
+            mask_loss=mask_loss,
+        )
+
+        pred = self.predict_step(
+            {
+                "x": x_context,
+                "eo": eo,
+                "valid_mask": valid_mask_context,
+                "land_mask": land_mask,
+                "coords": coords,
+                "date": date,
+                "sampler": self.val_sampler,
+                "return_intermediates": True,
+                # None captures all reverse-diffusion steps.
+                "intermediate_step_indices": None,
+            },
+            batch_idx=batch_idx,
+        )
+        denoise_samples = pred.get("denoise_samples", [])
+        if not denoise_samples:
+            return
+
+        epoch_i = int(self.current_epoch) if trainer is not None else 0
+        dump_validation_reconstruction_sequence(
+            output_dir=self.training_objective_dump_val_reconstruction_output_dir,
+            epoch=epoch_i,
+            global_step=int(self.global_step),
+            batch_idx=int(batch_idx),
+            x_context=x_context.detach(),
+            denoise_samples=denoise_samples,
+            y_target=None if y_target is None else y_target.detach(),
+            eo=None if eo is None else eo.detach(),
+            valid_mask_for_loss=(
+                None if valid_mask_for_loss is None else valid_mask_for_loss.detach()
+            ),
+            valid_mask_context=(
+                None if valid_mask_context is None else valid_mask_context.detach()
+            ),
+            land_mask=None if land_mask is None else land_mask.detach(),
+            max_samples=self.training_objective_dump_val_reconstruction_max_samples,
+        )
+
     def _apply_postprocess_gaussian_blur(self, tensor: torch.Tensor) -> torch.Tensor:
         """Helper that computes apply postprocess gaussian blur.
 
@@ -1337,7 +1582,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         ):
             return
 
-        x, y, eo, valid_mask, land_mask, coords, date = self._cached_val_example
+        x, y, eo, valid_mask, land_mask, coords, date, loss_mask = self._cached_val_example
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
         total_steps = 0
@@ -1480,11 +1725,13 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_hat=y_hat_denorm_for_plot,
             y_target=y_denorm,
             valid_mask=valid_mask,
+            loss_mask=loss_mask,
             land_mask=land_mask,
             prefix="val_imgs",
             image_key="x_y_full_reconstruction",
             cmap=PLOT_CMAP,
-            show_valid_mask_panel=False,
+            show_valid_mask_panel=True,
+            show_loss_mask_panel=True,
         )
         if self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
@@ -1528,29 +1775,34 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        x = batch["x"]
-        y = batch["y"]
-        eo = batch.get("eo")
-        valid_mask = batch.get("valid_mask")
-        land_mask = batch.get("land_mask")
-        coords = batch.get("coords")
-        date = batch.get("date")
-        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
-        y_t = self.input_T(y)
+        objective_batch = self._prepare_objective_batch(
+            batch, is_validation=False, batch_idx=batch_idx
+        )
+        target = objective_batch["target"]
+        target_t = objective_batch["target_t"]
+        model_condition = objective_batch["condition"]
+        valid_mask_context = objective_batch["valid_mask_context"]
+        supervision_mask = objective_batch["supervision_mask"]
+        mask_loss = bool(objective_batch["mask_loss"])
+        land_mask = objective_batch["land_mask"]
+        coords = objective_batch["coords"]
+        date = objective_batch["date"]
+        batch_size = int(target.size(0))
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            y_t, prefix="train_target", batch_size=int(y.size(0))
+            target_t, prefix="train_target", batch_size=batch_size
         )
         self._log_pre_diffusion_stats(
-            model_condition, prefix="train_condition", batch_size=int(y.size(0))
+            model_condition, prefix="train_condition", batch_size=batch_size
         )
         # Conditional p_loss uses x as context while learning selected denoising target.
         loss = self.model.p_loss(
-            y_t,
+            target_t,
             model_condition,
-            valid_mask=valid_mask,
+            valid_mask=valid_mask_context,
+            supervision_mask=supervision_mask,
             land_mask=land_mask,
-            mask_loss=self.mask_loss_with_valid_pixels,
+            mask_loss=mask_loss,
             coord=coords,
             date=date,
         )
@@ -1563,21 +1815,30 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=True,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=batch_size,
         )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(valid_mask)
+            masked_fraction = self._masked_fraction(valid_mask_context)
             self.log(
                 "train/masked_fraction",
                 masked_fraction,
                 on_step=True,
                 on_epoch=False,
                 logger=True,
-                batch_size=y.size(0),
+                batch_size=batch_size,
             )
+            if supervision_mask is not None:
+                self.log(
+                    "train/objective_supervision_fraction",
+                    supervision_mask.float().mean(),
+                    on_step=True,
+                    on_epoch=False,
+                    logger=True,
+                    batch_size=batch_size,
+                )
 
-        self._log_common_batch_stats(y, prefix="train", batch_size=int(y.size(0)))
+        self._log_common_batch_stats(target, prefix="train", batch_size=batch_size)
         return loss
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -1590,29 +1851,38 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        x = batch["x"]
-        y = batch["y"]
-        eo = batch.get("eo")
-        valid_mask = batch.get("valid_mask")
-        land_mask = batch.get("land_mask")
-        coords = batch.get("coords")
-        date = batch.get("date")
-        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
-        y_t = self.input_T(y)
+        objective_batch = self._prepare_objective_batch(
+            batch, is_validation=True, batch_idx=batch_idx
+        )
+        x_context = objective_batch["x_context"]
+        target = objective_batch["target"]
+        target_t = objective_batch["target_t"]
+        model_condition = objective_batch["condition"]
+        valid_mask_context = objective_batch["valid_mask_context"]
+        supervision_mask = objective_batch["supervision_mask"]
+        mask_loss = bool(objective_batch["mask_loss"])
+        eo = objective_batch["eo"]
+        land_mask = objective_batch["land_mask"]
+        coords = objective_batch["coords"]
+        date = objective_batch["date"]
+        batch_size = int(target.size(0))
+        # Reconstruction diagnostics still use the full y field when available.
+        y = batch.get("y")
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            y_t, prefix="val_target", batch_size=int(y.size(0))
+            target_t, prefix="val_target", batch_size=batch_size
         )
         self._log_pre_diffusion_stats(
-            model_condition, prefix="val_condition", batch_size=int(y.size(0))
+            model_condition, prefix="val_condition", batch_size=batch_size
         )
         # Same training objective for validation; full reverse-chain recon is logged at epoch end.
         loss = self.model.p_loss(
-            y_t,
+            target_t,
             model_condition,
-            valid_mask=valid_mask,
+            valid_mask=valid_mask_context,
+            supervision_mask=supervision_mask,
             land_mask=land_mask,
-            mask_loss=self.mask_loss_with_valid_pixels,
+            mask_loss=mask_loss,
             coord=coords,
             date=date,
         )
@@ -1625,7 +1895,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=True,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=batch_size,
         )
         loss_ckpt = torch.nan_to_num(loss.detach(), nan=1e9, posinf=1e9, neginf=1e9)
         self.log(
@@ -1636,11 +1906,11 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=False,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=batch_size,
         )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
-            masked_fraction = self._masked_fraction(valid_mask)
+            masked_fraction = self._masked_fraction(valid_mask_context)
             self.log(
                 "val/masked_fraction",
                 masked_fraction,
@@ -1648,30 +1918,56 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=batch_size,
             )
+            if supervision_mask is not None:
+                self.log(
+                    "val/objective_supervision_fraction",
+                    supervision_mask.float().mean(),
+                    on_step=False,
+                    on_epoch=True,
+                    logger=True,
+                    sync_dist=True,
+                    batch_size=batch_size,
+                )
 
-        if batch_idx == 0 and self._cached_val_example is None:
+        self._maybe_dump_validation_reconstruction(
+            batch_idx=batch_idx,
+            objective_batch=objective_batch,
+            y_target=y,
+        )
+
+        if batch_idx == 0 and self._cached_val_example is None and y is not None:
             # Cache up to N validation samples from the first val batch for one
             # epoch-end full reverse-diffusion reconstruction pass.
-            n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
+            n_cache = min(self.max_full_reconstruction_samples, int(x_context.size(0)))
             cached_valid_mask = (
-                valid_mask[:n_cache].detach() if valid_mask is not None else None
+                valid_mask_context[:n_cache].detach()
+                if valid_mask_context is not None
+                else None
             )
             cached_land_mask = (
                 land_mask[:n_cache].detach() if land_mask is not None else None
             )
+            cached_loss_mask = self._loss_mask_for_logging(
+                supervision_mask=supervision_mask,
+                valid_mask_context=valid_mask_context,
+                mask_loss=mask_loss,
+            )
+            if cached_loss_mask is not None:
+                cached_loss_mask = cached_loss_mask[:n_cache].detach()
             cached_eo = eo[:n_cache].detach() if eo is not None else None
             cached_coords = coords[:n_cache].detach() if coords is not None else None
             cached_date = date[:n_cache].detach() if date is not None else None
             self._cached_val_example = (
-                x[:n_cache].detach(),
+                x_context[:n_cache].detach(),
                 y[:n_cache].detach(),
                 cached_eo,
                 cached_valid_mask,
                 cached_land_mask,
                 cached_coords,
                 cached_date,
+                cached_loss_mask,
             )
 
         return loss

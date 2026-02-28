@@ -31,11 +31,15 @@ Runtime effect:
 ### Masked loss
 Config:  
 - `model.mask_loss_with_valid_pixels`  
+- `model.training_objective.mode`
+- `model.training_objective.holdout_fraction`
+- `model.training_objective.deterministic_val_mask`
 
 Runtime effect:  
 - if enabled, loss is computed on missing pixels (`1 - valid_mask`)  
 - optionally gated by `land_mask` to focus on ocean pixels  
 - mask alignment preserves per-band semantics (`B x C x H x W`) unless a single shared mask channel is explicitly used  
+- `x_holdout_sparse` masks a fraction of observed `x` pixels in the dataset path and provides `loss_mask`; model supervises only those held-out pixels (EO remains unchanged)
 
 ### Inference output composition
 Runtime effect:  
@@ -170,6 +174,13 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 | `model.condition_use_valid_mask` | `true` | Includes valid mask in condition input. |
 | `model.clamp_known_pixels` | `false` | Clamps known pixels each reverse step for inpainting-style stability. |
 | `model.mask_loss_with_valid_pixels` | `true` | Computes loss on missing pixels (`1-valid_mask`) with optional gating. |
+| `model.training_objective.mode` | `"x_holdout_sparse"` | Training objective selector: `"standard"` (y-supervised) or `"x_holdout_sparse"` (hold out observed `x` and supervise held-out `x` only). |
+| `model.training_objective.holdout_fraction` | `0.15` | Fraction of observed `x` pixels withheld from conditioning input in `"x_holdout_sparse"` mode. |
+| `model.training_objective.deterministic_val_mask` | `true` | Enables deterministic dataset holdout masks per sample when `"x_holdout_sparse"` is enabled (applies to both train and val with current shared-dataset wiring). |
+| `model.training_objective.dump_val_reconstruction.enabled` | `false` | Writes per-step validation reconstruction PNGs when enabled. |
+| `model.training_objective.dump_val_reconstruction.output_dir` | `"temp/val_step_reconstruction"` | Output folder for local validation-step reconstruction dumps. |
+| `model.training_objective.dump_val_reconstruction.max_samples` | `1` | Number of validation samples dumped per selected batch. |
+| `model.training_objective.dump_val_reconstruction.only_first_batch` | `true` | Dumps only first validation batch each epoch when enabled. |
 | `model.parameterization` | `"x0"` | Diffusion training target (`"epsilon"` or `"x0"`). |
 | `model.log_intermediates` | `true` | Default validation intermediate logging behavior. |
 | `model.post_process.gaussian_blur.enabled` | `false` | Enables final denormalized Gaussian blur post-process. |

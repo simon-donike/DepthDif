@@ -82,6 +82,9 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
         self.eo_dropout_prob = 0.0
+        self.training_objective_mode = "standard"
+        self.training_objective_holdout_fraction = 0.15
+        self.training_objective_deterministic_mask = False
         if self.enable_transform and self.return_coords:
             warnings.warn(
                 "Geometric augmentation is enabled while return_coords=true. "
@@ -279,6 +282,52 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
     def _eo_dropout_enabled(self) -> bool:
         return bool(self.ENABLE_EO_DROPOUT)
 
+    @staticmethod
+    def _normalize_training_objective_mode(mode: str) -> str:
+        value = str(mode).strip().lower().replace("-", "_")
+        if value in {"standard", "default"}:
+            return "standard"
+        if value in {"x_holdout_sparse", "x_holdout", "x_only_holdout"}:
+            return "x_holdout_sparse"
+        return "standard"
+
+    def _build_x_holdout_loss_mask(
+        self, valid_mask: torch.Tensor, *, sample_idx: int
+    ) -> torch.Tensor:
+        if valid_mask.ndim != 3:
+            raise RuntimeError(
+                "valid_mask must be shaped as (C,H,W) for x_holdout_sparse objective."
+            )
+        channels, h, w = valid_mask.shape
+        observed_spatial = (valid_mask > 0.5).all(dim=0)
+        observed_flat_idx = torch.nonzero(
+            observed_spatial.reshape(-1), as_tuple=False
+        ).squeeze(1)
+        n_observed = int(observed_flat_idx.numel())
+        loss_mask_2d = torch.zeros((h, w), dtype=torch.bool, device=valid_mask.device)
+        if n_observed <= 0:
+            return loss_mask_2d.unsqueeze(0).to(dtype=valid_mask.dtype)
+
+        n_holdout = int(round(float(self.training_objective_holdout_fraction) * n_observed))
+        n_holdout = max(1, min(n_holdout, n_observed))
+        if bool(self.training_objective_deterministic_mask):
+            # Deterministic sampling by dataset index keeps sparse objective stable across epochs.
+            generator = torch.Generator(device="cpu")
+            seed = int(self.split_seed) * 1_000_003 + int(sample_idx)
+            generator.manual_seed(int(seed) & 0x7FFFFFFF)
+            observed_cpu = observed_flat_idx.detach().cpu()
+            selected_cpu = torch.randperm(
+                n_observed, generator=generator, device="cpu"
+            )[:n_holdout]
+            selected = observed_cpu[selected_cpu].to(device=valid_mask.device)
+        else:
+            selected = observed_flat_idx[
+                torch.randperm(n_observed, device=valid_mask.device)[:n_holdout]
+            ]
+        loss_mask_2d.view(-1)[selected] = True
+        _ = channels
+        return loss_mask_2d.unsqueeze(0).to(dtype=valid_mask.dtype)
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         # Resolve relative file paths against the index location.
         row = self._rows[int(idx)]
@@ -379,11 +428,33 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                     valid_mask[band_idx, hide_mask] = False
                     y_corrupt[band_idx, hide_mask] = 0.0
 
+        # Optional X-only sparse objective: hide a subset of already observed x pixels and
+        # expose that subset as the masked-loss supervision region.
+        loss_mask: torch.Tensor | None = None
+        objective_mode = self._normalize_training_objective_mode(
+            str(self.training_objective_mode)
+        )
+        if objective_mode == "x_holdout_sparse":
+            holdout_fraction = float(np.clip(self.training_objective_holdout_fraction, 0.0, 1.0))
+            self.training_objective_holdout_fraction = holdout_fraction
+            loss_mask = self._build_x_holdout_loss_mask(
+                valid_mask, sample_idx=int(idx)
+            )
+            if holdout_fraction <= 0.0:
+                loss_mask = torch.zeros_like(loss_mask)
+            loss_mask_bool = loss_mask > 0.5
+            y_corrupt = y_corrupt.masked_fill(loss_mask_bool, 0.0)
+            valid_mask = valid_mask.masked_fill(loss_mask_bool.expand_as(valid_mask), 0.0)
+
         # Keep tensors finite before returning a batch dict.
         x = y_corrupt
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        if loss_mask is not None:
+            loss_mask = torch.nan_to_num(
+                loss_mask, nan=0.0, posinf=0.0, neginf=0.0
+            )
         # Apply conditioning dropout after all EO processing for a single clear ablation point.
         if self._eo_dropout_enabled():
             if self.eo_dropout_prob > 0.0 and bool(torch.rand(()) < self.eo_dropout_prob):
@@ -399,6 +470,8 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             "land_mask": land_mask,
             "date": date,
         }
+        if loss_mask is not None:
+            sample["loss_mask"] = loss_mask
         if self.return_coords:
             lat0 = float(row["lat0"])
             lat1 = float(row["lat1"])

@@ -517,6 +517,40 @@ def main(
                 ),
             )
         )
+    if hasattr(dataset, "training_objective_mode"):
+        model_section = model_cfg.get("model", {})
+        objective_cfg = model_section.get("training_objective", {})
+        objective_mode_raw = str(objective_cfg.get("mode", "standard")).strip().lower()
+        objective_mode = objective_mode_raw.replace("-", "_")
+        if objective_mode not in {"standard", "default", "x_holdout_sparse", "x_holdout", "x_only_holdout"}:
+            objective_mode = "standard"
+        if objective_mode in {"default"}:
+            objective_mode = "standard"
+        if objective_mode in {"x_holdout", "x_only_holdout"}:
+            objective_mode = "x_holdout_sparse"
+
+        dataset_variant = resolve_dataset_variant(ds_cfg, effective_data_config_path)
+        if objective_mode == "x_holdout_sparse" and dataset_variant not in {
+            "eo_4band",
+            "4band_eo",
+            "4bands",
+        }:
+            warnings.warn(
+                "model.training_objective.mode='x_holdout_sparse' is only supported "
+                "for non-OSTIA eo_4band datasets. Falling back to 'standard'.",
+                stacklevel=2,
+            )
+            objective_mode = "standard"
+
+        dataset.training_objective_mode = objective_mode
+        dataset.training_objective_holdout_fraction = float(
+            max(0.0, min(1.0, float(objective_cfg.get("holdout_fraction", 0.15))))
+        )
+        # Dataset operates before train/val step separation, so deterministic masking
+        # applies to both splits when enabled.
+        dataset.training_objective_deterministic_mask = bool(
+            objective_cfg.get("deterministic_val_mask", True)
+        )
     datamodule = DepthTileDataModule(
         dataset=dataset,
         dataloader_cfg=dataloader_cfg,

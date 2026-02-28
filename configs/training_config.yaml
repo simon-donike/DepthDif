@@ -37,7 +37,7 @@ trainer: # PL Trainer Settings
 wandb: # Logging Settings
   project: "DepthDif_Simon" # W&B project name.
   entity: "esa-phi-lab" # W&B team/user; null uses your default account.
-  run_name: "eo_4band_cond" # Explicit run name for EO + 3-band conditioning runs.
+  run_name: "eo_4band_x_holdout_sparse" # Explicit run name for EO + 3-band conditioning runs.
   log_model: "false" # W&B model artifact logging policy ("all", "false", etc.).
   verbose: true # Enable extra metric/image logging from the LightningModule.
   watch_gradients: false # Log gradient histories via wandb.watch.

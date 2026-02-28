@@ -31,6 +31,17 @@ Override example:
   --set training.wandb.run_name=null
 ```
 
+Sparse X-only objective override example (`eo_4band` only):
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config configs/data.yaml \
+  --train-config configs/training_config.yaml \
+  --model-config configs/model_config.yaml \
+  --set model.training_objective.mode=x_holdout_sparse \
+  --set model.training_objective.holdout_fraction=0.15
+```
+
 ## Important Config Notes
 - `train.py` currently supports only:  
   - `dataset.core.dataloader_type: "light"`  
@@ -39,6 +50,11 @@ Override example:
 - for `dataset_variant="ostia"`, set `dataset.source.light_index_csv` to the overlap index (with `ostia_npy_path`) and ensure sibling `ostia_npy/` tiles exist  
 - `SurfaceTempPatchOstiaLightDataset` does not apply EO degradation (no EO dropout/random-scale/speckle)  
 - EO dropout from data config is injected into dataset object for both train and val  
+- `model.training_objective.mode="x_holdout_sparse"` keeps EO conditioning and trains against held-out observed `x` pixels only (no `y` required for the loss path); dataset returns `batch["loss_mask"]` for supervision
+- `x_holdout_sparse` currently targets non-OSTIA `eo_4band`; unsupported variants fall back to `standard` objective with a warning
+- with current shared dataset object, `training_objective.deterministic_val_mask=true` makes dataset-side holdout masks deterministic for both train and val
+- Epoch-end validation reconstruction logging to W&B includes `x`, `eo`, reconstruction, `y`, context valid mask, and the sparse loss mask panel
+- Optional local PNG dumps remain available via `model.training_objective.dump_val_reconstruction.*` (disabled by default)
 - parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended  
 
 ## What `train.py` Does During Startup

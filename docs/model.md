@@ -52,10 +52,20 @@ Behavior:
 Loss options:  
 - unmasked MSE (default behavior when masking disabled)  
 - masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`  
+- explicit supervision-mask MSE (used by `training_objective.mode="x_holdout_sparse"`)
+
+`x_holdout_sparse` objective (non-OSTIA `eo_4band`):
+- starts from observed `x` pixels (`valid_mask=1`)
+- dataset applies holdout (`training_objective.holdout_fraction`, default `0.15`) and returns `loss_mask`
+- keeps EO conditioning unchanged
+- uses original observed `x` as pseudo-target
+- computes loss only on held-out pixels via an explicit `supervision_mask`
+- does not require `y` in this objective path
 
 Current EO config (`configs/model_config.yaml`) uses:
 - `parameterization: "x0"`  
 - `mask_loss_with_valid_pixels: true`  
+- `training_objective.mode: "x_holdout_sparse"`
 
 ## Inference Flow
 Prediction entry point is `predict_step`.

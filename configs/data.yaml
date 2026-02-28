@@ -19,7 +19,7 @@ dataset:
     mask_patch_min: 2 # Minimum rectangle patch side length for legacy "rectangles" strategy (pixels).
     mask_patch_max: 5 # Maximum rectangle patch side length for legacy "rectangles" strategy (pixels).
   conditioning:
-    eo_dropout_prob: 0.50 # Probability to zero EO conditioning per sample (applies to train and val).
+    eo_dropout_prob: 0.0 # Probability to zero EO conditioning per sample (applies to train and val).
     eo_random_scale_enabled: false # If true, add a random EO offset in [-2.0, 2.0] temperature units.
     eo_speckle_noise_enabled: true # If true, apply multiplicative speckle noise (clamped to [0.9, 1.1]) on EO.
   augmentation:

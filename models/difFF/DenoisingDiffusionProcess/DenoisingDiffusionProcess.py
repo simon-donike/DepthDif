@@ -605,6 +605,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         condition: torch.Tensor,
         *,
         valid_mask: torch.Tensor | None = None,
+        supervision_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
         coord: torch.Tensor | None = None,
@@ -616,6 +617,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             output (torch.Tensor): Tensor input for the computation.
             condition (torch.Tensor): Tensor input for the computation.
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            supervision_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
             coord (torch.Tensor | None): Coordinate conditioning values.
@@ -646,9 +648,17 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if not mask_loss:
             return self.loss_fn(target, prediction)
 
-        generated_mask = self._build_valid_mask(valid_mask, target)
-        if generated_mask is None:
-            return self.loss_fn(target, prediction)
+        if supervision_mask is not None:
+            generated_mask = self._align_mask_to_reference(
+                (supervision_mask > 0.5).float(),
+                target,
+                mask_name="supervision_mask",
+            )
+            generated_mask = generated_mask.to(device=target.device, dtype=target.dtype)
+        else:
+            generated_mask = self._build_valid_mask(valid_mask, target)
+            if generated_mask is None:
+                return self.loss_fn(target, prediction)
         ocean_mask = self._build_land_mask(land_mask, target)
         if ocean_mask is not None:
             generated_mask = generated_mask * ocean_mask

@@ -592,12 +592,14 @@ def log_wandb_conditional_reconstruction_grid(
     y_hat: torch.Tensor,
     y_target: torch.Tensor,
     valid_mask: torch.Tensor | None = None,
+    loss_mask: torch.Tensor | None = None,
     land_mask: torch.Tensor | None = None,
     eo: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
     show_valid_mask_panel: bool = True,
+    show_loss_mask_panel: bool = True,
 ) -> None:
     """Log wandb conditional reconstruction grid for monitoring.
 
@@ -607,12 +609,14 @@ def log_wandb_conditional_reconstruction_grid(
         y_hat (torch.Tensor): Tensor input for the computation.
         y_target (torch.Tensor): Tensor input for the computation.
         valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        loss_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
         land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
         eo (torch.Tensor | None): Tensor input for the computation.
         prefix (str): Input value.
         image_key (str): Input value.
         cmap (str): Input value.
         show_valid_mask_panel (bool): Controls whether valid mask is shown as a panel.
+        show_loss_mask_panel (bool): Controls whether loss mask is shown as a panel.
 
     Returns:
         None: No value is returned.
@@ -639,10 +643,13 @@ def log_wandb_conditional_reconstruction_grid(
     try:
         total_rows = num_to_plot * channels_to_plot
         show_valid_panel = bool(show_valid_mask_panel and valid_mask is not None)
+        show_loss_panel = bool(show_loss_mask_panel and loss_mask is not None)
         ncols = 3
         if eo is not None:
             ncols += 1
         if show_valid_panel:
+            ncols += 1
+        if show_loss_panel:
             ncols += 1
         if land_mask is not None:
             ncols += 1
@@ -652,12 +659,16 @@ def log_wandb_conditional_reconstruction_grid(
 
         for i in range(num_to_plot):
             valid_mask_i = _mask_for_sample(valid_mask, i)
+            loss_mask_i = _mask_for_sample(loss_mask, i)
             land_mask_i = _mask_for_sample(land_mask, i)
             for band_idx in range(channels_to_plot):
                 row_idx = (i * channels_to_plot) + band_idx
                 valid_band = valid_mask_i
                 if valid_band is not None and valid_band.ndim == 3:
                     valid_band = valid_band[min(band_idx, int(valid_band.size(0)) - 1)]
+                loss_band = loss_mask_i
+                if loss_band is not None and loss_band.ndim == 3:
+                    loss_band = loss_band[min(band_idx, int(loss_band.size(0)) - 1)]
                 land_band = land_mask_i
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
@@ -721,6 +732,19 @@ def log_wandb_conditional_reconstruction_grid(
                         axes[row_idx, col].set_axis_off()
                         if row_idx == 0:
                             axes[row_idx, col].set_title("Valid mask")
+                    col += 1
+
+                if show_loss_panel:
+                    if loss_band is not None:
+                        axes[row_idx, col].imshow(
+                            loss_band.detach().float().cpu().numpy(),
+                            cmap="gray",
+                            vmin=0.0,
+                            vmax=1.0,
+                        )
+                        axes[row_idx, col].set_axis_off()
+                        if row_idx == 0:
+                            axes[row_idx, col].set_title("Loss mask")
                     col += 1
 
                 if land_mask is not None and land_band is not None:
