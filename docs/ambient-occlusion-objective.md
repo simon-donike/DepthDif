@@ -5,9 +5,6 @@ This document describes changes implemented to go from the standard DepthDif and
 - Daras et al., *Ambient Diffusion: Learning Clean Distributions from Corrupted Data* (arXiv:2305.19256).  
   Paper: <https://arxiv.org/abs/2305.19256>
 
-Related follow-up (not the primary objective source used here):
-- Aali et al., *Ambient Diffusion Posterior Sampling: Solving Inverse Problems with Diffusion Models Trained on Corrupted Data* (arXiv:2403.08728 / ICLR 2025).  
-  Paper: <https://arxiv.org/abs/2403.08728>
 
 ## TL;DR
 

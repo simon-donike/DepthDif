@@ -104,16 +104,15 @@ How sparse target works in this experiment:
 Observation:  
 - reconstruction quality remains strong on the synthetic setup with EO + degradation  
 - held-out sparse targets are recovered well while global structure stays coherent  
+- the same experiment failed on the OSTIA dataset, most likely again due to the small dataset size  
 ![img](assets/sparse_targets.png)
 
-### Experiment 10.2 (Continuation on OSTIA -> Reanalysis)
+## Experiment 11
 Setup:  
-- continued training on the OSTIA -> reanalysis dataset  
-- initialized from the previous checkpoint (no restart from scratch)  
+- training uses the ambient objective target (ambient-occlusion training mode)  
 
-Observation:  
-- continuation on OSTIA -> reanalysis also works with the sparse-target setup  
-![img](assets/ostia_sparse.png)
+Status:  
+ ...currently training...
 
 ## Next Experiments (Roadmap)
 - Sparse Targets for Reanalysis data (from scratch & from pretrained)
