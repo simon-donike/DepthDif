@@ -1,6 +1,6 @@
 dataset:
   core:
-    dataset_variant: "ostia" # Compatibility alias config; prefer configs/data_ostia.yaml for OSTIA runs.
+    dataset_variant: "eo_4band" # Compatibility alias config; prefer configs/data_ostia.yaml for OSTIA runs.
     dataloader_type: "light" # "raw" (NetCDF on-the-fly) or "light" (CSV + saved y_npy patches).
   source:
     #root_dir: "/data1/datasets/depth/monthy/" # Directory containing source .nc files.

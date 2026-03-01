@@ -170,7 +170,7 @@ up to the repository’s existing normalization/parameterization conventions and
     - `PixelDiffusionConditional.__init__(...)`
 - \(\tilde{A}\) construction:
   - `PixelDiffusionConditional._build_ambient_further_valid_mask(...)`
-- Condition path replacement \((x,A)\to(\tilde{x},\tilde{A})`:
+- Condition path replacement \((x,A)\to(\tilde{x},\tilde{A})\) :
   - `training_step(...)`, `validation_step(...)`
 - Ambient loss execution:
   - `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`

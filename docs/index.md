@@ -15,9 +15,16 @@ The repository currently supports:
 - [Releases](https://github.com/simon-donike/DepthDif/releases)
 
 ## Model Description
-DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
-In the OSTIA setup, EO surface conditioning comes from mid-month OSTIA SST snapshots (15th, 12:00 UTC), while subsurface targets remain monthly Copernicus reanalysis.
+
 ![depthdif_schema](assets/depthdif_schema.png)
+
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
+  
+In the OSTIA setup, EO surface conditioning comes from mid-month OSTIA SST snapshots (15th, 12:00 UTC), while subsurface targets remain monthly Copernicus reanalysis.
+  
+Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.  
+For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize
+`L = E[ || (epsilon - epsilon_theta(x_t * m', cond, t)) * m ||_2^2 ]` (predict on stronger corruption, score on original observations).
 
 ## Documentation Map
 - [Quick Start](quickstart.md): environment setup + fastest train/infer path  
