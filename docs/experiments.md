@@ -109,7 +109,9 @@ Observation:
 
 ## Experiment 11
 Setup:  
-- training uses the ambient objective target (ambient-occlusion training mode), differing from Experiment 10 by calculating the loss over all X pixels instead of just the generated, not conditioned-upon pixels.  
+- training uses the ambient objective target (ambient-occlusion training mode), differing from Experiment 10 by calculating the loss over all observed `x` pixels instead of just the generated, not conditioned-upon pixels.  
+![img](assets/ambient_dif_1.png)
+
 
 Status:  
  ...currently training...

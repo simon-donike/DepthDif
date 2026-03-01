@@ -18,7 +18,7 @@ Why this matters: it avoids a weak objective where the model can learn shortcuts
 
 Inference/sampling did not change. This is a training-objective change only.
 
-## Visual Walkthrough (One Real Sample)
+## Visual Walkthrough
 
 ![Ambient objective step-by-step example](assets/sample_12370_t653.png)
 
@@ -88,7 +88,7 @@ where:
 
 Conditioning used the original sparse input/mask pair \((x, A)\) (plus EO, if enabled), without extra stochastic masking during training.
 
-## 4. New Ambient Objective (Implemented)
+## 4. New Ambient Objective
 
 ### 4.1 Training Inputs
 
