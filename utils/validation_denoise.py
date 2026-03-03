@@ -831,3 +831,131 @@ def log_wandb_conditional_reconstruction_grid(
     except Exception:
         # Auxiliary scalar logging must never block validation image logging.
         pass
+
+
+def log_wandb_depth_level_reconstruction_grid(
+    *,
+    logger: Any,
+    y_hat: torch.Tensor,
+    y_target: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+    eo: torch.Tensor | None = None,
+    land_mask: torch.Tensor | None = None,
+    prefix: str = "val_imgs",
+    image_key: str = "depth_level_reconstruction_grid",
+    band_indices: tuple[int, ...] = (0, 1, 3),
+    sample_idx: int = 0,
+    cmap: str = "turbo",
+) -> None:
+    """Log wandb depth-level reconstruction grid for monitoring.
+
+    Args:
+        logger (Any): Logger instance used for experiment tracking.
+        y_hat (torch.Tensor): Tensor input for the computation.
+        y_target (torch.Tensor): Tensor input for the computation.
+        valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        eo (torch.Tensor | None): Tensor input for the computation.
+        land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        prefix (str): Input value.
+        image_key (str): Input value.
+        band_indices (tuple[int, ...]): Input value.
+        sample_idx (int): Input value.
+        cmap (str): Input value.
+
+    Returns:
+        None: No value is returned.
+    """
+    if logger is None or not hasattr(logger, "experiment"):
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+
+    try:
+        import wandb
+    except Exception:
+        return
+
+    if int(y_hat.size(0)) <= 0 or int(y_target.size(0)) <= 0:
+        return
+    if int(y_hat.size(0)) != int(y_target.size(0)):
+        return
+    if not band_indices:
+        return
+
+    sample_i = int(max(0, min(int(sample_idx), int(y_hat.size(0)) - 1)))
+    available_bands = int(y_hat.size(1)) if y_hat.ndim == 4 else 1
+    max_band_idx = max(0, available_bands - 1)
+
+    fig = None
+    try:
+        fig, axes = plt.subplots(
+            len(band_indices),
+            4,
+            figsize=(16, 2.8 * len(band_indices)),
+            squeeze=False,
+        )
+        valid_mask_i = _mask_for_sample(valid_mask, sample_i)
+        land_mask_i = _mask_for_sample(land_mask, sample_i)
+
+        for row_idx, requested_band_idx in enumerate(band_indices):
+            # Clamp requested indices so this view still renders for 1/3/4-band setups.
+            band_idx = int(max(0, min(int(requested_band_idx), max_band_idx)))
+            valid_band = valid_mask_i
+            if valid_band is not None and valid_band.ndim == 3:
+                valid_band = valid_band[min(band_idx, int(valid_band.size(0)) - 1)]
+            land_band = land_mask_i
+            if land_band is not None and land_band.ndim == 3:
+                land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
+
+            recon_img = _plot_band_image(
+                y_hat, sample_i, band_idx=band_idx, mask=land_band
+            )
+            target_img = _plot_band_image(
+                y_target, sample_i, band_idx=band_idx, mask=land_band
+            )
+            if eo is not None:
+                eo_img = _plot_band_image(
+                    eo, sample_i, band_idx=band_idx, mask=land_band
+                )
+            else:
+                eo_img = np.zeros_like(recon_img, dtype=np.float32)
+            if valid_band is not None:
+                valid_img = valid_band.detach().float().cpu().numpy()
+            else:
+                valid_img = np.zeros_like(recon_img, dtype=np.float32)
+
+            if land_band is not None:
+                ocean_np = land_band.detach().cpu().numpy() > 0.5
+                eo_img[~ocean_np] = 0.0
+                recon_img[~ocean_np] = 0.0
+                target_img[~ocean_np] = 0.0
+
+            axes[row_idx, 0].imshow(valid_img, cmap="gray", vmin=0.0, vmax=1.0)
+            axes[row_idx, 0].set_axis_off()
+            axes[row_idx, 1].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[row_idx, 1].set_axis_off()
+            axes[row_idx, 2].imshow(recon_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[row_idx, 2].set_axis_off()
+            axes[row_idx, 3].imshow(target_img, cmap=cmap, vmin=0.0, vmax=1.0)
+            axes[row_idx, 3].set_axis_off()
+
+            if row_idx == 0:
+                axes[row_idx, 0].set_title("Valid mask")
+                axes[row_idx, 1].set_title("EO condition")
+                axes[row_idx, 2].set_title("Reconstruction")
+                axes[row_idx, 3].set_title("Ground truth")
+
+            if int(requested_band_idx) == band_idx:
+                axes[row_idx, 0].set_ylabel(f"band {band_idx}", rotation=90)
+            else:
+                axes[row_idx, 0].set_ylabel(
+                    f"band {int(requested_band_idx)} -> {band_idx}",
+                    rotation=90,
+                )
+
+        fig.tight_layout()
+        experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})
+    finally:
+        if fig is not None:
+            plt.close(fig)

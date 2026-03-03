@@ -21,6 +21,7 @@ from utils.validation_denoise import (
     build_evenly_spaced_capture_steps,
     log_wandb_diffusion_schedule_profile,
     log_wandb_conditional_reconstruction_grid,
+    log_wandb_depth_level_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
 )
 
@@ -1624,6 +1625,19 @@ class PixelDiffusionConditional(pl.LightningModule):
             image_key="x_y_full_reconstruction",
             cmap=PLOT_CMAP,
             show_valid_mask_panel=False,
+        )
+        log_wandb_depth_level_reconstruction_grid(
+            logger=self.logger,
+            y_hat=y_hat_denorm_for_plot,
+            y_target=y_denorm,
+            valid_mask=valid_mask,
+            eo=eo_denorm,
+            land_mask=land_mask,
+            prefix="val_imgs",
+            image_key="depth_level_reconstruction_grid",
+            band_indices=(0, 1, 3),
+            sample_idx=0,
+            cmap=PLOT_CMAP,
         )
         if self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
