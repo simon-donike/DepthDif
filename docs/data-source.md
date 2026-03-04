@@ -16,6 +16,10 @@ Use this page for raw-source provenance and download details. See [Synthetic Dat
 Reference dataset link:  
 [Global Ocean Physics Reanalysis](https://data.marine.copernicus.eu/product/GLOBAL_MULTIYEAR_PHY_001_030/files?subdataset=cmems_mod_glo_phy_my_0.083deg_P1M-m_202311&path=GLOBAL_MULTIYEAR_PHY_001_030%2Fcmems_mod_glo_phy_my_0.083deg_P1M-m_202311%2F2024%2F)
 
+The Depth levels range from 0.4m to >5km, rigins almost exponentially due to the larger gradients existing in the upper alyers.  
+![img](assets/depth_levels.png)
+
+
 ## Download
 Example CLI from this project:
 `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*YYYY/*"`
