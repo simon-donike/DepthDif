@@ -1,0 +1,50 @@
+# Settings for instantiating latent conditional diffusion architecture/checkpoint behavior.
+model: # Model Settings
+  model_type: "latent_cond_dif" # Latent conditional diffusion model type.
+  resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
+  load_checkpoint: false # false/null disables warm start; set to a .ckpt path to load model state_dict only.
+  generated_channels: 12 # Predict latent z_y channels.
+  condition_channels: 14 # z_x (12) + EO (1) + valid mask (1).
+  condition_mask_channels: 1 # One valid-mask channel is concatenated to the model condition.
+  condition_include_eo: true # Include batch["eo"] as extra condition channel.
+  condition_use_valid_mask: true # Use valid_mask as conditioning input in addition to EO + z_x.
+  clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
+  mask_loss_with_valid_pixels: true # If true, loss is computed over missing pixels (1-valid_mask), with optional land/ocean gating.
+  parameterization: "x0" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
+  log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
+
+  latent:
+    ae_config_path: "configs/lat_space/ae_config.yaml" # Path to AE architecture/training config.
+    ae_checkpoint: false # false/null disables loading pretrained AE; set to checkpoint path when available.
+    freeze_autoencoder: true # Freeze AE weights during latent diffusion training.
+    latent_channels: 12 # Expected latent channel count.
+    spatial_downsample: 1 # 1 keeps latent at full HxW.
+    eo_in_pixel_space: true # Keep EO conditioning in pixel space and concatenate directly.
+
+  ambient_occlusion:
+    enabled: false # Enables ambient-diffusion style objective for occlusion tasks.
+    further_drop_prob: 0.1 # Additional drop probability delta applied to already observed pixels.
+    apply_to_noisy_branch: true # If true, applies the further mask to the noisy target branch (~A x_t).
+    shared_spatial_mask: true # If true, samples one spatial further-mask per sample and shares it across channels.
+    min_kept_observed_pixels: 1 # Guarantees at least this many originally-observed pixels remain after further corruption.
+    require_x0_parameterization: true # If true, ambient objective requires model.parameterization == "x0".
+
+  post_process:
+    gaussian_blur:
+      enabled: false # If true, apply a small Gaussian blur to denormalized predictions at final post-process.
+      sigma: 0.5 # Small blur strength (standard deviation in pixels).
+      kernel_size: 3 # Odd kernel size; even values are auto-adjusted to the next odd number.
+
+  coord_conditioning:
+    enabled: true # Enable patch-center coordinate conditioning via FiLM.
+    encoding: "unit_sphere" # "unit_sphere", "sincos", or "raw".
+    include_date: true # If true, also encode batch["date"] (YYYYMMDD) together with coords.
+    date_encoding: "day_of_year_sincos" # Current option: non-leap day-of-year sin/cos with denominator 365.
+    embed_dim: null # If null, defaults to unet.dim.
+
+  unet: # Denoiser backbone (ConvNeXt U-Net) settings.
+    dim: 64 # Base channel width of U-Net.
+    dim_mults: [1, 2, 4, 8] # Per-stage width multipliers; length controls U-Net depth.
+    with_time_emb: true # Enable timestep embeddings in the denoiser.
+    output_mean_scale: false # Optional output mean correction used by some diffusion variants.
+    residual: false # If true, predicts a residual added to input.

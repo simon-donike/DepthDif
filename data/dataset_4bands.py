@@ -6,7 +6,7 @@ from data.dataset_utils import SurfaceTempPatchBaseLightDataset
 class SurfaceTempPatch4BandsLightDataset(SurfaceTempPatchBaseLightDataset):
     """Dataset that loads EO-conditioned multi-band depth patches."""
 
-    DEFAULT_CONFIG_PATH = "configs/data.yaml"
+    DEFAULT_CONFIG_PATH = "configs/px_space/data_config.yaml"
     FORCE_DISABLE_EO_DEGRADATION = False
     ENABLE_EO_DROPOUT = True
     PLOT_COLUMNS = ("eo", "x", "y", "valid_mask", "land_mask")
@@ -22,7 +22,7 @@ class SurfaceTempPatch4BandsLightDataset(SurfaceTempPatchBaseLightDataset):
 
 
 if __name__ == "__main__":
-    dataset = SurfaceTempPatch4BandsLightDataset.from_config("configs/older_configs/data.yaml")
+    dataset = SurfaceTempPatch4BandsLightDataset.from_config("configs/px_space/older_configs/data.yaml")
     dataset._plot_example_image()
 
     print(f"Dataset length: {len(dataset)}")

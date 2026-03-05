@@ -6,26 +6,26 @@ Use explicit config paths to avoid ambiguity:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_ostia.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml
+  --data-config configs/px_space/data_ostia.yaml \
+  --train-config configs/px_space/training_config.yaml \
+  --model-config configs/px_space/model_config.yaml
 ```
 
-For legacy same-source EO (`eo_4band`), use `--data-config configs/data.yaml`.
+For legacy same-source EO (`eo_4band`), use `--data-config configs/px_space/data_config.yaml`.
 
 CLI aliases:  
 - `--train-config` and `--training-config` are equivalent  
 - `--model-config` also accepts the typo alias `--mdoel-config`  
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)  
-- because `configs/model_config.yaml` itself is nested under top-level `model:`, model overrides must use `model.model.*` (example below)
+- because `configs/px_space/model_config.yaml` itself is nested under top-level `model:`, model overrides must use `model.model.*` (example below)
 
 Override example:  
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_ostia.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml \
+  --data-config configs/px_space/data_ostia.yaml \
+  --train-config configs/px_space/training_config.yaml \
+  --model-config configs/px_space/model_config.yaml \
   --set data.dataset.degradation.mask_fraction=0.99 \
   --set data.dataset.conditioning.eo_dropout_prob=0.0 \
   --set training.trainer.max_epochs=100 \
@@ -36,9 +36,9 @@ Ambient-occlusion objective example (paper-faithful):
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/data_ostia.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml \
+  --data-config configs/px_space/data_ostia.yaml \
+  --train-config configs/px_space/training_config.yaml \
+  --model-config configs/px_space/model_config.yaml \
   --set model.model.ambient_occlusion.enabled=true \
   --set model.model.ambient_occlusion.further_drop_prob=0.1 \
   --set training.wandb.run_name=ambient_synth_v1
@@ -56,14 +56,41 @@ Note: turning `model.ambient_occlusion.enabled` back to `false` does not switch 
 For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enabled=false`.
 
 ## Important Config Notes
-- `train.py` currently supports only:  
-  - `dataset.core.dataloader_type: "light"`  
-  - `model.model_type: "cond_px_dif"`  
+- `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.  
+- `model.model_type="cond_px_dif"` runs pixel-space diffusion.
+- `model.model_type="latent_cond_dif"` runs latent diffusion with the autoencoder bridge.
 - dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)  
 - `dataset_variant` now fully controls CSV selection in code (`"eo_4band"` -> full depth index, `"ostia"` -> OSTIA overlap index with `ostia_npy_path`)  
 - `SurfaceTempPatchOstiaLightDataset` does not apply EO degradation (no EO dropout/random-scale/speckle)  
 - EO dropout from data config is injected into dataset object for both train and val  
-- parser defaults in `train.py` still point to legacy `configs/*_config.yaml` names, so explicit CLI paths are recommended  
+- parser defaults in `train.py` now point to `configs/px_space/*.yaml`; explicit CLI paths are still recommended for reproducibility  
+
+## Autoencoder and Latent Workflow
+For latent diffusion training, use the latent config domain under `configs/lat_space/`.
+
+Autoencoder pretraining command:
+
+```bash
+/work/envs/depth/bin/python train_autoencoder.py \
+  --ae-config configs/lat_space/ae_config.yaml \
+  --data-config configs/lat_space/data_config.yaml \
+  --train-config configs/lat_space/training_config.yaml
+```
+
+Latent diffusion command:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config configs/lat_space/data_config.yaml \
+  --train-config configs/lat_space/training_config.yaml \
+  --model-config configs/lat_space/model_config.yaml
+```
+
+Repo launcher scripts:
+- `./scripts/train_autoencoder.sh`
+- `./scripts/train_latent_diffusion.sh`
+
+Design details, model goals, and limitations are documented in [Autoencoder + Latent Diffusion](autoencoder.md).
 
 ## What `train.py` Does During Startup
 1. Resolves distributed rank and creates a run directory under `logs/<timestamp>` on global rank 0.  
@@ -111,7 +138,7 @@ Notable behavior:
 
 ## W&B Occlusion Sweep (EO Always Available)
 Sweep config:  
-- `configs/sweeps/eo_occlusion_grid_no_eodrop.yaml`  
+- `configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml`  
 
 This sweep runs grid values:  
 - `mask_fraction`: `0.95, 0.96, 0.97, 0.98, 0.99, 0.995`  
@@ -129,6 +156,6 @@ Launch:
 Equivalent manual steps:  
 
 ```bash
-/work/envs/depth/bin/wandb sweep configs/sweeps/eo_occlusion_grid_no_eodrop.yaml
+/work/envs/depth/bin/wandb sweep configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml
 /work/envs/depth/bin/wandb agent <entity/project/sweep_id>
 ```

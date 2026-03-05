@@ -2,10 +2,18 @@
 This page maps key configuration flags to their runtime behavior in code.
 
 Primary config files used in current EO setup:   
-- `configs/data.yaml` (legacy `eo_4band`)  
-- `configs/data_ostia.yaml` (new OSTIA-conditioned setup)  
-- `configs/model_config.yaml`  
-- `configs/training_config.yaml`  
+- `configs/px_space/data_config.yaml` (legacy `eo_4band`)  
+- `configs/px_space/data_ostia.yaml` (new OSTIA-conditioned setup)  
+- `configs/px_space/model_config.yaml`  
+- `configs/px_space/training_config.yaml`  
+
+Latent-space config set:
+- `configs/lat_space/model_config.yaml`
+- `configs/lat_space/training_config.yaml`
+- `configs/lat_space/data_config.yaml`
+- `configs/lat_space/ae_config.yaml`
+
+See [Autoencoder + Latent Diffusion](autoencoder.md) for latent architecture and training workflow.
 
 ## Major Settings
 ### Conditioning channels
@@ -127,9 +135,9 @@ Runtime notes:
 ## FUll settings documentation
 This section contains the complete key-by-key configuration reference previously documented on the separate Configs page.
 
-### Dataset Configs (`configs/data.yaml` and `configs/data_ostia.yaml`)
+### Dataset Configs (`configs/px_space/data_config.yaml` and `configs/px_space/data_ostia.yaml`)
 Dataset settings are grouped by intent (`core`, `validity`, `degradation`, `conditioning`, `augmentation`, `output`, `runtime`).  
-Defaults below refer to `configs/data_ostia.yaml` unless noted.
+Defaults below refer to `configs/px_space/data_ostia.yaml` unless noted.
 
 | Config key | Default value | Explanation |
 |---|---|---|
@@ -151,14 +159,16 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 | `dataset.output.x_return_mode` | `"currupted_plus_mask"` | Return mode for `x` (`"corrputed"` or `"currupted_plus_mask"` in file comments). |
 | `dataset.output.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |
 | `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |
+| `dataset.output.target_band_start` | `1` | Target depth slice start index (inclusive) loaded from `y_npy_path`. |
+| `dataset.output.target_band_end` | `4` | Target depth slice end index (exclusive); set `null`/`-1` to use all remaining channels. |
 | `dataset.runtime.rebuild_index` | `false` | Rebuilds tile index from raw files on startup. |
 | `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |
 | `split.val_fraction` | `0.2` | Fraction of dataset reserved for validation. |
 
-### `configs/model_config.yaml`
+### `configs/px_space/model_config.yaml`
 | Config key | Default value | Explanation |
 |---|---|---|
-| `model.model_type` | `"cond_px_dif"` | Model type (conditional diffusion). |
+| `model.model_type` | `"cond_px_dif"` | Model type (`"cond_px_dif"` for pixel diffusion, `"latent_cond_dif"` for latent diffusion with AE bridge). |
 | `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path resumes training. |
 | `model.load_checkpoint` | `false` | `false/null` disables warm start; checkpoint path loads model `state_dict` only (no Lightning optimizer/trainer resume). |
 | `model.generated_channels` | `3` | Number of predicted target channels. |
@@ -192,7 +202,7 @@ Defaults below refer to `configs/data_ostia.yaml` unless noted.
 
 Detailed objective math, implementation mapping, visualization, and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md).
 
-### `configs/training_config.yaml`
+### `configs/px_space/training_config.yaml`
 | Config key | Default value | Explanation |
 |---|---|---|
 | `training.lr` | `1.0e-4` | Optimizer learning rate. |

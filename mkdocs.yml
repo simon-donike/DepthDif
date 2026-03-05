@@ -65,6 +65,7 @@ nav:
       - Data Source: data-source.md
       - Synthetic Dataset: data.md
       - Model: model.md
+      - Autoencoder + Latent Diffusion: autoencoder.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
       - Data + Coordinate Injection: data-coordinate-injection.md
       - Training: training.md

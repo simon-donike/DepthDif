@@ -18,6 +18,7 @@ from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
+from models.latent import LatentDiffusionConditional
 
 
 # Centralized YAML loader for config files.
@@ -363,18 +364,18 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
         str: Computed scalar output.
     """
     model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
-    if model_type == "cond_px_dif":
+    if model_type in {"cond_px_dif", "latent_cond_dif"}:
         return model_type
     raise ValueError(
         "Unsupported model.model_type value "
-        f"'{model_type}'. Only 'cond_px_dif' is supported; legacy 'px_dif' was removed."
+        f"'{model_type}'. Supported values: 'cond_px_dif', 'latent_cond_dif'."
     )
 
 
 def main(
-    model_config_path: str = "configs/model_config.yaml",
-    data_config_path: str = "configs/data.yaml",
-    training_config_path: str = "configs/training_config.yaml",
+    model_config_path: str = "configs/px_space/model_config.yaml",
+    data_config_path: str = "configs/px_space/data_config.yaml",
+    training_config_path: str = "configs/px_space/training_config.yaml",
     overrides: list[str] | None = None,
 ) -> None:
     # Determine rank before creating any run-scoped folders/files.
@@ -421,6 +422,19 @@ def main(
             "data": data_cfg,
         },
     )
+    latent_ae_config_path: str | None = None
+    if str(model_cfg.get("model", {}).get("model_type", "")).strip() == "latent_cond_dif":
+        ae_cfg_value = model_cfg.get("model", {}).get("latent", {}).get("ae_config_path", None)
+        if ae_cfg_value is None or str(ae_cfg_value).strip() == "":
+            raise ValueError(
+                "model.latent.ae_config_path is required for model.model_type='latent_cond_dif'."
+            )
+        ae_cfg_path = Path(str(ae_cfg_value)).expanduser()
+        if not ae_cfg_path.is_file():
+            raise FileNotFoundError(f"AE config not found: {ae_cfg_path}")
+        latent_ae_config_path = str(ae_cfg_path)
+        if is_global_zero:
+            shutil.copy2(ae_cfg_path, run_dir / ae_cfg_path.name)
 
     # Model/dataset builders load YAML files from paths, so write effective runtime
     # configs when overrides are present and route all path-based constructors there.
@@ -443,6 +457,8 @@ def main(
         dump_yaml(effective_training_config_path, training_cfg)
 
     uploaded_config_paths = [model_config_path, data_config_path, training_config_path]
+    if latent_ae_config_path is not None:
+        uploaded_config_paths.append(latent_ae_config_path)
     if is_global_zero and override_list:
         model_effective_snapshot = run_dir / f"{Path(model_config_path).stem}_effective.yaml"
         data_effective_snapshot = run_dir / f"{Path(data_config_path).stem}_effective.yaml"
@@ -457,6 +473,8 @@ def main(
             str(data_effective_snapshot),
             str(training_effective_snapshot),
         ]
+        if latent_ae_config_path is not None:
+            uploaded_config_paths.append(latent_ae_config_path)
 
     # Resolve checkpoint paths once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
@@ -466,7 +484,7 @@ def main(
             "model.resume_checkpoint and model.load_checkpoint are mutually exclusive."
         )
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
-    resolve_model_type(model_cfg)
+    model_type = resolve_model_type(model_cfg)
 
     # Use Tensor Cores efficiently for fp16/bf16 mixed precision.
     torch.set_float32_matmul_precision(str(trainer_cfg.get("matmul_precision", "high")))
@@ -524,13 +542,21 @@ def main(
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
 
-    # Instantiate the conditional model from config.
-    model = PixelDiffusionConditional.from_config(
-        model_config_path=effective_model_config_path,
-        data_config_path=effective_data_config_path,
-        training_config_path=effective_training_config_path,
-        datamodule=datamodule,
-    )
+    # Instantiate the requested model type from config.
+    if model_type == "latent_cond_dif":
+        model = LatentDiffusionConditional.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
+    else:
+        model = PixelDiffusionConditional.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
     if load_ckpt_path is not None:
         checkpoint = torch.load(load_ckpt_path, map_location="cpu")
         # load_checkpoint is a warm-start: copy model weights only (no optimizer/trainer state).
@@ -614,20 +640,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",
-        default="configs/data.yaml",
+        default="configs/px_space/data_config.yaml",
         help="Path to data config yaml.",
     )
     parser.add_argument(
         "--train-config",
         "--training-config",
-        default="configs/training_config.yaml",
+        default="configs/px_space/training_config.yaml",
         dest="training_config",
         help="Path to training config yaml.",
     )
     parser.add_argument(
         "--model-config",
         "--mdoel-config",
-        default="configs/model_config.yaml",
+        default="configs/px_space/model_config.yaml",
         dest="model_config",
         help="Path to model config yaml.",
     )
@@ -657,9 +683,9 @@ if __name__ == "__main__":
 
 """
 # Training quick start (single command):
-python train.py --model-config configs/model_config.yaml \
-    --data-config configs/data.yaml \
-    --training-config configs/training_config.yaml
+python train.py --model-config configs/px_space/model_config.yaml \
+    --data-config configs/px_space/data_config.yaml \
+    --training-config configs/px_space/training_config.yaml
 
 # Sweep quick start (single command):
 ./scripts/start_occlusion_sweep.sh

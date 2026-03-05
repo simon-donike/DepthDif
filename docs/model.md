@@ -60,9 +60,11 @@ Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):
 - compute masked MSE on the originally observed subset (`A`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
 
-Current EO config (`configs/model_config.yaml`) uses:
+Current EO config (`configs/px_space/model_config.yaml`) uses:
 - `parameterization: "x0"`  
 - `mask_loss_with_valid_pixels: true`  
+
+Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.
 
 This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`), not over the full `y` image.
 

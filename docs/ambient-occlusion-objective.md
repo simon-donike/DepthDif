@@ -163,7 +163,7 @@ up to the repository’s existing normalization/parameterization conventions and
 ## 7. Code Mapping (Equation to Implementation)
 
 - Ambient config surface:
-  - `configs/model_config.yaml` (`model.ambient_occlusion.*`)
+  - `configs/px_space/model_config.yaml` (`model.ambient_occlusion.*`)
 - Runtime config wiring and safety:
   - `models/difFF/PixelDiffusion.py`
     - `PixelDiffusionConditional.from_config(...)`

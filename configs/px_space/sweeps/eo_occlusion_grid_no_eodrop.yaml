@@ -18,11 +18,11 @@ command:
   - /work/envs/depth/bin/python
   - train.py
   - --data-config
-  - configs/data.yaml
+  - configs/px_space/data_config.yaml
   - --train-config
-  - configs/training_config.yaml
+  - configs/px_space/training_config.yaml
   - --model-config
-  - configs/model_config.yaml
+  - configs/px_space/model_config.yaml
   - --set
   - data.dataset.conditioning.eo_dropout_prob=0.0
   - --set

@@ -3,6 +3,9 @@ There are two practical inference workflows in this repository:
 - run the standalone script `inference.py`  
 - call `PixelDiffusionConditional.predict_step(...)` directly  
 
+DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow configs (`configs/lat_space/*`).  
+For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
+
 ## Workflow 1: Use `inference.py`
 `inference.py` is a configurable script for quick prediction sanity checks.
 
@@ -24,8 +27,8 @@ At the top of `inference.py`, set:
 
 ### Note on default paths
 The script constants should be set explicitly. In this repository, the actively used configs are:
-- EO/OSTIA setup: `configs/model_config.yaml`, `configs/data_ostia.yaml`, `configs/training_config.yaml`  
-- legacy same-source EO setup: swap to `configs/data.yaml`  
+- EO/OSTIA setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia.yaml`, `configs/px_space/training_config.yaml`  
+- legacy same-source EO setup: swap to `configs/px_space/data_config.yaml`  
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry point is:  
@@ -61,9 +64,9 @@ from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from models.difFF import PixelDiffusionConditional
 
-model_config = "configs/model_config.yaml"
-data_config = "configs/data_ostia.yaml"
-train_config = "configs/training_config.yaml"
+model_config = "configs/px_space/model_config.yaml"
+data_config = "configs/px_space/data_ostia.yaml"
+train_config = "configs/px_space/training_config.yaml"
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"
 
 dataset = SurfaceTempPatch4BandsLightDataset.from_config(data_config, split="all")

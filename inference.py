@@ -10,13 +10,14 @@ from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
+from models.latent import LatentDiffusionConditional
 
 # ----------------------------
 # In-script settings
 # ----------------------------
-MODEL_CONFIG_PATH = "configs/model_config.yaml"
-DATA_CONFIG_PATH = "configs/data_ostia.yaml"
-TRAIN_CONFIG_PATH = "configs/training_config.yaml"
+MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
+DATA_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
+TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 
 # Optional explicit checkpoint path. If None, uses model.load_checkpoint then model.resume_checkpoint from model config.
 CHECKPOINT_PATH: str | None = None
@@ -131,11 +132,11 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
         str: Computed scalar output.
     """
     model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
-    if model_type == "cond_px_dif":
+    if model_type in {"cond_px_dif", "latent_cond_dif"}:
         return model_type
     raise ValueError(
         "Unsupported model.model_type value "
-        f"'{model_type}'. Only 'cond_px_dif' is supported; legacy 'px_dif' was removed."
+        f"'{model_type}'. Supported values: 'cond_px_dif', 'latent_cond_dif'."
     )
 
 
@@ -181,7 +182,7 @@ def build_model(
     training_config_path: str,
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
-) -> PixelDiffusionConditional:
+) -> PixelDiffusionConditional | LatentDiffusionConditional:
     """Build and return model.
 
     Args:
@@ -192,9 +193,16 @@ def build_model(
         datamodule (DepthTileDataModule): Input value.
 
     Returns:
-        PixelDiffusionConditional: Computed output value.
+        PixelDiffusionConditional | LatentDiffusionConditional: Computed output value.
     """
-    resolve_model_type(model_cfg)
+    model_type = resolve_model_type(model_cfg)
+    if model_type == "latent_cond_dif":
+        return LatentDiffusionConditional.from_config(
+            model_config_path=model_config_path,
+            data_config_path=data_config_path,
+            training_config_path=training_config_path,
+            datamodule=datamodule,
+        )
     return PixelDiffusionConditional.from_config(
         model_config_path=model_config_path,
         data_config_path=data_config_path,
@@ -271,7 +279,7 @@ def pretty_shape(value: Any) -> str:
 
 
 def build_random_batch(
-    model: PixelDiffusionConditional,
+    model: Any,
     data_cfg: dict[str, Any],
     batch_size: int,
     height: int,
@@ -281,7 +289,7 @@ def build_random_batch(
     """Build and return random batch.
 
     Args:
-        model (PixelDiffusionConditional): Input value.
+        model (Any): Input value.
         data_cfg (dict[str, Any]): Configuration dictionary or section.
         batch_size (int): Size/count parameter.
         height (int): Size/count parameter.
@@ -344,14 +352,14 @@ def build_random_batch(
 
 
 def run_predict_once(
-    model: PixelDiffusionConditional,
+    model: Any,
     batch: dict[str, Any],
     include_intermediates: bool,
 ) -> dict[str, Any]:
     """Compute run predict once and return the result.
 
     Args:
-        model (PixelDiffusionConditional): Input value.
+        model (Any): Input value.
         batch (dict[str, Any]): Input value.
         include_intermediates (bool): Boolean flag controlling behavior.
 
