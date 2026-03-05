@@ -90,7 +90,7 @@ y_hat = pred["y_hat"]
 y_hat_denorm = pred["y_hat_denorm"]
 ```
 
-For `dataset_variant="ostia"`, use `SurfaceTempPatchOstiaLightDataset` instead and point `data_config.dataset.source.light_index_csv` to the OSTIA overlap CSV with `ostia_npy_path`.
+For `dataset_variant="ostia"`, use `SurfaceTempPatchOstiaLightDataset`; the overlap CSV with `ostia_npy_path` is selected automatically from `dataset_variant`.
 
 ## Sampler Choice
 Validation/inference sampler can be switched via training config:

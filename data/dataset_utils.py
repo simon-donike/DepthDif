@@ -30,6 +30,10 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
     }
     PLOT_OUTPUT_PATH = "temp/example_depth_tile_4bands.png"
     PLOT_FIG_WIDTH = 17.0
+    CSV_PATH_BY_VARIANT = {
+        "eo_4band": "/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv",
+        "ostia": "/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv",
+    }
 
     def __init__(
         self,
@@ -165,12 +169,11 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         cfg = cls._load_config(config_path)
         ds_cfg = cfg["dataset"]
         split_cfg = cfg.get("split", {})
-        csv_path = cls._cfg_get(
-            ds_cfg,
-            "source.light_index_csv",
-            "light_index_csv",
-            default="data/exported_patches/patch_index_with_paths.parquet",
+        dataset_variant = cls._resolve_dataset_variant(
+            ds_cfg=ds_cfg,
+            config_path=config_path,
         )
+        csv_path = cls._csv_path_for_variant(dataset_variant)
         return cls(
             csv_path=csv_path,
             split=split,
@@ -234,6 +237,41 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             ),
             val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         )
+
+    @classmethod
+    def _resolve_dataset_variant(cls, *, ds_cfg: dict[str, Any], config_path: str) -> str:
+        variant = cls._cfg_get(
+            ds_cfg,
+            "core.dataset_variant",
+            "dataset_variant",
+            default=None,
+        )
+        if variant is None:
+            stem = Path(config_path).stem.lower()
+            if "ostia" in stem:
+                return "ostia"
+            if "4band" in stem or "eo" in stem:
+                return "eo_4band"
+            return "eo_4band"
+        variant_norm = str(variant).strip().lower()
+        if variant_norm in {"eo_4band", "4band_eo", "4bands"}:
+            return "eo_4band"
+        if variant_norm in {"ostia", "ostia_4band", "4band_ostia"}:
+            return "ostia"
+        raise ValueError(
+            "Unsupported dataset variant in data config. "
+            f"Got '{variant_norm}', expected one of {{'eo_4band', 'ostia'}}."
+        )
+
+    @classmethod
+    def _csv_path_for_variant(cls, dataset_variant: str) -> str:
+        # Keep CSV routing centralized so variant selection alone controls sample pool size.
+        csv_path = cls.CSV_PATH_BY_VARIANT.get(dataset_variant, None)
+        if csv_path is None:
+            raise ValueError(
+                f"No CSV path mapping configured for dataset variant '{dataset_variant}'."
+            )
+        return csv_path
 
     @staticmethod
     def _cfg_get(

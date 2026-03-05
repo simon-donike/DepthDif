@@ -11,7 +11,7 @@ Dataset example for 50% occlusion:
 The data export script is `data/dataset_to_disk.py`.
 
 Core behavior:
-- reads `*.nc` files from `dataset.source.root_dir`  
+- reads `*.nc` files from the `to_disk(..., root_dir=...)` input path  
 - extracts any configured number of depth levels (`bands`) from any selected 3D variable (`variable`, default `thetao`)  
 - writes each patch to `y_npy/<sample_id>.npy`  
 - writes an index CSV with paths and metadata (`patch_index_with_paths.csv`)  

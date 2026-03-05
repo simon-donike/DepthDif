@@ -22,7 +22,7 @@ class SurfaceTempPatch4BandsLightDataset(SurfaceTempPatchBaseLightDataset):
 
 
 if __name__ == "__main__":
-    dataset = SurfaceTempPatch4BandsLightDataset.from_config("configs/data.yaml")
+    dataset = SurfaceTempPatch4BandsLightDataset.from_config("configs/older_configs/data.yaml")
     dataset._plot_example_image()
 
     print(f"Dataset length: {len(dataset)}")

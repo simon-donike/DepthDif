@@ -128,16 +128,14 @@ Runtime notes:
 This section contains the complete key-by-key configuration reference previously documented on the separate Configs page.
 
 ### Dataset Configs (`configs/data.yaml` and `configs/data_ostia.yaml`)
-Dataset settings are grouped by intent (`core`, `source`, `validity`, `degradation`, `conditioning`, `augmentation`, `output`, `runtime`).  
+Dataset settings are grouped by intent (`core`, `validity`, `degradation`, `conditioning`, `augmentation`, `output`, `runtime`).  
 Defaults below refer to `configs/data_ostia.yaml` unless noted.
 
 | Config key | Default value | Explanation |
 |---|---|---|
 | `dataset.core.dataset_variant` | `"ostia"` | Selects dataset in `train.py` (`"eo_4band"` -> reanalysis surface channel from `y_npy`, `"ostia"` -> OSTIA surface EO from `ostia_npy_path`). |
 | `dataset.core.dataloader_type` | `"light"` | `"raw"` loads NetCDF on-the-fly, `"light"` uses CSV + saved patch paths. |
-| `dataset.source.light_index_csv` | `"/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv"` | Index CSV used when `dataloader_type="light"` (`"eo_4band"`: depth index, `"ostia"`: overlap index preserving original depth columns plus OSTIA links like `ostia_npy_path`). |
-| `dataset.source.bands` | `["thetao"]` | Variables/bands to extract and write (order preserved). |
-| `dataset.source.edge_size` | `128` | Patch size in pixels; also used as stride for non-overlapping tiles. |
+| `dataset CSV selection` (implicit) | variant-mapped | `dataset_variant` now drives a fixed CSV path in code (`eo_4band` -> `patch_index_with_paths_split.csv`, `ostia` -> `patch_index_with_ostia_overlap.csv`). |
 | `dataset.validity.max_nodata_fraction` | `0.15` | Maximum invalid/nodata ratio per tile when validity filtering is enabled. |
 | `dataset.validity.nan_fill_value` | `0.0` | Fill value used for invalid/land pixels before tensor conversion. |
 | `dataset.validity.valid_from_fill_value` | `true` | In light mode, infer valid mask from standardized fill value. |
