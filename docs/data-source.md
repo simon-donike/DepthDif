@@ -26,8 +26,8 @@ Example CLI from this project:
 
 ## Product B: Surface EO SST (OSTIA)
 - Provider: Copernicus Marine Service / UKMO OSTIA stream  
-- Dataset used in this project: `SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001`  
-- Files used here: monthly folders containing one selected file at `YYYYMM15120000`  
+- Dataset used in this project: `SST_GLO_SST_L4_REP_OBSERVATIONS_010_011`  
+- Files used here: daily OSTIA snapshots (`YYYYMMDD120000`) from `2010-01-01` onward  
 - Variable used for conditioning: `analysed_sst` (sea-surface temperature)
 
 OSTIA dataset sample used in this project:  
@@ -35,8 +35,19 @@ OSTIA dataset sample used in this project:
 
 Temporal note for current OSTIA overlap workflow:  
 - previous depth workflow was monthly reanalysis composites
-- EO now comes from OSTIA mid-month snapshots (15th day at 12:00 UTC), not monthly mean composites
+- EO now comes from daily OSTIA snapshots (12:00 UTC), not monthly mean composites
 - overlap dataset keeps only months where both sources are available
+
+## Product C: EN4 Profile Observations (Argo/Other In-Situ)
+- Provider: UK Met Office Hadley Centre (EN4)
+- Dataset family: EN4.2.2 profile ZIP archives
+- Typical file naming: `EN.4.2.2.profiles.g10.YYYY.zip`
+- Example direct link:  
+  `https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1/EN.4.2.2/EN.4.2.2.profiles.g10.2019.zip`
+
+Project helper script:
+- `data/get_argo/download_en4_profiles.sh`
+- checks each year individually (dry-run HEAD check), logs CSV, and downloads immediately per available year
 
 ## Data Contents (`data/data_info.txt`, Reanalysis Sample)
 The raw source file contains the following data variables (NetCDF variables):
