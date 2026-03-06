@@ -62,9 +62,12 @@ nav:
   - Home:
       - Overview: index.md
       - Sampling Diagnostics: sampling-diagnostics.md
+      - Production Datasets: production-datasets.md
       - Data Source: data-source.md
       - Synthetic Dataset: data.md
       - Model: model.md
+      - Temporal Dimension Ideas: temporal_dimension.md
+      - Autoencoder + Latent Diffusion: autoencoder.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
       - Data + Coordinate Injection: data-coordinate-injection.md
       - Training: training.md

@@ -19,9 +19,9 @@ from inference import (
 from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
 
-MODEL_CONFIG_PATH = "configs/model_config.yaml"
-DATA_CONFIG_PATH = "configs/data_ostia.yaml"
-TRAIN_CONFIG_PATH = "configs/training_config.yaml"
+MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
+DATA_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
+TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 
 LOADER_SPLIT = "val"
 DEVICE = "auto"

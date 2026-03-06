@@ -12,7 +12,7 @@ from data.dataset_utils import SurfaceTempPatchBaseLightDataset
 class SurfaceTempPatchOstiaLightDataset(SurfaceTempPatchBaseLightDataset):
     """Dataset that loads OSTIA-conditioned multi-band depth patches."""
 
-    DEFAULT_CONFIG_PATH = "configs/data_ostia.yaml"
+    DEFAULT_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
     FORCE_DISABLE_EO_DEGRADATION = True
     ENABLE_EO_DROPOUT = False
     PLOT_COLUMNS = ("x", "eo", "y")
@@ -57,7 +57,7 @@ class SurfaceTempPatchOstiaLightDataset(SurfaceTempPatchBaseLightDataset):
 
 
 if __name__ == "__main__":
-    dataset = SurfaceTempPatchOstiaLightDataset.from_config("configs/data_ostia.yaml")
+    dataset = SurfaceTempPatchOstiaLightDataset.from_config("configs/px_space/data_ostia.yaml")
     dataset._plot_example_image()
 
     print(f"Dataset length: {len(dataset)}")

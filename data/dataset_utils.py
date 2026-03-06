@@ -17,7 +17,7 @@ from utils.stretching import minmax_stretch
 class SurfaceTempPatchBaseLightDataset(Dataset):
     """Shared dataset implementation used by EO-4band and OSTIA variants."""
 
-    DEFAULT_CONFIG_PATH = "configs/data.yaml"
+    DEFAULT_CONFIG_PATH = "configs/px_space/data_config.yaml"
     FORCE_DISABLE_EO_DEGRADATION = False
     ENABLE_EO_DROPOUT = True
     PLOT_COLUMNS = ("eo", "x", "y", "valid_mask", "land_mask")
@@ -30,6 +30,10 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
     }
     PLOT_OUTPUT_PATH = "temp/example_depth_tile_4bands.png"
     PLOT_FIG_WIDTH = 17.0
+    CSV_PATH_BY_VARIANT = {
+        "eo_4band": "/work/data/depth/4_bands_v2/patch_index_with_paths_split.csv",
+        "ostia": "/work/data/depth/4_bands_v2/patch_index_with_ostia_overlap.csv",
+    }
 
     def __init__(
         self,
@@ -50,6 +54,8 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         eo_speckle_noise_enabled: bool = False,
         split_seed: int = 7,
         val_fraction: float = 0.2,
+        target_band_start: int = 1,
+        target_band_end: int | None = 4,
     ) -> None:
         self.csv_path = Path(csv_path)
         self.csv_dir = self.csv_path.parent
@@ -81,6 +87,14 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             self.eo_speckle_noise_enabled = bool(eo_speckle_noise_enabled)
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        self.target_band_start = int(target_band_start)
+        self.target_band_end = (
+            None if target_band_end is None else int(target_band_end)
+        )
+        if self.target_band_start < 0:
+            raise ValueError("target_band_start must be >= 0.")
+        if self.target_band_end is not None and self.target_band_end <= self.target_band_start:
+            raise ValueError("target_band_end must be > target_band_start when provided.")
         self.eo_dropout_prob = 0.0
         if self.enable_transform and self.return_coords:
             warnings.warn(
@@ -165,12 +179,11 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         cfg = cls._load_config(config_path)
         ds_cfg = cfg["dataset"]
         split_cfg = cfg.get("split", {})
-        csv_path = cls._cfg_get(
-            ds_cfg,
-            "source.light_index_csv",
-            "light_index_csv",
-            default="data/exported_patches/patch_index_with_paths.parquet",
+        dataset_variant = cls._resolve_dataset_variant(
+            ds_cfg=ds_cfg,
+            config_path=config_path,
         )
+        csv_path = cls._csv_path_for_variant(dataset_variant)
         return cls(
             csv_path=csv_path,
             split=split,
@@ -233,7 +246,56 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                 cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
             ),
             val_fraction=float(split_cfg.get("val_fraction", 0.2)),
+            target_band_start=int(
+                cls._cfg_get(
+                    ds_cfg,
+                    "output.target_band_start",
+                    "target_band_start",
+                    default=1,
+                )
+            ),
+            target_band_end=cls._cfg_get(
+                ds_cfg,
+                "output.target_band_end",
+                "target_band_end",
+                default=4,
+            ),
         )
+
+    @classmethod
+    def _resolve_dataset_variant(cls, *, ds_cfg: dict[str, Any], config_path: str) -> str:
+        variant = cls._cfg_get(
+            ds_cfg,
+            "core.dataset_variant",
+            "dataset_variant",
+            default=None,
+        )
+        if variant is None:
+            stem = Path(config_path).stem.lower()
+            if "ostia" in stem:
+                return "ostia"
+            if "4band" in stem or "eo" in stem:
+                return "eo_4band"
+            return "eo_4band"
+        variant_norm = str(variant).strip().lower()
+        if variant_norm in {"eo_4band", "4band_eo", "4bands"}:
+            return "eo_4band"
+        if variant_norm in {"ostia", "ostia_4band", "4band_ostia"}:
+            return "ostia"
+        raise ValueError(
+            "Unsupported dataset variant in data config. "
+            f"Got '{variant_norm}', expected one of {{'eo_4band', 'ostia'}}."
+        )
+
+    @classmethod
+    def _csv_path_for_variant(cls, dataset_variant: str) -> str:
+        # Keep CSV routing centralized so variant selection alone controls sample pool size.
+        csv_path = cls.CSV_PATH_BY_VARIANT.get(dataset_variant, None)
+        if csv_path is None:
+            raise ValueError(
+                f"No CSV path mapping configured for dataset variant '{dataset_variant}'."
+            )
+        return csv_path
 
     @staticmethod
     def _cfg_get(
@@ -284,22 +346,37 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         row = self._rows[int(idx)]
         y_abs_path = self._resolve_index_path(row["y_npy_path"])
 
-        # Expect at least 4 channels: EO (surface) + 3 target depth bands.
+        # Keep channel checks generic so latent/full-depth setups can load >3 targets.
         y_np_all = np.load(y_abs_path).astype(np.float32, copy=False)
         if y_np_all.ndim == 2:
             raise RuntimeError(
                 f"Unexpected y shape at {y_abs_path}: {tuple(y_np_all.shape)} "
-                "(expected (4,H,W), got 2D)."
+                "(expected (C,H,W), got 2D)."
             )
-        if y_np_all.ndim != 3 or y_np_all.shape[0] < 4:
+        if y_np_all.ndim != 3 or y_np_all.shape[0] < 1:
             raise RuntimeError(
                 f"Unexpected y shape at {y_abs_path}: {tuple(y_np_all.shape)} "
-                "(expected at least 4 channels)."
+                "(expected at least 1 channel)."
             )
 
         eo_np = self._load_eo_np(row=row, y_np_all=y_np_all)
-        # Channel layout in y_npy_path is [0]=legacy EO, [1:4]=supervised depth targets.
-        y_np = y_np_all[1:4]
+        end_exclusive = int(y_np_all.shape[0]) if self.target_band_end is None else int(
+            self.target_band_end
+        )
+        if end_exclusive < 0:
+            end_exclusive = int(y_np_all.shape[0])
+        if self.target_band_start >= int(y_np_all.shape[0]) or end_exclusive > int(y_np_all.shape[0]):
+            raise RuntimeError(
+                "Configured target band slice is out of range for loaded tensor. "
+                f"Slice=({self.target_band_start}:{end_exclusive}), "
+                f"channels={int(y_np_all.shape[0])}, path={y_abs_path}."
+            )
+        if end_exclusive <= self.target_band_start:
+            raise RuntimeError(
+                "Configured target band slice is empty. "
+                f"Slice=({self.target_band_start}:{end_exclusive}), path={y_abs_path}."
+            )
+        y_np = y_np_all[self.target_band_start:end_exclusive]
 
         # Keep a per-depth structural mask so shallow valid bands are preserved
         # even when deeper bands are invalid at the same pixel.

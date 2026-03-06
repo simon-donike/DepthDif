@@ -1,0 +1,21 @@
+ae: # Autoencoder settings for depth-band latent compression.
+  model_type: "depth_band_ae" # Band-only latent autoencoder for depth profiles.
+  in_channels: 50 # Number of input depth bands.
+  latent_channels: 12 # Latent channel count k.
+  spatial_downsample: 1 # 1 keeps original spatial resolution (band-only compression).
+
+  encoder:
+    hidden_channels: [64, 96, 128] # Progressive channel widths for encoder blocks.
+
+  decoder:
+    hidden_channels: [128, 96, 64] # Progressive channel widths for decoder blocks.
+
+  loss:
+    recon_l1_weight: 1.0 # L1 reconstruction loss weight.
+    recon_l2_weight: 0.5 # L2 reconstruction loss weight.
+    masked_only: false # If true, compute reconstruction only on masked/generated pixels.
+
+  training:
+    lr: 1.0e-4 # AE optimizer learning rate.
+    batch_size: 16 # AE batch size.
+    max_epochs: 400 # AE max training epochs.

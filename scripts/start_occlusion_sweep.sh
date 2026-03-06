@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WAND_BIN="/work/envs/depth/bin/wandb"
-DEFAULT_SWEEP_CFG="configs/sweeps/eo_occlusion_grid_no_eodrop.yaml"
+DEFAULT_SWEEP_CFG="configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml"
 SWEEP_CFG="${1:-$DEFAULT_SWEEP_CFG}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

@@ -155,7 +155,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             None: No value is returned.
         """
         pl.LightningModule.__init__(self)
-        self.save_hyperparameters(ignore=["datamodule"])
+        self.save_hyperparameters(ignore=["datamodule", "autoencoder"])
 
         self.datamodule = datamodule
         self.lr = lr
@@ -269,9 +269,9 @@ class PixelDiffusionConditional(pl.LightningModule):
     @classmethod
     def from_config(
         cls,
-        model_config_path: str = "configs/model_config.yaml",
-        data_config_path: str = "configs/data.yaml",
-        training_config_path: str = "configs/training_config.yaml",
+        model_config_path: str = "configs/px_space/model_config.yaml",
+        data_config_path: str = "configs/px_space/data_config.yaml",
+        training_config_path: str = "configs/px_space/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
         """Compute from config and return the result.

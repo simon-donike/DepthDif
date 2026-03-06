@@ -30,7 +30,9 @@ python -m pip install -r requirements.txt
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).  
 - Main task modes:  
   - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).  
-- Default configs live in `configs/` and are selected via CLI.  
+- Config layout:
+  - `configs/px_space/`: active pixel-space diffusion configs
+  - `configs/lat_space/`: latent-space config set (`model_config.yaml`, `training_config.yaml`, `data_config.yaml`, `ae_config.yaml`)
 
 DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.
 
@@ -47,20 +49,20 @@ EO + multiband training:
 
 ```bash
 python train.py \
-  --data-config configs/data_ostia.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml
+  --data-config configs/px_space/data_ostia.yaml \
+  --train-config configs/px_space/training_config.yaml \
+  --model-config configs/px_space/model_config.yaml
 ```
 
-Legacy same-source EO config: `configs/data.yaml`  
+Legacy same-source EO config: `configs/px_space/data_config.yaml`  
 
 Ambient-occlusion objective example:
 
 ```bash
 python train.py \
-  --data-config configs/data_ostia.yaml \
-  --train-config configs/training_config.yaml \
-  --model-config configs/model_config.yaml \
+  --data-config configs/px_space/data_ostia.yaml \
+  --train-config configs/px_space/training_config.yaml \
+  --model-config configs/px_space/model_config.yaml \
   --set model.model.ambient_occlusion.enabled=true \
   --set model.model.ambient_occlusion.further_drop_prob=0.1 \
   --set training.wandb.run_name=ambient_synth_v1
@@ -70,6 +72,8 @@ Notes:
 - `--train-config` and `--training-config` are equivalent.  
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.  
 - `model.resume_checkpoint` resumes full Lightning state; `model.load_checkpoint` warm-starts by loading only model weights.  
+- Latent diffusion workflow configs live in `configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
+- Latent launcher scripts: `scripts/train_autoencoder.sh`, `scripts/train_latent_diffusion.sh`.
 
 ## Inference
 
@@ -77,8 +81,8 @@ Use `inference.py`:
 
 1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:
-   `configs/model_config.yaml`, `configs/data_ostia.yaml`, `configs/training_config.yaml`  
-   (legacy same-source EO uses `configs/data.yaml`).
+   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia.yaml`, `configs/px_space/training_config.yaml`  
+   (legacy same-source EO uses `configs/px_space/data_config.yaml`).
 2. Choose `MODE` (`"dataloader"` or `"random"`).  
 3. Run:  
 
@@ -89,4 +93,5 @@ python inference.py
 ## Documentation
 
 - Full documentation: `docs/` (or build/serve with MkDocs).  
+- Autoencoder + latent workflow guide: `docs/autoencoder.md`.  
 - Experiments page: `docs/experiments.md`.  

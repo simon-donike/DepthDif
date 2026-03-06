@@ -11,7 +11,7 @@ Dataset example for 50% occlusion:
 The data export script is `data/dataset_to_disk.py`.
 
 Core behavior:
-- reads `*.nc` files from `dataset.source.root_dir`  
+- reads `*.nc` files from the `to_disk(..., root_dir=...)` input path  
 - extracts any configured number of depth levels (`bands`) from any selected 3D variable (`variable`, default `thetao`)  
 - writes each patch to `y_npy/<sample_id>.npy`  
 - writes an index CSV with paths and metadata (`patch_index_with_paths.csv`)  
@@ -53,8 +53,10 @@ Visual reference of the OSTIA-conditioned dataset:
 
 ## Implemented Dataset
 Current configs support `eo_4band` and `ostia`.
-- `configs/data.yaml`: legacy same-source `eo_4band`
-- `configs/data_ostia.yaml`: OSTIA-conditioned `ostia`
+- `configs/px_space/data_config.yaml`: legacy same-source `eo_4band`
+- `configs/px_space/data_ostia.yaml`: OSTIA-conditioned `ostia`
+- `configs/lat_space/data_config.yaml`: latent-workflow data preset (currently `eo_4band` default)
+For latent training flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
 
 ### `eo_4band` (EO-conditioned multiband)
 `SurfaceTempPatch4BandsLightDataset` (`data/dataset_4bands.py`) returns:  
@@ -65,6 +67,10 @@ Current configs support `eo_4band` and `ostia`.
 - `land_mask`: per-channel land/ocean mask  
 - `date`: parsed integer date (`YYYYMMDD`)  
 - optional: `coords`, `info`  
+
+Band selection for targets is configurable through:
+- `dataset.output.target_band_start` (inclusive)
+- `dataset.output.target_band_end` (exclusive)
 
 ### `ostia` (OSTIA-conditioned multiband)
 `SurfaceTempPatchOstiaLightDataset` (`data/dataset_ostia.py`) keeps the same output contract as `eo_4band`, but loads `eo` from `ostia_npy_path` in the overlap CSV produced by `data/get_ostia/overlap_ostia_depth.py`.

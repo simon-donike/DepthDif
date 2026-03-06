@@ -8,6 +8,7 @@ DepthDif explores conditional diffusion for reconstructing dense subsurface ocea
 The repository currently supports:  
 - EO-conditioned multi-band reconstruction (surface condition + deeper target bands)  
 - cross-source conditioning where EO surface SST can come from OSTIA while deeper targets remain Copernicus reanalysis  
+- latent diffusion workflow with autoencoder-based depth compression (see [Autoencoder](autoencoder.md))  
 
 ## Project Links
 - [GitHub Repository](https://github.com/simon-donike/DepthDif)
@@ -28,9 +29,12 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 
 ## Documentation Map
 - [Quick Start](quickstart.md): environment setup + fastest train/infer path  
+- [Production Datasets](production-datasets.md): OSTIA L4 + EN4 profile dataset specs and download workflows  
 - [Data Source](data-source.md): source product, download, and raw variable tables  
 - [Synthetic Dataset](data.md): preprocessing, synthetic corruption, and split behavior  
 - [Model](model.md): architecture and diffusion conditioning flow  
+- [Temporal Dimension Ideas](temporal_dimension.md): options and tradeoffs for extending from `B,C,H,W` to `B,T,C,H,W` on real dataset windows  
+- [Autoencoder + Latent Diffusion](autoencoder.md): AE architecture, latent task setup, launch commands, and constraints  
 - [Data + Coordinate Injection](data-coordinate-injection.md): coordinate/date FiLM conditioning details  
 - [Training](training.md): CLI usage, run outputs, logging, checkpoints  
 - [Inference](inference.md): script and direct `predict_step` workflows  
