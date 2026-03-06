@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1/EN.4.2.2}"
+BASE_URL="${BASE_URL:-https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1}"
 START_YEAR="${START_YEAR:-2010}"
 END_YEAR="${END_YEAR:-2025}"
 OUTPUT_DIR="${1:-./downloads/en4_profiles}"
