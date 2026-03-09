@@ -51,6 +51,21 @@ Temporal resolution/alignment note:
 Visual reference of the OSTIA-conditioned dataset:
 ![img](assets/dataset_ostia.png)
 
+## OSTIA Patch-Time Index CSV (Spatial x Daily)
+For raw OSTIA-only indexing (before adding profile sources), use
+`data/get_ostia/build_ostia_patch_time_index.py`.
+
+This script:
+- builds a fixed spatial patch grid from OSTIA coverage (`tile_size`, `resolution_deg`)
+- computes per-patch invalid ratio from a reference OSTIA day
+- labels patches as `invalid` if invalid ratio exceeds threshold
+- splits remaining water patches into `train`/`val` with deterministic seed
+- expands to daily rows using all OSTIA files (`rows = patches x timesteps`)
+
+Default outputs in `depth_v2`:
+- `/data1/datasets/depth_v2/ostia_patch_index_spatial.csv`
+- `/data1/datasets/depth_v2/ostia_patch_index_daily.csv`
+
 ## Implemented Dataset
 Current configs support `eo_4band` and `ostia`.
 - `configs/px_space/data_config.yaml`: legacy same-source `eo_4band`
@@ -88,6 +103,18 @@ Cross-source structure notes (OSTIA surface vs reanalysis depth):
 
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)
+
+### Raw OSTIA + Argo Profiles (standalone)
+`OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:
+- OSTIA daily NetCDF files from `ostia_dir` as conditioning source (`condition` / alias `eo`)
+- EN4 monthly profile NetCDF files from `argo_dir` as profile source (`x`)
+
+Per `__getitem__` behavior:
+- picks one EN4 profile center in a month that overlaps OSTIA files
+- builds a shared `128x128` grid with `0.1` degree spacing around that center
+- interpolates OSTIA `analysed_sst` onto that grid
+- interpolates EN4 profile temperatures (selected `argo_level_index`) onto the same grid
+- returns aligned tensors: `x`, `condition` (`eo` alias), `x_valid_mask`, `coords`, `date`
 
 ## Synthetic Transformations
 ## Masking, Validity, and Augmentation
