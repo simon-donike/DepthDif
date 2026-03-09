@@ -106,15 +106,17 @@ EO + multiband example:
 
 ### Raw OSTIA + Argo Profiles (standalone)
 `OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:
-- OSTIA daily NetCDF files from `ostia_dir` as conditioning source (`condition` / alias `eo`)
-- EN4 monthly profile NetCDF files from `argo_dir` as profile source (`x`)
+- rows come from the merged daily CSV (`patch_id/date/lat0/lat1/lon0/lon1/phase/ostia_file_path` plus Argo linkage columns)
+- OSTIA daily NetCDF files are resolved per row via `ostia_file_path` (or `matched_ostia_file_path`)
 
 Per `__getitem__` behavior:
-- picks one EN4 profile center in a month that overlaps OSTIA files
-- builds a shared `128x128` grid with `0.1` degree spacing around that center
-- interpolates OSTIA `analysed_sst` onto that grid
-- interpolates EN4 profile temperatures (selected `argo_level_index`) onto the same grid
-- returns aligned tensors: `x`, `condition` (`eo` alias), `x_valid_mask`, `coords`, `date`
+- filters `train`/`val`/`all` from CSV split labels (`phase` or `split`)
+- rebuilds the patch sampling grid from `lat0/lat1/lon0/lon1`
+- interpolates OSTIA `analysed_sst` onto that grid and returns it as `condition` (alias `eo`)
+- returns Argo linkage fields (for example `argo_file_path`) as metadata only
+
+Current scope note:
+- this dataset currently focuses on OSTIA surface retrieval only; EN4/Argo profile loading is not wired yet
 
 ## Synthetic Transformations
 ## Masking, Validity, and Augmentation
