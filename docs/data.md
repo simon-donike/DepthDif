@@ -111,12 +111,17 @@ EO + multiband example:
 
 Per `__getitem__` behavior:
 - filters `train`/`val`/`all` from CSV split labels (`phase` or `split`)
+- pre-filters CSV rows at dataset initialization to keep only valid Argo-linked entries (`argo_file_path`, valid `date`, positive Argo flags/counts, and at least one JULD-matching profile)
 - rebuilds the patch sampling grid from `lat0/lat1/lon0/lon1`
-- interpolates OSTIA `analysed_sst` onto that grid and returns it as `condition` (alias `eo`)
-- returns Argo linkage fields (for example `argo_file_path`) as metadata only
+- interpolates OSTIA `analysed_sst` onto that grid and returns it as `eo`
+- opens the row-linked EN4 monthly file from `argo_file_path`
+- converts `JULD` to `YYYYMMDD` and selects profiles matching the row date
+- rasterizes matched Argo profiles onto the patch grid and returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes)
+- returns Argo-driven `valid_mask` with the same shape as `x`
+- returns only: `x`, `eo`, `valid_mask`, `info`
 
 Current scope note:
-- this dataset currently focuses on OSTIA surface retrieval only; EN4/Argo profile loading is not wired yet
+- profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step
 
 ## Synthetic Transformations
 ## Masking, Validity, and Augmentation
