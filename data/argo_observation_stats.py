@@ -224,7 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--csv-path",
         type=Path,
-        default=Path("/work/data/depth_v2/ostia_patch_index_daily.csv"),
+        default=Path("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv"),
         help="Merged daily CSV used by OstiaArgoTileDataset.",
     )
     parser.add_argument(
@@ -269,6 +269,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional local world-outline shapefile path (.shp).",
     )
+    parser.add_argument(
+        "--intermediate-every-n-samples",
+        type=int,
+        default=500,
+        help="Overwrite *_intermediate outputs every N processed samples (0 disables).",
+    )
     return parser
 
 
@@ -311,8 +317,15 @@ def main() -> None:
     patch_obs_fraction_sum: dict[str, float] = defaultdict(float)
     patch_sample_count: dict[str, int] = defaultdict(int)
     patch_meta: dict[str, dict[str, Any]] = {}
+    intermediate_every_n = max(int(args.intermediate_every_n_samples), 0)
+    intermediate_hist_path = output_dir / "argo_observations_histogram_intermediate.png"
+    intermediate_geojson_path = output_dir / "argo_observations_per_patch_intermediate.geojson"
+    intermediate_map_path = output_dir / "argo_observations_map_intermediate.png"
 
-    for idx in tqdm(selected_indices, desc="Iterating dataset", unit="sample"):
+    for sample_i, idx in enumerate(
+        tqdm(selected_indices, desc="Iterating dataset", unit="sample"),
+        start=1,
+    ):
         row = dataset._rows[idx]
         year = _parse_year(row.get("date"))
         if year not in year_set:
@@ -345,6 +358,26 @@ def main() -> None:
                 "lon_lo": lon_lo,
                 "lon_hi": lon_hi,
             }
+
+        if intermediate_every_n > 0 and (sample_i % intermediate_every_n == 0):
+            # Intermediate checkpoints overwrite fixed files so the latest progress is always visible.
+            _plot_histogram(
+                out_path=intermediate_hist_path,
+                patch_day_obs_fractions=patch_day_obs_fractions,
+            )
+            intermediate_fc, _ = _write_geojson(
+                out_path=intermediate_geojson_path,
+                patch_meta=patch_meta,
+                patch_obs_fraction_sum=patch_obs_fraction_sum,
+                patch_sample_count=patch_sample_count,
+            )
+            _plot_world_map(
+                out_path=intermediate_map_path,
+                feature_collection=intermediate_fc,
+                year_start=int(args.year_start),
+                year_end=int(args.year_end),
+                world_shapefile=args.world_shapefile,
+            )
 
     hist_path = output_dir / f"argo_observations_histogram_{args.year_start}_{args.year_end}.png"
     geojson_path = (

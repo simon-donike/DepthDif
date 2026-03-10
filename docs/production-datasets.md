@@ -67,9 +67,9 @@ Notes for this command:
 - patch geographic span is `tile_size * resolution_deg` per axis
 - invalid patches are excluded by default (`train`/`val` only); use `--include-invalid` to keep them
 
-Patch split visualization (red = land/invalid, green = train, yellow = val):
+Patch split visualization (red = land/invalid, green = train, yellow = val) for 0.1 deg resolution and 128x128 patch size:
 
-![OSTIA train val land patch map](assets/train_test_split_actual_data.png)
+![OSTIA train val land patch map](docs/assets/train_val_split_0p5.png)
 
 Source portal:
 - <https://data.marine.copernicus.eu/product/SST_GLO_SST_L4_REP_OBSERVATIONS_010_011>
@@ -198,23 +198,27 @@ Snapshot measured on **March 9, 2026** for `/data1/datasets/depth_v2`.
 Core counts:
 - OSTIA daily files (`ostia/*.nc`): `5,326`
 - EN4 monthly profile files (`en4_profiles/*.nc`): `186`
-- spatial patches (`ostia_patch_index_spatial.csv`): `751` total
-- split counts (spatial): `638 train`, `113 val`
-- daily index rows (`ostia_patch_index_daily.csv`): `3,999,826` (`751 patches x 5,326 days`)
+- spatial patches (`ostia_patch_index_spatial.csv`): `191` total (0.5 Deg)
+- split counts (spatial): `162 train`, `30 val` (0.5 Deg)
+- daily index rows (`ostia_patch_index_daily.csv`): ~600k (0.5 Deg)
 - daily date range in index: `2010-01-01` to `2024-07-31`
 
 Argo coverage in final daily CSV:
 - days with `argo_valid=1`: `4,199`
 - days with `argo_valid=0`: `1,127`
-- row-level counts: `3,153,449` rows with `argo_valid=1`, `846,377` with `argo_valid=0`
-
-On-disk size (CSVs):
-- `ostia_patch_index_spatial.csv`: `68,744` bytes (`~0.07 MiB`)
-- `ostia_patch_index_daily.csv`: `1,078,416,942` bytes (`~1.00 GiB`)
-- `argo_profile_datetime_match.csv`: `1,244,885,730` bytes (`~1.16 GiB`)
-- combined CSV footprint: `2,323,371,416` bytes (`~2.16 GiB`)
+- row-level counts: `~600,000` rows with `argo_valid=1`
 
 On-disk size (data folders):
 - `ostia/`: `86,859,298,331` bytes (`~81 GiB`)
 - `en4_profiles/`: `25,074,283,765` bytes (`~24 GiB`)
 - full `/data1/datasets/depth_v2`: `156,937,570,342` bytes (`~146 GiB`)
+
+
+# Dataset Reduction (Spatial and Temporal)
+
+## V1: 0.05 Deg, Daily
+3M samples, ~55% percent of samples without a single observation, ~1.6 average observations for valid tiles. Due to the low number, moving on the 0.1 deg
+
+## V2: 0.1 Deg, Daily
+600k samples, ~15% percent of samples without a single observation, ~4.05 average observations for valid tiles.  
+![OSTIA 0.1 deg sample](docs/assets/argo_ostia_sample_5.png)

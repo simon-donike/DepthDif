@@ -230,44 +230,67 @@ class OstiaArgoTileDataset(Dataset):
             # Build the target patch pixel centers from the same CSV bounds used everywhere else.
             lat_axis = self._build_patch_axis(float(lat0), float(lat1))
             lon_axis = self._build_patch_axis(float(lon0), float(lon1))
+            lat_lo = min(float(lat0), float(lat1))
+            lat_hi = max(float(lat0), float(lat1))
+            lon_lo = min(float(lon0), float(lon1))
+            lon_hi = max(float(lon0), float(lon1))
 
-            # Fast path: contiguous isel slices when patch centers align to native grid.
-            lat_i0 = self._nearest_index(lat, float(lat_axis[0]))
-            lat_i1 = self._nearest_index(lat, float(lat_axis[-1]))
-            lon_i0 = self._nearest_index(lon, float(lon_axis[0]))
-            lon_i1 = self._nearest_index(lon, float(lon_axis[-1]))
-            lat_lo_i = min(lat_i0, lat_i1)
-            lat_hi_i = max(lat_i0, lat_i1)
-            lon_lo_i = min(lon_i0, lon_i1)
-            lon_hi_i = max(lon_i0, lon_i1)
+            # Always load the full native-resolution subgrid over the patch footprint first.
+            lat_idx = np.flatnonzero((lat >= lat_lo) & (lat <= lat_hi))
+            lon_idx = np.flatnonzero((lon >= lon_lo) & (lon <= lon_hi))
+            if lat_idx.size == 0:
+                lat_i0 = self._nearest_index(lat, lat_lo)
+                lat_i1 = self._nearest_index(lat, lat_hi)
+                lat_idx = np.arange(min(lat_i0, lat_i1), max(lat_i0, lat_i1) + 1)
+            if lon_idx.size == 0:
+                lon_i0 = self._nearest_index(lon, lon_lo)
+                lon_i1 = self._nearest_index(lon, lon_hi)
+                lon_idx = np.arange(min(lon_i0, lon_i1), max(lon_i0, lon_i1) + 1)
 
-            use_isel = (
-                (lat_hi_i - lat_lo_i + 1) == int(self.tile_size)
-                and (lon_hi_i - lon_lo_i + 1) == int(self.tile_size)
+            lat_start = int(lat_idx.min())
+            lat_stop = int(lat_idx.max()) + 1
+            lon_start = int(lon_idx.min())
+            lon_stop = int(lon_idx.max()) + 1
+            native_patch = np.asarray(
+                sst_var.isel(
+                    lat=slice(lat_start, lat_stop),
+                    lon=slice(lon_start, lon_stop),
+                ).to_numpy(),
+                dtype=np.float32,
             )
-            if use_isel:
-                patch = np.asarray(
-                    sst_var.isel(
-                        lat=slice(lat_lo_i, lat_hi_i + 1),
-                        lon=slice(lon_lo_i, lon_hi_i + 1),
-                    ).to_numpy(),
-                    dtype=np.float32,
-                )
-                # Align orientation with axis order returned by _build_patch_axis (low -> high).
-                if patch.shape[0] == self.tile_size and lat[lat_lo_i] > lat[lat_hi_i]:
-                    patch = patch[::-1, :]
-                if patch.shape[1] == self.tile_size and lon[lon_lo_i] > lon[lon_hi_i]:
-                    patch = patch[:, ::-1]
-            else:
-                # Fallback: nearest-point gather for each requested pixel center.
-                patch = np.asarray(
-                    sst_var.sel(
+            lat_native = np.asarray(lat[lat_start:lat_stop], dtype=np.float64)
+            lon_native = np.asarray(lon[lon_start:lon_stop], dtype=np.float64)
+
+            # Interpolation expects ascending coordinates; flip axes if source order is descending.
+            if lat_native.size > 1 and lat_native[0] > lat_native[-1]:
+                lat_native = lat_native[::-1]
+                native_patch = native_patch[::-1, :]
+            if lon_native.size > 1 and lon_native[0] > lon_native[-1]:
+                lon_native = lon_native[::-1]
+                native_patch = native_patch[:, ::-1]
+
+            native_da = xr.DataArray(
+                native_patch,
+                coords={"lat": lat_native, "lon": lon_native},
+                dims=("lat", "lon"),
+            )
+            patch_linear = native_da.interp(
+                lat=xr.DataArray(lat_axis, dims="lat"),
+                lon=xr.DataArray(lon_axis, dims="lon"),
+                method="linear",
+            )
+            patch = np.asarray(patch_linear.to_numpy(), dtype=np.float32)
+            if np.any(~np.isfinite(patch)):
+                # Fill edge/degenerate interpolation gaps with nearest-neighbor values.
+                patch_nearest = np.asarray(
+                    native_da.interp(
                         lat=xr.DataArray(lat_axis, dims="lat"),
                         lon=xr.DataArray(lon_axis, dims="lon"),
                         method="nearest",
                     ).to_numpy(),
                     dtype=np.float32,
                 )
+                patch = np.where(np.isfinite(patch), patch, patch_nearest)
 
         if patch.ndim != 2:
             raise RuntimeError(
@@ -739,7 +762,7 @@ class OstiaArgoTileDataset(Dataset):
 
 if __name__ == "__main__":
     # Example usage:
-    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily.csv", split="train",return_argo_profiles=True)
+    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True)
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     print(f"Sample keys: {list(sample.keys())}")
@@ -768,4 +791,4 @@ if __name__ == "__main__":
             c_avg_num.append(valid_pixels)
         else:
             c_inv += 1
-        print(f"Valid Argo samples: {c_val}, Invalid Argo samples: {c_inv}, Average valid pixels: {np.mean(c_avg_num):.2f}", end="\r")
+        print(f"Percentage of invalid samples: {c_inv / (c_val + c_inv) * 100:.2f}%, Average valid pixels: {np.mean(c_avg_num):.2f}. {i}/1000", end="\r")

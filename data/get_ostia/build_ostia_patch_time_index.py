@@ -216,6 +216,22 @@ def _classify_patches_from_reference(
 
 
 def _write_patch_spatial_csv(path: Path, records: list[PatchRecord]) -> None:
+    def _bbox_wkt_wgs84(rec: PatchRecord) -> str:
+        lat_lo = min(rec.lat0, rec.lat1)
+        lat_hi = max(rec.lat0, rec.lat1)
+        lon_lo = min(rec.lon0, rec.lon1)
+        lon_hi = max(rec.lon0, rec.lon1)
+        # WKT coordinate order is x/y, i.e., lon/lat in EPSG:4326 (WGS84).
+        return (
+            "POLYGON (("
+            f"{lon_lo:.6f} {lat_lo:.6f}, "
+            f"{lon_hi:.6f} {lat_lo:.6f}, "
+            f"{lon_hi:.6f} {lat_hi:.6f}, "
+            f"{lon_lo:.6f} {lat_hi:.6f}, "
+            f"{lon_lo:.6f} {lat_lo:.6f}"
+            "))"
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -231,6 +247,7 @@ def _write_patch_spatial_csv(path: Path, records: list[PatchRecord]) -> None:
                 "invalid_fraction",
                 "invalid_percentage",
                 "phase",
+                "wkt",
             ]
         )
         for rec in records:
@@ -246,6 +263,7 @@ def _write_patch_spatial_csv(path: Path, records: list[PatchRecord]) -> None:
                     f"{rec.invalid_fraction:.6f}",
                     f"{rec.invalid_percentage:.4f}",
                     rec.phase,
+                    _bbox_wkt_wgs84(rec),
                 ]
             )
 

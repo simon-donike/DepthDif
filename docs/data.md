@@ -113,7 +113,7 @@ Per `__getitem__` behavior:
 - filters `train`/`val`/`all` from CSV split labels (`phase` or `split`)
 - pre-filters CSV rows at dataset initialization to keep only valid Argo-linked entries (`argo_file_path`, valid `date`, positive Argo flags/counts, and at least one JULD-matching profile)
 - rebuilds the patch sampling grid from `lat0/lat1/lon0/lon1`
-- interpolates OSTIA `analysed_sst` onto that grid and returns it as `eo`
+- loads the full native-resolution OSTIA subgrid for that bbox, then interpolates `analysed_sst` onto the patch grid and returns it as `eo`
 - opens the row-linked EN4 monthly file from `argo_file_path`
 - converts `JULD` to `YYYYMMDD` and selects profiles matching the row date
 - rasterizes matched Argo profiles onto the patch grid and returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes)
