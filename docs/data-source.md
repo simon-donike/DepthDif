@@ -1,7 +1,7 @@
 # Data Source
-DepthDif now uses two raw upstream sources:
-- Copernicus Marine monthly reanalysis for sub-surface temperatures (targets and sparse inputs)
-- OSTIA L4 SST for sea-surface EO conditioning
+DepthDif now uses two raw upstream sources:  
+- Copernicus Marine monthly reanalysis for sub-surface temperatures (targets and sparse inputs)  
+- OSTIA L4 SST for sea-surface EO conditioning  
 
 Use this page for raw-source provenance and download details. See [Synthetic Dataset](data.md) for project-specific preprocessing and transformations.
 
@@ -21,39 +21,39 @@ The Depth levels range from 0.4m to >5km, rigins almost exponentially due to the
 
 
 ## Download
-Example CLI from this project:
+Example CLI from this project:  
 `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*YYYY/*"`
 
-Project helper scripts:
-- `data/get_glorys/download_glorys_daily.sh` (daily GLORYS downloads from `2010-01-01` to today by default)
+Project helper scripts:  
+- `data/get_glorys/download_glorys_monthly.sh` (monthly GLORYS downloads from `2010-01-01` to today by default)
 
-## Product B: Surface EO SST (OSTIA)
+## Product B: Surface EO SST (OSTIA). 
 - Provider: Copernicus Marine Service / UKMO OSTIA stream  
 - Dataset used in this project: `SST_GLO_SST_L4_REP_OBSERVATIONS_010_011`  
 - Files used here: daily OSTIA snapshots (`YYYYMMDD120000`) from `2010-01-01` onward  
 - Variable used for conditioning: `analysed_sst` (sea-surface temperature)
 
 OSTIA dataset sample used in this project:  
-![img](assets/dataset_ostia.png)
+![img](assets/dataset_ostia.png). 
 
 Temporal note for current OSTIA overlap workflow:  
-- previous depth workflow was monthly reanalysis composites
-- EO now comes from daily OSTIA snapshots (12:00 UTC), not monthly mean composites
-- overlap dataset keeps only months where both sources are available
+- previous depth workflow was monthly reanalysis composites  
+- EO now comes from daily OSTIA snapshots (12:00 UTC), not monthly mean composites  
+- overlap dataset keeps only months where both sources are available  
 
-## Product C: EN4 Profile Observations (Argo/Other In-Situ)
-- Provider: UK Met Office Hadley Centre (EN4)
-- Dataset family: EN4.2.2 profile ZIP archives
-- Typical file naming: `EN.4.2.2.profiles.g10.YYYY.zip`
+## Product C: EN4 Profile Observations (Argo/Other In-Situ)  
+- Provider: UK Met Office Hadley Centre (EN4)  
+- Dataset family: EN4.2.2 profile ZIP archives  
+- Typical file naming: `EN.4.2.2.profiles.g10.YYYY.zip`  
 - Example direct link:  
-  `https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1/EN.4.2.2/EN.4.2.2.profiles.g10.2019.zip`
+  `https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1/EN.4.2.2/EN.4.2.2.profiles.g10.2019.zip`  
 
-Project helper script:
-- `data/get_argo/download_en4_profiles.sh`
-- checks each year individually (dry-run HEAD check), logs CSV, and downloads immediately per available year
+Project helper script:  
+- `data/get_argo/download_en4_profiles.sh`  
+- checks each year individually (dry-run HEAD check), logs CSV, and downloads immediately per available year  
 
 ## Data Contents (`data/data_info.txt`, Reanalysis Sample)
-The raw source file contains the following data variables (NetCDF variables):
+The raw source file contains the following data variables (NetCDF variables):  
 
 | Variable | Dimensions | Description | Units |
 |---|---|---|---|
@@ -76,7 +76,7 @@ The raw source file contains the following data variables (NetCDF variables):
 - `depth`: 50 vertical levels  
 
 
-## Depth Levels (Meters)
+## Depth Levels (Meters)  
 | Level | Depth (m) |
 |---:|---:|
 | 0 | 0.494 |

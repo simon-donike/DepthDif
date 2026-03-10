@@ -67,9 +67,9 @@ Notes for this command:
 - patch geographic span is `tile_size * resolution_deg` per axis
 - invalid patches are excluded by default (`train`/`val` only); use `--include-invalid` to keep them
 
-Patch split visualization (red = land/invalid, green = train, yellow = val) for 0.1 deg resolution and 128x128 patch size:
+Patch split visualization (blue = train, red = val, number show fraction of land pixels) for 0.1 deg resolution and 128x128 patch size:
 
-![OSTIA train val land patch map](assets/train_val_split_0p5.png)
+![OSTIA train val land patch map](assets/train_val_split_0p1.png)
 
 Source portal:
 - <https://data.marine.copernicus.eu/product/SST_GLO_SST_L4_REP_OBSERVATIONS_010_011>
