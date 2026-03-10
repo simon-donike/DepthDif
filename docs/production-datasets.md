@@ -69,7 +69,7 @@ Notes for this command:
 
 Patch split visualization (red = land/invalid, green = train, yellow = val) for 0.1 deg resolution and 128x128 patch size:
 
-![OSTIA train val land patch map](docs/assets/train_val_split_0p5.png)
+![OSTIA train val land patch map](assets/train_val_split_0p5.png)
 
 Source portal:
 - <https://data.marine.copernicus.eu/product/SST_GLO_SST_L4_REP_OBSERVATIONS_010_011>
@@ -222,10 +222,10 @@ On-disk size (data folders):
 ## V2: 0.1 Deg, Daily
 600k samples, ~15% percent of samples without a single observation, ~4.05 average observations for valid tiles.  
 Sample Image:  
-![OSTIA 0.1 deg sample](docs/assets/argo_ostia_sample_5.png)  
+![OSTIA 0.1 deg sample](assets/argo_ostia_sample_5.png)  
   
 Validation Set Histogram of valid pixel fractions:    
-![OSTIA 0.1 deg hist](docs/assets/argo_observations_histogram_intermediate.png)  
+![OSTIA 0.1 deg hist](assets/argo_observations_histogram_intermediate.png)  
   
 Validaiton Set Map of patches, color-coded by valid pixel fraction:  
-![OSTIA 0.1 deg map](docs/assets/argo_observations_map_intermediate.png)  
+![OSTIA 0.1 deg map](assets/argo_observations_map_intermediate.png)  
