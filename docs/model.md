@@ -1,103 +1,103 @@
-# Model
-DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.
-
+# Model  
+DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.  
+  
 Model schema:  
-![depthdif_schema](assets/depthdif_schema.png)
-
-Core stack:
+![depthdif_schema](assets/depthdif_schema.png)  
+  
+Core stack:  
 - Lightning wrapper: `PixelDiffusionConditional`  
 - diffusion core: `DenoisingDiffusionConditionalProcess`  
 - denoiser backbone: `UnetConvNextBlock` (ConvNeXt-style U-Net)  
-
-The model learns to generate `y` while conditioning on observed channels (`x`, optional `eo`, optional mask channels).
-
-## Conditioning Setup
+  
+The model learns to generate `y` while conditioning on observed channels (`x`, optional `eo`, optional mask channels).  
+  
+## Conditioning Setup  
 Two conditioning layouts are supported by code/config:  
-
+  
 - Single-band task: `x -> y`  
 - EO multiband task: `[eo, x, valid_mask] -> y`  
-
+  
 Condition assembly happens in `_prepare_condition_for_model`:  
 - optionally prepend `eo` (`condition_include_eo=true`)  
 - append data channels from `x`  
 - optionally append valid-mask channels (`condition_use_valid_mask=true`)  
 - enforce channel count equals `model.condition_channels`  
-
-## Architecture Summary
-`UnetConvNextBlock` follows a U-Net encoder/decoder with ConvNeXt blocks and linear attention.
-
+  
+## Architecture Summary  
+`UnetConvNextBlock` follows a U-Net encoder/decoder with ConvNeXt blocks and linear attention.  
+  
 With default `dim_mults=[1,2,4,8]`:  
 - 4 downsampling stages  
 - bottleneck block with attention  
 - 3 upsampling stages with skip connections  
 - final ConvNeXt block + `1x1` output conv to `generated_channels`  
-
+  
 Time conditioning:  
 - sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks  
-
+  
 Coordinate/date conditioning (when enabled):  
 - per-channel FiLM scale/shift in ConvNeXt blocks  
 - details in [Data + Coordinate Injection](data-coordinate-injection.md)  
-
-## Training Objective
-Training step (`training_step`) calls conditional diffusion `p_loss` on standardized temperature tensors.
-
+  
+## Training Objective  
+Training step (`training_step`) calls conditional diffusion `p_loss` on standardized temperature tensors.  
+  
 Behavior:  
 - sample random timestep `t`  
 - forward diffuse `y` to noisy target branch  
 - predict either:  
   - noise (`epsilon` parameterization), or  
   - clean sample (`x0` parameterization)  
-
+  
 Loss options:  
 - unmasked MSE (default behavior when masking disabled)  
 - masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`  
-
+  
 Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):  
 - sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)  
 - feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask  
 - optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)  
 - compute masked MSE on the originally observed subset (`A`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
-
-Current EO config (`configs/px_space/model_config.yaml`) uses:
+  
+Current EO config (`configs/px_space/model_config.yaml`) uses:  
 - `parameterization: "x0"`  
 - `mask_loss_with_valid_pixels: true`  
-
-Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.
-
-This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`), not over the full `y` image.
-
-## Inference Flow
-Prediction entry point is `predict_step`.
-
+  
+Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
+  
+This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`), not over the full `y` image.  
+  
+## Inference Flow  
+Prediction entry point is `predict_step`.  
+  
 At inference:  
 - build condition tensor from batch inputs  
 - start reverse process from Gaussian latent  
 - keep condition fixed during reverse sampling  
 - use configured sampler (`ddpm` by default, `ddim` optional)  
 - optional known-pixel clamping can overwrite known pixels each step  
-
+  
 Output dictionary from `predict_step`:  
 - `y_hat`: standardized model output  
 - `y_hat_denorm`: denormalized output  
 - `denoise_samples`: optional intermediate reverse samples  
 - `x0_denoise_samples`: optional per-step `x0` predictions  
 - `sampler`: sampler object used  
-
-## Post-Processing in Lightning Inference
+  
+## Post-Processing in Lightning Inference  
 After denormalization, inference can apply:  
 - optional Gaussian blur (`model.post_process.gaussian_blur.*`)  
 - merge observed pixels from `x` (where `valid_mask=1`) with generated pixels (where `valid_mask=0`)  
 - zero land pixels using `land_mask`  
-
-This post-processing is centralized in `predict_step`.
-
-## Validation Diagnostics
+  
+This post-processing is centralized in `predict_step`.  
+  
+## Validation Diagnostics  
 Validation computes two paths:  
 - per-batch validation loss (`validation_step`) using the same objective as training  
 - one full reverse-diffusion reconstruction per epoch from cached first validation batch (`on_validation_epoch_end`)  
-
+  
 When available, full reconstruction logging includes:  
 - MSE  
 - PSNR/SSIM (if `skimage` is installed)  
