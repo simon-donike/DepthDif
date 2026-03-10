@@ -116,6 +116,16 @@ Setup:
 Status:  
  ...currently training...
 
+## Experiment 12 (Synthetic GLORYS EO, 99.5% occlusion)
+Setup:  
+- condition `eo`: synthetic GLORYS EO  
+- occlusion rate: 99.5%  
+- average observations per patch: ~84  
+
+Observation:  
+- works as expected  
+![img](assets/995_synth.png)
+
 ## Next Experiments (Roadmap)
 - Sparse Targets for Reanalysis data (from scratch & from pretrained)
 - 99 or more perc. occlusion rates for OSTIA - do that later since it requires data download and handling
