@@ -30,6 +30,7 @@ python -m pip install -r requirements.txt
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).  
 - Main task modes:  
   - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).  
+- Additional standalone raw-source dataset: `data/dataset_ostia_argo.py` (`OstiaArgoTileDataset`) for CSV-driven OSTIA condition tile retrieval plus date-matched EN4 profile extraction from `argo_file_path`.
 - Config layout:
   - `configs/px_space/`: active pixel-space diffusion configs
   - `configs/lat_space/`: latent-space config set (`model_config.yaml`, `training_config.yaml`, `data_config.yaml`, `ae_config.yaml`)

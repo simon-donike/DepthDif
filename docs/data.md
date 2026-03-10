@@ -51,6 +51,21 @@ Temporal resolution/alignment note:
 Visual reference of the OSTIA-conditioned dataset:
 ![img](assets/dataset_ostia.png)
 
+## OSTIA Patch-Time Index CSV (Spatial x Daily)
+For raw OSTIA-only indexing (before adding profile sources), use
+`data/get_ostia/build_ostia_patch_time_index.py`.
+
+This script:
+- builds a fixed spatial patch grid from OSTIA coverage (`tile_size`, `resolution_deg`)
+- computes per-patch invalid ratio from a reference OSTIA day
+- labels patches as `invalid` if invalid ratio exceeds threshold
+- splits remaining water patches into `train`/`val` with deterministic seed
+- expands to daily rows using all OSTIA files (`rows = patches x timesteps`)
+
+Default outputs in `depth_v2`:
+- `/data1/datasets/depth_v2/ostia_patch_index_spatial.csv`
+- `/data1/datasets/depth_v2/ostia_patch_index_daily.csv`
+
 ## Implemented Dataset
 Current configs support `eo_4band` and `ostia`.
 - `configs/px_space/data_config.yaml`: legacy same-source `eo_4band`
@@ -88,6 +103,25 @@ Cross-source structure notes (OSTIA surface vs reanalysis depth):
 
 EO + multiband example:  
 ![img](assets/eo_dataset_example.png)
+
+### Raw OSTIA + Argo Profiles (standalone)
+`OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:
+- rows come from the merged daily CSV (`patch_id/date/lat0/lat1/lon0/lon1/phase/ostia_file_path` plus Argo linkage columns)
+- OSTIA daily NetCDF files are resolved per row via `ostia_file_path` (or `matched_ostia_file_path`), with index paths typically stored as `depth_v2/...` and optional constructor `root_path` support for relocated datasets
+
+Per `__getitem__` behavior:
+- filters `train`/`val`/`all` from CSV split labels (`phase` or `split`)
+- pre-filters CSV rows at dataset initialization to keep only valid Argo-linked entries (`argo_file_path`, valid `date`, positive Argo flags/counts, and at least one JULD-matching profile)
+- rebuilds the patch sampling grid from `lat0/lat1/lon0/lon1`
+- loads the full native-resolution OSTIA subgrid for that bbox, then interpolates `analysed_sst` onto the patch grid and returns it as `eo`
+- opens the row-linked EN4 monthly file from `argo_file_path`
+- converts `JULD` to `YYYYMMDD` and selects profiles matching the row date
+- rasterizes matched Argo profiles onto the patch grid and returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes)
+- returns Argo-driven `valid_mask` with the same shape as `x`
+- returns only: `x`, `eo`, `valid_mask`, `info`
+
+Current scope note:
+- profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step
 
 ## Synthetic Transformations
 ## Masking, Validity, and Augmentation

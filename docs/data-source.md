@@ -24,6 +24,9 @@ The Depth levels range from 0.4m to >5km, rigins almost exponentially due to the
 Example CLI from this project:
 `copernicusmarine get -i cmems_mod_glo_phy_my_0.083deg_P1M-m --filter "*YYYY/*"`
 
+Project helper scripts:
+- `data/get_glorys/download_glorys_daily.sh` (daily GLORYS downloads from `2010-01-01` to today by default)
+
 ## Product B: Surface EO SST (OSTIA)
 - Provider: Copernicus Marine Service / UKMO OSTIA stream  
 - Dataset used in this project: `SST_GLO_SST_L4_REP_OBSERVATIONS_010_011`  

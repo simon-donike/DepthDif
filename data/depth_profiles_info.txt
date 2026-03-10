@@ -1,0 +1,742 @@
+EN4 depth-profile directory: /data1/datasets/depth_v2/en4_profiles
+Matched files: 186
+Total size (GB): 23.35
+First file: /data1/datasets/depth_v2/en4_profiles/EN.4.2.2.f.profiles.g10.201001.nc
+Last file: /data1/datasets/depth_v2/en4_profiles/EN.4.2.2.f.profiles.g10.202512.nc
+Month coverage: 201001 -> 202512
+Missing month count in covered range: 6
+Missing months: 202107, 202108, 202109, 202110, 202111, 202112
+
+=== COLLECTION STRUCTURE SUMMARY ===
+- N_PROF min/max: 14755 / 79110
+- N_PROF average: 37735.25
+- Unique N_LEVELS values: [400]
+- Unique data-variable counts: [55]
+- Unique global-attribute counts: [4]
+- Unique dimension-name signatures: 1
+- Unique variable-name signatures: 1
+- Unreadable files: 0
+- Backend use counts: {'h5netcdf': 138, 'default': 48}
+
+Dimension signatures:
+- ('N_CALIB', 'N_HISTORY', 'N_LEVELS', 'N_PARAM', 'N_PROF')
+
+=== SAMPLE FILE SUMMARY ===
+Opening: /data1/datasets/depth_v2/en4_profiles/EN.4.2.2.f.profiles.g10.201001.nc
+Backend used: h5netcdf
+
+=== DATASET SUMMARY ===
+<xarray.Dataset> Size: 477MB
+Dimensions:                       (N_PROF: 31697, N_CALIB: 1, N_PARAM: 5,
+                                   N_LEVELS: 400, N_HISTORY: 0)
+Dimensions without coordinates: N_PROF, N_CALIB, N_PARAM, N_LEVELS, N_HISTORY
+Data variables: (12/55)
+    CALIBRATION_DATE              (N_PROF, N_CALIB, N_PARAM) |S14 2MB ...
+    CYCLE_NUMBER                  (N_PROF) int32 127kB ...
+    DATA_CENTRE                   (N_PROF) |S2 63kB ...
+    DATA_MODE                     (N_PROF) |S1 32kB ...
+    DATA_STATE_INDICATOR          (N_PROF) |S4 127kB ...
+    DATA_TYPE                     |S16 16B ...
+    ...                            ...
+    STATION_PARAMETERS            (N_PROF, N_PARAM) |S4 634kB ...
+    TEMP                          (N_PROF, N_LEVELS) float32 51MB ...
+    WMO_INST_TYPE                 (N_PROF) |S4 127kB ...
+    depth_corrections             (N_PROF, N_LEVELS) float32 51MB ...
+    instrument_type               (N_PROF) object 254kB ...
+    thermal_corrections           (N_PROF) float32 127kB ...
+Attributes:
+    licence:     EN4 is distributed under the Non Commercial Government Licen...
+    references:  Website and paper: https://www.metoffice.gov.uk/hadobs/en4/;...
+    history:     Fri Apr  2 19:50:52 2021: ncks -O -x -v TEMP_UNIQUE_ID,PSAL_...
+    NCO:         netCDF Operators version 4.7.5 (Homepage = http://nco.sf.net...
+
+=== TARGET VARIABLE VALUE SUMMARY ===
+- TEMP: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32, valid=2578713/12678800
+  units=degree_celsius, fill_value=99999.0
+  stats: min=-3.9450, max=39.8470, mean=12.1144, p01=-1.5515, p50=11.8519, p99=29.5500
+- PSAL_CORRECTED: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32, valid=1969578/12678800
+  units=1, fill_value=99999.0
+  stats: min=0.0000, max=44.9580, mean=34.7524, p01=29.2582, p50=34.7673, p99=38.8960
+- POTM_CORRECTED: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32, valid=2577867/12678800
+  units=degree_celsius, fill_value=99999.0
+  stats: min=-3.9525, max=39.6818, mean=12.0845, p01=-1.5531, p50=11.8177, p99=29.5391
+
+=== DEPTH LEVELS IN N_LEVELS DIMENSION ===
+- N_LEVELS count: 400
+- Level index range: 0 .. 399
+- Level indices: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399
+- Representative median physical depth per level (m):
+  level 0: 3.574
+  level 1: 9.049
+  level 2: 14.903
+  level 3: 20.000
+  level 4: 26.000
+  level 5: 30.720
+  level 6: 38.000
+  level 7: 42.529
+  level 8: 49.000
+  level 9: 52.585
+  level 10: 55.088
+  level 11: 59.606
+  level 12: 64.549
+  level 13: 69.387
+  level 14: 74.319
+  level 15: 79.249
+  level 16: 84.187
+  level 17: 87.532
+  level 18: 91.000
+  level 19: 98.201
+  level 20: 103.028
+  level 21: 108.268
+  level 22: 113.371
+  level 23: 118.226
+  level 24: 123.218
+  level 25: 128.171
+  level 26: 133.126
+  level 27: 138.080
+  level 28: 143.041
+  level 29: 148.010
+  level 30: 153.387
+  level 31: 158.400
+  level 32: 163.375
+  level 33: 168.358
+  level 34: 173.323
+  level 35: 178.282
+  level 36: 183.240
+  level 37: 188.250
+  level 38: 193.231
+  level 39: 198.225
+  level 40: 208.609
+  level 41: 218.579
+  level 42: 228.556
+  level 43: 238.591
+  level 44: 248.446
+  level 45: 258.388
+  level 46: 267.913
+  level 47: 277.472
+  level 48: 287.257
+  level 49: 297.105
+  level 50: 306.874
+  level 51: 316.378
+  level 52: 326.108
+  level 53: 336.012
+  level 54: 345.712
+  level 55: 342.500
+  level 56: 177.346
+  level 57: 183.997
+  level 58: 169.500
+  level 59: 177.000
+  level 60: 188.856
+  level 61: 179.750
+  level 62: 154.891
+  level 63: 165.500
+  level 64: 154.913
+  level 65: 158.681
+  level 66: 159.659
+  level 67: 160.754
+  level 68: 162.828
+  level 69: 145.990
+  level 70: 142.805
+  level 71: 140.960
+  level 72: 93.663
+  level 73: 91.765
+  level 74: 92.415
+  level 75: 92.105
+  level 76: 92.214
+  level 77: 92.722
+  level 78: 92.210
+  level 79: 92.153
+  level 80: 92.955
+  level 81: 93.728
+  level 82: 94.500
+  level 83: 95.155
+  level 84: 96.334
+  level 85: 97.009
+  level 86: 98.170
+  level 87: 99.580
+  level 88: 100.250
+  level 89: 101.254
+  level 90: 102.000
+  level 91: 101.510
+  level 92: 101.900
+  level 93: 102.900
+  level 94: 103.900
+  level 95: 105.100
+  level 96: 106.219
+  level 97: 107.310
+  level 98: 108.190
+  level 99: 109.430
+  level 100: 111.420
+  level 101: 112.910
+  level 102: 114.470
+  level 103: 115.430
+  level 104: 116.785
+  level 105: 117.545
+  level 106: 114.900
+  level 107: 116.416
+  level 108: 117.600
+  level 109: 117.600
+  level 110: 117.370
+  level 111: 118.190
+  level 112: 119.436
+  level 113: 121.535
+  level 114: 122.000
+  level 115: 119.700
+  level 116: 120.700
+  level 117: 121.700
+  level 118: 122.700
+  level 119: 123.700
+  level 120: 124.600
+  level 121: 125.600
+  level 122: 126.600
+  level 123: 127.600
+  level 124: 128.600
+  level 125: 129.600
+  level 126: 130.600
+  level 127: 131.600
+  level 128: 132.600
+  level 129: 133.500
+  level 130: 134.500
+  level 131: 135.500
+  level 132: 136.500
+  level 133: 137.500
+  level 134: 138.500
+  level 135: 139.500
+  level 136: 140.500
+  level 137: 141.500
+  level 138: 142.400
+  level 139: 143.400
+  level 140: 144.400
+  level 141: 145.400
+  level 142: 146.400
+  level 143: 147.400
+  level 144: 148.400
+  level 145: 149.300
+  level 146: 150.300
+  level 147: 151.300
+  level 148: 152.300
+  level 149: 153.300
+  level 150: 154.300
+  level 151: 155.300
+  level 152: 156.300
+  level 153: 157.300
+  level 154: 158.300
+  level 155: 159.300
+  level 156: 160.200
+  level 157: 161.200
+  level 158: 162.200
+  level 159: 163.200
+  level 160: 164.200
+  level 161: 165.200
+  level 162: 166.200
+  level 163: 167.200
+  level 164: 168.200
+  level 165: 169.200
+  level 166: 170.200
+  level 167: 171.100
+  level 168: 172.100
+  level 169: 173.100
+  level 170: 174.100
+  level 171: 175.100
+  level 172: 176.100
+  level 173: 177.100
+  level 174: 178.100
+  level 175: 179.100
+  level 176: 180.000
+  level 177: 181.100
+  level 178: 182.000
+  level 179: 183.000
+  level 180: 184.000
+  level 181: 185.000
+  level 182: 186.000
+  level 183: 187.000
+  level 184: 188.000
+  level 185: 189.000
+  level 186: 189.900
+  level 187: 190.900
+  level 188: 191.900
+  level 189: 192.900
+  level 190: 193.900
+  level 191: 194.900
+  level 192: 195.900
+  level 193: 196.900
+  level 194: 197.900
+  level 195: 198.900
+  level 196: 199.800
+  level 197: 200.800
+  level 198: 201.800
+  level 199: 202.800
+  level 200: 203.800
+  level 201: 204.800
+  level 202: 205.800
+  level 203: 206.800
+  level 204: 207.700
+  level 205: 208.800
+  level 206: 209.700
+  level 207: 210.800
+  level 208: 211.700
+  level 209: 212.700
+  level 210: 213.700
+  level 211: 214.700
+  level 212: 215.700
+  level 213: 216.700
+  level 214: 217.700
+  level 215: 218.700
+  level 216: 219.700
+  level 217: 220.600
+  level 218: 221.600
+  level 219: 222.600
+  level 220: 223.600
+  level 221: 224.600
+  level 222: 225.600
+  level 223: 226.600
+  level 224: 227.600
+  level 225: 228.600
+  level 226: 229.600
+  level 227: 230.600
+  level 228: 231.600
+  level 229: 232.500
+  level 230: 233.500
+  level 231: 234.500
+  level 232: 235.500
+  level 233: 236.500
+  level 234: 237.500
+  level 235: 238.500
+  level 236: 239.750
+  level 237: 240.780
+  level 238: 242.000
+  level 239: 243.000
+  level 240: 244.000
+  level 241: 245.000
+  level 242: 246.100
+  level 243: 247.100
+  level 244: 248.100
+  level 245: 249.100
+  level 246: 250.000
+  level 247: 251.100
+  level 248: 252.000
+  level 249: 253.000
+  level 250: 254.000
+  level 251: 255.000
+  level 252: 256.000
+  level 253: 257.000
+  level 254: 257.850
+  level 255: 258.700
+  level 256: 259.820
+  level 257: 260.700
+  level 258: 261.700
+  level 259: 262.900
+  level 260: 263.900
+  level 261: 264.900
+  level 262: 265.800
+  level 263: 266.750
+  level 264: 267.550
+  level 265: 268.100
+  level 266: 269.100
+  level 267: 270.145
+  level 268: 271.400
+  level 269: 272.700
+  level 270: 273.750
+  level 271: 274.700
+  level 272: 275.700
+  level 273: 276.800
+  level 274: 277.750
+  level 275: 278.750
+  level 276: 279.700
+  level 277: 280.800
+  level 278: 281.800
+  level 279: 282.800
+  level 280: 283.800
+  level 281: 284.800
+  level 282: 285.800
+  level 283: 286.900
+  level 284: 288.800
+  level 285: 291.000
+  level 286: 296.600
+  level 287: 300.700
+  level 288: 311.400
+  level 289: 322.050
+  level 290: 333.715
+  level 291: 345.360
+  level 292: 349.660
+  level 293: 359.310
+  level 294: 370.750
+  level 295: 382.015
+  level 296: 390.450
+  level 297: 395.640
+  level 298: 401.480
+  level 299: 404.785
+  level 300: 409.120
+  level 301: 411.105
+  level 302: 413.700
+  level 303: 415.940
+  level 304: 418.110
+  level 305: 420.430
+  level 306: 422.985
+  level 307: 425.935
+  level 308: 428.020
+  level 309: 429.700
+  level 310: 432.210
+  level 311: 434.600
+  level 312: 436.930
+  level 313: 440.600
+  level 314: 442.650
+  level 315: 444.830
+  level 316: 447.390
+  level 317: 448.990
+  level 318: 451.180
+  level 319: 453.800
+  level 320: 455.920
+  level 321: 456.960
+  level 322: 462.080
+  level 323: 463.720
+  level 324: 465.600
+  level 325: 467.550
+  level 326: 469.275
+  level 327: 471.200
+  level 328: 473.270
+  level 329: 474.875
+  level 330: 476.470
+  level 331: 478.270
+  level 332: 480.040
+  level 333: 481.680
+  level 334: 483.840
+  level 335: 485.180
+  level 336: 485.920
+  level 337: 488.380
+  level 338: 486.800
+  level 339: 488.260
+  level 340: 489.255
+  level 341: 490.040
+  level 342: 489.390
+  level 343: 489.890
+  level 344: 491.450
+  level 345: 494.765
+  level 346: 497.200
+  level 347: 503.200
+  level 348: 513.339
+  level 349: 523.868
+  level 350: 534.343
+  level 351: 544.747
+  level 352: 555.131
+  level 353: 565.459
+  level 354: 575.823
+  level 355: 586.177
+  level 356: 596.571
+  level 357: 606.836
+  level 358: 617.152
+  level 359: 627.996
+  level 360: 638.762
+  level 361: 649.453
+  level 362: 660.110
+  level 363: 670.682
+  level 364: 681.235
+  level 365: 691.750
+  level 366: 702.132
+  level 367: 710.965
+  level 368: 712.828
+  level 369: 714.692
+  level 370: 716.560
+  level 371: 718.426
+  level 372: 720.293
+  level 373: 722.159
+  level 374: 724.025
+  level 375: 725.860
+  level 376: 736.560
+  level 377: 747.536
+  level 378: 753.485
+  level 379: 760.785
+  level 380: 772.720
+  level 381: 784.900
+  level 382: 796.419
+  level 383: 807.014
+  level 384: 817.608
+  level 385: 828.107
+  level 386: 838.922
+  level 387: 851.440
+  level 388: 863.480
+  level 389: 876.075
+  level 390: 892.400
+  level 391: 908.268
+  level 392: 912.340
+  level 393: 926.815
+  level 394: 944.000
+  level 395: 953.285
+  level 396: 960.450
+  level 397: 919.797
+  level 398: 931.355
+  level 399: 994.100
+
+=== GLOBAL ATTRIBUTES (TAGS) ===
+- licence: EN4 is distributed under the Non Commercial Government Licence: http://www.nationalarchives.gov.uk/doc/non-commercial-government-licence/version/2/. The data are available for non-commercial use with attribution to the data providers, please see the product website (see global attribute: references) for terms and conditions.
+- references: Website and paper: https://www.metoffice.gov.uk/hadobs/en4/; Good, S. A., M. J. Martin and N. A. Rayner, 2013. EN4: quality controlled ocean temperature and salinity profiles and monthly objective analyses with uncertainty estimates, Journal of Geophysical Research: Oceans, 118, 6704-6716, doi:10.1002/2013JC009067
+- history: Fri Apr  2 19:50:52 2021: ncks -O -x -v TEMP_UNIQUE_ID,PSAL_UNIQUE_ID /project/EN/EN.4.2.2/WDIR/g10/EN.4.2.2.f.profiles.g10.201001.nc /project/EN/EN.4.2.2/WDIR/g10/EN.4.2.2.f.profiles.g10.201001.nc
+Fri Apr  2 19:50:48 2021: ncks -O -x -v BKPT,BKPS /project/EN/EN.4.2.2/WDIR/g10/EN.4.2.2.f.profiles.g10.201001.nc /project/EN/EN.4.2.2/WDIR/g10/EN.4.2.2.f.profiles.g10.201001.nc
+Fri Apr  2 19:22:43 2021: ncatted -a _FillValue,BKPS,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+Fri Apr  2 19:22:42 2021: ncatted -a _FillValue,BKPT,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+Fri Apr  2 19:22:40 2021: ncatted -a _FillValue,POTM_CORRECTED,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+Fri Apr  2 19:22:39 2021: ncatted -a _FillValue,TEMP,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+Fri Apr  2 19:22:37 2021: ncatted -a _FillValue,PSAL_CORRECTED,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+Fri Apr  2 19:22:25 2021: ncatted -a _FillValue,DEPH_CORRECTED,c,f,99999.0 /project/EN/EN.4.2.2/WDIR/profiles.nc
+- NCO: netCDF Operators version 4.7.5 (Homepage = http://nco.sf.net, Code = http://github.com/nco/nco)
+
+=== DIMENSIONS ===
+- N_PROF: 31697
+- N_CALIB: 1
+- N_PARAM: 5
+- N_LEVELS: 400
+- N_HISTORY: 0
+
+=== COORDINATES ===
+(none)
+
+=== DATA VARIABLES ===
+- CALIBRATION_DATE: dims=('N_PROF', 'N_CALIB', 'N_PARAM'), shape=(31697, 1, 5), dtype=|S14
+  attrs:
+    - long_name: date of calibration of this PARAMETER
+    - conventions: yyyymmddhh24miss
+- CYCLE_NUMBER: dims=('N_PROF',), shape=(31697,), dtype=int32
+  attrs:
+    - long_name: float cycle number
+    - conventions: 0..n, o : launch cycle(if exists), 1 : first complete cycle
+    - _fillvalue: 99999
+- DATA_CENTRE: dims=('N_PROF',), shape=(31697,), dtype=|S2
+  attrs:
+    - long_name: data centre in charge of float data processing
+    - conventions: gtspp table
+- DATA_MODE: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: delayed mode or real time data
+    - conventions: r : real time ; d : delayed mode
+- DATA_STATE_INDICATOR: dims=('N_PROF',), shape=(31697,), dtype=|S4
+  attrs:
+    - long_name: degree of processing the data have passed through
+    - conventions: oopc table
+- DATA_TYPE: dims=(), shape=(), dtype=|S16
+  attrs:
+    - long_name: Type of data stored in file eg ARGO or ENSEMBLES
+- DATE_CREATION: dims=(), shape=(), dtype=|S14
+  attrs:
+    - long_name: date of file creation
+    - conventions: yyyymmddhh24miss
+- DATE_UPDATE: dims=(), shape=(), dtype=|S14
+  attrs:
+    - long_name: date of update of this file
+    - conventions: yyyymmddhh24miss
+- DC_REFERENCE: dims=('N_PROF',), shape=(31697,), dtype=|S16
+  attrs:
+    - long_name: station unique identifier in data centre
+    - conventions: data centre convention
+- DEPH_CORRECTED: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32
+  attrs:
+    - long_name: corrected depth
+    - _fillvalue: 99999.0
+    - units: metre
+    - valid_min: 0.0
+    - valid_max: 15000.0
+    - c_format: %7.1f
+    - fortran_format: f7.1
+    - resolution: 0.1
+- DEPH_CORRECTED_QC: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=|S1
+  attrs:
+    - long_name: quality on depth
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- DIRECTION: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: direction of the station profiles
+    - conventions: a : ascending profiles, d : descending profiles
+- FORMAT_VERSION: dims=(), shape=(), dtype=|S4
+  attrs:
+    - long_name: file format version
+- HANDBOOK_VERSION: dims=(), shape=(), dtype=float32
+  attrs:
+    - long_name: data handbook version
+- HISTORY_ACTION: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S4
+  attrs:
+    - long_name: action performed on data
+    - conventions: gtspp (meds) action code
+- HISTORY_DATE: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S14
+  attrs:
+    - long_name: date the history record was created
+    - conventions: yyyymmddhh24miss
+- HISTORY_INSTITUTION: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S4
+  attrs:
+    - long_name: institution which performed action
+    - conventions: gtspp institution code
+- HISTORY_PARAMETER: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S4
+  attrs:
+    - long_name: station PARAMETER action is performed on
+    - conventions: gf3 PARAMETER code
+- HISTORY_PREVIOUS_VALUE: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=float32
+  attrs:
+    - long_name: PARAMETER/flag previous value before action
+    - _fillvalue: 99999.0
+- HISTORY_QCTEST: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S16
+  attrs:
+    - long_name: documentation of tests performed, tests failed (in hex form)
+    - conventions: write tests performed when action=qcp$; tests failed when action=qcf$
+- HISTORY_SOFTWARE: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S4
+  attrs:
+    - long_name: software which performed action
+    - conventions: institution dependent
+- HISTORY_SOFTWARE_RELEASE: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=|S4
+  attrs:
+    - long_name: version/release of software which performed action
+    - conventions: institution dependent
+- HISTORY_START_DEPH: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=float32
+  attrs:
+    - long_name: start depth action applied on
+    - _fillvalue: 99999.0
+    - units: metre
+- HISTORY_STOP_DEPH: dims=('N_HISTORY', 'N_PROF'), shape=(0, 31697), dtype=float32
+  attrs:
+    - long_name: stop depth action applied on
+    - _fillvalue: 99999.0
+    - units: metre
+- INST_REFERENCE: dims=('N_PROF',), shape=(31697,), dtype=|S64
+  attrs:
+    - long_name: instrument type
+    - conventions: brand/type/serial number
+- JULD: dims=('N_PROF',), shape=(31697,), dtype=float64
+  attrs:
+    - long_name: julian day (utc) of the station relative to reference_date_time
+    - units: days since 1950-01-01 00:00:00 utc
+    - conventions: relative julian days with decimal part (as parts of day)
+    - _fillvalue: 99999.0
+- JULD_LOCATION: dims=('N_PROF',), shape=(31697,), dtype=float64
+  attrs:
+    - long_name: julian day (utc) of the location relative to reference_date_time
+    - units: days since 1950-01-01 00:00:00 utc
+    - conventions: relative julian days with decimal part (as parts of day)
+    - _fillvalue: 99999.0
+- JULD_QC: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: quality on date and time
+    - conventions: q where q=[0-9]
+    - _fillvalue: 0
+- LATITUDE: dims=('N_PROF',), shape=(31697,), dtype=float64
+  attrs:
+    - long_name: latitude of the station, best estimated value
+    - units: degree_north
+    - _fillvalue: 99999.0
+    - valid_min: -90.0
+    - valid_max: 90.0
+- LONGITUDE: dims=('N_PROF',), shape=(31697,), dtype=float64
+  attrs:
+    - long_name: longitude of the station, best estimated value
+    - units: degree_east
+    - _fillvalue: 99999.0
+    - valid_min: -180.0
+    - valid_max: 180.0
+- PARAMETER: dims=('N_PROF', 'N_CALIB', 'N_PARAM'), shape=(31697, 1, 5), dtype=|S4
+  attrs:
+    - long_name: list of PARAMETERs with calibration information
+    - conventions: gf3 code list in (deph, potm, psal, bkpt, bkps, anpt)
+- PI_NAME: dims=('N_PROF',), shape=(31697,), dtype=|S64
+  attrs:
+    - long_name: primary investigator name
+- PLATFORM_NUMBER: dims=('N_PROF',), shape=(31697,), dtype=|S8
+  attrs:
+    - long_name: float unique identifier
+    - conventions: wmo float identifier : qa9iiiii
+- POSITIONING_SYSTEM: dims=('N_PROF',), shape=(31697,), dtype=|S8
+  attrs:
+    - long_name: positioning system
+    - conventions: argos or gps
+- POSITION_QC: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: quality on position (latitude and longitude)
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- POTM_CORRECTED: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32
+  attrs:
+    - long_name: corrected pot. temp
+    - _fillvalue: 99999.0
+    - units: degree_celsius
+    - valid_min: -3.0
+    - valid_max: 40.0
+    - comment: corrected value
+    - c_format: %9.3f
+    - fortran_format: f9.3
+    - resolution: 0.001
+- POTM_CORRECTED_QC: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=|S1
+  attrs:
+    - long_name: quality on pot. temperature
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- PROFILE_DEPH_QC: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: global quality flag of depth profile
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- PROFILE_POTM_QC: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: global quality flag of theta profile
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- PROFILE_PSAL_QC: dims=('N_PROF',), shape=(31697,), dtype=|S1
+  attrs:
+    - long_name: global quality flag of practical salinity profile
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- PROJECT_NAME: dims=('N_PROF',), shape=(31697,), dtype=|S64
+  attrs:
+    - long_name: name of the project
+- PSAL_CORRECTED: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32
+  attrs:
+    - long_name: corrected practical salinity
+    - _fillvalue: 99999.0
+    - units: 1
+    - valid_min: 0.0
+    - valid_max: 60.0
+    - comment: corrected value
+    - c_format: %9.3f
+    - fortran_format: f9.3
+    - resolution: 0.001
+- PSAL_CORRECTED_QC: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=|S1
+  attrs:
+    - long_name: quality on practical salinity
+    - conventions: q where q =[0,9]
+    - _fillvalue: 0
+- QC_FLAGS_LEVELS: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=int32
+- QC_FLAGS_PROFILES: dims=('N_PROF',), shape=(31697,), dtype=int32
+- REFERENCE_DATE_TIME: dims=(), shape=(), dtype=|S14
+  attrs:
+    - long_name: date of reference for julian days
+    - conventions: yyyymmddhh24miss
+- SCIENTIFIC_CALIB_COEFFICIENT: dims=('N_PROF', 'N_CALIB', 'N_PARAM'), shape=(31697, 1, 5), dtype=|S256
+  attrs:
+    - long_name: calibration coefficients for this equation
+- SCIENTIFIC_CALIB_COMMENT: dims=('N_PROF', 'N_CALIB', 'N_PARAM'), shape=(31697, 1, 5), dtype=|S256
+  attrs:
+    - long_name: comment applying to this PARAMETER calibration
+- SCIENTIFIC_CALIB_EQUATION: dims=('N_PROF', 'N_CALIB', 'N_PARAM'), shape=(31697, 1, 5), dtype=|S256
+  attrs:
+    - long_name: calibration equation for this PARAMETER
+- STATION_PARAMETERS: dims=('N_PROF', 'N_PARAM'), shape=(31697, 5), dtype=|S4
+  attrs:
+    - long_name: list of available PARAMETERs for the station
+    - conventions: gf3 code list in (deph, potm, psal, cndc)
+- TEMP: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32
+  attrs:
+    - long_name: Temperature in situ t90 scale
+    - _fillvalue: 99999.0
+    - units: degree_celsius
+    - valid_min: -3.0
+    - valid_max: 40.0
+    - comment: in situ measurement
+    - c_format: %9.3f
+    - fortran_format: f9.3
+    - resolution: 0.001
+- WMO_INST_TYPE: dims=('N_PROF',), shape=(31697,), dtype=|S4
+  attrs:
+    - long_name: code instrument type
+    - conventions: wmo code table 1770 - instrument type
+- depth_corrections: dims=('N_PROF', 'N_LEVELS'), shape=(31697, 400), dtype=float32
+  attrs:
+    - units: metre
+- instrument_type: dims=('N_PROF',), shape=(31697,), dtype=object
+- thermal_corrections: dims=('N_PROF',), shape=(31697,), dtype=float32
+  attrs:
+    - units: degree_celsius
