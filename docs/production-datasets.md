@@ -225,7 +225,7 @@ Sample Image:
 ![OSTIA 0.1 deg sample](assets/argo_ostia_sample_5.png)  
   
 Validation Set Histogram of valid pixel fractions:    
-![OSTIA 0.1 deg hist](assets/argo_observations_histogram_intermediate.png)  
+![OSTIA 0.1 deg hist](assets/argo_observations_histogram.png)  
   
 Validaiton Set Map of patches, color-coded by valid pixel fraction:  
-![OSTIA 0.1 deg map](assets/argo_observations_map_intermediate.png)  
+![OSTIA 0.1 deg map](assets/argo_observations_map.png)  

@@ -58,22 +58,23 @@ markdown_extensions:
       generic: true
 
 nav:
-  # Keep primary content layered under the Home tab.
   - Home:
       - Overview: index.md
+      - Development: development.md
+  - Model:
+      - Training: training.md
+      - Inference: inference.md
+      - Quickstart: quickstart.md
+      - Model Description: model.md
       - Sampling Diagnostics: sampling-diagnostics.md
+      - Ambient Occlusion Objective: ambient-occlusion-objective.md
+      - Date + Time Injection: data-coordinate-injection.md
+      - Model Settings: settings.md
+      - Autoencoder + Latent Diffusion: autoencoder.md
+      - Temporal Dimension Ideas: temporal_dimension.md
+  - Data:
       - Production Datasets: production-datasets.md
       - Data Source: data-source.md
       - Synthetic Dataset: data.md
-      - Model: model.md
-      - Temporal Dimension Ideas: temporal_dimension.md
-      - Autoencoder + Latent Diffusion: autoencoder.md
-      - Ambient Occlusion Objective: ambient-occlusion-objective.md
-      - Data + Coordinate Injection: data-coordinate-injection.md
-      - Training: training.md
-      - Inference: inference.md
-      - Model Settings: settings.md
-      - Development: development.md
   - Experiments: experiments.md
-  - Quickstart: quickstart.md
   - API Reference: api.md
