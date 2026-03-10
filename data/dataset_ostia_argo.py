@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
+import textwrap
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 import xarray as xr
-from scipy.interpolate import RegularGridInterpolator
 from torch.utils.data import Dataset
 
 
@@ -32,6 +32,7 @@ class OstiaArgoTileDataset(Dataset):
         self,
         csv_path: str | Path,
         *,
+        root_path: str | Path | None = None,
         split: str = "all",
         tile_size: int = 128,
         sst_var_name: str = "analysed_sst",
@@ -45,6 +46,11 @@ class OstiaArgoTileDataset(Dataset):
         # Store constructor args as normalized runtime config for all downstream methods.
         self.csv_path = Path(csv_path)
         self.csv_dir = self.csv_path.parent
+        if root_path is not None:
+            # Accept either ".../depth_v2" or its parent as root_path input.
+            self._depth_v2_root = self._normalize_depth_v2_root(Path(root_path).resolve())
+        else:
+            self._depth_v2_root = self._find_named_ancestor(self.csv_dir, "depth_v2")
         self.split = str(split).strip().lower()
         self.tile_size = int(tile_size)
         self.sst_var_name = str(sst_var_name)
@@ -54,6 +60,8 @@ class OstiaArgoTileDataset(Dataset):
         self.argo_depth_var_name = str(argo_depth_var_name)
         self.return_info = bool(return_info)
         self.verbose_init = bool(verbose_init)
+        
+        self._log(f"Initializing OstiaArgoTileDataset with CSV: {self.csv_path} from root: {self._depth_v2_root}, split: '{self.split}', tile_size: {self.tile_size}, ")
 
         # Validate basic constructor constraints early so failures are explicit.
         if not self.csv_path.exists():
@@ -142,12 +150,61 @@ class OstiaArgoTileDataset(Dataset):
     def __len__(self) -> int:
         return len(self._rows)
 
-    def _resolve_index_path(self, value: Any) -> Path:
-        # Support absolute paths and CSV-relative paths in the same index.
-        path = Path(str(value))
-        return path if path.is_absolute() else self.csv_dir / path
+    @staticmethod
+    def _find_named_ancestor(path: Path, target_name: str) -> Path | None:
+        # Walk upward from CSV location to discover a movable dataset root anchor.
+        curr = path.resolve()
+        while True:
+            if curr.name == target_name:
+                return curr
+            if curr.parent == curr:
+                return None
+            curr = curr.parent
 
-    def _load_ostia_arrays(self, ostia_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    @staticmethod
+    def _normalize_depth_v2_root(root_path: Path) -> Path:
+        # root_path may point directly to depth_v2 or to its parent directory.
+        return root_path if root_path.name == "depth_v2" else root_path / "depth_v2"
+
+    def _resolve_index_path(self, value: Any) -> Path:
+        # Support absolute paths, CSV-relative paths, and `depth_v2/...` anchored paths.
+        path = Path(str(value).strip())
+        if path.is_absolute():
+            return path
+        if path.parts and path.parts[0] == "depth_v2":
+            if self._depth_v2_root is not None:
+                return self._depth_v2_root / Path(*path.parts[1:])
+        return self.csv_dir / path
+
+    @staticmethod
+    def _nearest_index(axis: np.ndarray, value: float) -> int:
+        """Return nearest index on a monotonic axis (ascending or descending)."""
+        if axis.ndim != 1 or axis.size == 0:
+            raise RuntimeError("Axis must be a non-empty 1D array.")
+        asc = bool(axis[0] <= axis[-1])
+        if not asc:
+            axis_work = axis[::-1]
+            pos = int(np.searchsorted(axis_work, value, side="left"))
+            pos = max(1, min(pos, int(axis_work.size) - 1))
+            left = float(axis_work[pos - 1])
+            right = float(axis_work[pos])
+            idx_rev = pos if abs(value - right) < abs(value - left) else (pos - 1)
+            return int(axis.size - 1 - idx_rev)
+        pos = int(np.searchsorted(axis, value, side="left"))
+        pos = max(1, min(pos, int(axis.size) - 1))
+        left = float(axis[pos - 1])
+        right = float(axis[pos])
+        return int(pos if abs(value - right) < abs(value - left) else (pos - 1))
+
+    def _load_ostia_patch(
+        self,
+        *,
+        ostia_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
         # Open one OSTIA file for the current row only (no dataset-level caching).
         with xr.open_dataset(
             ostia_path,
@@ -163,31 +220,68 @@ class OstiaArgoTileDataset(Dataset):
                     f"OSTIA file is missing variable '{self.sst_var_name}': {ostia_path}"
                 )
 
-            # Pull coordinate axes and the SST field into numpy arrays for interpolation.
+            # Pull coordinate axes only; we want to avoid loading full SST field.
             lat = np.asarray(ds["lat"].to_numpy(), dtype=np.float64)
             lon = np.asarray(ds["lon"].to_numpy(), dtype=np.float64)
             sst_var = ds[self.sst_var_name]
             # Daily OSTIA files typically have a singleton time dimension.
             if "time" in sst_var.dims:
                 sst_var = sst_var.isel(time=0)
-            sst = np.asarray(sst_var.to_numpy(), dtype=np.float32)
+            # Build the target patch pixel centers from the same CSV bounds used everywhere else.
+            lat_axis = self._build_patch_axis(float(lat0), float(lat1))
+            lon_axis = self._build_patch_axis(float(lon0), float(lon1))
 
-        # Interpolator expects a 2D data plane over (lat, lon).
-        if sst.ndim != 2:
-            raise RuntimeError(f"Expected 2D SST field, got shape {tuple(sst.shape)} at {ostia_path}")
+            # Fast path: contiguous isel slices when patch centers align to native grid.
+            lat_i0 = self._nearest_index(lat, float(lat_axis[0]))
+            lat_i1 = self._nearest_index(lat, float(lat_axis[-1]))
+            lon_i0 = self._nearest_index(lon, float(lon_axis[0]))
+            lon_i1 = self._nearest_index(lon, float(lon_axis[-1]))
+            lat_lo_i = min(lat_i0, lat_i1)
+            lat_hi_i = max(lat_i0, lat_i1)
+            lon_lo_i = min(lon_i0, lon_i1)
+            lon_hi_i = max(lon_i0, lon_i1)
 
-        # Ensure axes are strictly increasing because RegularGridInterpolator assumes sorted axes.
-        if lat.size > 1 and lat[0] > lat[-1]:
-            lat = lat[::-1].copy()
-            sst = sst[::-1, :]
-        if lon.size > 1 and lon[0] > lon[-1]:
-            lon = lon[::-1].copy()
-            sst = sst[:, ::-1]
+            use_isel = (
+                (lat_hi_i - lat_lo_i + 1) == int(self.tile_size)
+                and (lon_hi_i - lon_lo_i + 1) == int(self.tile_size)
+            )
+            if use_isel:
+                patch = np.asarray(
+                    sst_var.isel(
+                        lat=slice(lat_lo_i, lat_hi_i + 1),
+                        lon=slice(lon_lo_i, lon_hi_i + 1),
+                    ).to_numpy(),
+                    dtype=np.float32,
+                )
+                # Align orientation with axis order returned by _build_patch_axis (low -> high).
+                if patch.shape[0] == self.tile_size and lat[lat_lo_i] > lat[lat_hi_i]:
+                    patch = patch[::-1, :]
+                if patch.shape[1] == self.tile_size and lon[lon_lo_i] > lon[lon_hi_i]:
+                    patch = patch[:, ::-1]
+            else:
+                # Fallback: nearest-point gather for each requested pixel center.
+                patch = np.asarray(
+                    sst_var.sel(
+                        lat=xr.DataArray(lat_axis, dims="lat"),
+                        lon=xr.DataArray(lon_axis, dims="lon"),
+                        method="nearest",
+                    ).to_numpy(),
+                    dtype=np.float32,
+                )
+
+        if patch.ndim != 2:
+            raise RuntimeError(
+                f"Expected 2D SST patch, got shape {tuple(patch.shape)} at {ostia_path}"
+            )
+        if patch.shape != (self.tile_size, self.tile_size):
+            raise RuntimeError(
+                f"Unexpected SST patch shape {tuple(patch.shape)} at {ostia_path}, "
+                f"expected ({self.tile_size}, {self.tile_size})."
+            )
 
         # Replace obvious fill values with NaN so invalid regions propagate cleanly.
-        sst[(~np.isfinite(sst)) | (sst > 1.0e6)] = np.nan
-
-        return lat, lon, sst
+        patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
+        return patch
 
     def _build_patch_axis(self, start: float, end: float) -> np.ndarray:
         # Build pixel-center coordinates for one patch axis from bbox bounds.
@@ -344,6 +438,112 @@ class OstiaArgoTileDataset(Dataset):
 
         return torch.from_numpy(x_grid), torch.from_numpy(valid_mask)
 
+    @staticmethod
+    def _interpolate_sparse_x_level(
+        x_level: np.ndarray,
+        valid_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Interpolate sparse Argo level values onto the full 2D tile grid."""
+        x_level = np.asarray(x_level, dtype=np.float32)
+        valid_mask = np.asarray(valid_mask, dtype=bool)
+        if x_level.ndim != 2:
+            raise RuntimeError(f"Expected 2D x_level, got shape {tuple(x_level.shape)}")
+        if valid_mask.shape != x_level.shape:
+            raise RuntimeError(
+                "valid_mask shape must match x_level shape: "
+                f"{tuple(valid_mask.shape)} != {tuple(x_level.shape)}"
+            )
+
+        filled = x_level.copy()
+        observed_count = int(valid_mask.sum())
+        if observed_count == 0:
+            return filled
+
+        yy, xx = np.indices(x_level.shape, dtype=np.float32)
+        points = np.column_stack((yy[valid_mask], xx[valid_mask]))
+        values = x_level[valid_mask].astype(np.float32, copy=False)
+        target_mask = ~valid_mask
+        if not np.any(target_mask):
+            return filled
+
+        if observed_count == 1:
+            # With one observed point, nearest-neighbor interpolation is constant everywhere.
+            filled[target_mask] = values[0]
+            return filled
+
+        from scipy.interpolate import griddata
+
+        target_points = np.column_stack((yy[target_mask], xx[target_mask]))
+        nearest_fill = griddata(points, values, target_points, method="nearest")
+        if observed_count >= 3:
+            # Prefer smooth linear interpolation where possible, fallback to nearest outside hull.
+            try:
+                linear_fill = griddata(points, values, target_points, method="linear")
+                fill_values = np.where(np.isfinite(linear_fill), linear_fill, nearest_fill)
+            except Exception:
+                # Degenerate point layouts (e.g., profiles on one line) can fail linear triangulation.
+                fill_values = nearest_fill
+        else:
+            fill_values = nearest_fill
+        filled[target_mask] = np.asarray(fill_values, dtype=np.float32)
+        return filled
+
+    def save_batch_plot_to_temp(
+        self,
+        idx: int = 0,
+        output_path: str | Path = "temp/argo_ostia_batch_0.png",
+    ) -> Path:
+        """Save a single PNG with x[0], eo, and interpolated x[0] for one sample."""
+        import matplotlib.pyplot as plt
+
+        sample = self.__getitem__(int(idx))
+        x = sample["x"]
+        eo = sample["eo"]
+        valid_mask = sample["valid_mask"]
+        valid_mask_1d = sample["valid_mask_1d"]
+        info = sample.get("info", {})
+
+        if x.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
+            raise RuntimeError(
+                "Expected sample tensors with shape (C,H,W): "
+                f"x={tuple(x.shape)}, eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
+            )
+        if x.shape[0] == 0:
+            raise RuntimeError("Cannot plot Argo channel 0 because x has no channels.")
+
+        x0 = np.asarray(x[0].detach().cpu().numpy(), dtype=np.float32)
+        eo0 = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
+        # For interpolation visualization, treat exact zeros as missing and fill all missing pixels.
+        zero_invalid_mask = np.isfinite(x0) & (x0 != 0.0)
+        x0_interpolated = self._interpolate_sparse_x_level(x0, zero_invalid_mask)
+        valid_mask_1d_np = np.asarray(valid_mask_1d[0].detach().cpu().numpy(), dtype=np.float32)
+
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+        panels = (
+            (x0, "Argo x[0] (sparse)"),
+            (eo0, "OSTIA eo[0]"),
+            (x0_interpolated, "Argo x[0] (interpolated)"),
+        )
+        for ax, (img, title) in zip(axes, panels):
+            im = ax.imshow(img, cmap="viridis")
+            ax.set_title(title)
+            ax.set_axis_off()
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        info_date = info.get("date", "N/A")
+        fig.suptitle(f"OstiaArgoTileDataset idx={idx} date={info_date}", fontsize=12)
+        info_text = textwrap.fill(str(info), width=160)
+        fig.text(0.01, 0.01, info_text, ha="left", va="bottom", fontsize=8, family="monospace")
+        # Keep collapsed validity available in the figure metadata area.
+        valid_fraction = float(valid_mask_1d_np.mean())
+        fig.text(0.99, 0.01, f"valid_mask_1d mean={valid_fraction:.4f}", ha="right", va="bottom", fontsize=8)
+        fig.savefig(out_path, dpi=160)
+        plt.close(fig)
+        return out_path
+
     def _filter_valid_argo_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         # This method performs ONLY lightweight CSV-based filtering.
         # It does not open Argo NetCDF files.
@@ -468,26 +668,13 @@ class OstiaArgoTileDataset(Dataset):
         if not ostia_path.exists():
             raise FileNotFoundError(f"OSTIA file not found: {ostia_path}")
 
-        # Load OSTIA field and build interpolator over physical (lat, lon) grid.
-        lat, lon, sst = self._load_ostia_arrays(ostia_path)
-        interp = RegularGridInterpolator(
-            (lat, lon),
-            sst,
-            method="linear",
-            bounds_error=False,
-            fill_value=np.nan,
-        )
-
-        # Build the patch pixel-center axes from CSV bounds.
-        # These axes define the physical footprint of eo for this sample.
-        lat_axis = self._build_patch_axis(float(row["lat0"]), float(row["lat1"]))
-        lon_axis = self._build_patch_axis(float(row["lon0"]), float(row["lon1"]))
-        mesh_lon, mesh_lat = np.meshgrid(lon_axis, lat_axis)
-        query_points = np.column_stack([mesh_lat.ravel(), mesh_lon.ravel()])
-
-        # Interpolate OSTIA SST onto the patch grid and convert units if requested.
-        patch = interp(query_points).reshape(self.tile_size, self.tile_size).astype(
-            np.float32, copy=False
+        # Load ONLY the requested OSTIA patch window from NetCDF (no full-field materialization).
+        patch = self._load_ostia_patch(
+            ostia_path=ostia_path,
+            lat0=float(row["lat0"]),
+            lat1=float(row["lat1"]),
+            lon0=float(row["lon0"]),
+            lon1=float(row["lon1"]),
         )
         if self.output_units == "celsius":
             patch = patch - np.float32(273.15)
@@ -523,11 +710,20 @@ class OstiaArgoTileDataset(Dataset):
                         lon0=float(row["lon0"]),
                         lon1=float(row["lon1"]),
                     )
+        # Collapse across all depth bands so each pixel is valid if any band has an observation.
+        if valid_mask.shape[0] > 0:
+            valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
+        else:
+            valid_mask_1d = torch.zeros(
+                (1, self.tile_size, self.tile_size),
+                dtype=torch.bool,
+            )
         # Final sample contract: Argo raster (x), OSTIA patch (eo), Argo valid mask, metadata.
         sample: dict[str, Any] = {
             "x": x,
             "eo": eo,
             "valid_mask": valid_mask,
+            "valid_mask_1d": valid_mask_1d,
             "info": {
                 "index": int(idx),
                 "patch_id": row.get("patch_id"),
@@ -543,10 +739,33 @@ class OstiaArgoTileDataset(Dataset):
 
 if __name__ == "__main__":
     # Example usage:
-    dataset = OstiaArgoTileDataset("/data1/datasets/depth_v2/ostia_patch_index_daily.csv", split="train")
+    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily.csv", split="train",return_argo_profiles=True)
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     print(f"Sample keys: {list(sample.keys())}")
     print(f"x shape: {tuple(sample['x'].shape)}")
     print(f"eo shape: {tuple(sample['eo'].shape)}")
     print(f"valid_mask shape: {tuple(sample['valid_mask'].shape)}")
+    
+    # save as PNG for a few random samples to visually inspect Argo/OSTIA alignment and interpolation behavior
+    import random
+    for i in range(10):
+        rand_i = random.randint(0, len(dataset) - 1)
+        dataset.save_batch_plot_to_temp(idx=rand_i, output_path=f"temp/argo_ostia/argo_ostia_sample_{i}.png")
+        
+    
+    # calculate valid/invalid counts for Argo samples in the dataset
+    c_inv = 0
+    c_val = 0
+    c_avg_num = []
+    for i in range(1000):
+        rand_i = random.randint(0, len(dataset) - 1)
+        batch = dataset[rand_i]
+        max_v = batch['x'].max().item()
+        valid_pixels = batch["valid_mask_1d"].sum().item()
+        if max_v > 0:
+            c_val += 1
+            c_avg_num.append(valid_pixels)
+        else:
+            c_inv += 1
+        print(f"Valid Argo samples: {c_val}, Invalid Argo samples: {c_inv}, Average valid pixels: {np.mean(c_avg_num):.2f}", end="\r")

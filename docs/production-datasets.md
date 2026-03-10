@@ -42,6 +42,12 @@ Patch-level train/val indexing is built from the downloaded OSTIA files using:
   - spatial patch metadata CSV (`ostia_patch_index_spatial.csv`)
   - daily expanded CSV (`ostia_patch_index_daily.csv`)
 
+Grid and patch setup used in current runs:
+- pixel resolution: `0.05°`
+- patch size: `128 x 128` pixels
+- physical patch span: `128 * 0.05° = 6.4°` per axis
+- temporal aggregation level: daily (`one row per (patch, day)` in `ostia_patch_index_daily.csv`)
+
 Recommended command (native OSTIA resolution):
 
 ```bash
@@ -120,6 +126,9 @@ Output columns:
 - `matched_ostia_date`
 - `matched_ostia_file_path`
 
+Path format note:
+- path columns are stored from `depth_v2` onward (for example `depth_v2/en4_profiles/...nc`) instead of absolute filesystem paths
+
 Matching behavior:
 - convert EN4 `JULD` to `YYYYMMDD`
 - for each profile date, choose nearest OSTIA day within the same month
@@ -143,6 +152,9 @@ Added columns in final daily CSV:
 - `argo_profile_count` (matched profile count for that day)
 - `argo_month_key`
 - `argo_file_path`
+
+Path format note:
+- `ostia_file_path` and `argo_file_path` are written as `depth_v2/...` anchored paths so the dataset tree can be moved without regenerating absolute paths
 
 ## End-To-End Build Order
 Run these steps in order:
@@ -179,3 +191,30 @@ Examples:
 - Both download scripts support `DRY_RUN_ONLY=1` for availability checks without downloading.
 - Both download scripts append tracking CSV logs in the output directory by default.
 - For EN4, `404` means the specific year/file is not present at the current published path.
+
+## Current Dataset Footprint (Snapshot)
+Snapshot measured on **March 9, 2026** for `/data1/datasets/depth_v2`.
+
+Core counts:
+- OSTIA daily files (`ostia/*.nc`): `5,326`
+- EN4 monthly profile files (`en4_profiles/*.nc`): `186`
+- spatial patches (`ostia_patch_index_spatial.csv`): `751` total
+- split counts (spatial): `638 train`, `113 val`
+- daily index rows (`ostia_patch_index_daily.csv`): `3,999,826` (`751 patches x 5,326 days`)
+- daily date range in index: `2010-01-01` to `2024-07-31`
+
+Argo coverage in final daily CSV:
+- days with `argo_valid=1`: `4,199`
+- days with `argo_valid=0`: `1,127`
+- row-level counts: `3,153,449` rows with `argo_valid=1`, `846,377` with `argo_valid=0`
+
+On-disk size (CSVs):
+- `ostia_patch_index_spatial.csv`: `68,744` bytes (`~0.07 MiB`)
+- `ostia_patch_index_daily.csv`: `1,078,416,942` bytes (`~1.00 GiB`)
+- `argo_profile_datetime_match.csv`: `1,244,885,730` bytes (`~1.16 GiB`)
+- combined CSV footprint: `2,323,371,416` bytes (`~2.16 GiB`)
+
+On-disk size (data folders):
+- `ostia/`: `86,859,298,331` bytes (`~81 GiB`)
+- `en4_profiles/`: `25,074,283,765` bytes (`~24 GiB`)
+- full `/data1/datasets/depth_v2`: `156,937,570,342` bytes (`~146 GiB`)

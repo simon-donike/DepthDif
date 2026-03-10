@@ -107,7 +107,7 @@ EO + multiband example:
 ### Raw OSTIA + Argo Profiles (standalone)
 `OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:
 - rows come from the merged daily CSV (`patch_id/date/lat0/lat1/lon0/lon1/phase/ostia_file_path` plus Argo linkage columns)
-- OSTIA daily NetCDF files are resolved per row via `ostia_file_path` (or `matched_ostia_file_path`)
+- OSTIA daily NetCDF files are resolved per row via `ostia_file_path` (or `matched_ostia_file_path`), with index paths typically stored as `depth_v2/...` and optional constructor `root_path` support for relocated datasets
 
 Per `__getitem__` behavior:
 - filters `train`/`val`/`all` from CSV split labels (`phase` or `split`)

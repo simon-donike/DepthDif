@@ -10,6 +10,17 @@ import xarray as xr
 from h5py import is_hdf5
 
 
+def _path_from_depth_v2(path: Path) -> str:
+    """Return path string anchored at the `depth_v2` segment when present."""
+    resolved = path.resolve()
+    parts = resolved.parts
+    if "depth_v2" not in parts:
+        # Fallback keeps current behavior when datasets are stored outside the expected tree.
+        return resolved.as_posix()
+    depth_v2_idx = parts.index("depth_v2")
+    return Path(*parts[depth_v2_idx:]).as_posix()
+
+
 def _scan_ostia_by_month(ostia_dir: Path) -> dict[str, list[tuple[int, str]]]:
     files = sorted(
         ostia_dir.glob("*-UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB_REP-v02.0-fv02.0.nc")
@@ -24,7 +35,7 @@ def _scan_ostia_by_month(ostia_dir: Path) -> dict[str, list[tuple[int, str]]]:
             continue
         date_yyyymmdd = int(m.group(1))
         month_key = m.group(1)[:6]
-        out.setdefault(month_key, []).append((date_yyyymmdd, str(path.resolve())))
+        out.setdefault(month_key, []).append((date_yyyymmdd, _path_from_depth_v2(path)))
 
     for month_key in out:
         out[month_key].sort(key=lambda x: x[0])
@@ -133,7 +144,7 @@ def build_argo_datetime_match_csv(
                         month_key,
                         int(d),
                         int(profile_idx),
-                        str(argo_path.resolve()),
+                        _path_from_depth_v2(argo_path),
                         int(matched_date),
                         matched_path,
                     ]
@@ -183,4 +194,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -44,6 +44,17 @@ def _parse_ostia_date_yyyymmdd(path: Path) -> int:
     return int(m.group(1))
 
 
+def _path_from_depth_v2(path: Path) -> str:
+    """Return path string anchored at the `depth_v2` segment when present."""
+    resolved = path.resolve()
+    parts = resolved.parts
+    if "depth_v2" not in parts:
+        # Fallback keeps current behavior when datasets are stored outside the expected tree.
+        return resolved.as_posix()
+    depth_v2_idx = parts.index("depth_v2")
+    return Path(*parts[depth_v2_idx:]).as_posix()
+
+
 def _build_patch_grid(
     *,
     lat_min: float,
@@ -266,7 +277,7 @@ def _write_patch_daily_csv(
         # Stream rows directly to disk to keep memory stable for large (patches x timesteps).
         for ostia_path in ostia_files:
             day = _parse_ostia_date_yyyymmdd(ostia_path)
-            day_path = str(ostia_path.resolve())
+            day_path = _path_from_depth_v2(ostia_path)
             for rec in records:
                 writer.writerow(
                     [
