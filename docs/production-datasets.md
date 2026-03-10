@@ -29,6 +29,9 @@ Download workflow in this repo:
   - Writes CSV log for each day (`filename,path,datetime,status`)  
   - Prints progress and ETA  
 
+Current folder size (snapshot on March 10, 2026):  
+- `/data1/datasets/depth_v2/ostia`: `86,859,298,331` bytes (`~80.89 GiB`)  
+
 ### Building the OSTIA Patch Dataset (0.05 degree grid)
 Patch-level train/val indexing is built from the downloaded OSTIA files using:  
 - Script: `data/get_ostia/build_ostia_patch_time_index.py`  
@@ -102,6 +105,9 @@ Download workflow in this repo:
   - Writes CSV log including transfer stats  
     (`filename,path,datetime,status,expected_bytes,downloaded_bytes,duration_seconds,avg_mb_per_s`)  
   - Prints per-file live progress (size/speed/ETA), plus run progress/ETA  
+
+Current folder size (snapshot on March 10, 2026):  
+- `/data1/datasets/depth_v2/en4_profiles`: `25,074,283,765` bytes (`~23.35 GiB`)  
 
 ## 3) Argo <-> OSTIA Datetime Matching
 After EN4 monthly NetCDF profile files are available in
@@ -193,34 +199,68 @@ Examples:
 - For EN4, `404` means the specific year/file is not present at the current published path.  
 
 ## Current Dataset Footprint (Snapshot)
-Snapshot measured on **March 9, 2026** for `/data1/datasets/depth_v2`.  
+Snapshot measured/recomputed on **March 10, 2026**.  
 
-Core counts:  
+Shared source data (used by both index versions):  
 - OSTIA daily files (`ostia/*.nc`): `5,326`  
-- EN4 monthly profile files (`en4_profiles/*.nc`): `186`
-- spatial patches (`ostia_patch_index_spatial.csv`): `191` total (0.5 Deg)  
-- split counts (spatial): `162 train`, `30 val` (0.5 Deg)  
-- daily index rows (`ostia_patch_index_daily.csv`): ~600k (0.5 Deg)
-- daily date range in index: `2010-01-01` to `2024-07-31`  
+- EN4 monthly profile files (`en4_profiles/*.nc`): `186`  
+- date range in daily indices: `2010-01-01` to `2024-07-31`  
 
-Argo coverage in final daily CSV:  
-- days with `argo_valid=1`: `4,199`
-- days with `argo_valid=0`: `1,127`  
-- row-level counts: `~600,000` rows with `argo_valid=1`  
+### Index Version A (0.05 degree, daily)
+Files:
+- spatial index: `ostia_patch_index_spatial.csv`  
+- daily index: `ostia_patch_index_daily.csv`  
 
-On-disk size (data folders):
-- `ostia/`: `86,859,298,331` bytes (`~81 GiB`)
-- `en4_profiles/`: `25,074,283,765` bytes (`~24 GiB`)
-- full `/data1/datasets/depth_v2`: `156,937,570,342` bytes (`~146 GiB`)  
+Counts:
+- spatial patches: `751` total    
+- spatial split: `638 train`, `113 val`  
+- daily rows: `3,999,826` total  
+- daily split rows: `3,397,988 train`, `601,838 val`  
+
+Argo coverage in final daily CSV:
+- rows with `argo_valid=1`: `3,153,449` (`78.84%`)  
+- rows with `argo_valid=0`: `846,377` (`21.16%`)  
+
+### Index Version B (0.1 degree, daily, recomputed)
+Files:  
+- spatial index: `ostia_patch_index_spatial_0p1_recomputed.csv`  
+- daily index: `ostia_patch_index_daily_0p1_recomputed_merged.csv`  
+
+Counts:  
+- spatial patches: `175` total  
+- spatial split: `149 train`, `26 val`  
+- daily rows: `932,050` total  
+- daily split rows: `793,574 train`, `138,476 val`  
+
+Argo coverage in final daily CSV:
+- rows with `argo_valid=1`: `734,825` (`78.84%`)  
+- rows with `argo_valid=0`: `197,225` (`21.16%`)  
 
 
 # Dataset Reduction (Spatial and Temporal)
 
+Resolution progression in this project: initial experiments started at `0.05°`, and the current dataset version is `0.1°` for better observation density.
+
 ## V1: 0.05 Deg, Daily
-3M samples, ~55% percent of samples without a single observation, ~1.6 average observations for valid tiles. Due to the low number, moving on the 0.1 deg
+Recomputed production numbers:
+- `3,999,826` patch-day samples  
+- `638 train` / `113 val` spatial patches  
+- `3,397,988 train` / `601,838 val` daily rows  
+- `846,377` rows (`21.16%`) without Argo observations (`argo_valid=0`)  
+
+Estimate:  
+`~3M` samples, `~55%` samples without a single observation, `~1.6` average observations for valid tiles.  
 
 ## V2: 0.1 Deg, Daily
-600k samples, ~15% percent of samples without a single observation, ~4.05 average observations for valid tiles.  
+Recomputed numbers:
+- `932,050` patch-day samples  
+- `149 train` / `26 val` spatial patches  
+- `793,574 train` / `138,476 val` daily rows  
+- `197,225` rows (`21.16%`) without Argo observations (`argo_valid=0`)  
+
+Estimate:  
+`~600k` samples, `~15%` samples without a single observation, `~4.05` average observations for valid tiles.  
+
 Sample Image:  
 ![OSTIA 0.1 deg sample](assets/argo_ostia_sample_5.png)  
   
