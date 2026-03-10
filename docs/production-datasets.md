@@ -221,4 +221,11 @@ On-disk size (data folders):
 
 ## V2: 0.1 Deg, Daily
 600k samples, ~15% percent of samples without a single observation, ~4.05 average observations for valid tiles.  
-![OSTIA 0.1 deg sample](docs/assets/argo_ostia_sample_5.png)
+Sample Image:  
+![OSTIA 0.1 deg sample](docs/assets/argo_ostia_sample_5.png)  
+  
+Validation Set Histogram of valid pixel fractions:    
+![OSTIA 0.1 deg hist](docs/assets/argo_observations_histogram_intermediate.png)  
+  
+Validaiton Set Map of patches, color-coded by valid pixel fraction:  
+![OSTIA 0.1 deg map](docs/assets/argo_observations_map_intermediate.png)  
