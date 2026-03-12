@@ -237,11 +237,11 @@ Argo coverage in final daily CSV:
 - rows with `argo_valid=0`: `197,225` (`21.16%`)  
   
   
-# Dataset Reduction (Spatial and Temporal)  
+## Dataset Reduction (Spatial and Temporal)  
   
 Resolution progression in this project: initial experiments started at `0.05°`, and the current dataset version is `0.1°` for better observation density.  
   
-## V1: 0.05 Deg, Daily  
+### V1: 0.05 Deg, Daily  
 Recomputed production numbers:  
 - `3,999,826` patch-day samples  
 - `638 train` / `113 val` spatial patches  
@@ -251,7 +251,7 @@ Recomputed production numbers:
 Estimate:  
 `~3M` samples, `~55%` samples without a single observation, `~1.6` average observations for valid tiles.  
   
-## V2: 0.1 Deg, Daily  
+### V2: 0.1 Deg, Daily  
 Recomputed numbers:  
 - `932,050` patch-day samples  
 - `149 train` / `26 val` spatial patches  
@@ -270,7 +270,7 @@ Train Set Histogram of valid pixel fractions for the years 2019 and 2020:
 Train Set Map of patches, color-coded by valid pixel fraction for the years 2019 and 2020:  
 ![OSTIA 0.1 deg map](assets/argo_observations_map.png)  
 
-## V3: 0.1 Deg, 7-day aggregate
+### V3: 0.1 Deg, 7-day aggregate
 Recomputed numbers:  
 - `932,050` patch-day samples  
 - `149 train` / `26 val` spatial patches  
@@ -284,4 +284,10 @@ Estimate:
   
 Sample Image:  
 ![OSTIA 0.1 deg sample](assets/argo_ostia_sample_0p1_7days.png)  
+
+Train Set Histogram of valid pixel fractions for the year 2019 (random, 10% subset):  
+![OSTIA 0.1 deg hist](assets/argo_observations_histogram_7days.png)  
+  
+Train Set Map of patches, color-coded by valid pixel fraction for the year 2019 (random, 10% subset):  
+![OSTIA 0.1 deg map](assets/argo_observations_map_7days.png)  
 
