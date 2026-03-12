@@ -15,6 +15,7 @@ docs/assets/ambient_diffusion.pdf
 docs/assets/ambient_diffusion.pdf
 
 # temp file types
+*.csv
 *.geojson
 *.json
 
