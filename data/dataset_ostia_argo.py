@@ -35,6 +35,7 @@ class OstiaArgoTileDataset(Dataset):
         root_path: str | Path | None = None,
         split: str = "all",
         tile_size: int = 128,
+        days: int = 1,
         sst_var_name: str = "analysed_sst",
         output_units: str = "celsius",
         return_argo_profiles: bool = True,
@@ -53,6 +54,7 @@ class OstiaArgoTileDataset(Dataset):
             self._depth_v2_root = self._find_named_ancestor(self.csv_dir, "depth_v2")
         self.split = str(split).strip().lower()
         self.tile_size = int(tile_size)
+        self.days = int(days)
         self.sst_var_name = str(sst_var_name)
         self.output_units = str(output_units).strip().lower()
         self.return_argo_profiles = bool(return_argo_profiles)
@@ -60,8 +62,19 @@ class OstiaArgoTileDataset(Dataset):
         self.argo_depth_var_name = str(argo_depth_var_name)
         self.return_info = bool(return_info)
         self.verbose_init = bool(verbose_init)
-        
-        self._log(f"Initializing OstiaArgoTileDataset with CSV: {self.csv_path} from root: {self._depth_v2_root}, split: '{self.split}', tile_size: {self.tile_size}, ")
+
+        if self.days < 1:
+            raise ValueError("days must be >= 1.")
+        if self.days % 2 == 0:
+            self.days += 1
+            self._log(f"days was even; auto-adjusted to odd window length: {self.days}")
+        self._window_radius_days = self.days // 2
+
+        self._log(
+            "Initializing OstiaArgoTileDataset with CSV: "
+            f"{self.csv_path} from root: {self._depth_v2_root}, split: '{self.split}', "
+            f"tile_size: {self.tile_size}, days: {self.days}"
+        )
 
         # Validate basic constructor constraints early so failures are explicit.
         if not self.csv_path.exists():
@@ -131,6 +144,10 @@ class OstiaArgoTileDataset(Dataset):
         if len(df) == 0:
             raise RuntimeError("Dataset is empty after split filtering.")
 
+        # Keep one in-memory dataframe view keyed by patch for temporal row filtering in __getitem__.
+        self._lookup_rows_by_patch = self._build_lookup_rows_by_patch(df)
+        self._log(f"Prepared temporal lookup for {len(self._lookup_rows_by_patch)} patch keys.")
+
         # Convert to row dictionaries once for very fast __getitem__ lookup.
         self._rows = df.to_dict(orient="records")
         self._log(f"Dataset ready with {len(self._rows)} rows.")
@@ -149,6 +166,102 @@ class OstiaArgoTileDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self._rows)
+
+    @staticmethod
+    def _parse_date_int(value: Any) -> int:
+        raw = str(value).strip()
+        if raw == "":
+            return 0
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return 0
+        return parsed if parsed > 0 else 0
+
+    @staticmethod
+    def _bbox_lookup_key(*, lat0: Any, lat1: Any, lon0: Any, lon1: Any) -> str:
+        # Normalize bbox orientation so fallback patch keys stay stable across rows.
+        lat_lo = min(float(lat0), float(lat1))
+        lat_hi = max(float(lat0), float(lat1))
+        lon_lo = min(float(lon0), float(lon1))
+        lon_hi = max(float(lon0), float(lon1))
+        return f"bbox:{lat_lo:.6f}|{lat_hi:.6f}|{lon_lo:.6f}|{lon_hi:.6f}"
+
+    def _patch_lookup_key_from_row(self, row: dict[str, Any] | pd.Series) -> str:
+        patch_id = str(row.get("patch_id", "")).strip()
+        if patch_id != "":
+            return f"patch:{patch_id}"
+        return self._bbox_lookup_key(
+            lat0=row["lat0"],
+            lat1=row["lat1"],
+            lon0=row["lon0"],
+            lon1=row["lon1"],
+        )
+
+    def _build_lookup_rows_by_patch(self, df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        lookup_df = df.copy()
+        lookup_df["_target_date"] = pd.to_numeric(
+            lookup_df["date"], errors="coerce"
+        ).fillna(0).astype(np.int64)
+
+        n_rows = int(len(lookup_df))
+        patch_id_vals = (
+            lookup_df["patch_id"].astype(str).str.strip().to_numpy()
+            if "patch_id" in lookup_df.columns
+            else np.full((n_rows,), "", dtype=object)
+        )
+        lat0_vals = pd.to_numeric(lookup_df["lat0"], errors="coerce").to_numpy(dtype=np.float64)
+        lat1_vals = pd.to_numeric(lookup_df["lat1"], errors="coerce").to_numpy(dtype=np.float64)
+        lon0_vals = pd.to_numeric(lookup_df["lon0"], errors="coerce").to_numpy(dtype=np.float64)
+        lon1_vals = pd.to_numeric(lookup_df["lon1"], errors="coerce").to_numpy(dtype=np.float64)
+
+        patch_keys: list[str] = []
+        for i in range(n_rows):
+            patch_id = str(patch_id_vals[i]).strip()
+            if patch_id != "":
+                patch_keys.append(f"patch:{patch_id}")
+                continue
+            patch_keys.append(
+                self._bbox_lookup_key(
+                    lat0=lat0_vals[i],
+                    lat1=lat1_vals[i],
+                    lon0=lon0_vals[i],
+                    lon1=lon1_vals[i],
+                )
+            )
+        lookup_df["_patch_lookup_key"] = patch_keys
+
+        rows_by_patch: dict[str, pd.DataFrame] = {}
+        for patch_key, patch_df in lookup_df.groupby("_patch_lookup_key", sort=False):
+            rows_by_patch[str(patch_key)] = patch_df.sort_values("_target_date").reset_index(drop=True)
+        return rows_by_patch
+
+    def _window_date_bounds(self, target_date: int) -> tuple[int, int]:
+        parsed = pd.to_datetime(str(int(target_date)), format="%Y%m%d", errors="coerce")
+        if pd.isna(parsed):
+            return int(target_date), int(target_date)
+        date_lo = parsed - pd.Timedelta(days=self._window_radius_days)
+        date_hi = parsed + pd.Timedelta(days=self._window_radius_days)
+        return int(date_lo.strftime("%Y%m%d")), int(date_hi.strftime("%Y%m%d"))
+
+    def _select_temporal_rows(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        target_date = self._parse_date_int(row.get("date", 0))
+        if self.days <= 1 or target_date <= 0:
+            return [row]
+
+        patch_key = self._patch_lookup_key_from_row(row)
+        patch_df = self._lookup_rows_by_patch.get(patch_key)
+        if patch_df is None or patch_df.empty:
+            return [row]
+
+        date_lo, date_hi = self._window_date_bounds(target_date)
+        window_df = patch_df[
+            (patch_df["_target_date"] >= int(date_lo))
+            & (patch_df["_target_date"] <= int(date_hi))
+        ]
+        if window_df.empty:
+            return [row]
+        return window_df.to_dict(orient="records")
 
     @staticmethod
     def _find_named_ancestor(path: Path, target_name: str) -> Path | None:
@@ -372,7 +485,7 @@ class OstiaArgoTileDataset(Dataset):
         lat1: float,
         lon0: float,
         lon1: float,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # temperature is expected as (N_PROF, N_LEVELS): one vertical profile per row.
         temp_np = np.asarray(temperature.cpu().numpy(), dtype=np.float32)
         if temp_np.ndim != 2:
@@ -387,12 +500,13 @@ class OstiaArgoTileDataset(Dataset):
             return (
                 torch.empty((0, h, w), dtype=torch.float32),
                 torch.empty((0, h, w), dtype=torch.bool),
+                torch.empty((0, h, w), dtype=torch.int32),
             )
 
         # Accumulators are flattened per-pixel for easy vectorized channel updates.
         # x_sum[level, pixel] stores summed temperatures; x_count stores observation counts.
         x_sum = np.zeros((n_levels, h * w), dtype=np.float32)
-        x_count = np.zeros((n_levels, h * w), dtype=np.uint16)
+        x_count = np.zeros((n_levels, h * w), dtype=np.int32)
 
         # Read profile positions (one lat/lon per profile).
         lat_np = np.asarray(latitude.cpu().numpy(), dtype=np.float64).reshape(-1)
@@ -459,7 +573,11 @@ class OstiaArgoTileDataset(Dataset):
         x_grid = x_grid.reshape(n_levels, h, w)
         valid_mask = valid_mask.reshape(n_levels, h, w)
 
-        return torch.from_numpy(x_grid), torch.from_numpy(valid_mask)
+        return (
+            torch.from_numpy(x_grid),
+            torch.from_numpy(valid_mask),
+            torch.from_numpy(x_count.astype(np.int32, copy=False)),
+        )
 
     @staticmethod
     def _interpolate_sparse_x_level(
@@ -685,54 +803,115 @@ class OstiaArgoTileDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         # Read the prefiltered CSV row.
         row = self._rows[int(idx)]
+        temporal_rows = self._select_temporal_rows(row)
 
-        # Resolve and validate OSTIA path for this row.
-        ostia_path = self._resolve_index_path(row[self._ostia_path_col])
-        if not ostia_path.exists():
-            raise FileNotFoundError(f"OSTIA file not found: {ostia_path}")
+        center_ostia_path = self._resolve_index_path(row[self._ostia_path_col])
+        patch_sum = np.zeros((self.tile_size, self.tile_size), dtype=np.float32)
+        patch_count = np.zeros((self.tile_size, self.tile_size), dtype=np.uint16)
+        ostia_days_used = 0
+        for day_row in temporal_rows:
+            day_ostia_raw = str(day_row.get(self._ostia_path_col, "")).strip()
+            if day_ostia_raw == "":
+                continue
+            day_ostia_path = self._resolve_index_path(day_ostia_raw)
+            if not day_ostia_path.exists():
+                continue
 
-        # Load ONLY the requested OSTIA patch window from NetCDF (no full-field materialization).
-        patch = self._load_ostia_patch(
-            ostia_path=ostia_path,
-            lat0=float(row["lat0"]),
-            lat1=float(row["lat1"]),
-            lon0=float(row["lon0"]),
-            lon1=float(row["lon1"]),
-        )
-        if self.output_units == "celsius":
-            patch = patch - np.float32(273.15)
+            day_patch = self._load_ostia_patch(
+                ostia_path=day_ostia_path,
+                lat0=float(day_row["lat0"]),
+                lat1=float(day_row["lat1"]),
+                lon0=float(day_row["lon0"]),
+                lon1=float(day_row["lon1"]),
+            )
+            if self.output_units == "celsius":
+                day_patch = day_patch - np.float32(273.15)
 
+            day_valid = np.isfinite(day_patch)
+            if not np.any(day_valid):
+                continue
+            patch_sum[day_valid] += day_patch[day_valid]
+            patch_count[day_valid] += 1
+            ostia_days_used += 1
+
+        if not np.any(patch_count > 0):
+            raise FileNotFoundError(
+                "No readable OSTIA files found inside temporal window for sample "
+                f"idx={idx}, patch_id={row.get('patch_id')}, date={row.get('date')}, "
+                f"center_path={center_ostia_path}"
+            )
+
+        patch = np.full((self.tile_size, self.tile_size), np.nan, dtype=np.float32)
+        patch_valid = patch_count > 0
+        patch[patch_valid] = patch_sum[patch_valid] / patch_count[patch_valid].astype(np.float32)
         # eo is single-band (surface SST) in channel-first shape.
         eo = torch.from_numpy(patch).unsqueeze(0)
+
         # Default x/valid_mask are empty and will be filled if Argo data is available.
         x = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
         valid_mask = torch.empty(
             (0, self.tile_size, self.tile_size),
             dtype=torch.bool,
         )
+        argo_days_used = 0
         if self.return_argo_profiles:
-            # Parse Argo file/date pointers from CSV row.
-            argo_path_raw = row.get(self._argo_path_col, "") if self._argo_path_col is not None else ""
-            argo_date = int(row.get("date", 0)) if str(row.get("date", "")).strip() else 0
-            if str(argo_path_raw).strip():
+            x_sum: torch.Tensor | None = None
+            x_count: torch.Tensor | None = None
+            for day_row in temporal_rows:
+                # Parse Argo file/date pointers from each temporal row.
+                argo_path_raw = (
+                    day_row.get(self._argo_path_col, "") if self._argo_path_col is not None else ""
+                )
+                argo_date = self._parse_date_int(day_row.get("date", 0))
+                if argo_date <= 0 or str(argo_path_raw).strip() == "":
+                    continue
+
                 argo_path = self._resolve_index_path(argo_path_raw)
-                if argo_path.exists():
-                    # Load date-matched profile table from EN4 monthly file.
-                    argo_payload = self._load_argo_profiles_for_date(
-                        argo_path=argo_path,
-                        target_date=argo_date,
+                if not argo_path.exists():
+                    continue
+
+                # Load date-matched profile table from EN4 monthly file.
+                argo_payload = self._load_argo_profiles_for_date(
+                    argo_path=argo_path,
+                    target_date=argo_date,
+                )
+                # Rasterize profile table into patch tensor x and corresponding valid_mask.
+                # IMPORTANT: we pass the same CSV bounds used for eo, so x/eo overlap physically.
+                x_day, _valid_mask_day, count_day = self._argo_profiles_to_x_grid(
+                    temperature=argo_payload["temperature"],
+                    latitude=argo_payload["latitude"],
+                    longitude=argo_payload["longitude"],
+                    lat0=float(day_row["lat0"]),
+                    lat1=float(day_row["lat1"]),
+                    lon0=float(day_row["lon0"]),
+                    lon1=float(day_row["lon1"]),
+                )
+
+                if x_sum is None or x_count is None:
+                    x_sum = torch.zeros_like(x_day)
+                    x_count = torch.zeros_like(x_day, dtype=torch.int32)
+                elif x_day.shape != x_sum.shape:
+                    raise RuntimeError(
+                        "Temporal Argo aggregation encountered inconsistent shapes: "
+                        f"expected {tuple(x_sum.shape)}, got {tuple(x_day.shape)}"
                     )
-                    # Rasterize profile table into patch tensor x and corresponding valid_mask.
-                    # IMPORTANT: we pass the same CSV bounds used for eo, so x/eo overlap physically.
-                    x, valid_mask = self._argo_profiles_to_x_grid(
-                        temperature=argo_payload["temperature"],
-                        latitude=argo_payload["latitude"],
-                        longitude=argo_payload["longitude"],
-                        lat0=float(row["lat0"]),
-                        lat1=float(row["lat1"]),
-                        lon0=float(row["lon0"]),
-                        lon1=float(row["lon1"]),
+
+                if count_day.shape != x_sum.shape:
+                    raise RuntimeError(
+                        "Temporal Argo aggregation encountered inconsistent count shape: "
+                        f"expected {tuple(x_sum.shape)}, got {tuple(count_day.shape)}"
                     )
+
+                # Convert per-day means back to sums so temporal aggregation is the true average
+                # over all overlapping observations (not an unweighted average of day-means).
+                x_sum += x_day * count_day.to(dtype=torch.float32)
+                x_count += count_day
+                argo_days_used += 1
+
+            if x_sum is not None and x_count is not None:
+                valid_mask = x_count > 0
+                x = torch.zeros_like(x_sum, dtype=torch.float32)
+                x[valid_mask] = x_sum[valid_mask] / x_count[valid_mask].to(dtype=torch.float32)
         # Collapse across all depth bands so each pixel is valid if any band has an observation.
         if valid_mask.shape[0] > 0:
             valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
@@ -752,9 +931,13 @@ class OstiaArgoTileDataset(Dataset):
                 "patch_id": row.get("patch_id"),
                 "date": row.get("date"),
                 "phase": row.get("phase", row.get("split")),
-                "ostia_file_path": str(ostia_path),
+                "ostia_file_path": str(center_ostia_path),
                 "argo_file_path": row.get("argo_file_path"),
                 "argo_profile_count": row.get("argo_profile_count"),
+                "temporal_window_days": int(self.days),
+                "temporal_rows_count": int(len(temporal_rows)),
+                "temporal_ostia_days_used": int(ostia_days_used),
+                "temporal_argo_days_used": int(argo_days_used),
             },
         }
         return sample
