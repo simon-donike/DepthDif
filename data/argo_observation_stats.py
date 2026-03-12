@@ -241,6 +241,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Patch side length used by dataset rasterization.",
     )
     parser.add_argument(
+        "--days",
+        type=int,
+        default=1,
+        help=(
+            "Temporal window length passed to OstiaArgoTileDataset "
+            "(even values auto-adjust to odd in dataset)."
+            "Set 1 for daily."
+        ),
+    )
+    parser.add_argument(
         "--year-start",
         type=int,
         default=2019,
@@ -296,6 +306,7 @@ def main() -> None:
         root_path=Path("/work/data/depth_v2/"),
         split=args.split,
         tile_size=int(args.tile_size),
+        days=int(args.days),
         verbose_init=not bool(args.quiet_init),
     )
 

@@ -269,3 +269,19 @@ Train Set Histogram of valid pixel fractions for the years 2019 and 2020:
   
 Train Set Map of patches, color-coded by valid pixel fraction for the years 2019 and 2020:  
 ![OSTIA 0.1 deg map](assets/argo_observations_map.png)  
+
+## V3: 0.1 Deg, 7-day aggregate
+Recomputed numbers:  
+- `932,050` patch-day samples  
+- `149 train` / `26 val` spatial patches  
+- `793,574 train` / `138,476 val` daily rows  
+- `197,225` rows (`21.16%`) without Argo observations (`argo_valid=0`)  
+
+Each step is now sampled +/- N days, so single observations are loaded multiple times when they intersect with the timespan in question. The number of days is adjustable, it's at 7 for now.
+  
+Estimate:  
+`~600k` samples, `~1.5%` samples without a single observation, `~20.5` average observations for valid tiles.  
+  
+Sample Image:  
+![OSTIA 0.1 deg sample](assets/argo_ostia_sample_0p1_7days.png)  
+

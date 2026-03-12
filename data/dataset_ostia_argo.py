@@ -572,6 +572,7 @@ class OstiaArgoTileDataset(Dataset):
         # Reshape back from flattened pixels to (levels, H, W).
         x_grid = x_grid.reshape(n_levels, h, w)
         valid_mask = valid_mask.reshape(n_levels, h, w)
+        x_count = x_count.reshape(n_levels, h, w)
 
         return (
             torch.from_numpy(x_grid),
@@ -920,6 +921,19 @@ class OstiaArgoTileDataset(Dataset):
                 (1, self.tile_size, self.tile_size),
                 dtype=torch.bool,
             )
+
+        surface_valid_pixels = 0
+        surface_ostia_argo_mae_deg: float | None = None
+        if x.shape[0] > 0 and valid_mask.shape[0] > 0:
+            # Compute surface-only error on observed Argo pixels:
+            # Argo level 0 vs. OSTIA surface eo[0].
+            surface_valid = valid_mask[0]
+            surface_valid_pixels = int(surface_valid.sum().item())
+            if surface_valid_pixels > 0:
+                surface_ostia_argo_mae_deg = float(
+                    torch.abs(x[0][surface_valid] - eo[0][surface_valid]).mean().item()
+                )
+
         # Final sample contract: Argo raster (x), OSTIA patch (eo), Argo valid mask, metadata.
         sample: dict[str, Any] = {
             "x": x,
@@ -938,6 +952,8 @@ class OstiaArgoTileDataset(Dataset):
                 "temporal_rows_count": int(len(temporal_rows)),
                 "temporal_ostia_days_used": int(ostia_days_used),
                 "temporal_argo_days_used": int(argo_days_used),
+                "surface_ostia_argo_valid_pixels": int(surface_valid_pixels),
+                "surface_ostia_argo_mae_deg": surface_ostia_argo_mae_deg,
             },
         }
         return sample
@@ -945,7 +961,7 @@ class OstiaArgoTileDataset(Dataset):
 
 if __name__ == "__main__":
     # Example usage:
-    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True)
+    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True,days=7)
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     print(f"Sample keys: {list(sample.keys())}")
