@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 import time
 import textwrap
@@ -630,6 +631,312 @@ class OstiaArgoTileDataset(Dataset):
         filled[target_mask] = np.asarray(fill_values, dtype=np.float32)
         return filled
 
+    @staticmethod
+    def _sanitize_filename_component(value: Any) -> str:
+        raw = str(value).strip()
+        if raw == "":
+            return "na"
+
+        sanitized_chars: list[str] = []
+        for ch in raw:
+            if ch.isalnum() or ch in {"-", "_"}:
+                sanitized_chars.append(ch)
+            elif ch == ".":
+                sanitized_chars.append("p")
+            else:
+                sanitized_chars.append("_")
+        sanitized = "".join(sanitized_chars).strip("_")
+        return sanitized or "na"
+
+    def _export_basename_from_row(self, row: dict[str, Any]) -> str:
+        date_token = self._sanitize_filename_component(row.get("date", "na"))
+        patch_id = str(row.get("patch_id", "")).strip()
+        if patch_id != "":
+            patch_token = f"patch_{self._sanitize_filename_component(patch_id)}"
+        else:
+            patch_token = "_".join(
+                [
+                    "bbox",
+                    self._sanitize_filename_component(f"{float(row['lat0']):.6f}"),
+                    self._sanitize_filename_component(f"{float(row['lat1']):.6f}"),
+                    self._sanitize_filename_component(f"{float(row['lon0']):.6f}"),
+                    self._sanitize_filename_component(f"{float(row['lon1']):.6f}"),
+                ]
+            )
+        return f"{date_token}_{patch_token}"
+
+    @staticmethod
+    def _north_up_array(values: np.ndarray) -> np.ndarray:
+        arr = np.asarray(values, dtype=np.float32)
+        # Internal patch tensors are built south->north; flip latitude so GeoTIFF row 0 is north.
+        if arr.ndim == 2:
+            return np.ascontiguousarray(arr[::-1, :])
+        if arr.ndim == 3:
+            return np.ascontiguousarray(arr[:, ::-1, :])
+        raise RuntimeError(f"Expected 2D or 3D array for GeoTIFF export, got {tuple(arr.shape)}")
+
+    @staticmethod
+    def _write_geotiff(
+        path: Path,
+        values: np.ndarray,
+        *,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+        band_descriptions: tuple[str, ...],
+        tags: dict[str, Any] | None = None,
+    ) -> None:
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        data = np.asarray(values, dtype=np.float32)
+        if data.ndim == 2:
+            data = data[np.newaxis, :, :]
+        elif data.ndim != 3:
+            raise RuntimeError(
+                f"Expected GeoTIFF export array with shape (H,W) or (C,H,W), got {tuple(data.shape)}"
+            )
+
+        count, height, width = data.shape
+        if len(band_descriptions) != count:
+            raise RuntimeError(
+                "Band description count must match raster band count: "
+                f"{len(band_descriptions)} != {count}"
+            )
+
+        transform = from_bounds(
+            min(float(lon0), float(lon1)),
+            min(float(lat0), float(lat1)),
+            max(float(lon0), float(lon1)),
+            max(float(lat0), float(lat1)),
+            int(width),
+            int(height),
+        )
+        north_up = OstiaArgoTileDataset._north_up_array(data)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=int(width),
+            height=int(height),
+            count=int(count),
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=transform,
+            nodata=np.nan,
+            compress="deflate",
+            predictor=3,
+        ) as dst:
+            dst.write(north_up)
+            for band_idx, desc in enumerate(band_descriptions, start=1):
+                dst.set_band_description(band_idx, str(desc))
+            if tags:
+                dst.update_tags(**{key: str(value) for key, value in tags.items() if value is not None})
+
+    @staticmethod
+    def _append_manifest_record(manifest_path: Path, record: dict[str, Any]) -> None:
+        import fcntl
+        import os
+
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = list(record.keys())
+        with manifest_path.open("a+", newline="", encoding="utf-8") as f:
+            # Use a file lock so multiple DataLoader workers can append safely on Linux.
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.seek(0)
+                header = next(csv.reader(f), None)
+                f.seek(0, 2)
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if header is None:
+                    writer.writeheader()
+                elif list(header) != fieldnames:
+                    raise RuntimeError(
+                        f"Manifest header mismatch at {manifest_path}. "
+                        "Delete the CSV or keep the exported schema consistent."
+                    )
+                writer.writerow(record)
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+    def save_to_disk(
+        self,
+        idx: int,
+        output_root: str | Path = "/work/data/depth_v3",
+        *,
+        manifest_path: str | Path | None = None,
+        argo_depth_indices: tuple[int, ...] = (0, 1, 2),
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        if not self.return_argo_profiles:
+            raise RuntimeError("save_to_disk requires return_argo_profiles=True.")
+
+        row = dict(self._rows[int(idx)])
+        sample = self.__getitem__(int(idx))
+        x = sample["x"]
+        eo = sample["eo"]
+        valid_mask = sample["valid_mask"]
+        info = sample.get("info", {})
+
+        if x.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
+            raise RuntimeError(
+                "Expected sample tensors with shape (C,H,W): "
+                f"x={tuple(x.shape)}, eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
+            )
+        if eo.shape[0] != 1:
+            raise RuntimeError(f"Expected single-band OSTIA tensor, got shape {tuple(eo.shape)}")
+        if valid_mask.shape != x.shape:
+            raise RuntimeError(
+                "Expected valid_mask shape to match x shape: "
+                f"{tuple(valid_mask.shape)} != {tuple(x.shape)}"
+            )
+
+        argo_depth_indices = tuple(int(depth_idx) for depth_idx in argo_depth_indices)
+        if len(argo_depth_indices) == 0:
+            raise ValueError("argo_depth_indices must contain at least one layer index.")
+        if min(argo_depth_indices) < 0:
+            raise ValueError("argo_depth_indices must be non-negative.")
+        if x.shape[0] <= max(argo_depth_indices):
+            raise RuntimeError(
+                "Requested Argo layers are not available in this sample: "
+                f"requested={argo_depth_indices}, available_channels={x.shape[0]}"
+            )
+
+        output_root = Path(output_root)
+        argo_dir = output_root / "argo"
+        ostia_dir = output_root / "ostia"
+        argo_dir.mkdir(parents=True, exist_ok=True)
+        ostia_dir.mkdir(parents=True, exist_ok=True)
+
+        basename = self._export_basename_from_row(row)
+        filename = f"{basename}.tif"
+        argo_tif_path = argo_dir / filename
+        ostia_tif_path = ostia_dir / filename
+        if manifest_path is None:
+            manifest_path = output_root / "ostia_argo_tiff_index.csv"
+        else:
+            manifest_path = Path(manifest_path)
+
+        if argo_tif_path.exists() != ostia_tif_path.exists() and not overwrite:
+            raise FileExistsError(
+                "Found only one half of an exported OSTIA/Argo pair. "
+                "Delete the partial export or rerun with overwrite=True."
+            )
+
+        files_written = False
+        if overwrite or (not argo_tif_path.exists() and not ostia_tif_path.exists()):
+            argo_np = np.asarray(
+                x[list(argo_depth_indices)].detach().cpu().numpy(),
+                dtype=np.float32,
+            )
+            valid_np = np.asarray(
+                valid_mask[list(argo_depth_indices)].detach().cpu().numpy(),
+                dtype=bool,
+            )
+            # Missing Argo pixels are encoded as NaN so downstream loaders can infer validity directly.
+            argo_np = np.where(valid_np, argo_np, np.nan).astype(np.float32, copy=False)
+            eo_np = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
+
+            lat0 = float(row["lat0"])
+            lat1 = float(row["lat1"])
+            lon0 = float(row["lon0"])
+            lon1 = float(row["lon1"])
+            centroid_lat = 0.5 * (lat0 + lat1)
+            centroid_lon = 0.5 * (lon0 + lon1)
+
+            common_tags = {
+                "sample_basename": basename,
+                "date": row.get("date"),
+                "patch_id": row.get("patch_id"),
+                "phase": row.get("phase", row.get("split")),
+                "centroid_lat": f"{centroid_lat:.6f}",
+                "centroid_lon": f"{centroid_lon:.6f}",
+            }
+            self._write_geotiff(
+                ostia_tif_path,
+                eo_np,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+                band_descriptions=("ostia_sst",),
+                tags={
+                    **common_tags,
+                    "product": "ostia",
+                    "source_file": str(self._resolve_index_path(row[self._ostia_path_col])),
+                },
+            )
+            self._write_geotiff(
+                argo_tif_path,
+                argo_np,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+                band_descriptions=tuple(
+                    f"argo_temperature_layer_{depth_idx}" for depth_idx in argo_depth_indices
+                ),
+                tags={
+                    **common_tags,
+                    "product": "argo",
+                    "source_file": (
+                        str(self._resolve_index_path(row[self._argo_path_col]))
+                        if self._argo_path_col is not None
+                        else ""
+                    ),
+                    "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                },
+            )
+            files_written = True
+
+        lat0 = float(row["lat0"])
+        lat1 = float(row["lat1"])
+        lon0 = float(row["lon0"])
+        lon1 = float(row["lon1"])
+        centroid_lat = 0.5 * (lat0 + lat1)
+        centroid_lon = 0.5 * (lon0 + lon1)
+        record: dict[str, Any] = dict(row)
+        record.update(
+            {
+                "export_index": int(idx),
+                "sample_basename": basename,
+                "filename": filename,
+                "centroid_lat": float(centroid_lat),
+                "centroid_lon": float(centroid_lon),
+                "ostia_tif_path": ostia_tif_path.resolve().as_posix(),
+                "argo_tif_path": argo_tif_path.resolve().as_posix(),
+                "ostia_filename": ostia_tif_path.name,
+                "argo_filename": argo_tif_path.name,
+                "ostia_rel_path": ostia_tif_path.relative_to(output_root).as_posix(),
+                "argo_rel_path": argo_tif_path.relative_to(output_root).as_posix(),
+                "manifest_csv_path": manifest_path.resolve().as_posix(),
+                "crs": "EPSG:4326",
+                "tile_size": int(self.tile_size),
+                "output_units": self.output_units,
+                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                "argo_band_count": int(len(argo_depth_indices)),
+                "ostia_band_count": 1,
+                "resolved_ostia_source_path": str(self._resolve_index_path(row[self._ostia_path_col])),
+                "resolved_argo_source_path": (
+                    str(self._resolve_index_path(row[self._argo_path_col]))
+                    if self._argo_path_col is not None
+                    else ""
+                ),
+                "temporal_window_days": int(info.get("temporal_window_days", self.days)),
+                "temporal_rows_count": int(info.get("temporal_rows_count", 0)),
+                "temporal_ostia_days_used": int(info.get("temporal_ostia_days_used", 0)),
+                "temporal_argo_days_used": int(info.get("temporal_argo_days_used", 0)),
+            }
+        )
+        if files_written:
+            self._append_manifest_record(manifest_path, record)
+        return record
+
     def save_batch_plot_to_temp(
         self,
         idx: int = 0,
@@ -959,7 +1266,8 @@ class OstiaArgoTileDataset(Dataset):
         return sample
 
 
-if __name__ == "__main__":
+#if __name__ == "__main__":
+if False:
     # Example usage:
     dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True,days=7)
     print(f"Dataset length: {len(dataset)}")
@@ -991,3 +1299,16 @@ if __name__ == "__main__":
         else:
             c_inv += 1
         print(f"Percentage of invalid samples: {c_inv / (c_val + c_inv) * 100:.2f}%, Average valid pixels: {np.mean(c_avg_num):.2f}. {i}/1000", end="\r")
+
+if __name__ == "__main__":
+    save_to_disk = True
+    if save_to_disk:
+        dataset = OstiaArgoTileDataset(
+            "/work/data/depth_v2/ostia_patch_index_daily_0p1.csv",
+            split="train",
+            days=14,
+            return_argo_profiles=True,
+        )
+        from tqdm import tqdm
+        for i in tqdm(range(len(dataset))):
+            record = dataset.save_to_disk(i)  # writes to /work/data/depth_v3 by default

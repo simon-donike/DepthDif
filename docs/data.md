@@ -121,7 +121,13 @@ Per `__getitem__` behavior:
 - returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes), i.e. still 400 depth bands (not `days * 400`)  
 - returns Argo-driven `valid_mask` with the same shape as `x`  
 - returns: `x`, `eo`, `valid_mask`, `valid_mask_1d`, `info`  
-  
+
+Disk export helper:  
+- `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one OSTIA GeoTIFF to `ostia/<basename>.tif` and one Argo GeoTIFF to `argo/<basename>.tif` with the same basename for later pairing  
+- default Argo export keeps only the top three layers via `argo_depth_indices=(0, 1, 2)` and writes missing Argo pixels as `NaN`  
+- GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform and a north-up row order  
+- each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
+
 Current scope note:  
 - profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step  
   
