@@ -16,6 +16,7 @@ from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
+from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
@@ -324,7 +325,10 @@ def ds_cfg_value(
 
 
 def build_dataset(
-    data_config_path: str, ds_cfg: dict[str, Any]
+    data_config_path: str,
+    ds_cfg: dict[str, Any],
+    *,
+    split: str,
 ) -> torch.utils.data.Dataset:
     # Route to dataset implementation matching the requested training task.
     """Build and return dataset.
@@ -332,6 +336,7 @@ def build_dataset(
     Args:
         data_config_path (str): Path to an input or output file.
         ds_cfg (dict[str, Any]): Configuration dictionary or section.
+        split (str): Dataset split label to instantiate.
 
     Returns:
         torch.utils.data.Dataset: Computed output value.
@@ -340,17 +345,35 @@ def build_dataset(
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
         return SurfaceTempPatch4BandsLightDataset.from_config(
             data_config_path,
-            split="all",
+            split=split,
         )
     if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
         return SurfaceTempPatchOstiaLightDataset.from_config(
             data_config_path,
-            split="all",
+            split=split,
+        )
+    if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
+        return OstiaArgoTiffDataset(
+            csv_path=str(
+                ds_cfg_value(
+                    ds_cfg,
+                    "core.manifest_csv_path",
+                    "manifest_csv_path",
+                    default=OstiaArgoTiffDataset.DEFAULT_CSV_PATH,
+                )
+            ),
+            split=split,
+            return_info=bool(
+                ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
+            ),
+            return_coords=bool(
+                ds_cfg_value(ds_cfg, "output.return_coords", "return_coords", default=True)
+            ),
         )
     raise ValueError(
         "Unsupported dataset variant in data config. "
         f"Got '{dataset_variant}', expected one of "
-        "{'eo_4band', 'ostia'}."
+        "{'eo_4band', 'ostia', 'ostia_argo_disk'}."
     )
 
 
@@ -516,27 +539,39 @@ def main(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
     # Instantiate dataset variant and inject EO dropout probability from data config.
-    # Train/val subsets share the same base dataset object, so this applies to both.
-    dataset = build_dataset(data_config_path=effective_data_config_path, ds_cfg=ds_cfg)
-    if hasattr(dataset, "eo_dropout_prob"):
-        dataset.eo_dropout_prob = float(
-            max(
-                0.0,
-                min(
-                    1.0,
-                    float(
-                        ds_cfg_value(
-                            ds_cfg,
-                            "conditioning.eo_dropout_prob",
-                            "eo_dropout_prob",
-                            default=0.0,
-                        )
-                    ),
+    # Train/val datasets are instantiated separately so explicit CSV split labels are respected.
+    train_dataset = build_dataset(
+        data_config_path=effective_data_config_path,
+        ds_cfg=ds_cfg,
+        split="train",
+    )
+    val_dataset = build_dataset(
+        data_config_path=effective_data_config_path,
+        ds_cfg=ds_cfg,
+        split="val",
+    )
+    eo_dropout_prob = float(
+        max(
+            0.0,
+            min(
+                1.0,
+                float(
+                    ds_cfg_value(
+                        ds_cfg,
+                        "conditioning.eo_dropout_prob",
+                        "eo_dropout_prob",
+                        default=0.0,
+                    )
                 ),
-            )
+            ),
         )
+    )
+    for dataset in (train_dataset, val_dataset):
+        if hasattr(dataset, "eo_dropout_prob"):
+            dataset.eo_dropout_prob = eo_dropout_prob
     datamodule = DepthTileDataModule(
-        dataset=dataset,
+        dataset=train_dataset,
+        val_dataset=val_dataset,
         dataloader_cfg=dataloader_cfg,
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),

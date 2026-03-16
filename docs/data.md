@@ -128,6 +128,7 @@ Disk export helper:
 - GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform and a north-up row order  
 - each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
 - `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, writes TIFFs in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end  
+- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
 
 Current scope note:  
 - profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step  
