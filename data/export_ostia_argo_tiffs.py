@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -64,6 +65,23 @@ def _resolve_export_indices(total_len: int, *, start_index: int, limit: int | No
         return []
     stop_index = total_len if limit is None else min(total_len, start_index + max(int(limit), 0))
     return list(range(int(start_index), int(stop_index)))
+
+
+def _shuffle_export_indices(
+    export_indices: list[int],
+    *,
+    shuffle_seed: int,
+    shuffle_block_size: int,
+) -> list[int]:
+    block_size = max(int(shuffle_block_size), 1)
+    shuffled = list(export_indices)
+    blocks = [
+        shuffled[start : start + block_size]
+        for start in range(0, len(shuffled), block_size)
+    ]
+    rng = np.random.default_rng(int(shuffle_seed))
+    rng.shuffle(blocks)
+    return [idx for block in blocks for idx in block]
 
 
 def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
@@ -165,6 +183,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Write the manifest CSV every N exported samples in the main process.",
     )
     parser.add_argument(
+        "--shuffle",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Shuffle export order so partially written datasets cover the full timespan better.",
+    )
+    parser.add_argument(
+        "--shuffle-seed",
+        type=int,
+        default=7,
+        help="Random seed used for deterministic export-order shuffling.",
+    )
+    parser.add_argument(
+        "--shuffle-block-size",
+        type=int,
+        default=100,
+        help="Shuffle export order in contiguous blocks of this many samples.",
+    )
+    parser.add_argument(
         "--verbose-init",
         action="store_true",
         help="Enable verbose OstiaArgoTileDataset initialization logging.",
@@ -195,6 +231,12 @@ def main() -> None:
         start_index=int(args.start_index),
         limit=args.limit,
     )
+    if bool(args.shuffle):
+        export_indices = _shuffle_export_indices(
+            export_indices,
+            shuffle_seed=int(args.shuffle_seed),
+            shuffle_block_size=int(args.shuffle_block_size),
+        )
     if not export_indices:
         raise RuntimeError("No samples selected for export.")
 

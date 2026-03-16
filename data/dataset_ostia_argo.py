@@ -9,7 +9,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
+import h5netcdf
 import xarray as xr
+from scipy.interpolate import RegularGridInterpolator
 from torch.utils.data import Dataset
 
 
@@ -319,14 +321,98 @@ class OstiaArgoTileDataset(Dataset):
         lon0: float,
         lon1: float,
     ) -> np.ndarray:
-        # Open one OSTIA file for the current row only (no dataset-level caching).
-        with xr.open_dataset(
-            ostia_path,
-            engine="h5netcdf",
-            decode_times=False,
-            cache=False,
-        ) as ds:
-            # Fail early when key geospatial axes or SST variable are absent.
+        try:
+            patch = self._load_ostia_patch_h5netcdf(
+                ostia_path=ostia_path,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+            )
+        except Exception:
+            # Keep the xarray path as a compatibility fallback for files h5netcdf cannot decode.
+            patch = self._load_ostia_patch_xarray(
+                ostia_path=ostia_path,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+            )
+
+        if patch.ndim != 2:
+            raise RuntimeError(
+                f"Expected 2D SST patch, got shape {tuple(patch.shape)} at {ostia_path}"
+            )
+        if patch.shape != (self.tile_size, self.tile_size):
+            raise RuntimeError(
+                f"Unexpected SST patch shape {tuple(patch.shape)} at {ostia_path}, "
+                f"expected ({self.tile_size}, {self.tile_size})."
+            )
+
+        # Replace obvious fill values with NaN so invalid regions propagate cleanly.
+        patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
+        return patch
+
+    def _interp_native_patch_to_tile(
+        self,
+        *,
+        native_patch: np.ndarray,
+        lat_native: np.ndarray,
+        lon_native: np.ndarray,
+        lat_axis: np.ndarray,
+        lon_axis: np.ndarray,
+    ) -> np.ndarray:
+        native_patch = np.asarray(native_patch, dtype=np.float32)
+        lat_native = np.asarray(lat_native, dtype=np.float64)
+        lon_native = np.asarray(lon_native, dtype=np.float64)
+
+        # RegularGridInterpolator requires ascending axes and avoids building transient xarray objects.
+        if lat_native.size > 1 and lat_native[0] > lat_native[-1]:
+            lat_native = lat_native[::-1]
+            native_patch = native_patch[::-1, :]
+        if lon_native.size > 1 and lon_native[0] > lon_native[-1]:
+            lon_native = lon_native[::-1]
+            native_patch = native_patch[:, ::-1]
+
+        target_lat, target_lon = np.meshgrid(lat_axis, lon_axis, indexing="ij")
+        target_points = np.column_stack((target_lat.reshape(-1), target_lon.reshape(-1)))
+        linear_interp = RegularGridInterpolator(
+            (lat_native, lon_native),
+            native_patch,
+            method="linear",
+            bounds_error=False,
+            fill_value=np.nan,
+        )
+        patch = np.asarray(
+            linear_interp(target_points).reshape(self.tile_size, self.tile_size),
+            dtype=np.float32,
+        )
+        if np.any(~np.isfinite(patch)):
+            # Fill edge or convex-hull gaps without keeping a second full reader open.
+            nearest_interp = RegularGridInterpolator(
+                (lat_native, lon_native),
+                native_patch,
+                method="nearest",
+                bounds_error=False,
+                fill_value=np.nan,
+            )
+            nearest_patch = np.asarray(
+                nearest_interp(target_points).reshape(self.tile_size, self.tile_size),
+                dtype=np.float32,
+            )
+            patch = np.where(np.isfinite(patch), patch, nearest_patch)
+        return patch
+
+    def _load_ostia_patch_h5netcdf(
+        self,
+        *,
+        ostia_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
+        with h5netcdf.File(ostia_path, "r") as ds:
             if "lat" not in ds.variables or "lon" not in ds.variables:
                 raise RuntimeError(f"OSTIA file is missing lat/lon coordinates: {ostia_path}")
             if self.sst_var_name not in ds.variables:
@@ -334,14 +420,8 @@ class OstiaArgoTileDataset(Dataset):
                     f"OSTIA file is missing variable '{self.sst_var_name}': {ostia_path}"
                 )
 
-            # Pull coordinate axes only; we want to avoid loading full SST field.
-            lat = np.asarray(ds["lat"].to_numpy(), dtype=np.float64)
-            lon = np.asarray(ds["lon"].to_numpy(), dtype=np.float64)
-            sst_var = ds[self.sst_var_name]
-            # Daily OSTIA files typically have a singleton time dimension.
-            if "time" in sst_var.dims:
-                sst_var = sst_var.isel(time=0)
-            # Build the target patch pixel centers from the same CSV bounds used everywhere else.
+            lat = np.asarray(ds.variables["lat"][:], dtype=np.float64)
+            lon = np.asarray(ds.variables["lon"][:], dtype=np.float64)
             lat_axis = self._build_patch_axis(float(lat0), float(lat1))
             lon_axis = self._build_patch_axis(float(lon0), float(lon1))
             lat_lo = min(float(lat0), float(lat1))
@@ -349,7 +429,75 @@ class OstiaArgoTileDataset(Dataset):
             lon_lo = min(float(lon0), float(lon1))
             lon_hi = max(float(lon0), float(lon1))
 
-            # Always load the full native-resolution subgrid over the patch footprint first.
+            lat_idx = np.flatnonzero((lat >= lat_lo) & (lat <= lat_hi))
+            lon_idx = np.flatnonzero((lon >= lon_lo) & (lon <= lon_hi))
+            if lat_idx.size == 0:
+                lat_i0 = self._nearest_index(lat, lat_lo)
+                lat_i1 = self._nearest_index(lat, lat_hi)
+                lat_idx = np.arange(min(lat_i0, lat_i1), max(lat_i0, lat_i1) + 1)
+            if lon_idx.size == 0:
+                lon_i0 = self._nearest_index(lon, lon_lo)
+                lon_i1 = self._nearest_index(lon, lon_hi)
+                lon_idx = np.arange(min(lon_i0, lon_i1), max(lon_i0, lon_i1) + 1)
+
+            lat_start = int(lat_idx.min())
+            lat_stop = int(lat_idx.max()) + 1
+            lon_start = int(lon_idx.min())
+            lon_stop = int(lon_idx.max()) + 1
+            sst_var = ds.variables[self.sst_var_name]
+            if "time" in getattr(sst_var, "dimensions", ()):
+                native_patch = np.asarray(
+                    sst_var[0, lat_start:lat_stop, lon_start:lon_stop],
+                    dtype=np.float32,
+                )
+            else:
+                native_patch = np.asarray(
+                    sst_var[lat_start:lat_stop, lon_start:lon_stop],
+                    dtype=np.float32,
+                )
+            return self._interp_native_patch_to_tile(
+                native_patch=native_patch,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
+            )
+
+    def _load_ostia_patch_xarray(
+        self,
+        *,
+        ostia_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
+        # Keep a fallback reader for non-HDF5 files, but avoid xarray interpolation allocations.
+        with xr.open_dataset(
+            ostia_path,
+            engine="h5netcdf",
+            decode_times=False,
+            cache=False,
+        ) as ds:
+            if "lat" not in ds.variables or "lon" not in ds.variables:
+                raise RuntimeError(f"OSTIA file is missing lat/lon coordinates: {ostia_path}")
+            if self.sst_var_name not in ds.variables:
+                raise RuntimeError(
+                    f"OSTIA file is missing variable '{self.sst_var_name}': {ostia_path}"
+                )
+
+            lat = np.asarray(ds["lat"].to_numpy(), dtype=np.float64)
+            lon = np.asarray(ds["lon"].to_numpy(), dtype=np.float64)
+            sst_var = ds[self.sst_var_name]
+            if "time" in sst_var.dims:
+                sst_var = sst_var.isel(time=0)
+            lat_axis = self._build_patch_axis(float(lat0), float(lat1))
+            lon_axis = self._build_patch_axis(float(lon0), float(lon1))
+            lat_lo = min(float(lat0), float(lat1))
+            lat_hi = max(float(lat0), float(lat1))
+            lon_lo = min(float(lon0), float(lon1))
+            lon_hi = max(float(lon0), float(lon1))
+
             lat_idx = np.flatnonzero((lat >= lat_lo) & (lat <= lat_hi))
             lon_idx = np.flatnonzero((lon >= lon_lo) & (lon <= lon_hi))
             if lat_idx.size == 0:
@@ -372,53 +520,13 @@ class OstiaArgoTileDataset(Dataset):
                 ).to_numpy(),
                 dtype=np.float32,
             )
-            lat_native = np.asarray(lat[lat_start:lat_stop], dtype=np.float64)
-            lon_native = np.asarray(lon[lon_start:lon_stop], dtype=np.float64)
-
-            # Interpolation expects ascending coordinates; flip axes if source order is descending.
-            if lat_native.size > 1 and lat_native[0] > lat_native[-1]:
-                lat_native = lat_native[::-1]
-                native_patch = native_patch[::-1, :]
-            if lon_native.size > 1 and lon_native[0] > lon_native[-1]:
-                lon_native = lon_native[::-1]
-                native_patch = native_patch[:, ::-1]
-
-            native_da = xr.DataArray(
-                native_patch,
-                coords={"lat": lat_native, "lon": lon_native},
-                dims=("lat", "lon"),
+            return self._interp_native_patch_to_tile(
+                native_patch=native_patch,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
             )
-            patch_linear = native_da.interp(
-                lat=xr.DataArray(lat_axis, dims="lat"),
-                lon=xr.DataArray(lon_axis, dims="lon"),
-                method="linear",
-            )
-            patch = np.asarray(patch_linear.to_numpy(), dtype=np.float32)
-            if np.any(~np.isfinite(patch)):
-                # Fill edge/degenerate interpolation gaps with nearest-neighbor values.
-                patch_nearest = np.asarray(
-                    native_da.interp(
-                        lat=xr.DataArray(lat_axis, dims="lat"),
-                        lon=xr.DataArray(lon_axis, dims="lon"),
-                        method="nearest",
-                    ).to_numpy(),
-                    dtype=np.float32,
-                )
-                patch = np.where(np.isfinite(patch), patch, patch_nearest)
-
-        if patch.ndim != 2:
-            raise RuntimeError(
-                f"Expected 2D SST patch, got shape {tuple(patch.shape)} at {ostia_path}"
-            )
-        if patch.shape != (self.tile_size, self.tile_size):
-            raise RuntimeError(
-                f"Unexpected SST patch shape {tuple(patch.shape)} at {ostia_path}, "
-                f"expected ({self.tile_size}, {self.tile_size})."
-            )
-
-        # Replace obvious fill values with NaN so invalid regions propagate cleanly.
-        patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
-        return patch
 
     def _build_patch_axis(self, start: float, end: float) -> np.ndarray:
         # Build pixel-center coordinates for one patch axis from bbox bounds.
@@ -1090,10 +1198,91 @@ class OstiaArgoTileDataset(Dataset):
             "longitude": torch.empty((0,), dtype=torch.float32),
         }
 
+    @staticmethod
+    def _empty_argo_payload_with_levels(n_levels: int) -> dict[str, torch.Tensor]:
+        return {
+            "profile_idx": torch.empty((0,), dtype=torch.long),
+            "profile_dates": torch.empty((0,), dtype=torch.long),
+            "temperature": torch.empty((0, int(n_levels)), dtype=torch.float32),
+            "depth": torch.empty((0, int(n_levels)), dtype=torch.float32),
+            "latitude": torch.empty((0,), dtype=torch.float32),
+            "longitude": torch.empty((0,), dtype=torch.float32),
+        }
+
+    @staticmethod
+    def _dimension_size(dim: Any) -> int:
+        if dim is None:
+            return 0
+        if isinstance(dim, (int, np.integer)):
+            return int(dim)
+        return int(len(dim))
+
+    def _load_argo_profiles_for_date_h5netcdf(
+        self,
+        *,
+        argo_path: Path,
+        target_date: int,
+    ) -> dict[str, torch.Tensor]:
+        with h5netcdf.File(argo_path, "r") as ds:
+            if "JULD" not in ds.variables:
+                raise RuntimeError(f"Argo file is missing JULD variable: {argo_path}")
+            if self.argo_temp_var_name not in ds.variables:
+                raise RuntimeError(
+                    f"Argo file is missing variable '{self.argo_temp_var_name}': {argo_path}"
+                )
+            if self.argo_depth_var_name not in ds.variables:
+                raise RuntimeError(
+                    f"Argo file is missing variable '{self.argo_depth_var_name}': {argo_path}"
+            )
+
+            juld = np.asarray(ds.variables["JULD"][:], dtype=np.float64)
+            profile_dates = self._juld_to_yyyymmdd(juld)
+            profile_idx = np.flatnonzero(profile_dates == int(target_date)).astype(np.int64)
+            n_levels = self._dimension_size(ds.dimensions.get("N_LEVELS"))
+            if profile_idx.size == 0:
+                return self._empty_argo_payload_with_levels(n_levels)
+
+            temp = self._sanitize_float_array(
+                np.asarray(ds.variables[self.argo_temp_var_name][profile_idx, :], dtype=np.float32)
+            )
+            depth = self._sanitize_float_array(
+                np.asarray(ds.variables[self.argo_depth_var_name][profile_idx, :], dtype=np.float32)
+            )
+            if "LATITUDE" in ds.variables:
+                lat = self._sanitize_float_array(
+                    np.asarray(ds.variables["LATITUDE"][profile_idx], dtype=np.float32)
+                )
+            else:
+                lat = np.full((profile_idx.size,), np.nan, dtype=np.float32)
+            if "LONGITUDE" in ds.variables:
+                lon = self._sanitize_float_array(
+                    np.asarray(ds.variables["LONGITUDE"][profile_idx], dtype=np.float32)
+                )
+            else:
+                lon = np.full((profile_idx.size,), np.nan, dtype=np.float32)
+
+            return {
+                "profile_idx": torch.from_numpy(profile_idx),
+                "profile_dates": torch.from_numpy(profile_dates[profile_idx].astype(np.int64)),
+                "temperature": torch.from_numpy(temp),
+                "depth": torch.from_numpy(depth),
+                "latitude": torch.from_numpy(lat.astype(np.float32, copy=False)),
+                "longitude": torch.from_numpy(lon.astype(np.float32, copy=False)),
+            }
+
     def _load_argo_profiles_for_date(self, *, argo_path: Path, target_date: int) -> dict[str, torch.Tensor]:
         # Load one monthly EN4 file and keep only profiles for target_date.
         if target_date <= 0:
             return self._empty_argo_payload()
+
+        try:
+            return self._load_argo_profiles_for_date_h5netcdf(
+                argo_path=argo_path,
+                target_date=target_date,
+            )
+        except Exception:
+            # Keep xarray as a fallback reader for monthly files that are not h5netcdf-compatible.
+            pass
 
         with self._open_argo_dataset(argo_path) as ds:
             # Validate required variables for date filtering + profile payload.
@@ -1115,14 +1304,7 @@ class OstiaArgoTileDataset(Dataset):
             if profile_idx.size == 0:
                 # Keep channel dimension consistent even when this date has no profiles.
                 n_levels = int(ds.sizes.get("N_LEVELS", 0))
-                return {
-                    "profile_idx": torch.empty((0,), dtype=torch.long),
-                    "profile_dates": torch.empty((0,), dtype=torch.long),
-                    "temperature": torch.empty((0, n_levels), dtype=torch.float32),
-                    "depth": torch.empty((0, n_levels), dtype=torch.float32),
-                    "latitude": torch.empty((0,), dtype=torch.float32),
-                    "longitude": torch.empty((0,), dtype=torch.float32),
-                }
+                return self._empty_argo_payload_with_levels(n_levels)
 
             # Pull selected profiles only (N_MATCHED, N_LEVELS) and sanitize fill/extreme values.
             temp = self._sanitize_float_array(
