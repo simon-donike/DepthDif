@@ -66,6 +66,12 @@ def _resolve_export_indices(total_len: int, *, start_index: int, limit: int | No
     return list(range(int(start_index), int(stop_index)))
 
 
+def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
+    ordered_records = sorted(records, key=lambda rec: int(rec["export_index"]))
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame.from_records(ordered_records).to_csv(manifest_path, index=False)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -153,6 +159,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rewrite TIFF pairs even if they already exist.",
     )
     parser.add_argument(
+        "--flush-every",
+        type=int,
+        default=100,
+        help="Write the manifest CSV every N exported samples in the main process.",
+    )
+    parser.add_argument(
         "--verbose-init",
         action="store_true",
         help="Enable verbose OstiaArgoTileDataset initialization logging.",
@@ -210,15 +222,17 @@ def main() -> None:
 
     records: list[dict[str, Any]] = []
     written_count = 0
+    flush_every = max(int(args.flush_every), 1)
     with tqdm(total=len(export_dataset), desc="Exporting OSTIA/Argo TIFF pairs") as pbar:
         for record in loader:
             records.append(record)
             written_count += int(record.get("files_written", 0))
+            if len(records) % flush_every == 0:
+                # Persist partial progress so long-running exports can be resumed or inspected.
+                _write_manifest(records, manifest_path)
             pbar.update(1)
 
-    records.sort(key=lambda rec: int(rec["export_index"]))
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame.from_records(records).to_csv(manifest_path, index=False)
+    _write_manifest(records, manifest_path)
 
     print(
         "Export complete: "
