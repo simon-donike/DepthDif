@@ -764,6 +764,139 @@ class OstiaArgoTileDataset(Dataset):
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
+    def _build_export_record(
+        self,
+        *,
+        idx: int,
+        row: dict[str, Any],
+        info: dict[str, Any],
+        output_root: Path,
+        manifest_path: Path,
+        filename: str,
+        argo_tif_path: Path,
+        ostia_tif_path: Path,
+        argo_depth_indices: tuple[int, ...],
+        files_written: bool,
+    ) -> dict[str, Any]:
+        lat0 = float(row["lat0"])
+        lat1 = float(row["lat1"])
+        lon0 = float(row["lon0"])
+        lon1 = float(row["lon1"])
+        centroid_lat = 0.5 * (lat0 + lat1)
+        centroid_lon = 0.5 * (lon0 + lon1)
+        basename = argo_tif_path.stem
+
+        record: dict[str, Any] = dict(row)
+        record.update(
+            {
+                "export_index": int(idx),
+                "sample_basename": basename,
+                "filename": filename,
+                "centroid_lat": float(centroid_lat),
+                "centroid_lon": float(centroid_lon),
+                "ostia_tif_path": ostia_tif_path.resolve().as_posix(),
+                "argo_tif_path": argo_tif_path.resolve().as_posix(),
+                "ostia_filename": ostia_tif_path.name,
+                "argo_filename": argo_tif_path.name,
+                "ostia_rel_path": ostia_tif_path.relative_to(output_root).as_posix(),
+                "argo_rel_path": argo_tif_path.relative_to(output_root).as_posix(),
+                "manifest_csv_path": manifest_path.resolve().as_posix(),
+                "crs": "EPSG:4326",
+                "tile_size": int(self.tile_size),
+                "output_units": self.output_units,
+                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                "argo_band_count": int(len(argo_depth_indices)),
+                "ostia_band_count": 1,
+                "files_written": int(files_written),
+                "resolved_ostia_source_path": str(self._resolve_index_path(row[self._ostia_path_col])),
+                "resolved_argo_source_path": (
+                    str(self._resolve_index_path(row[self._argo_path_col]))
+                    if self._argo_path_col is not None
+                    else ""
+                ),
+                "temporal_window_days": int(info.get("temporal_window_days", self.days)),
+                "temporal_rows_count": int(info.get("temporal_rows_count", 0)),
+                "temporal_ostia_days_used": int(info.get("temporal_ostia_days_used", 0)),
+                "temporal_argo_days_used": int(info.get("temporal_argo_days_used", 0)),
+            }
+        )
+        return record
+
+    def _write_sample_tiffs(
+        self,
+        *,
+        row: dict[str, Any],
+        x: torch.Tensor,
+        eo: torch.Tensor,
+        valid_mask: torch.Tensor,
+        argo_depth_indices: tuple[int, ...],
+        argo_tif_path: Path,
+        ostia_tif_path: Path,
+    ) -> None:
+        argo_np = np.asarray(
+            x[list(argo_depth_indices)].detach().cpu().numpy(),
+            dtype=np.float32,
+        )
+        valid_np = np.asarray(
+            valid_mask[list(argo_depth_indices)].detach().cpu().numpy(),
+            dtype=bool,
+        )
+        # Missing Argo pixels are encoded as NaN so downstream loaders can infer validity directly.
+        argo_np = np.where(valid_np, argo_np, np.nan).astype(np.float32, copy=False)
+        eo_np = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
+
+        lat0 = float(row["lat0"])
+        lat1 = float(row["lat1"])
+        lon0 = float(row["lon0"])
+        lon1 = float(row["lon1"])
+        centroid_lat = 0.5 * (lat0 + lat1)
+        centroid_lon = 0.5 * (lon0 + lon1)
+        basename = argo_tif_path.stem
+
+        common_tags = {
+            "sample_basename": basename,
+            "date": row.get("date"),
+            "patch_id": row.get("patch_id"),
+            "phase": row.get("phase", row.get("split")),
+            "centroid_lat": f"{centroid_lat:.6f}",
+            "centroid_lon": f"{centroid_lon:.6f}",
+        }
+        self._write_geotiff(
+            ostia_tif_path,
+            eo_np,
+            lat0=lat0,
+            lat1=lat1,
+            lon0=lon0,
+            lon1=lon1,
+            band_descriptions=("ostia_sst",),
+            tags={
+                **common_tags,
+                "product": "ostia",
+                "source_file": str(self._resolve_index_path(row[self._ostia_path_col])),
+            },
+        )
+        self._write_geotiff(
+            argo_tif_path,
+            argo_np,
+            lat0=lat0,
+            lat1=lat1,
+            lon0=lon0,
+            lon1=lon1,
+            band_descriptions=tuple(
+                f"argo_temperature_layer_{depth_idx}" for depth_idx in argo_depth_indices
+            ),
+            tags={
+                **common_tags,
+                "product": "argo",
+                "source_file": (
+                    str(self._resolve_index_path(row[self._argo_path_col]))
+                    if self._argo_path_col is not None
+                    else ""
+                ),
+                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+            },
+        )
+
     def save_to_disk(
         self,
         idx: int,
@@ -772,6 +905,7 @@ class OstiaArgoTileDataset(Dataset):
         manifest_path: str | Path | None = None,
         argo_depth_indices: tuple[int, ...] = (0, 1, 2),
         overwrite: bool = False,
+        write_manifest: bool = True,
     ) -> dict[str, Any]:
         if not self.return_argo_profiles:
             raise RuntimeError("save_to_disk requires return_argo_profiles=True.")
@@ -830,110 +964,30 @@ class OstiaArgoTileDataset(Dataset):
 
         files_written = False
         if overwrite or (not argo_tif_path.exists() and not ostia_tif_path.exists()):
-            argo_np = np.asarray(
-                x[list(argo_depth_indices)].detach().cpu().numpy(),
-                dtype=np.float32,
-            )
-            valid_np = np.asarray(
-                valid_mask[list(argo_depth_indices)].detach().cpu().numpy(),
-                dtype=bool,
-            )
-            # Missing Argo pixels are encoded as NaN so downstream loaders can infer validity directly.
-            argo_np = np.where(valid_np, argo_np, np.nan).astype(np.float32, copy=False)
-            eo_np = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
-
-            lat0 = float(row["lat0"])
-            lat1 = float(row["lat1"])
-            lon0 = float(row["lon0"])
-            lon1 = float(row["lon1"])
-            centroid_lat = 0.5 * (lat0 + lat1)
-            centroid_lon = 0.5 * (lon0 + lon1)
-
-            common_tags = {
-                "sample_basename": basename,
-                "date": row.get("date"),
-                "patch_id": row.get("patch_id"),
-                "phase": row.get("phase", row.get("split")),
-                "centroid_lat": f"{centroid_lat:.6f}",
-                "centroid_lon": f"{centroid_lon:.6f}",
-            }
-            self._write_geotiff(
-                ostia_tif_path,
-                eo_np,
-                lat0=lat0,
-                lat1=lat1,
-                lon0=lon0,
-                lon1=lon1,
-                band_descriptions=("ostia_sst",),
-                tags={
-                    **common_tags,
-                    "product": "ostia",
-                    "source_file": str(self._resolve_index_path(row[self._ostia_path_col])),
-                },
-            )
-            self._write_geotiff(
-                argo_tif_path,
-                argo_np,
-                lat0=lat0,
-                lat1=lat1,
-                lon0=lon0,
-                lon1=lon1,
-                band_descriptions=tuple(
-                    f"argo_temperature_layer_{depth_idx}" for depth_idx in argo_depth_indices
-                ),
-                tags={
-                    **common_tags,
-                    "product": "argo",
-                    "source_file": (
-                        str(self._resolve_index_path(row[self._argo_path_col]))
-                        if self._argo_path_col is not None
-                        else ""
-                    ),
-                    "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
-                },
+            self._write_sample_tiffs(
+                row=row,
+                x=x,
+                eo=eo,
+                valid_mask=valid_mask,
+                argo_depth_indices=argo_depth_indices,
+                argo_tif_path=argo_tif_path,
+                ostia_tif_path=ostia_tif_path,
             )
             files_written = True
 
-        lat0 = float(row["lat0"])
-        lat1 = float(row["lat1"])
-        lon0 = float(row["lon0"])
-        lon1 = float(row["lon1"])
-        centroid_lat = 0.5 * (lat0 + lat1)
-        centroid_lon = 0.5 * (lon0 + lon1)
-        record: dict[str, Any] = dict(row)
-        record.update(
-            {
-                "export_index": int(idx),
-                "sample_basename": basename,
-                "filename": filename,
-                "centroid_lat": float(centroid_lat),
-                "centroid_lon": float(centroid_lon),
-                "ostia_tif_path": ostia_tif_path.resolve().as_posix(),
-                "argo_tif_path": argo_tif_path.resolve().as_posix(),
-                "ostia_filename": ostia_tif_path.name,
-                "argo_filename": argo_tif_path.name,
-                "ostia_rel_path": ostia_tif_path.relative_to(output_root).as_posix(),
-                "argo_rel_path": argo_tif_path.relative_to(output_root).as_posix(),
-                "manifest_csv_path": manifest_path.resolve().as_posix(),
-                "crs": "EPSG:4326",
-                "tile_size": int(self.tile_size),
-                "output_units": self.output_units,
-                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
-                "argo_band_count": int(len(argo_depth_indices)),
-                "ostia_band_count": 1,
-                "resolved_ostia_source_path": str(self._resolve_index_path(row[self._ostia_path_col])),
-                "resolved_argo_source_path": (
-                    str(self._resolve_index_path(row[self._argo_path_col]))
-                    if self._argo_path_col is not None
-                    else ""
-                ),
-                "temporal_window_days": int(info.get("temporal_window_days", self.days)),
-                "temporal_rows_count": int(info.get("temporal_rows_count", 0)),
-                "temporal_ostia_days_used": int(info.get("temporal_ostia_days_used", 0)),
-                "temporal_argo_days_used": int(info.get("temporal_argo_days_used", 0)),
-            }
+        record = self._build_export_record(
+            idx=int(idx),
+            row=row,
+            info=info,
+            output_root=output_root,
+            manifest_path=manifest_path,
+            filename=filename,
+            argo_tif_path=argo_tif_path,
+            ostia_tif_path=ostia_tif_path,
+            argo_depth_indices=argo_depth_indices,
+            files_written=files_written,
         )
-        if files_written:
+        if write_manifest:
             self._append_manifest_record(manifest_path, record)
         return record
 
@@ -1266,39 +1320,39 @@ class OstiaArgoTileDataset(Dataset):
         return sample
 
 
-#if __name__ == "__main__":
-if False:
-    # Example usage:
-    dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True,days=7)
-    print(f"Dataset length: {len(dataset)}")
-    sample = dataset[0]
-    print(f"Sample keys: {list(sample.keys())}")
-    print(f"x shape: {tuple(sample['x'].shape)}")
-    print(f"eo shape: {tuple(sample['eo'].shape)}")
-    print(f"valid_mask shape: {tuple(sample['valid_mask'].shape)}")
-    
-    # save as PNG for a few random samples to visually inspect Argo/OSTIA alignment and interpolation behavior
-    import random
-    for i in range(10):
-        rand_i = random.randint(0, len(dataset) - 1)
-        dataset.save_batch_plot_to_temp(idx=rand_i, output_path=f"temp/argo_ostia/argo_ostia_sample_{i}.png")
+if __name__ == "__main__":
+    if False:
+        # Example usage:
+        dataset = OstiaArgoTileDataset("/work/data/depth_v2/ostia_patch_index_daily_0p1.csv", split="train",return_argo_profiles=True,days=7)
+        print(f"Dataset length: {len(dataset)}")
+        sample = dataset[0]
+        print(f"Sample keys: {list(sample.keys())}")
+        print(f"x shape: {tuple(sample['x'].shape)}")
+        print(f"eo shape: {tuple(sample['eo'].shape)}")
+        print(f"valid_mask shape: {tuple(sample['valid_mask'].shape)}")
         
-    
-    # calculate valid/invalid counts for Argo samples in the dataset
-    c_inv = 0
-    c_val = 0
-    c_avg_num = []
-    for i in range(1000):
-        rand_i = random.randint(0, len(dataset) - 1)
-        batch = dataset[rand_i]
-        max_v = batch['x'].max().item()
-        valid_pixels = batch["valid_mask_1d"].sum().item()
-        if max_v > 0:
-            c_val += 1
-            c_avg_num.append(valid_pixels)
-        else:
-            c_inv += 1
-        print(f"Percentage of invalid samples: {c_inv / (c_val + c_inv) * 100:.2f}%, Average valid pixels: {np.mean(c_avg_num):.2f}. {i}/1000", end="\r")
+        # save as PNG for a few random samples to visually inspect Argo/OSTIA alignment and interpolation behavior
+        import random
+        for i in range(10):
+            rand_i = random.randint(0, len(dataset) - 1)
+            dataset.save_batch_plot_to_temp(idx=rand_i, output_path=f"temp/argo_ostia/argo_ostia_sample_{i}.png")
+            
+        
+        # calculate valid/invalid counts for Argo samples in the dataset
+        c_inv = 0
+        c_val = 0
+        c_avg_num = []
+        for i in range(1000):
+            rand_i = random.randint(0, len(dataset) - 1)
+            batch = dataset[rand_i]
+            max_v = batch['x'].max().item()
+            valid_pixels = batch["valid_mask_1d"].sum().item()
+            if max_v > 0:
+                c_val += 1
+                c_avg_num.append(valid_pixels)
+            else:
+                c_inv += 1
+            print(f"Percentage of invalid samples: {c_inv / (c_val + c_inv) * 100:.2f}%, Average valid pixels: {np.mean(c_avg_num):.2f}. {i}/1000", end="\r")
 
 if __name__ == "__main__":
     save_to_disk = True

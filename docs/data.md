@@ -127,6 +127,7 @@ Disk export helper:
 - default Argo export keeps only the top three layers via `argo_depth_indices=(0, 1, 2)` and writes missing Argo pixels as `NaN`  
 - GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform and a north-up row order  
 - each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
+- `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, writes TIFFs in worker processes, and writes the final manifest once in the main process for better scaling  
 
 Current scope note:  
 - profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step  
