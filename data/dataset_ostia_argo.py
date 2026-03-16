@@ -926,6 +926,8 @@ class OstiaArgoTileDataset(Dataset):
                 "temporal_rows_count": int(info.get("temporal_rows_count", 0)),
                 "temporal_ostia_days_used": int(info.get("temporal_ostia_days_used", 0)),
                 "temporal_argo_days_used": int(info.get("temporal_argo_days_used", 0)),
+                "valid_mask_1d_pixels": int(info.get("valid_mask_1d_pixels", 0)),
+                "export_skipped_reason": str(info.get("export_skipped_reason", "")),
             }
         )
         return record
@@ -1023,6 +1025,7 @@ class OstiaArgoTileDataset(Dataset):
         x = sample["x"]
         eo = sample["eo"]
         valid_mask = sample["valid_mask"]
+        valid_mask_1d = sample["valid_mask_1d"]
         info = sample.get("info", {})
 
         if x.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
@@ -1036,6 +1039,11 @@ class OstiaArgoTileDataset(Dataset):
             raise RuntimeError(
                 "Expected valid_mask shape to match x shape: "
                 f"{tuple(valid_mask.shape)} != {tuple(x.shape)}"
+            )
+        if valid_mask_1d.ndim != 3 or valid_mask_1d.shape != (1, self.tile_size, self.tile_size):
+            raise RuntimeError(
+                "Expected valid_mask_1d shape to be (1,H,W): "
+                f"{tuple(valid_mask_1d.shape)} != {(1, self.tile_size, self.tile_size)}"
             )
 
         argo_depth_indices = tuple(int(depth_idx) for depth_idx in argo_depth_indices)
@@ -1068,6 +1076,24 @@ class OstiaArgoTileDataset(Dataset):
             raise FileExistsError(
                 "Found only one half of an exported OSTIA/Argo pair. "
                 "Delete the partial export or rerun with overwrite=True."
+            )
+
+        valid_mask_1d_pixels = int(valid_mask_1d.sum().item())
+        if valid_mask_1d_pixels < 4:
+            info = dict(info)
+            info["valid_mask_1d_pixels"] = valid_mask_1d_pixels
+            info["export_skipped_reason"] = "valid_mask_1d_pixels_lt_4"
+            return self._build_export_record(
+                idx=int(idx),
+                row=row,
+                info=info,
+                output_root=output_root,
+                manifest_path=manifest_path,
+                filename=filename,
+                argo_tif_path=argo_tif_path,
+                ostia_tif_path=ostia_tif_path,
+                argo_depth_indices=argo_depth_indices,
+                files_written=False,
             )
 
         files_written = False
@@ -1497,6 +1523,7 @@ class OstiaArgoTileDataset(Dataset):
                 "temporal_argo_days_used": int(argo_days_used),
                 "surface_ostia_argo_valid_pixels": int(surface_valid_pixels),
                 "surface_ostia_argo_mae_deg": surface_ostia_argo_mae_deg,
+                "valid_mask_1d_pixels": int(valid_mask_1d.sum().item()),
             },
         }
         return sample
