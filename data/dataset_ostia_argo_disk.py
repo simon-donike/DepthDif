@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import textwrap
 from typing import Any
 
 import numpy as np
@@ -188,11 +189,115 @@ class OstiaArgoTiffDataset(Dataset):
             sample["info"] = row
         return sample
 
+    def save_sample_figure_to_temp(
+        self,
+        idx: int,
+        output_path: str | Path | None = None,
+    ) -> Path:
+        """Save one sample as a single matplotlib figure in the repo temp directory."""
+        import matplotlib.pyplot as plt
+
+        sample = self.__getitem__(int(idx))
+        panels: list[tuple[np.ndarray, str]] = []
+
+        eo = sample["eo"]
+        x = sample["x"]
+        valid_mask = sample["valid_mask"]
+        land_mask = sample["land_mask"]
+        y = sample["y"]
+        info = sample.get("info", {})
+
+        if eo.ndim != 3 or x.ndim != 3 or valid_mask.ndim != 3 or land_mask.ndim != 3 or y.ndim != 3:
+            raise RuntimeError(
+                "Expected image-like sample tensors with shape (C,H,W): "
+                f"eo={tuple(eo.shape)}, x={tuple(x.shape)}, y={tuple(y.shape)}, "
+                f"valid_mask={tuple(valid_mask.shape)}, land_mask={tuple(land_mask.shape)}"
+            )
+
+        panels.append((np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32), "eo[0]"))
+        for channel_idx in range(x.shape[0]):
+            panels.append(
+                (
+                    np.asarray(x[channel_idx].detach().cpu().numpy(), dtype=np.float32),
+                    f"x[{channel_idx}]",
+                )
+            )
+        for channel_idx in range(y.shape[0]):
+            panels.append(
+                (
+                    np.asarray(y[channel_idx].detach().cpu().numpy(), dtype=np.float32),
+                    f"y[{channel_idx}]",
+                )
+            )
+        for channel_idx in range(valid_mask.shape[0]):
+            # Cast boolean masks to float so imshow produces a stable binary visualization.
+            panels.append(
+                (
+                    np.asarray(valid_mask[channel_idx].detach().cpu().numpy(), dtype=np.float32),
+                    f"valid_mask[{channel_idx}]",
+                )
+            )
+        for channel_idx in range(land_mask.shape[0]):
+            panels.append(
+                (
+                    np.asarray(land_mask[channel_idx].detach().cpu().numpy(), dtype=np.float32),
+                    f"land_mask[{channel_idx}]",
+                )
+            )
+
+        if output_path is None:
+            output_path = Path("temp") / f"ostia_argo_tiff_sample_{int(idx)}.png"
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        n_panels = len(panels) + 1
+        ncols = min(4, n_panels)
+        nrows = int(np.ceil(n_panels / ncols))
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(4.2 * ncols, 3.6 * nrows),
+            constrained_layout=True,
+            squeeze=False,
+        )
+        axes_flat = axes.reshape(-1)
+
+        for ax, (img, title) in zip(axes_flat, panels):
+            im = ax.imshow(img, cmap="viridis")
+            ax.set_title(title)
+            ax.set_axis_off()
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        info_ax = axes_flat[len(panels)]
+        info_ax.set_axis_off()
+        info_text = textwrap.fill(str(info), width=80)
+        coords = sample.get("coords", None)
+        coords_text = "N/A" if coords is None else np.array2string(coords.detach().cpu().numpy(), precision=4)
+        info_ax.text(
+            0.0,
+            1.0,
+            f"idx={int(idx)}\ndate={sample['date']}\ncoords={coords_text}\n\ninfo={info_text}",
+            ha="left",
+            va="top",
+            fontsize=9,
+            family="monospace",
+            wrap=True,
+        )
+
+        for ax in axes_flat[n_panels:]:
+            ax.set_axis_off()
+
+        fig.suptitle(f"OstiaArgoTiffDataset sample {int(idx)}", fontsize=12)
+        fig.savefig(out_path, dpi=160)
+        plt.close(fig)
+        return out_path
+
 
 if __name__ == "__main__":
-    dataset = OstiaArgoTiffDataset()
+    dataset = OstiaArgoTiffDataset(split="all")
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
+    dataset.save_sample_figure_to_temp(0)
     print(f"Sample keys: {list(sample.keys())}")
     print(
         f"eo shape: {tuple(sample['eo'].shape)}, x shape: {tuple(sample['x'].shape)}, "

@@ -86,7 +86,23 @@ def _shuffle_export_indices(
 
 
 def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
-    ordered_records = sorted(records, key=lambda rec: int(rec["export_index"]))
+    if manifest_path.exists():
+        existing_records = pd.read_csv(manifest_path).to_dict(orient="records")
+    else:
+        existing_records = []
+
+    merged_records: dict[int, dict[str, Any]] = {}
+    for record in existing_records:
+        merged_records[int(record["export_index"])] = record
+    for record in records:
+        # Keep previously exported samples in the manifest while letting the current
+        # run refresh rows that were re-exported or resumed.
+        merged_records[int(record["export_index"])] = record
+
+    ordered_records = [
+        merged_records[export_index]
+        for export_index in sorted(merged_records)
+    ]
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame.from_records(ordered_records).to_csv(manifest_path, index=False)
 
