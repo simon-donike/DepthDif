@@ -70,6 +70,10 @@ class _NetCDFPatchExporter:
                 "All patches were filtered out by valid_fraction_threshold."
             )
 
+        selected_idx, selected_depths = self._resolve_export_depth_metadata(nc_files[0])
+        selected_idx_str = "|".join(str(i) for i in selected_idx.tolist())
+        selected_depths_str = "|".join(f"{float(v):.6f}" for v in selected_depths.tolist())
+
         records: list[dict[str, Any]] = []
         kept_count = 0
 
@@ -77,62 +81,63 @@ class _NetCDFPatchExporter:
         with tqdm(total=len(index_df), desc="Saving dataset to disk") as pbar:
             for source_file, rows in grouped:
                 nc_path = self.params.root_dir / str(source_file)
-
-                with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
-                    da3d, lat_name, lon_name, selected_idx, selected_depths = (
-                        self._extract_depth_stack(ds)
+                row_infos: list[tuple[Any, Path, dict[str, Any]]] = []
+                missing_row_infos: list[tuple[Any, Path, dict[str, Any]]] = []
+                for row in rows.itertuples(index=False):
+                    y_rel_path = Path("y_npy") / f"{kept_count:08d}.npy"
+                    y_abs_path = self.params.output_dir / y_rel_path
+                    rec = row._asdict()
+                    rec.update(
+                        {
+                            "sample_idx": kept_count,
+                            "y_npy_path": y_rel_path.as_posix(),
+                            "valid_fraction": float(row.template_valid_fraction),
+                            "variable": self.params.variable,
+                            "bands": "|".join(str(b) for b in self.params.bands),
+                            "selected_depth_indices": selected_idx_str,
+                            "selected_depth_values": selected_depths_str,
+                            "num_channels": len(self.params.bands),
+                        }
                     )
+                    row_info = (row, y_abs_path, rec)
+                    row_infos.append(row_info)
+                    if not y_abs_path.exists():
+                        missing_row_infos.append(row_info)
+                    kept_count += 1
 
-                    for row in rows.itertuples(index=False):
-                        y0 = int(row.y0)
-                        x0 = int(row.x0)
-                        edge = int(row.edge_size)
-                        valid_fraction = float(row.template_valid_fraction)
+                if missing_row_infos:
+                    with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
+                        da3d, lat_name, lon_name, _, _ = self._extract_depth_stack(ds)
 
-                        patch = da3d.isel(
-                            {
-                                lat_name: slice(y0, y0 + edge),
-                                lon_name: slice(x0, x0 + edge),
-                            }
-                        )
-                        y_np = patch.values.astype(np.float32, copy=False)
+                        for row, y_abs_path, rec in missing_row_infos:
+                            y0 = int(row.y0)
+                            x0 = int(row.x0)
+                            edge = int(row.edge_size)
 
-                        np.nan_to_num(
-                            y_np,
-                            copy=False,
-                            nan=self.params.nan_fill_value,
-                            posinf=self.params.nan_fill_value,
-                            neginf=self.params.nan_fill_value,
-                        )
-
-                        y_rel_path = Path("y_npy") / f"{kept_count:08d}.npy"
-                        np.save(self.params.output_dir / y_rel_path, y_np)
-
-                        rec = row._asdict()
-                        rec.update(
-                            {
-                                "sample_idx": kept_count,
-                                "y_npy_path": y_rel_path.as_posix(),
-                                "valid_fraction": valid_fraction,
-                                "variable": self.params.variable,
-                                "bands": "|".join(str(b) for b in self.params.bands),
-                                "selected_depth_indices": "|".join(
-                                    str(i) for i in selected_idx.tolist()
-                                ),
-                                "selected_depth_values": "|".join(
-                                    f"{float(v):.6f}" for v in selected_depths.tolist()
-                                ),
-                                "num_channels": int(y_np.shape[0]),
-                            }
-                        )
-                        records.append(rec)
-                        kept_count += 1
-                        pbar.update(1)
-
-                        if kept_count % self.params.flush_every == 0:
-                            pd.DataFrame.from_records(records).to_csv(
-                                csv_path, index=False
+                            patch = da3d.isel(
+                                {
+                                    lat_name: slice(y0, y0 + edge),
+                                    lon_name: slice(x0, x0 + edge),
+                                }
                             )
+                            y_np = patch.values.astype(np.float32, copy=False)
+
+                            np.nan_to_num(
+                                y_np,
+                                copy=False,
+                                nan=self.params.nan_fill_value,
+                                posinf=self.params.nan_fill_value,
+                                neginf=self.params.nan_fill_value,
+                            )
+                            np.save(y_abs_path, y_np)
+                            rec["num_channels"] = int(y_np.shape[0])
+
+                for _, y_abs_path, rec in row_infos:
+                    records.append(rec)
+                    pbar.update(1)
+
+                    if len(records) % self.params.flush_every == 0:
+                        pd.DataFrame.from_records(records).to_csv(csv_path, index=False)
 
         if not records:
             raise RuntimeError("No tensors were saved after indexing.")
@@ -385,6 +390,12 @@ class _NetCDFPatchExporter:
         val_indices = set(rng.permutation(n_samples)[:val_len].tolist())
         for i, rec in enumerate(records):
             rec["split"] = "val" if i in val_indices else "train"
+
+    def _resolve_export_depth_metadata(self, template_path: Path) -> tuple[np.ndarray, np.ndarray]:
+        """Load the dataset schema once so manifest metadata stays stable across resumed exports."""
+        with xr.open_dataset(template_path, engine="h5netcdf", cache=False) as ds:
+            _, _, _, selected_idx, selected_depths = self._extract_depth_stack(ds)
+        return selected_idx, selected_depths
 
 
 
