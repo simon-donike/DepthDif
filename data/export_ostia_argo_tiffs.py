@@ -235,7 +235,7 @@ def main() -> None:
     if bool(args.shuffle):
         export_indices = _shuffle_export_indices(
             export_indices,
-            shuffle_seed=int(args.shuffle_seed),
+            shuffle_seed=args.shuffle_seed,
             shuffle_block_size=int(args.shuffle_block_size),
         )
     if not export_indices:

@@ -1021,6 +1021,51 @@ class OstiaArgoTileDataset(Dataset):
             raise RuntimeError("save_to_disk requires return_argo_profiles=True.")
 
         row = dict(self._rows[int(idx)])
+        argo_depth_indices = tuple(int(depth_idx) for depth_idx in argo_depth_indices)
+        if len(argo_depth_indices) == 0:
+            raise ValueError("argo_depth_indices must contain at least one layer index.")
+        if min(argo_depth_indices) < 0:
+            raise ValueError("argo_depth_indices must be non-negative.")
+
+        output_root = Path(output_root)
+        argo_dir = output_root / "argo"
+        ostia_dir = output_root / "ostia"
+        argo_dir.mkdir(parents=True, exist_ok=True)
+        ostia_dir.mkdir(parents=True, exist_ok=True)
+
+        basename = self._export_basename_from_row(row)
+        filename = f"{basename}.tif"
+        argo_tif_path = argo_dir / filename
+        ostia_tif_path = ostia_dir / filename
+        if manifest_path is None:
+            manifest_path = output_root / "ostia_argo_tiff_index.csv"
+        else:
+            manifest_path = Path(manifest_path)
+
+        if argo_tif_path.exists() != ostia_tif_path.exists() and not overwrite:
+            raise FileExistsError(
+                "Found only one half of an exported OSTIA/Argo pair. "
+                "Delete the partial export or rerun with overwrite=True."
+            )
+
+        if argo_tif_path.exists() and ostia_tif_path.exists() and not overwrite:
+            # Resumed exports can skip disk-complete samples before expensive sample materialization.
+            record = self._build_export_record(
+                idx=int(idx),
+                row=row,
+                info={},
+                output_root=output_root,
+                manifest_path=manifest_path,
+                filename=filename,
+                argo_tif_path=argo_tif_path,
+                ostia_tif_path=ostia_tif_path,
+                argo_depth_indices=argo_depth_indices,
+                files_written=False,
+            )
+            if write_manifest:
+                self._append_manifest_record(manifest_path, record)
+            return record
+
         sample = self.__getitem__(int(idx))
         x = sample["x"]
         eo = sample["eo"]
@@ -1045,37 +1090,10 @@ class OstiaArgoTileDataset(Dataset):
                 "Expected valid_mask_1d shape to be (1,H,W): "
                 f"{tuple(valid_mask_1d.shape)} != {(1, self.tile_size, self.tile_size)}"
             )
-
-        argo_depth_indices = tuple(int(depth_idx) for depth_idx in argo_depth_indices)
-        if len(argo_depth_indices) == 0:
-            raise ValueError("argo_depth_indices must contain at least one layer index.")
-        if min(argo_depth_indices) < 0:
-            raise ValueError("argo_depth_indices must be non-negative.")
         if x.shape[0] <= max(argo_depth_indices):
             raise RuntimeError(
                 "Requested Argo layers are not available in this sample: "
                 f"requested={argo_depth_indices}, available_channels={x.shape[0]}"
-            )
-
-        output_root = Path(output_root)
-        argo_dir = output_root / "argo"
-        ostia_dir = output_root / "ostia"
-        argo_dir.mkdir(parents=True, exist_ok=True)
-        ostia_dir.mkdir(parents=True, exist_ok=True)
-
-        basename = self._export_basename_from_row(row)
-        filename = f"{basename}.tif"
-        argo_tif_path = argo_dir / filename
-        ostia_tif_path = ostia_dir / filename
-        if manifest_path is None:
-            manifest_path = output_root / "ostia_argo_tiff_index.csv"
-        else:
-            manifest_path = Path(manifest_path)
-
-        if argo_tif_path.exists() != ostia_tif_path.exists() and not overwrite:
-            raise FileExistsError(
-                "Found only one half of an exported OSTIA/Argo pair. "
-                "Delete the partial export or rerun with overwrite=True."
             )
 
         valid_mask_1d_pixels = int(valid_mask_1d.sum().item())
