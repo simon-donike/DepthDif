@@ -70,7 +70,7 @@ def _resolve_export_indices(total_len: int, *, start_index: int, limit: int | No
 def _shuffle_export_indices(
     export_indices: list[int],
     *,
-    shuffle_seed: int,
+    shuffle_seed: int | None,
     shuffle_block_size: int,
 ) -> list[int]:
     block_size = max(int(shuffle_block_size), 1)
@@ -79,7 +79,8 @@ def _shuffle_export_indices(
         shuffled[start : start + block_size]
         for start in range(0, len(shuffled), block_size)
     ]
-    rng = np.random.default_rng(int(shuffle_seed))
+    # Default to fresh entropy on each run so resumed exports do not replay one fixed order.
+    rng = np.random.default_rng(None if shuffle_seed is None else int(shuffle_seed))
     rng.shuffle(blocks)
     return [idx for block in blocks for idx in block]
 
@@ -191,8 +192,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shuffle-seed",
         type=int,
-        default=7,
-        help="Random seed used for deterministic export-order shuffling.",
+        default=None,
+        help="Optional random seed for deterministic export-order shuffling.",
     )
     parser.add_argument(
         "--shuffle-block-size",
