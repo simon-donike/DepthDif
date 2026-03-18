@@ -26,6 +26,7 @@ Example CLI from this project:
   
 Project helper scripts:  
 - `data/get_glorys/download_glorys_monthly.sh` (monthly GLORYS downloads from `2010-01-01` to today by default)  
+- `data/get_glorys/download_glorys_weekly.sh` (weekly-cadence archive built by downloading every 7th GLORYS daily file from `2010-01-01` to today by default into `/data1/datasets/depth_v2/glorys_weekly`)  
   
 ## Product B: Surface EO SST (OSTIA).  
 - Provider: Copernicus Marine Service / UKMO OSTIA stream  
