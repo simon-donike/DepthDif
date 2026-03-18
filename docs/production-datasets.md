@@ -1,7 +1,7 @@
 # Production Dataset
 This page documents the production dataset assembly pipeline: how the raw products are sampled in space and time, how the indexing CSVs are built, and what the current dataset versions look like.
 
-Use [Data Sources And Alignment](data-source.md) for raw-product details, vertical-grid handling, and ARGO-to-GLORYS alignment logic.
+Use [Data Sources](data-source.md) for raw-product details and [Depth Alignment](depth-alignment.md) for vertical-grid handling and ARGO-to-GLORYS alignment logic.
 
 ## Scope
 The production workflow has three jobs:
@@ -195,4 +195,4 @@ This page intentionally focuses on:
 - how train/val splits are defined
 - how ARGO and OSTIA are linked in time
 
-It intentionally does not define the physical vertical alignment between ARGO and GLORYS. That logic lives in [Data Sources And Alignment](data-source.md), because it is a raw-source and resampling question rather than a spatial/temporal sampling question.
+It intentionally does not define the physical vertical alignment between ARGO and GLORYS. That logic lives in [Depth Alignment](depth-alignment.md), because it is a raw-source and resampling question rather than a spatial/temporal sampling question.

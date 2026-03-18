@@ -73,7 +73,8 @@ nav:
       - Autoencoder + Latent Diffusion: autoencoder.md
       - Temporal Dimension Ideas: temporal_dimension.md
   - Data:
-      - Data Sources + Alignment: data-source.md
+      - Data Sources: data-source.md
+      - Depth Alignment: depth-alignment.md
       - Production Dataset: production-datasets.md
       - Synthetic Dataset: data.md
   - Experiments:
