@@ -64,6 +64,27 @@ Temporal note for current OSTIA overlap workflow:
 Project helper script:  
 - `data/get_argo/download_en4_profiles.sh`  
 - checks each year individually (dry-run HEAD check), logs CSV, and downloads immediately per available year  
+
+Depth-grid interpretation note:  
+- EN4 profile depths are stored in `DEPH_CORRECTED`, which is the corrected physical depth assigned to each temperature sample after EN4 processing  
+- these are not one shared, evenly spaced ARGO depth levels that apply identically to every profile  
+- instead, each profile contains its own valid observed depths, and different profiles can have different depth values and different numbers of valid depth samples  
+- the rectangular EN4 storage shape `(N_PROF, 400)` should therefore be interpreted as file layout, not as a universal physical 400-level ocean grid  
+- this is why a representative per-slot median depth curve can show local dips or non-monotonic sections: the slot index is a storage coordinate, while the physical depth varies across profiles  
+
+Practical alignment consequence:  
+- if ARGO should be the ground-truth source for model targets, the physically clean way to align ARGO and GLORYS is to interpolate each ARGO profile independently onto one shared target depth grid  
+- in this project, the recommended common grid is the fixed GLORYS `depth` axis, because it is monotonic, physically meaningful, and already stable across files  
+- this yields `ARGO-on-GLORYS-grid` as the ground-truth target and avoids treating raw EN4 storage-slot indices as if they were a true physical depth coordinate  
+
+Depth-alignment figures generated from the saved mapping artifact:  
+![img](assets/argo_glorys_depth_vs_index.png)  
+![img](assets/argo_glorys_absolute_difference.png)  
+![img](assets/argo_glorys_depth_scatter.png)  
+![img](assets/argo_level_valid_profile_count.png)  
+
+Example 3D ARGO profile visualization:  
+![img](assets/argo_profile_3D.gif)  
   
 ## Data Contents (`data/data_info.txt`, Reanalysis Sample)  
 The raw source file contains the following data variables (NetCDF variables):  
