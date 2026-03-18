@@ -12,6 +12,43 @@ import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
 
+def _parse_mask_flag_metadata(mask_attrs: dict[str, object]) -> dict[str, int]:
+    """Map OSTIA mask flag names to bit values from the NetCDF metadata."""
+    raw_meanings = str(mask_attrs.get("flag_meanings", "")).strip()
+    raw_masks = np.asarray(mask_attrs.get("flag_masks", ()), dtype=np.int64).reshape(-1)
+    if raw_meanings == "" or raw_masks.size == 0:
+        raise RuntimeError("OSTIA mask variable is missing flag_meanings/flag_masks metadata.")
+
+    flag_names = [part.strip() for part in raw_meanings.split() if part.strip()]
+    if len(flag_names) != int(raw_masks.size):
+        raise RuntimeError(
+            "OSTIA mask flag metadata is inconsistent: "
+            f"{len(flag_names)} meanings vs {int(raw_masks.size)} masks."
+        )
+    return {
+        flag_name: int(flag_mask)
+        for flag_name, flag_mask in zip(flag_names, raw_masks.tolist())
+    }
+
+
+def _parse_invalid_mask_flags(
+    raw: str,
+    *,
+    allowed_flags: dict[str, int] | None = None,
+) -> tuple[str, ...]:
+    """Parse comma-separated OSTIA mask flags that should count as invalid."""
+    parts = tuple(part.strip() for part in raw.split(",") if part.strip())
+    if not parts:
+        raise ValueError("invalid_mask_flags cannot be empty.")
+    if allowed_flags is not None:
+        invalid_names = [part for part in parts if part not in allowed_flags]
+        if invalid_names:
+            allowed = ", ".join(sorted(allowed_flags))
+            invalid = ", ".join(invalid_names)
+            raise ValueError(f"Unknown OSTIA mask flag(s): {invalid}. Allowed values: {allowed}.")
+    return parts
+
+
 @dataclass
 class PatchRecord:
     """Patch-level metadata that is replicated across all OSTIA timesteps."""
@@ -130,7 +167,7 @@ def _classify_patches_from_reference(
     invalid_threshold: float,
     val_fraction: float,
     split_seed: int,
-    valid_mask_values: tuple[float, ...] = (1.0,),
+    invalid_mask_flags: tuple[str, ...] = ("land",),
 ) -> list[PatchRecord]:
     with xr.open_dataset(
         reference_ostia_path,
@@ -140,18 +177,13 @@ def _classify_patches_from_reference(
     ) as ds:
         lat = np.asarray(ds["lat"].to_numpy(), dtype=np.float32)
         lon = np.asarray(ds["lon"].to_numpy(), dtype=np.float32)
-        sst = np.asarray(ds["analysed_sst"].isel(time=0).to_numpy(), dtype=np.float32)
         mask = np.asarray(ds["mask"].isel(time=0).to_numpy(), dtype=np.float32)
+        mask_flag_bits = _parse_mask_flag_metadata(dict(ds["mask"].attrs))
+        invalid_mask_flags = _parse_invalid_mask_flags(
+            ",".join(invalid_mask_flags),
+            allowed_flags=mask_flag_bits,
+        )
 
-    sst[(~np.isfinite(sst)) | (sst > 1.0e6)] = np.nan
-
-    sst_interp = RegularGridInterpolator(
-        (lat, lon),
-        sst,
-        method="linear",
-        bounds_error=False,
-        fill_value=np.nan,
-    )
     mask_interp = RegularGridInterpolator(
         (lat, lon),
         mask,
@@ -162,7 +194,9 @@ def _classify_patches_from_reference(
 
     invalid_fractions: list[float] = []
     patch_boxes = list(patch_grid)
-    valid_mask_values_np = np.asarray(valid_mask_values, dtype=np.float32)
+    invalid_flag_mask = np.int64(0)
+    for flag_name in invalid_mask_flags:
+        invalid_flag_mask |= np.int64(mask_flag_bits[flag_name])
 
     for lat0, _, lon0, _ in patch_boxes:
         lat_axis, lon_axis = _patch_axes(
@@ -174,14 +208,12 @@ def _classify_patches_from_reference(
         mesh_lon, mesh_lat = np.meshgrid(lon_axis, lat_axis)
         query_points = np.column_stack([mesh_lat.ravel(), mesh_lon.ravel()])
 
-        sst_patch = sst_interp(query_points).reshape(tile_size, tile_size)
         mask_patch = mask_interp(query_points).reshape(tile_size, tile_size)
+        mask_patch_i = np.rint(mask_patch).astype(np.int64, copy=False)
 
         invalid = (
-            (~np.isfinite(sst_patch))
-            | np.isclose(sst_patch, 0.0, atol=1e-8, rtol=0.0)
-            | (~np.isfinite(mask_patch))
-            | (~np.isin(mask_patch, valid_mask_values_np))
+            (~np.isfinite(mask_patch))
+            | ((mask_patch_i & invalid_flag_mask) != 0)
         )
         invalid_fractions.append(float(np.mean(invalid)))
 
@@ -325,7 +357,7 @@ def build_ostia_patch_daily_index(
     invalid_threshold: float = 0.2,
     val_fraction: float = 0.15,
     split_seed: int = 7,
-    valid_mask_values: tuple[float, ...] = (1.0,),
+    invalid_mask_flags: tuple[str, ...] = ("land",),
     include_invalid: bool = False,
 ) -> tuple[Path, Path | None]:
     if tile_size < 2:
@@ -373,7 +405,7 @@ def build_ostia_patch_daily_index(
         invalid_threshold=invalid_threshold,
         val_fraction=val_fraction,
         split_seed=split_seed,
-        valid_mask_values=valid_mask_values,
+        invalid_mask_flags=invalid_mask_flags,
     )
     if not include_invalid:
         records = [r for r in records if r.phase != "invalid"]
@@ -387,13 +419,6 @@ def build_ostia_patch_daily_index(
     _write_patch_daily_csv(output_daily_csv, records, ostia_files)
 
     return output_daily_csv, output_spatial_csv
-
-
-def _parse_valid_mask_values(raw: str) -> tuple[float, ...]:
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if not parts:
-        raise ValueError("valid_mask_values cannot be empty.")
-    return tuple(float(p) for p in parts)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -438,7 +463,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--invalid-threshold",
         type=float,
         default=0.2,
-        help="Patch is invalid if invalid_fraction > threshold.",
+        help="Patch is invalid if the fraction of pixels matching invalid mask flags exceeds this threshold.",
     )
     parser.add_argument(
         "--val-fraction",
@@ -453,10 +478,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Random seed for water train/val assignment.",
     )
     parser.add_argument(
+        "--invalid-mask-flags",
+        type=str,
+        default="land",
+        help=(
+            "Comma-separated OSTIA mask flags treated as invalid coverage. "
+            "Default keeps sea ice and rejects only land."
+        ),
+    )
+    parser.add_argument(
         "--valid-mask-values",
         type=str,
         default="1",
-        help="Comma-separated OSTIA mask values treated as valid water (default: 1).",
+        help=(
+            "Deprecated compatibility option. Exact-value mask filtering is no longer used; "
+            "patch filtering is now controlled by --invalid-mask-flags."
+        ),
     )
     parser.add_argument(
         "--include-invalid",
@@ -469,7 +506,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
-    valid_mask_values = _parse_valid_mask_values(args.valid_mask_values)
+    invalid_mask_flags = _parse_invalid_mask_flags(args.invalid_mask_flags)
 
     daily_csv, spatial_csv = build_ostia_patch_daily_index(
         ostia_dir=args.ostia_dir,
@@ -480,7 +517,7 @@ def main() -> None:
         invalid_threshold=args.invalid_threshold,
         val_fraction=args.val_fraction,
         split_seed=args.split_seed,
-        valid_mask_values=valid_mask_values,
+        invalid_mask_flags=invalid_mask_flags,
         include_invalid=bool(args.include_invalid),
     )
 

@@ -1440,6 +1440,11 @@ class OstiaArgoTileDataset(Dataset):
                 f"center_path={center_ostia_path}"
             )
 
+        # Spatial alignment flow for one sample:
+        # 1) CSV lat/lon bounds define the physical patch extent for this row.
+        # 2) OSTIA is cropped/interpolated onto tile_size x tile_size using those bounds.
+        # 3) Argo profile lon/lat is converted into pixel indices using the same bounds.
+        # 4) Because both eo and x use the same bbox, they overlap in the same physical area.
         patch = np.full((self.tile_size, self.tile_size), np.nan, dtype=np.float32)
         patch_valid = patch_count > 0
         patch[patch_valid] = patch_sum[patch_valid] / patch_count[patch_valid].astype(np.float32)
@@ -1476,6 +1481,7 @@ class OstiaArgoTileDataset(Dataset):
                 )
                 # Rasterize profile table into patch tensor x and corresponding valid_mask.
                 # IMPORTANT: we pass the same CSV bounds used for eo, so x/eo overlap physically.
+                # The actual point->pixel conversion happens inside _argo_profiles_to_x_grid().
                 x_day, _valid_mask_day, count_day = self._argo_profiles_to_x_grid(
                     temperature=argo_payload["temperature"],
                     latitude=argo_payload["latitude"],
@@ -1634,4 +1640,3 @@ if __name__ == "__main__":
             num_frames=36,
             frame_duration_ms=100,
         )
-

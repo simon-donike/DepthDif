@@ -121,7 +121,7 @@ Per `__getitem__` behavior:
 - returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes), i.e. still 400 depth bands (not `days * 400`)  
 - returns Argo-driven `valid_mask` with the same shape as `x`  
 - returns: `x`, `eo`, `valid_mask`, `valid_mask_1d`, `info`  
-
+  
 Disk export helper:  
 - `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one OSTIA GeoTIFF to `ostia/<basename>.tif` and one Argo GeoTIFF to `argo/<basename>.tif` with the same basename for later pairing  
 - default Argo export keeps only the top three layers via `argo_depth_indices=(0, 1, 2)` and writes missing Argo pixels as `NaN`  
@@ -129,7 +129,7 @@ Disk export helper:
 - each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
 - `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, shuffles export order by default in contiguous blocks (`--shuffle`, optional `--shuffle-seed`, `--shuffle-block-size`, default `100`) so partial output spans the timeseries better without fully randomizing file access, writes TIFFs in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end  
 - `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
-
+  
 Current scope note:  
 - profile extraction is date-based within the monthly EN4 file; spatial interpolation/tiling of profiles is a separate follow-up step  
   
