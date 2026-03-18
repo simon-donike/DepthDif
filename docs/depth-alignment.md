@@ -81,6 +81,42 @@ This preserves the scientific meaning:
 - GLORYS only provides the common depth coordinates
 - every aligned profile then has one stable channel layout
 
+## Current Production Depth-Grid Decision
+For the current production setup, the working decision is:
+- restrict the aligned target grid to the GLORYS depths below `1000 m`
+- for each retained GLORYS target depth, use the nearest available ARGO depth recording as the observation-side match
+- keep this truncated shallow-to-mid-depth regime as the model depth axis so the vertical scale stays focused on the part of the water column where sampling density and practical signal are strongest
+
+Current consequence of that decision:
+- the production-aligned depth axis keeps `39` depth levels
+
+Interpretation:
+- this is a pragmatic modeling choice, not a claim that EN4 / ARGO becomes a fixed 39-level native grid
+- the underlying ARGO observations remain irregular in depth
+- the retained 39 levels are the production target channels chosen after restricting the common grid to the sub-`1000 m` regime
+- deeper GLORYS levels are intentionally excluded from the current aligned target definition
+
+## Profile-Level Nearest-Match Diagnostic
+This diagnostic is computed profile-by-profile rather than from EN4 slot-index aggregates:
+- for each EN4 / ARGO profile and each retained GLORYS target depth, find the closest observed `DEPH_CORRECTED` value
+- if a maximum valid-distance cutoff is active, discard nearest matches that are still too far away
+- aggregate only the accepted matches across profiles
+
+![img](assets/glorys_target_alignment_depth_summary.png)
+
+How to read this figure:
+- top panel: the fixed GLORYS target depth at each retained level, overlaid with the mean nearest accepted ARGO depth across profiles
+- blue band: `±1 std` of the nearest accepted ARGO depth, showing how much that nearest observation varies across the archive
+- bottom panel: mean absolute distance between each GLORYS target depth and the closest accepted ARGO observation, again with a `±1 std` band
+- when a cutoff is active, profiles whose nearest ARGO observation is still too far away are excluded from both panels rather than being averaged in
+
+Interpretation:
+- this is the more physically meaningful diagnostic because it works at the individual-profile level rather than treating EN4 slot index as if it were a shared depth axis
+- the mean nearest ARGO curve broadly follows the GLORYS depth curve, which shows that the shallow-to-mid-depth GLORYS grid is a workable target grid for resampled ARGO profiles
+- the spread and average nearest-depth mismatch both grow with depth, which indicates that the fixed GLORYS levels become a looser approximation of the irregular ARGO sampling deeper in the water column
+- in the saved summary, shallow levels are matched much more consistently than deep ones: the accepted-match fraction is above roughly `96%` near the surface and falls to about `36%` by the deepest retained levels, while the mean absolute accepted mismatch grows from roughly `1-3 m` near the surface to around `5 m` close to `900 m`
+- this supports the production choice to restrict the aligned depth axis to the sub-`1000 m` regime and to reject nearest matches that are still too far away, instead of forcing every GLORYS target depth to use a weak ARGO proxy
+
 ### Why Not Use Raw EN4 Slot Indices As Channels
 Because EN4 slot index is a storage coordinate, not a physical vertical coordinate:
 - aggregating by slot index across all profiles mixes different realized depths
@@ -101,11 +137,15 @@ The following artifacts summarize how the raw EN4 archive relates to the GLORYS 
 - `data/glorys_argo_alignment/argo_depth_level_summary.csv`
 - `data/glorys_argo_alignment/glorys_depth_coverage_summary.csv`
 - `data/glorys_argo_alignment/argo_corrected_depth_distribution.png`
+- `data/glorys_argo_alignment/figures/glorys_target_alignment_depth_summary.png`
+- `data/glorys_argo_alignment/figures/glorys_target_alignment_shift_summary.csv`
+- `data/glorys_argo_alignment/figures/glorys_target_alignment_within_cutoff_fraction.png`
 
 Helper scripts:
 - `data/EDA_glorys_argo_alignment.py`
 - `data/plot_argo_corrected_depth_distribution.py`
 - `utils/plot_argo_glorys_depth_mapping.py`
+- `utils/plot_glorys_target_alignment_shift.py`
 
 ## Alignment Diagnostics
 ![img](assets/argo_glorys_depth_vs_index.png)
