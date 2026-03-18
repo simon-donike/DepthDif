@@ -1,5 +1,7 @@
-# Experiments  
-This page summarizes qualitative experiments from the README, with the same scenarios preserved and clarified.  
+# Synthetic And Early Experiments  
+This page summarizes the earlier experiments that led up to the production-data workflow. Most of these runs were synthetic or synthetic-first, and they are kept here as historical context.
+
+For the new production-data runs based on the real OSTIA / EN4 / GLORYS pipeline, see [Production Results](experiments-production.md).
   
 ## Experiment 1 (Early baseline, 50% corruption)  
 Preliminary sub-surface reconstruction baseline with 50% clustered occlusion after ~24h training.  

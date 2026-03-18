@@ -73,8 +73,10 @@ nav:
       - Autoencoder + Latent Diffusion: autoencoder.md
       - Temporal Dimension Ideas: temporal_dimension.md
   - Data:
-      - Production Datasets: production-datasets.md
-      - Data Source: data-source.md
+      - Data Sources + Alignment: data-source.md
+      - Production Dataset: production-datasets.md
       - Synthetic Dataset: data.md
-  - Experiments: experiments.md
+  - Experiments:
+      - Synthetic + Early Experiments: experiments.md
+      - Production Results: experiments-production.md
   - API Reference: api.md
