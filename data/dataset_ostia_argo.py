@@ -562,6 +562,16 @@ class OstiaArgoTileDataset(Dataset):
         out[(~np.isfinite(out)) | (np.abs(out) > fill_abs_threshold)] = np.nan
         return out
 
+    @staticmethod
+    def _replace_en4_fill_with_zero(values: np.ndarray) -> np.ndarray:
+        # EN4 uses 99999.0 as a missing-data sentinel inside 400-slot profile rows.
+        # Collapse those slots to 0.0 at tensor creation time so downstream code can
+        # treat them as empty profile cells instead of extreme temperatures/depths.
+        out = np.asarray(values, dtype=np.float32).copy()
+        out[np.isclose(out, 99999.0)] = 0.0
+        out[~np.isfinite(out)] = 0.0
+        return out
+
     def _open_argo_dataset(self, argo_path: Path) -> xr.Dataset:
         # Try h5netcdf first (fast/common for EN4), then fallback to default backend.
         try:
@@ -667,7 +677,8 @@ class OstiaArgoTileDataset(Dataset):
 
             # For this profile, push every valid depth-level value into the same pixel column.
             vals = temp_np[prof_idx]
-            valid = np.isfinite(vals)
+            # Zero marks unobserved EN4 profile slots after fill-value sanitization.
+            valid = np.isfinite(vals) & (vals != 0.0)
             if not np.any(valid):
                 continue
             x_sum[valid, pix] += vals[valid]
@@ -1286,12 +1297,12 @@ class OstiaArgoTileDataset(Dataset):
             if profile_idx.size == 0:
                 return self._empty_argo_payload_with_levels(n_levels)
 
-            temp = self._sanitize_float_array(
+            temp = self._replace_en4_fill_with_zero(self._sanitize_float_array(
                 np.asarray(ds.variables[self.argo_temp_var_name][profile_idx, :], dtype=np.float32)
-            )
-            depth = self._sanitize_float_array(
+            ))
+            depth = self._replace_en4_fill_with_zero(self._sanitize_float_array(
                 np.asarray(ds.variables[self.argo_depth_var_name][profile_idx, :], dtype=np.float32)
-            )
+            ))
             if "LATITUDE" in ds.variables:
                 lat = self._sanitize_float_array(
                     np.asarray(ds.variables["LATITUDE"][profile_idx], dtype=np.float32)
@@ -1351,18 +1362,18 @@ class OstiaArgoTileDataset(Dataset):
                 return self._empty_argo_payload_with_levels(n_levels)
 
             # Pull selected profiles only (N_MATCHED, N_LEVELS) and sanitize fill/extreme values.
-            temp = self._sanitize_float_array(
+            temp = self._replace_en4_fill_with_zero(self._sanitize_float_array(
                 np.asarray(
                     ds[self.argo_temp_var_name].isel(N_PROF=profile_idx.tolist()).to_numpy(),
                     dtype=np.float32,
                 )
-            )
-            depth = self._sanitize_float_array(
+            ))
+            depth = self._replace_en4_fill_with_zero(self._sanitize_float_array(
                 np.asarray(
                     ds[self.argo_depth_var_name].isel(N_PROF=profile_idx.tolist()).to_numpy(),
                     dtype=np.float32,
                 )
-            )
+            ))
 
             # Profile positions are optional in some files; if absent, keep NaN placeholders.
             if "LATITUDE" in ds.variables:
@@ -1582,8 +1593,7 @@ if __name__ == "__main__":
             print(f"Percentage of invalid samples: {c_inv / (c_val + c_inv) * 100:.2f}%, Average valid pixels: {np.mean(c_avg_num):.2f}. {i}/1000", end="\r")
 
 if __name__ == "__main__":
-    save_to_disk = True
-    if save_to_disk:
+    if False:
         dataset = OstiaArgoTileDataset(
             "/work/data/depth_v2/ostia_patch_index_daily_0p1.csv",
             split="train",
@@ -1593,3 +1603,35 @@ if __name__ == "__main__":
         from tqdm import tqdm
         for i in tqdm(range(len(dataset))):
             record = dataset.save_to_disk(i)  # writes to /work/data/depth_v3 by default
+            
+if __name__ == "__main__":
+    if True:
+        # Get Dataset and get sample
+        dataset = OstiaArgoTileDataset(
+            "/work/data/depth_v2/ostia_patch_index_daily_0p1.csv",
+            split="train",
+            days=14,
+            return_argo_profiles=True,
+        )
+        import random
+        rand_i = random.randint(0, len(dataset) - 1)
+        sample = dataset[rand_i]
+        print(f"Fetched Sample: {rand_i}")
+        
+        # Save 3D plot for the sample
+        from utils.visualizations import save_argo_profile_3d_plot
+        save_argo_profile_3d_plot(
+            profile_tensor=sample["x"],
+            output_path=f"temp/visualize_sample_{rand_i}.png"
+        )
+        
+        # Save 3D Flyaround GIF for the same sample
+        from utils.visualizations import save_argo_profile_3d_flyaround_gif
+        save_argo_profile_3d_flyaround_gif(
+            profile_tensor=sample["x"],
+            output_path=f"temp/visualize_sample_{rand_i}.gif",
+            dpi=50,
+            num_frames=36,
+            frame_duration_ms=100,
+        )
+

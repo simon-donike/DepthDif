@@ -117,6 +117,10 @@ Shared vertical-grid note:
 - each EN4 profile stores its actual observed depths in `DEPH_CORRECTED`; unobserved slots remain missing/fill-value entries inside that 400-slot row  
 - therefore, a single ARGO profile can contain far fewer valid depths than 400, even though the source file still has shape `(N_PROF, 400)`  
 
+Example 3D visualization of a rasterized Argo profile tensor:  
+
+![3D Argo profile flyaround](assets/argo_profile_3D.gif)
+
 ## 3) GLORYS Weekly Archive And ARGO Depth Alignment  
 Source:  
 - Copernicus Marine GLORYS global physics reanalysis daily stream, subsampled every 7 days into a weekly archive  
