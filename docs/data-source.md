@@ -27,6 +27,18 @@ Example CLI from this project:
 Project helper scripts:  
 - `data/get_glorys/download_glorys_monthly.sh` (monthly GLORYS downloads from `2010-01-01` to today by default)  
 - `data/get_glorys/download_glorys_weekly.sh` (weekly-cadence archive built by downloading every 7th GLORYS daily file from `2010-01-01` to today by default into `/data1/datasets/depth_v2/glorys_weekly`)  
+- `data/EDA_glorys_argo_alignment.py` (opens representative ARGO and GLORYS files, then saves the nearest ARGO-level -> GLORYS-level channel mapping into `data/glorys_argo_alignment/argo_to_glorys_channel_mapping.json`)  
+
+Saved alignment artifact:  
+- `data/glorys_argo_alignment/argo_to_glorys_channel_mapping.json`  
+- this JSON stores, for each ARGO depth level index, the representative ARGO depth, the closest GLORYS level index, the matched GLORYS depth, and the absolute depth difference  
+- intended use: downstream preprocessing can load this file and map GLORYS channels to ARGO-style target channels without recomputing the depth comparison every run  
+
+Important EN4 depth-layout note:  
+- EN4 stores profile depths in a rectangular `(N_PROF, N_LEVELS)` array where `N_LEVELS` is often `400`  
+- that `400` value is the storage width of the file, not a promise that each individual profile measures 400 real depths  
+- each profile only fills the depth slots it actually observed; the remaining slots are missing/fill values  
+- the saved ARGO-to-GLORYS mapping therefore uses a representative depth per ARGO level index aggregated across all profiles in one representative EN4 file, rather than relying on one single observed profile  
   
 ## Product B: Surface EO SST (OSTIA).  
 - Provider: Copernicus Marine Service / UKMO OSTIA stream  
