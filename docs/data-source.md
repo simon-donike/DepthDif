@@ -105,8 +105,8 @@ OSTIA example tile:
 - Dataset family: EN4.2.2 profile archives  
 - Practical role in this project:  
   - source of ground-truth temperature observations  
-  - physically irregular in depth  
-  - must be resampled to a shared target grid before channels are comparable across profiles  
+  - samples the water column on profile-specific corrected depth coordinates rather than on one shared archive-wide vertical grid  
+  - therefore requires an explicit projection onto a common target depth axis before channel-wise learning or pixel-aligned supervision is well-defined  
   
 Relevant helper script:  
 - `data/get_argo/download_en4_profiles.sh`  
@@ -115,11 +115,21 @@ Key raw variables:
 - `TEMP`: observed temperature profile values  
 - `DEPH_CORRECTED`: corrected physical depth assigned to each observed sample  
   
-Important practical note:  
-- EN4 profile arrays are stored in rectangular form, but the profile depths are not one universal evenly spaced ARGO grid  
-- different profiles can have different valid depth values and different numbers of valid samples  
-- the recommended production handling is therefore to interpolate each profile onto a shared target grid instead of using raw EN4 storage-slot indices directly  
+Vertical sampling characteristics:  
+- EN4 stores profiles in rectangular arrays, but the array slot index is only a storage coordinate and not a physically invariant depth coordinate across the archive  
+- valid `DEPH_CORRECTED` entries vary profile-by-profile because the observing system samples at irregular depths and because quality control leaves a variable number of retained observations per profile  
+- the effective support of the archive is strongly concentrated in the upper ocean, while the tail toward larger depths becomes progressively sparser  
+- any model that consumes these observations as aligned channels therefore needs an external canonical depth axis; in this repository that role is assigned to the fixed GLORYS `depth` coordinate  
   
+Archive-wide corrected-depth histogram with GLORYS reference levels:  
+![img](assets/argo_corrected_depth_histogram.png)  
+  
+Interpretation of this diagnostic:  
+- the histogram aggregates every finite `DEPH_CORRECTED` value from all EN4 files into fixed `10 m` bins, so it estimates the empirical marginal sampling density of corrected observation depths over the full archive  
+- the vertical dotted lines mark the discrete GLORYS depth levels, which makes the mismatch between the continuous-irregular EN4 sampling distribution and the discrete GLORYS target grid directly visible  
+- the pronounced concentration at shallow depths and the rapidly decaying count with increasing depth imply that any depth-aligned learning setup is inherently supported by many more observations near the surface than in the deep ocean  
+- because the EN4 archive does not realize one common native vertical basis, nearest-level matching or interpolation onto GLORYS should be understood as a coordinate transformation from irregular observation space into a fixed target basis, not as a simple reinterpretation of pre-aligned native channels  
+
 See [Depth Alignment](depth-alignment.md) for:  
 - what `DEPH_CORRECTED` means in practice  
 - why EN4 slot indices are not a stable physical depth axis  
