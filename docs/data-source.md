@@ -148,3 +148,7 @@ Representative raw reanalysis variables in GLORYS:
 | `thetao` | `(time, depth, latitude, longitude)` | Temperature | `degrees_C` |  
 | `uo` | `(time, depth, latitude, longitude)` | Eastward velocity | `m s-1` |  
 | `vo` | `(time, depth, latitude, longitude)` | Northward velocity | `m s-1` |  
+
+## All-Source Overlap  
+Example overlap of the currently available raw-source modalities on one shared patch footprint:  
+![img](assets/argo_ostia_glorys_overlap.png)  

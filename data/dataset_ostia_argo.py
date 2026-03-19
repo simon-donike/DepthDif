@@ -639,6 +639,10 @@ class OstiaArgoTileDataset(Dataset):
                 thetao_var[0, :, lat_start:lat_stop, lon_start:lon_stop],
                 dtype=np.float32,
             )
+            native_cube = self._decode_cf_numeric(
+                native_cube,
+                dict(getattr(thetao_var, "attrs", {})),
+            )
             return self._interp_native_cube_to_tile(
                 native_cube=native_cube,
                 lat_native=lat[lat_start:lat_stop],
@@ -706,6 +710,7 @@ class OstiaArgoTileDataset(Dataset):
                 ).to_numpy(),
                 dtype=np.float32,
             )
+            native_cube = self._decode_cf_numeric(native_cube, dict(thetao_var.attrs))
             return self._interp_native_cube_to_tile(
                 native_cube=native_cube,
                 lat_native=lat[lat_start:lat_stop],
@@ -1101,17 +1106,7 @@ class OstiaArgoTileDataset(Dataset):
         from scipy.interpolate import griddata
 
         target_points = np.column_stack((yy[target_mask], xx[target_mask]))
-        nearest_fill = griddata(points, values, target_points, method="nearest")
-        if observed_count >= 3:
-            # Prefer smooth linear interpolation where possible, fallback to nearest outside hull.
-            try:
-                linear_fill = griddata(points, values, target_points, method="linear")
-                fill_values = np.where(np.isfinite(linear_fill), linear_fill, nearest_fill)
-            except Exception:
-                # Degenerate point layouts (e.g., profiles on one line) can fail linear triangulation.
-                fill_values = nearest_fill
-        else:
-            fill_values = nearest_fill
+        fill_values = griddata(points, values, target_points, method="nearest")
         filled[target_mask] = np.asarray(fill_values, dtype=np.float32)
         return filled
 
@@ -2058,7 +2053,8 @@ if __name__ == "__main__":
     if True:
         # Get Dataset and get sample
         dataset = OstiaArgoTileDataset(
-            "/work/data/depth_v2/ostia_patch_index_daily.csv",
+            #"/work/data/depth_v2/ostia_patch_index_daily.csv",
+            "/data1/datasets/depth_v2/ostia_patch_index_daily.csv",
             split="train",
             days=14,
             return_argo_profiles=True,
