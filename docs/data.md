@@ -108,6 +108,7 @@ EO + multiband example:
 `OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:  
 - rows come from the merged daily CSV (`patch_id/date/lat0/lat1/lon0/lon1/phase/ostia_file_path` plus Argo linkage columns)  
 - OSTIA daily NetCDF files are resolved per row via `ostia_file_path` (or `matched_ostia_file_path`), with index paths typically stored as `depth_v2/...` and optional constructor `root_path` support for relocated datasets  
+- nearest weekly GLORYS files are resolved per row via `matched_glorys_file_path` and loaded from variable `thetao` on the same geographic bbox  
 - constructor supports `days` as total temporal window length centered on row date (`days=1` keeps single-day behavior); even values auto-adjust to odd  
   
 Per `__getitem__` behavior:  
@@ -116,11 +117,12 @@ Per `__getitem__` behavior:
 - selects temporal rows at runtime from in-memory dataframe by `(same patch, date window)`  
 - rebuilds the patch sampling grid from `lat0/lat1/lon0/lon1`  
 - loads each available OSTIA day in the window, interpolates to the patch grid, then averages per pixel over finite values only  
+- loads each available nearest-weekly GLORYS file in the window, interpolates the full `thetao(depth, lat, lon)` cube onto the same patch grid, then averages per voxel over finite values only  
 - opens the row-linked EN4 monthly file from `argo_file_path` for each available day in the window  
 - converts `JULD` to `YYYYMMDD`, selects profiles matching each day, rasterizes to `(depth_levels, tile_size, tile_size)`, then temporally averages using per-pixel observation counts so overlapping Argo observations are properly averaged while unobserved zeros do not bias means  
 - returns `x` with shape `(depth_levels, 128, 128)` (or `(depth_levels, tile_size, tile_size)` for other tile sizes), i.e. still 400 depth bands (not `days * 400`)  
 - returns Argo-driven `valid_mask` with the same shape as `x`  
-- returns: `x`, `eo`, `valid_mask`, `valid_mask_1d`, `info`  
+- returns: `x`, `y`, `eo`, `valid_mask`, `valid_mask_1d`, `info`  
   
 Disk export helper:  
 - `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one OSTIA GeoTIFF to `ostia/<basename>.tif` and one Argo GeoTIFF to `argo/<basename>.tif` with the same basename for later pairing  

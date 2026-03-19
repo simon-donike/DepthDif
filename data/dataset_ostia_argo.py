@@ -32,6 +32,7 @@ class OstiaArgoTileDataset(Dataset):
     OSTIA_PATH_CANDIDATE_COLUMNS = ("ostia_file_path", "matched_ostia_file_path")
     SPLIT_CANDIDATE_COLUMNS = ("phase", "split")
     ARGO_PATH_CANDIDATE_COLUMNS = ("argo_file_path",)
+    GLORYS_PATH_CANDIDATE_COLUMNS = ("matched_glorys_file_path",)
 
     def __init__(
         self,
@@ -46,6 +47,7 @@ class OstiaArgoTileDataset(Dataset):
         return_argo_profiles: bool = True,
         argo_temp_var_name: str = "TEMP",
         argo_depth_var_name: str = "DEPH_CORRECTED",
+        glorys_var_name: str = "thetao",
         return_info: bool = True,
         verbose_init: bool = True,
     ) -> None:
@@ -65,6 +67,7 @@ class OstiaArgoTileDataset(Dataset):
         self.return_argo_profiles = bool(return_argo_profiles)
         self.argo_temp_var_name = str(argo_temp_var_name)
         self.argo_depth_var_name = str(argo_depth_var_name)
+        self.glorys_var_name = str(glorys_var_name)
         self.return_info = bool(return_info)
         self.verbose_init = bool(verbose_init)
 
@@ -122,6 +125,10 @@ class OstiaArgoTileDataset(Dataset):
         self._argo_path_col = self._first_present_column(
             df.columns.tolist(),
             self.ARGO_PATH_CANDIDATE_COLUMNS,
+        )
+        self._glorys_path_col = self._first_present_column(
+            df.columns.tolist(),
+            self.GLORYS_PATH_CANDIDATE_COLUMNS,
         )
         if self.split in {"train", "val"}:
             if split_col is None:
@@ -320,6 +327,50 @@ class OstiaArgoTileDataset(Dataset):
         right = float(axis[pos])
         return int(pos if abs(value - right) < abs(value - left) else (pos - 1))
 
+    @staticmethod
+    def _parse_ostia_mask_flag_metadata(mask_attrs: dict[str, Any]) -> dict[str, int]:
+        """Map OSTIA mask flag names to bit values from the NetCDF metadata."""
+        raw_meanings = str(mask_attrs.get("flag_meanings", "")).strip()
+        raw_masks = np.asarray(mask_attrs.get("flag_masks", ()), dtype=np.int64).reshape(-1)
+        if raw_meanings == "" or raw_masks.size == 0:
+            return {}
+
+        flag_names = [part.strip() for part in raw_meanings.split() if part.strip()]
+        if len(flag_names) != int(raw_masks.size):
+            return {}
+        return {
+            flag_name: int(flag_mask)
+            for flag_name, flag_mask in zip(flag_names, raw_masks.tolist())
+        }
+
+    @staticmethod
+    def _decode_cf_numeric(values: np.ndarray, attrs: dict[str, Any] | None) -> np.ndarray:
+        """Apply common CF packed-data decoding so fast low-level reads yield physical values."""
+        out = np.asarray(values, dtype=np.float32)
+        if attrs is None:
+            return out
+
+        fill_values: list[float] = []
+        for key in ("_FillValue", "missing_value"):
+            if key in attrs:
+                raw = np.asarray(attrs[key]).reshape(-1)
+                for value in raw.tolist():
+                    try:
+                        fill_values.append(float(value))
+                    except (TypeError, ValueError):
+                        continue
+        if fill_values:
+            for fill_value in fill_values:
+                out[np.isclose(out, np.float32(fill_value))] = np.nan
+
+        scale = attrs.get("scale_factor", None)
+        offset = attrs.get("add_offset", None)
+        if scale is not None:
+            out = out * np.float32(scale)
+        if offset is not None:
+            out = out + np.float32(offset)
+        return out
+
     def _load_ostia_patch(
         self,
         *,
@@ -359,6 +410,42 @@ class OstiaArgoTileDataset(Dataset):
 
         # Replace obvious fill values with NaN so invalid regions propagate cleanly.
         patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
+        return patch
+
+    def _apply_ostia_land_mask(
+        self,
+        *,
+        native_patch: np.ndarray,
+        native_mask: np.ndarray | None,
+        mask_attrs: dict[str, Any] | None,
+        lat_native: np.ndarray,
+        lon_native: np.ndarray,
+        lat_axis: np.ndarray,
+        lon_axis: np.ndarray,
+    ) -> np.ndarray:
+        """Mask OSTIA land pixels so they do not leak implausible SST values into eo."""
+        patch = np.asarray(native_patch, dtype=np.float32)
+        if native_mask is None or mask_attrs is None:
+            return patch
+
+        flag_bits = self._parse_ostia_mask_flag_metadata(mask_attrs)
+        land_bit = int(flag_bits.get("land", 0))
+        if land_bit == 0:
+            return patch
+
+        mask_patch = self._interp_native_patch_to_tile(
+            native_patch=np.asarray(native_mask, dtype=np.float32),
+            lat_native=lat_native,
+            lon_native=lon_native,
+            lat_axis=lat_axis,
+            lon_axis=lon_axis,
+        )
+        mask_patch_i = np.rint(mask_patch).astype(np.int64, copy=False)
+        land_pixels = np.isfinite(mask_patch) & ((mask_patch_i & land_bit) != 0)
+        if np.any(land_pixels):
+            # Use NaN here so temporal averaging ignores land, then __getitem__ collapses leftovers to 0.
+            patch = patch.copy()
+            patch[land_pixels] = np.nan
         return patch
 
     def _interp_native_patch_to_tile(
@@ -411,6 +498,222 @@ class OstiaArgoTileDataset(Dataset):
             patch = np.where(np.isfinite(patch), patch, nearest_patch)
         return patch
 
+    def _interp_native_cube_to_tile(
+        self,
+        *,
+        native_cube: np.ndarray,
+        lat_native: np.ndarray,
+        lon_native: np.ndarray,
+        lat_axis: np.ndarray,
+        lon_axis: np.ndarray,
+    ) -> np.ndarray:
+        native_cube = np.asarray(native_cube, dtype=np.float32)
+        lat_native = np.asarray(lat_native, dtype=np.float64)
+        lon_native = np.asarray(lon_native, dtype=np.float64)
+
+        if native_cube.ndim != 3:
+            raise RuntimeError(
+                f"Expected native GLORYS cube with shape (depth,lat,lon), got {tuple(native_cube.shape)}"
+            )
+
+        # Reorder axes to (lat, lon, depth) so one interpolator call returns all depth channels.
+        values = np.moveaxis(native_cube, 0, -1)
+        if lat_native.size > 1 and lat_native[0] > lat_native[-1]:
+            lat_native = lat_native[::-1]
+            values = values[::-1, :, :]
+        if lon_native.size > 1 and lon_native[0] > lon_native[-1]:
+            lon_native = lon_native[::-1]
+            values = values[:, ::-1, :]
+
+        target_lat, target_lon = np.meshgrid(lat_axis, lon_axis, indexing="ij")
+        target_points = np.column_stack((target_lat.reshape(-1), target_lon.reshape(-1)))
+        linear_interp = RegularGridInterpolator(
+            (lat_native, lon_native),
+            values,
+            method="linear",
+            bounds_error=False,
+            fill_value=np.nan,
+        )
+        cube = np.asarray(
+            linear_interp(target_points).reshape(self.tile_size, self.tile_size, values.shape[-1]),
+            dtype=np.float32,
+        )
+        if np.any(~np.isfinite(cube)):
+            # Fill edge or convex-hull gaps without dropping full depth columns.
+            nearest_interp = RegularGridInterpolator(
+                (lat_native, lon_native),
+                values,
+                method="nearest",
+                bounds_error=False,
+                fill_value=np.nan,
+            )
+            nearest_cube = np.asarray(
+                nearest_interp(target_points).reshape(
+                    self.tile_size,
+                    self.tile_size,
+                    values.shape[-1],
+                ),
+                dtype=np.float32,
+            )
+            cube = np.where(np.isfinite(cube), cube, nearest_cube)
+        return np.moveaxis(cube, -1, 0)
+
+    def _load_glorys_patch(
+        self,
+        *,
+        glorys_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
+        try:
+            patch = self._load_glorys_patch_h5netcdf(
+                glorys_path=glorys_path,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+            )
+        except Exception:
+            patch = self._load_glorys_patch_xarray(
+                glorys_path=glorys_path,
+                lat0=lat0,
+                lat1=lat1,
+                lon0=lon0,
+                lon1=lon1,
+            )
+
+        if patch.ndim != 3:
+            raise RuntimeError(
+                f"Expected 3D GLORYS patch, got shape {tuple(patch.shape)} at {glorys_path}"
+            )
+        patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
+        return patch
+
+    def _load_glorys_patch_h5netcdf(
+        self,
+        *,
+        glorys_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
+        with h5netcdf.File(glorys_path, "r") as ds:
+            if "latitude" not in ds.variables or "longitude" not in ds.variables:
+                raise RuntimeError(
+                    f"GLORYS file is missing latitude/longitude coordinates: {glorys_path}"
+                )
+            if self.glorys_var_name not in ds.variables:
+                raise RuntimeError(
+                    f"GLORYS file is missing variable '{self.glorys_var_name}': {glorys_path}"
+                )
+
+            lat = np.asarray(ds.variables["latitude"][:], dtype=np.float64)
+            lon = np.asarray(ds.variables["longitude"][:], dtype=np.float64)
+            lat_axis = self._build_patch_axis(float(lat0), float(lat1))
+            lon_axis = self._build_patch_axis(float(lon0), float(lon1))
+            lat_lo = min(float(lat0), float(lat1))
+            lat_hi = max(float(lat0), float(lat1))
+            lon_lo = min(float(lon0), float(lon1))
+            lon_hi = max(float(lon0), float(lon1))
+
+            lat_idx = np.flatnonzero((lat >= lat_lo) & (lat <= lat_hi))
+            lon_idx = np.flatnonzero((lon >= lon_lo) & (lon <= lon_hi))
+            if lat_idx.size == 0:
+                lat_i0 = self._nearest_index(lat, lat_lo)
+                lat_i1 = self._nearest_index(lat, lat_hi)
+                lat_idx = np.arange(min(lat_i0, lat_i1), max(lat_i0, lat_i1) + 1)
+            if lon_idx.size == 0:
+                lon_i0 = self._nearest_index(lon, lon_lo)
+                lon_i1 = self._nearest_index(lon, lon_hi)
+                lon_idx = np.arange(min(lon_i0, lon_i1), max(lon_i0, lon_i1) + 1)
+
+            lat_start = int(lat_idx.min())
+            lat_stop = int(lat_idx.max()) + 1
+            lon_start = int(lon_idx.min())
+            lon_stop = int(lon_idx.max()) + 1
+            thetao_var = ds.variables[self.glorys_var_name]
+            native_cube = np.asarray(
+                thetao_var[0, :, lat_start:lat_stop, lon_start:lon_stop],
+                dtype=np.float32,
+            )
+            return self._interp_native_cube_to_tile(
+                native_cube=native_cube,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
+            )
+
+    def _load_glorys_patch_xarray(
+        self,
+        *,
+        glorys_path: Path,
+        lat0: float,
+        lat1: float,
+        lon0: float,
+        lon1: float,
+    ) -> np.ndarray:
+        with xr.open_dataset(
+            glorys_path,
+            engine="h5netcdf",
+            decode_times=False,
+            cache=False,
+        ) as ds:
+            if "latitude" not in ds.variables or "longitude" not in ds.variables:
+                raise RuntimeError(
+                    f"GLORYS file is missing latitude/longitude coordinates: {glorys_path}"
+                )
+            if self.glorys_var_name not in ds.variables:
+                raise RuntimeError(
+                    f"GLORYS file is missing variable '{self.glorys_var_name}': {glorys_path}"
+                )
+
+            lat = np.asarray(ds["latitude"].to_numpy(), dtype=np.float64)
+            lon = np.asarray(ds["longitude"].to_numpy(), dtype=np.float64)
+            thetao_var = ds[self.glorys_var_name]
+            if "time" in thetao_var.dims:
+                thetao_var = thetao_var.isel(time=0)
+            lat_axis = self._build_patch_axis(float(lat0), float(lat1))
+            lon_axis = self._build_patch_axis(float(lon0), float(lon1))
+            lat_lo = min(float(lat0), float(lat1))
+            lat_hi = max(float(lat0), float(lat1))
+            lon_lo = min(float(lon0), float(lon1))
+            lon_hi = max(float(lon0), float(lon1))
+
+            lat_idx = np.flatnonzero((lat >= lat_lo) & (lat <= lat_hi))
+            lon_idx = np.flatnonzero((lon >= lon_lo) & (lon <= lon_hi))
+            if lat_idx.size == 0:
+                lat_i0 = self._nearest_index(lat, lat_lo)
+                lat_i1 = self._nearest_index(lat, lat_hi)
+                lat_idx = np.arange(min(lat_i0, lat_i1), max(lat_i0, lat_i1) + 1)
+            if lon_idx.size == 0:
+                lon_i0 = self._nearest_index(lon, lon_lo)
+                lon_i1 = self._nearest_index(lon, lon_hi)
+                lon_idx = np.arange(min(lon_i0, lon_i1), max(lon_i0, lon_i1) + 1)
+
+            lat_start = int(lat_idx.min())
+            lat_stop = int(lat_idx.max()) + 1
+            lon_start = int(lon_idx.min())
+            lon_stop = int(lon_idx.max()) + 1
+            native_cube = np.asarray(
+                thetao_var.isel(
+                    depth=slice(None),
+                    latitude=slice(lat_start, lat_stop),
+                    longitude=slice(lon_start, lon_stop),
+                ).to_numpy(),
+                dtype=np.float32,
+            )
+            return self._interp_native_cube_to_tile(
+                native_cube=native_cube,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
+            )
+
     def _load_ostia_patch_h5netcdf(
         self,
         *,
@@ -453,6 +756,7 @@ class OstiaArgoTileDataset(Dataset):
             lon_start = int(lon_idx.min())
             lon_stop = int(lon_idx.max()) + 1
             sst_var = ds.variables[self.sst_var_name]
+            mask_var = ds.variables["mask"] if "mask" in ds.variables else None
             if "time" in getattr(sst_var, "dimensions", ()):
                 native_patch = np.asarray(
                     sst_var[0, lat_start:lat_stop, lon_start:lon_stop],
@@ -463,8 +767,36 @@ class OstiaArgoTileDataset(Dataset):
                     sst_var[lat_start:lat_stop, lon_start:lon_stop],
                     dtype=np.float32,
                 )
-            return self._interp_native_patch_to_tile(
+            native_patch = self._decode_cf_numeric(
+                native_patch,
+                dict(getattr(sst_var, "attrs", {})),
+            )
+            native_mask = None
+            mask_attrs = None
+            if mask_var is not None:
+                if "time" in getattr(mask_var, "dimensions", ()):
+                    native_mask = np.asarray(
+                        mask_var[0, lat_start:lat_stop, lon_start:lon_stop],
+                        dtype=np.float32,
+                    )
+                else:
+                    native_mask = np.asarray(
+                        mask_var[lat_start:lat_stop, lon_start:lon_stop],
+                        dtype=np.float32,
+                    )
+                mask_attrs = dict(getattr(mask_var, "attrs", {}))
+
+            patch = self._interp_native_patch_to_tile(
                 native_patch=native_patch,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
+            )
+            return self._apply_ostia_land_mask(
+                native_patch=patch,
+                native_mask=native_mask,
+                mask_attrs=mask_attrs,
                 lat_native=lat[lat_start:lat_stop],
                 lon_native=lon[lon_start:lon_stop],
                 lat_axis=lat_axis,
@@ -499,6 +831,9 @@ class OstiaArgoTileDataset(Dataset):
             sst_var = ds[self.sst_var_name]
             if "time" in sst_var.dims:
                 sst_var = sst_var.isel(time=0)
+            mask_var = ds["mask"] if "mask" in ds.variables else None
+            if mask_var is not None and "time" in mask_var.dims:
+                mask_var = mask_var.isel(time=0)
             lat_axis = self._build_patch_axis(float(lat0), float(lat1))
             lon_axis = self._build_patch_axis(float(lon0), float(lon1))
             lat_lo = min(float(lat0), float(lat1))
@@ -528,8 +863,30 @@ class OstiaArgoTileDataset(Dataset):
                 ).to_numpy(),
                 dtype=np.float32,
             )
-            return self._interp_native_patch_to_tile(
+            native_patch = self._decode_cf_numeric(native_patch, dict(sst_var.attrs))
+            native_mask = None
+            mask_attrs = None
+            if mask_var is not None:
+                native_mask = np.asarray(
+                    mask_var.isel(
+                        lat=slice(lat_start, lat_stop),
+                        lon=slice(lon_start, lon_stop),
+                    ).to_numpy(),
+                    dtype=np.float32,
+                )
+                mask_attrs = dict(mask_var.attrs)
+
+            patch = self._interp_native_patch_to_tile(
                 native_patch=native_patch,
+                lat_native=lat[lat_start:lat_stop],
+                lon_native=lon[lon_start:lon_stop],
+                lat_axis=lat_axis,
+                lon_axis=lon_axis,
+            )
+            return self._apply_ostia_land_mask(
+                native_patch=patch,
+                native_mask=native_mask,
+                mask_attrs=mask_attrs,
                 lat_native=lat[lat_start:lat_stop],
                 lon_native=lon[lon_start:lon_stop],
                 lat_axis=lat_axis,
@@ -1167,20 +1524,22 @@ class OstiaArgoTileDataset(Dataset):
         idx: int = 0,
         output_path: str | Path = "temp/argo_ostia_batch_0.png",
     ) -> Path:
-        """Save a single PNG with x[0], eo, and interpolated x[0] for one sample."""
+        """Save a single PNG with x[0], optional y[0], eo, and interpolated x[0]."""
         import matplotlib.pyplot as plt
 
         sample = self.__getitem__(int(idx))
         x = sample["x"]
+        y = sample["y"]
         eo = sample["eo"]
         valid_mask = sample["valid_mask"]
         valid_mask_1d = sample["valid_mask_1d"]
         info = sample.get("info", {})
 
-        if x.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
+        if x.ndim != 3 or y.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
             raise RuntimeError(
                 "Expected sample tensors with shape (C,H,W): "
-                f"x={tuple(x.shape)}, eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
+                f"x={tuple(x.shape)}, y={tuple(y.shape)}, eo={tuple(eo.shape)}, "
+                f"valid_mask={tuple(valid_mask.shape)}"
             )
         if x.shape[0] == 0:
             raise RuntimeError("Cannot plot Argo channel 0 because x has no channels.")
@@ -1195,17 +1554,41 @@ class OstiaArgoTileDataset(Dataset):
         out_path = Path(output_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
-        panels = (
-            (x0, "Argo x[0] (sparse)"),
-            (eo0, "OSTIA eo[0]"),
-            (x0_interpolated, "Argo x[0] (interpolated)"),
-        )
-        for ax, (img, title) in zip(axes, panels):
-            im = ax.imshow(img, cmap="viridis")
-            ax.set_title(title)
-            ax.set_axis_off()
-            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        if y.shape[0] > 0:
+            y0 = np.asarray(y[0].detach().cpu().numpy(), dtype=np.float32)
+            fig, axes = plt.subplots(1, 4, figsize=(20, 5), constrained_layout=True)
+            panels = (
+                (x0, "Argo x[0] (sparse)"),
+                (y0, "GLORYS y[0]"),
+                (eo0, "OSTIA eo[0]"),
+                (x0_interpolated, "Argo x[0] (interpolated)"),
+            )
+            for ax, (img, title) in zip(axes, panels):
+                im = ax.imshow(img, cmap="viridis")
+                ax.set_title(title)
+                ax.set_axis_off()
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        else:
+            fig, axes = plt.subplots(1, 4, figsize=(20, 5), constrained_layout=True)
+            panels = (
+                (x0, "Argo x[0] (sparse)"),
+                (eo0, "OSTIA eo[0]"),
+                (x0_interpolated, "Argo x[0] (interpolated)"),
+            )
+            for ax, (img, title) in zip(axes[:3], panels):
+                im = ax.imshow(img, cmap="viridis")
+                ax.set_title(title)
+                ax.set_axis_off()
+                fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            axes[3].set_axis_off()
+            axes[3].text(
+                0.5,
+                0.5,
+                "GLORYS y unavailable\nfor this sample",
+                ha="center",
+                va="center",
+                fontsize=12,
+            )
 
         info_date = info.get("date", "N/A")
         fig.suptitle(f"OstiaArgoTileDataset idx={idx} date={info_date}", fontsize=12)
@@ -1456,8 +1839,58 @@ class OstiaArgoTileDataset(Dataset):
         patch = np.full((self.tile_size, self.tile_size), np.nan, dtype=np.float32)
         patch_valid = patch_count > 0
         patch[patch_valid] = patch_sum[patch_valid] / patch_count[patch_valid].astype(np.float32)
+        # Any land-only or otherwise invalid surface pixels should stay benign for downstream consumers.
+        patch[~np.isfinite(patch)] = np.float32(0.0)
         # eo is single-band (surface SST) in channel-first shape.
         eo = torch.from_numpy(patch).unsqueeze(0)
+
+        y = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
+        glorys_days_used = 0
+        center_glorys_path: Path | None = None
+        if self._glorys_path_col is not None:
+            center_glorys_raw = self._normalize_index_text(row.get(self._glorys_path_col, ""))
+            if center_glorys_raw != "":
+                center_glorys_path = self._resolve_index_path(center_glorys_raw)
+
+            y_sum: np.ndarray | None = None
+            y_count: np.ndarray | None = None
+            for day_row in temporal_rows:
+                day_glorys_raw = self._normalize_index_text(day_row.get(self._glorys_path_col, ""))
+                if day_glorys_raw == "":
+                    continue
+                day_glorys_path = self._resolve_index_path(day_glorys_raw)
+                if not day_glorys_path.exists():
+                    continue
+
+                # Use the same CSV bbox as eo/x so the GLORYS target is pixel-aligned spatially.
+                day_glorys = self._load_glorys_patch(
+                    glorys_path=day_glorys_path,
+                    lat0=float(day_row["lat0"]),
+                    lat1=float(day_row["lat1"]),
+                    lon0=float(day_row["lon0"]),
+                    lon1=float(day_row["lon1"]),
+                )
+                if y_sum is None or y_count is None:
+                    y_sum = np.zeros_like(day_glorys, dtype=np.float32)
+                    y_count = np.zeros_like(day_glorys, dtype=np.uint16)
+                elif day_glorys.shape != y_sum.shape:
+                    raise RuntimeError(
+                        "Temporal GLORYS aggregation encountered inconsistent shapes: "
+                        f"expected {tuple(y_sum.shape)}, got {tuple(day_glorys.shape)}"
+                    )
+
+                day_valid = np.isfinite(day_glorys)
+                if not np.any(day_valid):
+                    continue
+                y_sum[day_valid] += day_glorys[day_valid]
+                y_count[day_valid] += 1
+                glorys_days_used += 1
+
+            if y_sum is not None and y_count is not None and np.any(y_count > 0):
+                y_np = np.full_like(y_sum, np.nan, dtype=np.float32)
+                y_valid = y_count > 0
+                y_np[y_valid] = y_sum[y_valid] / y_count[y_valid].astype(np.float32)
+                y = torch.from_numpy(y_np)
 
         # Default x/valid_mask are empty and will be filled if Argo data is available.
         x = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
@@ -1549,6 +1982,7 @@ class OstiaArgoTileDataset(Dataset):
         # Final sample contract: Argo raster (x), OSTIA patch (eo), Argo valid mask, metadata.
         sample: dict[str, Any] = {
             "x": x,
+            "y": y,
             "eo": eo,
             "valid_mask": valid_mask,
             "valid_mask_1d": valid_mask_1d,
@@ -1558,11 +1992,13 @@ class OstiaArgoTileDataset(Dataset):
                 "date": row.get("date"),
                 "phase": row.get("phase", row.get("split")),
                 "ostia_file_path": str(center_ostia_path),
+                "glorys_file_path": str(center_glorys_path) if center_glorys_path is not None else "",
                 "argo_file_path": row.get("argo_file_path"),
-                "argo_profile_count": row.get("argo_profile_count"),
+                "argo_profile_count_world_daily": row.get("argo_profile_count"),
                 "temporal_window_days": int(self.days),
                 "temporal_rows_count": int(len(temporal_rows)),
                 "temporal_ostia_days_used": int(ostia_days_used),
+                "temporal_glorys_days_used": int(glorys_days_used),
                 "temporal_argo_days_used": int(argo_days_used),
                 "surface_ostia_argo_valid_pixels": int(surface_valid_pixels),
                 "surface_ostia_argo_mae_deg": surface_ostia_argo_mae_deg,
@@ -1631,20 +2067,22 @@ if __name__ == "__main__":
         rand_i = random.randint(0, len(dataset) - 1)
         sample = dataset[rand_i]
         print(f"Fetched Sample: {rand_i}")
+        dataset.save_batch_plot_to_temp(idx=rand_i, output_path=f"temp/argo_ostia/argo_ostia_modalities_sample_{rand_i}.png")
         
         # Save 3D plot for the sample
         from utils.visualizations import save_argo_profile_3d_plot
         save_argo_profile_3d_plot(
             profile_tensor=sample["x"],
-            output_path=f"temp/visualize_sample_{rand_i}.png"
+            output_path=f"temp/argo_ostia/argo_ostia_sample_{rand_i}.png"
         )
         
         # Save 3D Flyaround GIF for the same sample
         from utils.visualizations import save_argo_profile_3d_flyaround_gif
         save_argo_profile_3d_flyaround_gif(
             profile_tensor=sample["x"],
-            output_path=f"temp/visualize_sample_{rand_i}.gif",
+            output_path=f"temp/argo_ostia/argo_ostia_sample_{rand_i}.gif",
             dpi=50,
             num_frames=36,
             frame_duration_ms=100,
         )
+        
