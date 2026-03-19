@@ -1,13 +1,13 @@
-# Production Dataset  
-This page documents the production dataset assembly pipeline: how the raw products are sampled in space and time, how the indexing CSVs are built, and what the current dataset versions look like.  
-  
-Use [Data Sources](data-source.md) for raw-product details and [Depth Alignment](depth-alignment.md) for vertical-grid handling and ARGO-to-GLORYS alignment logic.  
-  
-## Scope  
-The production workflow has three jobs:  
-1. build a fixed spatial patch grid from OSTIA coverage  
-2. expand that grid into a daily or multi-day temporal index  
-3. attach ARGO availability and profile linkage metadata to each `(patch, time)` row  
+# Production Dataset
+This page documents the production dataset assembly pipeline: how the raw products are aligned in space, time, and depth, how the indexing CSVs are built, and what the current dataset versions look like.
+
+Use [Data Sources](data-source.md) for native product properties and [Depth Alignment](depth-alignment.md) for the detailed ARGO-to-GLORYS vertical resampling procedure.
+
+## Scope
+The production workflow aligns the sources in three ways:
+1. Spatially: build a fixed OSTIA-derived patch grid and sample all modalities on the same patch footprint.
+2. Temporally: expand that grid into daily rows, attach nearest-source metadata, and optionally aggregate a multi-day window.
+3. Depth-wise: project ARGO profiles onto the GLORYS depth coordinate before rasterization; see [Depth Alignment](depth-alignment.md).
   
 ## Source Inputs Required  
 Expected source trees:  
@@ -57,7 +57,7 @@ Current default semantics:
 Spatial split visualization:  
 ![OSTIA train val land patch map](assets/train_val_split_0p1.png)  
   
-## 2) Temporal Sampling  
+## 2) Temporal Sampling
 After the spatial patch grid exists, the production dataset expands it across time.  
   
 ### Daily Sampling  
@@ -94,19 +94,25 @@ Merge command:
   --output-csv /data1/datasets/depth_v2/ostia_patch_index_daily.csv  
 ```  
   
-### Multi-Day Temporal Windows  
-The dataset layer can also aggregate a centered time window instead of one single day.  
-  
-Current behavior in the production loader:  
-- `days=1` keeps single-day behavior  
-- `days=7` aggregates a seven-day temporal window around the target row date  
-- the output stays one spatial sample with aggregated observations, not `7x` stacked temporal channels  
-  
-Interpretation:  
-- single observations may contribute to multiple neighboring daily rows when they fall inside the configured temporal window  
-- this increases observation density without changing the fixed output tensor shape  
-  
-## 3) Production Index Files  
+### Multi-Day Temporal Windows
+The dataset layer can also aggregate a centered time window instead of one single day.
+
+Current behavior in the production loader:
+- `days=1` keeps single-day behavior
+- `days=7` aggregates a seven-day temporal window around the target row date
+- the output stays one spatial sample with aggregated observations, not `7x` stacked temporal channels
+
+Interpretation:
+- single observations may contribute to multiple neighboring daily rows when they fall inside the configured temporal window
+- this increases observation density without changing the fixed output tensor shape
+
+## 3) Depth Alignment Summary
+- ARGO profile temperatures are resampled onto the GLORYS `depth` coordinate before tile aggregation.
+- The raw dataset currently uses the full 50 GLORYS depth levels for `x`, `y`, and `valid_mask`.
+- Targets outside the observed ARGO depth range, or outside the nearest-depth cutoff, remain invalid.
+- The detailed profile-level procedure is documented on [Depth Alignment](depth-alignment.md).
+
+## 4) Production Index Files
 Core CSV artifacts:  
 - `ostia_patch_index_spatial.csv`  
 - `ostia_patch_index_daily.csv`  
@@ -127,7 +133,7 @@ Columns now written during CSV generation for nearest weekly GLORYS lookup:
 - `matched_glorys_file_path`  
 - `matched_glorys_abs_day_delta`  
   
-## 4) Current Dataset Versions  
+## 5) Current Dataset Versions
 Snapshot numbers below were measured/recomputed on **March 10, 2026**.  
   
 Shared source inventory:  
@@ -167,9 +173,6 @@ Sample Image:
 Train-set valid-fraction histogram:  
 ![OSTIA 0.1 deg hist](assets/argo_observations_histogram.png)  
   
-Train-set patch map:  
-![OSTIA 0.1 deg map](assets/argo_observations_map.png)  
-  
 ### Version C: 0.1 Degree, 7-Day Aggregate  
 Interpretation:  
 - the same spatial grid as Version B  
@@ -189,10 +192,8 @@ Sample Image:
 Train-set valid-fraction histogram:  
 ![OSTIA 0.1 deg hist](assets/argo_observations_histogram_7days.png)  
   
-Train-set patch map:  
-![OSTIA 0.1 deg map](assets/argo_observations_map_7days.png)  
   
-## 5) End-To-End Build Order  
+## 6) End-To-End Build Order
 1. Download OSTIA daily files with `data/get_ostia/download_ostia.sh`.  
 2. Download and extract EN4 profile data with `data/get_argo/download_en4_profiles.sh`.  
 3. Build the OSTIA spatial and daily patch index.  
@@ -202,11 +203,11 @@ Train-set patch map:
    - daily rows  
    - or multi-day temporal windows at load time  
   
-## 6) Practical Interpretation  
-This page intentionally focuses on:  
-- where the patches come from  
-- how often they are sampled  
-- how train/val splits are defined  
-- how ARGO and OSTIA are linked in time  
-  
-It intentionally does not define the physical vertical alignment between ARGO and GLORYS. That logic lives in [Depth Alignment](depth-alignment.md), because it is a raw-source and resampling question rather than a spatial/temporal sampling question.  
+## 7) Practical Interpretation
+This page focuses on the assembled dataset geometry:
+- where the shared patch footprints come from
+- how rows are expanded across time
+- how ARGO, OSTIA, and GLORYS metadata are linked per row
+- how depth alignment enters the final tensors at a high level
+
+The detailed vertical resampling logic lives in [Depth Alignment](depth-alignment.md).

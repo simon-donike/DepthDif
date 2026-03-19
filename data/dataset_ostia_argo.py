@@ -33,6 +33,9 @@ class OstiaArgoTileDataset(Dataset):
     SPLIT_CANDIDATE_COLUMNS = ("phase", "split")
     ARGO_PATH_CANDIDATE_COLUMNS = ("argo_file_path",)
     GLORYS_PATH_CANDIDATE_COLUMNS = ("matched_glorys_file_path",)
+    GLORYS_DEPTH_COORD_NAME = "depth"
+    GLORYS_RELATIVE_DEPTH_CUTOFF = 0.10
+    GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M = 10.0
 
     def __init__(
         self,
@@ -70,6 +73,7 @@ class OstiaArgoTileDataset(Dataset):
         self.glorys_var_name = str(glorys_var_name)
         self.return_info = bool(return_info)
         self.verbose_init = bool(verbose_init)
+        self._glorys_target_depths_cache: np.ndarray | None = None
 
         if self.days < 1:
             raise ValueError("days must be >= 1.")
@@ -933,13 +937,12 @@ class OstiaArgoTileDataset(Dataset):
         return out
 
     @staticmethod
-    def _replace_en4_fill_with_zero(values: np.ndarray) -> np.ndarray:
-        # EN4 uses 99999.0 as a missing-data sentinel inside 400-slot profile rows.
-        # Collapse those slots to 0.0 at tensor creation time so downstream code can
-        # treat them as empty profile cells instead of extreme temperatures/depths.
+    def _replace_en4_fill_with_nan(values: np.ndarray) -> np.ndarray:
+        # EN4 uses 99999.0 as a missing-data sentinel inside profile rows.
+        # Keep those cells as NaN so real 0 degC observations stay valid downstream.
         out = np.asarray(values, dtype=np.float32).copy()
-        out[np.isclose(out, 99999.0)] = 0.0
-        out[~np.isfinite(out)] = 0.0
+        out[np.isclose(out, 99999.0)] = np.nan
+        out[~np.isfinite(out)] = np.nan
         return out
 
     def _open_argo_dataset(self, argo_path: Path) -> xr.Dataset:
@@ -958,6 +961,206 @@ class OstiaArgoTileDataset(Dataset):
                 decode_times=False,
                 cache=False,
             )
+
+    @staticmethod
+    def _normalize_glorys_depths(depth_values: np.ndarray) -> np.ndarray:
+        out = np.asarray(depth_values, dtype=np.float64).reshape(-1)
+        out = out[np.isfinite(out)]
+        if out.size == 0:
+            raise RuntimeError("No valid GLORYS depth values were found.")
+        return np.sort(out.astype(np.float64, copy=False))
+
+    def _load_glorys_target_depths_h5netcdf(self, glorys_path: Path) -> np.ndarray:
+        with h5netcdf.File(glorys_path, "r") as ds:
+            if self.GLORYS_DEPTH_COORD_NAME not in ds.variables:
+                raise RuntimeError(
+                    f"GLORYS file is missing depth coordinate '{self.GLORYS_DEPTH_COORD_NAME}': "
+                    f"{glorys_path}"
+                )
+            return self._normalize_glorys_depths(
+                np.asarray(ds.variables[self.GLORYS_DEPTH_COORD_NAME][:], dtype=np.float64)
+            )
+
+    def _load_glorys_target_depths(self, glorys_path: Path) -> np.ndarray:
+        try:
+            return self._load_glorys_target_depths_h5netcdf(glorys_path)
+        except Exception:
+            with xr.open_dataset(
+                glorys_path,
+                engine="h5netcdf",
+                decode_times=False,
+                cache=False,
+            ) as ds:
+                if (
+                    self.GLORYS_DEPTH_COORD_NAME not in ds.coords
+                    and self.GLORYS_DEPTH_COORD_NAME not in ds.variables
+                ):
+                    raise RuntimeError(
+                        f"GLORYS file is missing depth coordinate '{self.GLORYS_DEPTH_COORD_NAME}': "
+                        f"{glorys_path}"
+                    )
+                return self._normalize_glorys_depths(
+                    np.asarray(ds[self.GLORYS_DEPTH_COORD_NAME].values, dtype=np.float64)
+                )
+
+    def _get_glorys_target_depths(
+        self,
+        *,
+        preferred_path: Path | None = None,
+        required: bool = True,
+    ) -> np.ndarray | None:
+        cached = getattr(self, "_glorys_target_depths_cache", None)
+        if cached is not None:
+            return cached
+
+        candidate_paths: list[Path] = []
+        seen_paths: set[str] = set()
+        if preferred_path is not None:
+            candidate_paths.append(preferred_path)
+            seen_paths.add(preferred_path.resolve().as_posix())
+
+        glorys_path_col = getattr(self, "_glorys_path_col", None)
+        if glorys_path_col is not None:
+            for row in getattr(self, "_rows", []):
+                raw_path = self._normalize_index_text(row.get(glorys_path_col, ""))
+                if raw_path == "":
+                    continue
+                resolved_path = self._resolve_index_path(raw_path)
+                resolved_text = resolved_path.resolve().as_posix()
+                if resolved_text in seen_paths:
+                    continue
+                candidate_paths.append(resolved_path)
+                seen_paths.add(resolved_text)
+
+        for glorys_path in candidate_paths:
+            if not glorys_path.exists():
+                continue
+            try:
+                depths = self._load_glorys_target_depths(glorys_path)
+            except Exception:
+                continue
+            self._glorys_target_depths_cache = depths.astype(np.float64, copy=False)
+            return self._glorys_target_depths_cache
+
+        if required:
+            raise RuntimeError("Could not resolve a readable GLORYS file for target depth loading.")
+        return None
+
+    @staticmethod
+    def _collapse_duplicate_profile_depths(
+        depth: np.ndarray,
+        temperature: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        unique_depths, inverse = np.unique(depth, return_inverse=True)
+        if unique_depths.size == depth.size:
+            return depth, temperature
+
+        # Average repeated depth entries so interpolation keeps one strictly increasing axis.
+        temp_sum = np.bincount(inverse, weights=temperature)
+        temp_count = np.bincount(inverse)
+        collapsed_temperature = temp_sum / np.maximum(temp_count, 1)
+        return unique_depths.astype(np.float64, copy=False), collapsed_temperature.astype(
+            np.float64,
+            copy=False,
+        )
+
+    @classmethod
+    def _align_argo_profile_to_glorys_depths(
+        cls,
+        *,
+        temperature: np.ndarray,
+        depth: np.ndarray,
+        glorys_depths: np.ndarray,
+    ) -> np.ndarray:
+        target_depths = np.asarray(glorys_depths, dtype=np.float64).reshape(-1)
+        out = np.full(target_depths.shape, np.nan, dtype=np.float32)
+
+        temp = np.asarray(temperature, dtype=np.float64).reshape(-1)
+        depth = np.asarray(depth, dtype=np.float64).reshape(-1)
+        valid = np.isfinite(temp) & np.isfinite(depth) & (depth >= 0.0)
+        if not np.any(valid):
+            return out
+
+        depth = depth[valid]
+        temp = temp[valid]
+        order = np.argsort(depth, kind="mergesort")
+        depth = depth[order]
+        temp = temp[order]
+        depth, temp = cls._collapse_duplicate_profile_depths(depth, temp)
+        if depth.size == 0:
+            return out
+
+        insert_idx = np.searchsorted(depth, target_depths, side="left")
+        left_idx = np.clip(insert_idx - 1, 0, max(depth.size - 1, 0))
+        right_idx = np.clip(insert_idx, 0, max(depth.size - 1, 0))
+
+        left_depth = depth[left_idx]
+        right_depth = depth[right_idx]
+        nearest_depth_distance = np.minimum(
+            np.abs(target_depths - left_depth),
+            np.abs(target_depths - right_depth),
+        )
+        max_allowed_distance = np.maximum(
+            cls.GLORYS_RELATIVE_DEPTH_CUTOFF * target_depths,
+            cls.GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
+        )
+        in_range = np.isfinite(target_depths) & (target_depths >= depth[0]) & (target_depths <= depth[-1])
+        within_cutoff = np.isfinite(nearest_depth_distance) & (
+            nearest_depth_distance <= max_allowed_distance
+        )
+        valid_targets = in_range & within_cutoff
+        if not np.any(valid_targets):
+            return out
+
+        if depth.size == 1:
+            exact_match = valid_targets & np.isclose(
+                target_depths,
+                depth[0],
+                rtol=0.0,
+                atol=1.0e-6,
+            )
+            if np.any(exact_match):
+                out[exact_match] = np.float32(temp[0])
+            return out
+
+        out[valid_targets] = np.interp(
+            target_depths[valid_targets],
+            depth,
+            temp,
+        ).astype(np.float32, copy=False)
+        return out
+
+    def _align_argo_profiles_to_glorys_depths(
+        self,
+        *,
+        temperature: torch.Tensor,
+        depth: torch.Tensor,
+        glorys_depths: np.ndarray,
+    ) -> torch.Tensor:
+        temp_np = np.asarray(temperature.detach().cpu().numpy(), dtype=np.float32)
+        depth_np = np.asarray(depth.detach().cpu().numpy(), dtype=np.float32)
+        if temp_np.ndim != 2 or depth_np.ndim != 2:
+            raise RuntimeError(
+                "Expected Argo temperature/depth tensors with shape (N_PROF, N_LEVELS): "
+                f"temperature={tuple(temp_np.shape)}, depth={tuple(depth_np.shape)}"
+            )
+        if temp_np.shape != depth_np.shape:
+            raise RuntimeError(
+                "Expected Argo temperature/depth tensors to share the same shape: "
+                f"{tuple(temp_np.shape)} != {tuple(depth_np.shape)}"
+            )
+
+        n_prof = int(temp_np.shape[0])
+        n_targets = int(np.asarray(glorys_depths).reshape(-1).size)
+        aligned = np.full((n_prof, n_targets), np.nan, dtype=np.float32)
+        for prof_idx in range(n_prof):
+            # Align each profile independently so every output channel matches the GLORYS depth axis.
+            aligned[prof_idx] = self._align_argo_profile_to_glorys_depths(
+                temperature=temp_np[prof_idx],
+                depth=depth_np[prof_idx],
+                glorys_depths=glorys_depths,
+            )
+        return torch.from_numpy(aligned)
 
     @staticmethod
     def _normalize_lon_array(lon: np.ndarray) -> np.ndarray:
@@ -1047,8 +1250,8 @@ class OstiaArgoTileDataset(Dataset):
 
             # For this profile, push every valid depth-level value into the same pixel column.
             vals = temp_np[prof_idx]
-            # Zero marks unobserved EN4 profile slots after fill-value sanitization.
-            valid = np.isfinite(vals) & (vals != 0.0)
+            # GLORYS-aligned profiles use NaN to mark rejected or unsupported target depths.
+            valid = np.isfinite(vals)
             if not np.any(valid):
                 continue
             x_sum[valid, pix] += vals[valid]
@@ -1243,6 +1446,42 @@ class OstiaArgoTileDataset(Dataset):
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
+    @staticmethod
+    def _format_depth_values(depth_values: np.ndarray | None) -> str:
+        if depth_values is None:
+            return ""
+        return "|".join(f"{float(depth_value):.3f}" for depth_value in depth_values.tolist())
+
+    def _selected_glorys_depths_for_export(
+        self,
+        *,
+        row: dict[str, Any],
+        argo_depth_indices: tuple[int, ...],
+    ) -> np.ndarray | None:
+        if len(argo_depth_indices) == 0:
+            return None
+
+        preferred_path: Path | None = None
+        if getattr(self, "_glorys_path_col", None) is not None:
+            raw_path = self._normalize_index_text(row.get(self._glorys_path_col, ""))
+            if raw_path != "":
+                preferred_path = self._resolve_index_path(raw_path)
+
+        glorys_depths = self._get_glorys_target_depths(
+            preferred_path=preferred_path,
+            required=False,
+        )
+        if glorys_depths is None:
+            return None
+
+        max_requested = max(int(depth_idx) for depth_idx in argo_depth_indices)
+        if max_requested >= int(glorys_depths.size):
+            raise RuntimeError(
+                "Requested GLORYS-aligned Argo export layer is out of range: "
+                f"requested_max={max_requested}, available_levels={glorys_depths.size}"
+            )
+        return glorys_depths[np.asarray(argo_depth_indices, dtype=np.int64)]
+
     def _build_export_record(
         self,
         *,
@@ -1264,6 +1503,10 @@ class OstiaArgoTileDataset(Dataset):
         centroid_lat = 0.5 * (lat0 + lat1)
         centroid_lon = 0.5 * (lon0 + lon1)
         basename = argo_tif_path.stem
+        selected_glorys_depths = self._selected_glorys_depths_for_export(
+            row=row,
+            argo_depth_indices=argo_depth_indices,
+        )
 
         record: dict[str, Any] = dict(row)
         record.update(
@@ -1284,6 +1527,8 @@ class OstiaArgoTileDataset(Dataset):
                 "tile_size": int(self.tile_size),
                 "output_units": self.output_units,
                 "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                "argo_depth_semantics": "glorys_depth_index",
+                "argo_glorys_depth_m": self._format_depth_values(selected_glorys_depths),
                 "argo_band_count": int(len(argo_depth_indices)),
                 "ostia_band_count": 1,
                 "files_written": int(files_written),
@@ -1333,6 +1578,10 @@ class OstiaArgoTileDataset(Dataset):
         centroid_lat = 0.5 * (lat0 + lat1)
         centroid_lon = 0.5 * (lon0 + lon1)
         basename = argo_tif_path.stem
+        selected_glorys_depths = self._selected_glorys_depths_for_export(
+            row=row,
+            argo_depth_indices=argo_depth_indices,
+        )
 
         common_tags = {
             "sample_basename": basename,
@@ -1364,7 +1613,18 @@ class OstiaArgoTileDataset(Dataset):
             lon0=lon0,
             lon1=lon1,
             band_descriptions=tuple(
-                f"argo_temperature_layer_{depth_idx}" for depth_idx in argo_depth_indices
+                (
+                    f"argo_glorys_level_{depth_idx}_{float(depth_m):.3f}m"
+                    if selected_glorys_depths is not None
+                    else f"argo_glorys_level_{depth_idx}"
+                )
+                for depth_idx, depth_m in zip(
+                    argo_depth_indices,
+                    selected_glorys_depths.tolist()
+                    if selected_glorys_depths is not None
+                    else [np.nan] * len(argo_depth_indices),
+                    strict=False,
+                )
             ),
             tags={
                 **common_tags,
@@ -1375,6 +1635,8 @@ class OstiaArgoTileDataset(Dataset):
                     else ""
                 ),
                 "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                "argo_depth_semantics": "glorys_depth_index",
+                "argo_glorys_depth_m": self._format_depth_values(selected_glorys_depths),
             },
         )
 
@@ -1519,7 +1781,7 @@ class OstiaArgoTileDataset(Dataset):
         idx: int = 0,
         output_path: str | Path = "temp/argo_ostia_batch_0.png",
     ) -> Path:
-        """Save a single PNG with x[0], optional y[0], eo, and interpolated x[0]."""
+        """Save a single PNG with a depth-collapsed Argo view, optional y[0], and eo."""
         import matplotlib.pyplot as plt
 
         sample = self.__getitem__(int(idx))
@@ -1537,9 +1799,12 @@ class OstiaArgoTileDataset(Dataset):
                 f"valid_mask={tuple(valid_mask.shape)}"
             )
         if x.shape[0] == 0:
-            raise RuntimeError("Cannot plot Argo channel 0 because x has no channels.")
+            raise RuntimeError("Cannot plot a depth-collapsed Argo projection because x has no channels.")
 
-        x0 = np.asarray(x[0].detach().cpu().numpy(), dtype=np.float32)
+        x0 = np.asarray(
+            x.max(dim=0, keepdim=True).values[0].detach().cpu().numpy(),
+            dtype=np.float32,
+        )
         eo0 = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
         # For interpolation visualization, treat exact zeros as missing and fill all missing pixels.
         zero_invalid_mask = np.isfinite(x0) & (x0 != 0.0)
@@ -1553,10 +1818,10 @@ class OstiaArgoTileDataset(Dataset):
             y0 = np.asarray(y[0].detach().cpu().numpy(), dtype=np.float32)
             fig, axes = plt.subplots(1, 4, figsize=(20, 5), constrained_layout=True)
             panels = (
-                (x0, "Argo x[0] (sparse)"),
+                (x0, "Argo max-depth projection (sparse)"),
                 (y0, "GLORYS y[0]"),
                 (eo0, "OSTIA eo[0]"),
-                (x0_interpolated, "Argo x[0] (interpolated)"),
+                (x0_interpolated, "Argo max-depth projection (interpolated)"),
             )
             for ax, (img, title) in zip(axes, panels):
                 im = ax.imshow(img, cmap="viridis")
@@ -1566,9 +1831,9 @@ class OstiaArgoTileDataset(Dataset):
         else:
             fig, axes = plt.subplots(1, 4, figsize=(20, 5), constrained_layout=True)
             panels = (
-                (x0, "Argo x[0] (sparse)"),
+                (x0, "Argo max-depth projection (sparse)"),
                 (eo0, "OSTIA eo[0]"),
-                (x0_interpolated, "Argo x[0] (interpolated)"),
+                (x0_interpolated, "Argo max-depth projection (interpolated)"),
             )
             for ax, (img, title) in zip(axes[:3], panels):
                 im = ax.imshow(img, cmap="viridis")
@@ -1683,10 +1948,10 @@ class OstiaArgoTileDataset(Dataset):
             if profile_idx.size == 0:
                 return self._empty_argo_payload_with_levels(n_levels)
 
-            temp = self._replace_en4_fill_with_zero(self._sanitize_float_array(
+            temp = self._replace_en4_fill_with_nan(self._sanitize_float_array(
                 np.asarray(ds.variables[self.argo_temp_var_name][profile_idx, :], dtype=np.float32)
             ))
-            depth = self._replace_en4_fill_with_zero(self._sanitize_float_array(
+            depth = self._replace_en4_fill_with_nan(self._sanitize_float_array(
                 np.asarray(ds.variables[self.argo_depth_var_name][profile_idx, :], dtype=np.float32)
             ))
             if "LATITUDE" in ds.variables:
@@ -1748,13 +2013,13 @@ class OstiaArgoTileDataset(Dataset):
                 return self._empty_argo_payload_with_levels(n_levels)
 
             # Pull selected profiles only (N_MATCHED, N_LEVELS) and sanitize fill/extreme values.
-            temp = self._replace_en4_fill_with_zero(self._sanitize_float_array(
+            temp = self._replace_en4_fill_with_nan(self._sanitize_float_array(
                 np.asarray(
                     ds[self.argo_temp_var_name].isel(N_PROF=profile_idx.tolist()).to_numpy(),
                     dtype=np.float32,
                 )
             ))
-            depth = self._replace_en4_fill_with_zero(self._sanitize_float_array(
+            depth = self._replace_en4_fill_with_nan(self._sanitize_float_array(
                 np.asarray(
                     ds[self.argo_depth_var_name].isel(N_PROF=profile_idx.tolist()).to_numpy(),
                     dtype=np.float32,
@@ -1847,8 +2112,22 @@ class OstiaArgoTileDataset(Dataset):
             if center_glorys_raw != "":
                 center_glorys_path = self._resolve_index_path(center_glorys_raw)
 
-            y_sum: np.ndarray | None = None
-            y_count: np.ndarray | None = None
+        need_glorys_depths = bool(self._glorys_path_col is not None or self.return_argo_profiles)
+        glorys_depths = self._get_glorys_target_depths(
+            preferred_path=center_glorys_path,
+            required=need_glorys_depths,
+        )
+        n_glorys_levels = 0 if glorys_depths is None else int(glorys_depths.size)
+        if n_glorys_levels > 0:
+            y = torch.full(
+                (n_glorys_levels, self.tile_size, self.tile_size),
+                float("nan"),
+                dtype=torch.float32,
+            )
+
+        if self._glorys_path_col is not None:
+            y_sum = np.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=np.float32)
+            y_count = np.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=np.uint16)
             for day_row in temporal_rows:
                 day_glorys_raw = self._normalize_index_text(day_row.get(self._glorys_path_col, ""))
                 if day_glorys_raw == "":
@@ -1865,10 +2144,7 @@ class OstiaArgoTileDataset(Dataset):
                     lon0=float(day_row["lon0"]),
                     lon1=float(day_row["lon1"]),
                 )
-                if y_sum is None or y_count is None:
-                    y_sum = np.zeros_like(day_glorys, dtype=np.float32)
-                    y_count = np.zeros_like(day_glorys, dtype=np.uint16)
-                elif day_glorys.shape != y_sum.shape:
+                if day_glorys.shape != y_sum.shape:
                     raise RuntimeError(
                         "Temporal GLORYS aggregation encountered inconsistent shapes: "
                         f"expected {tuple(y_sum.shape)}, got {tuple(day_glorys.shape)}"
@@ -1881,22 +2157,29 @@ class OstiaArgoTileDataset(Dataset):
                 y_count[day_valid] += 1
                 glorys_days_used += 1
 
-            if y_sum is not None and y_count is not None and np.any(y_count > 0):
+            if np.any(y_count > 0):
                 y_np = np.full_like(y_sum, np.nan, dtype=np.float32)
                 y_valid = y_count > 0
                 y_np[y_valid] = y_sum[y_valid] / y_count[y_valid].astype(np.float32)
                 y = torch.from_numpy(y_np)
 
         # Default x/valid_mask are empty and will be filled if Argo data is available.
-        x = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
-        valid_mask = torch.empty(
-            (0, self.tile_size, self.tile_size),
-            dtype=torch.bool,
-        )
+        if self.return_argo_profiles:
+            x = torch.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=torch.float32)
+            valid_mask = torch.zeros(
+                (n_glorys_levels, self.tile_size, self.tile_size),
+                dtype=torch.bool,
+            )
+        else:
+            x = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
+            valid_mask = torch.empty(
+                (0, self.tile_size, self.tile_size),
+                dtype=torch.bool,
+            )
         argo_days_used = 0
         if self.return_argo_profiles:
-            x_sum: torch.Tensor | None = None
-            x_count: torch.Tensor | None = None
+            x_sum = torch.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=torch.float32)
+            x_count = torch.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=torch.int32)
             for day_row in temporal_rows:
                 # Parse Argo file/date pointers from each temporal row.
                 argo_path_raw = (
@@ -1915,11 +2198,16 @@ class OstiaArgoTileDataset(Dataset):
                     argo_path=argo_path,
                     target_date=argo_date,
                 )
+                aligned_temperature = self._align_argo_profiles_to_glorys_depths(
+                    temperature=argo_payload["temperature"],
+                    depth=argo_payload["depth"],
+                    glorys_depths=glorys_depths,
+                )
                 # Rasterize profile table into patch tensor x and corresponding valid_mask.
                 # IMPORTANT: we pass the same CSV bounds used for eo, so x/eo overlap physically.
                 # The actual point->pixel conversion happens inside _argo_profiles_to_x_grid().
                 x_day, _valid_mask_day, count_day = self._argo_profiles_to_x_grid(
-                    temperature=argo_payload["temperature"],
+                    temperature=aligned_temperature,
                     latitude=argo_payload["latitude"],
                     longitude=argo_payload["longitude"],
                     lat0=float(day_row["lat0"]),
@@ -1928,10 +2216,7 @@ class OstiaArgoTileDataset(Dataset):
                     lon1=float(day_row["lon1"]),
                 )
 
-                if x_sum is None or x_count is None:
-                    x_sum = torch.zeros_like(x_day)
-                    x_count = torch.zeros_like(x_day, dtype=torch.int32)
-                elif x_day.shape != x_sum.shape:
+                if x_day.shape != x_sum.shape:
                     raise RuntimeError(
                         "Temporal Argo aggregation encountered inconsistent shapes: "
                         f"expected {tuple(x_sum.shape)}, got {tuple(x_day.shape)}"
@@ -1949,10 +2234,9 @@ class OstiaArgoTileDataset(Dataset):
                 x_count += count_day
                 argo_days_used += 1
 
-            if x_sum is not None and x_count is not None:
-                valid_mask = x_count > 0
-                x = torch.zeros_like(x_sum, dtype=torch.float32)
-                x[valid_mask] = x_sum[valid_mask] / x_count[valid_mask].to(dtype=torch.float32)
+            valid_mask = x_count > 0
+            x = torch.zeros_like(x_sum, dtype=torch.float32)
+            x[valid_mask] = x_sum[valid_mask] / x_count[valid_mask].to(dtype=torch.float32)
         # Collapse across all depth bands so each pixel is valid if any band has an observation.
         if valid_mask.shape[0] > 0:
             valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
@@ -1995,6 +2279,8 @@ class OstiaArgoTileDataset(Dataset):
                 "temporal_ostia_days_used": int(ostia_days_used),
                 "temporal_glorys_days_used": int(glorys_days_used),
                 "temporal_argo_days_used": int(argo_days_used),
+                "glorys_depth_band_count": int(n_glorys_levels),
+                "argo_depth_semantics": "glorys_depth_index",
                 "surface_ostia_argo_valid_pixels": int(surface_valid_pixels),
                 "surface_ostia_argo_mae_deg": surface_ostia_argo_mae_deg,
                 "valid_mask_1d_pixels": int(valid_mask_1d.sum().item()),
@@ -2056,12 +2342,16 @@ if __name__ == "__main__":
             #"/work/data/depth_v2/ostia_patch_index_daily.csv",
             "/data1/datasets/depth_v2/ostia_patch_index_daily.csv",
             split="train",
-            days=14,
+            days=7,
             return_argo_profiles=True,
         )
+        glorys_depths = dataset._get_glorys_target_depths(required=True)
+
+
         import random
         rand_i = random.randint(0, len(dataset) - 1)
         sample = dataset[rand_i]
+        print(f"Getting sample: {rand_i}")
         print(f"Fetched Sample: {rand_i}")
         dataset.save_batch_plot_to_temp(idx=rand_i, output_path=f"temp/argo_ostia/argo_ostia_modalities_sample_{rand_i}.png")
         
@@ -2069,7 +2359,8 @@ if __name__ == "__main__":
         from utils.visualizations import save_argo_profile_3d_plot
         save_argo_profile_3d_plot(
             profile_tensor=sample["x"],
-            output_path=f"temp/argo_ostia/argo_ostia_sample_{rand_i}.png"
+            output_path=f"temp/argo_ostia/argo_ostia_sample_{rand_i}.png",
+            depth_axis_m=glorys_depths,
         )
         
         # Save 3D Flyaround GIF for the same sample
@@ -2078,7 +2369,8 @@ if __name__ == "__main__":
             profile_tensor=sample["x"],
             output_path=f"temp/argo_ostia/argo_ostia_sample_{rand_i}.gif",
             dpi=50,
-            num_frames=36,
-            frame_duration_ms=100,
+            num_frames=48,
+            frame_duration_ms=75,
+            depth_axis_m=glorys_depths,
         )
         

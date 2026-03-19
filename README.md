@@ -30,7 +30,7 @@ python -m pip install -r requirements.txt
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).  
 - Main task modes:  
   - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, valid_mask] -> y`).  
-- Additional standalone raw-source datasets: `data/dataset_ostia_argo.py` (`OstiaArgoTileDataset`) for CSV-driven OSTIA condition tile retrieval plus date-matched EN4 profile extraction from `argo_file_path`, including optional temporal-window averaging via `days`, per-item GeoTIFF export via `save_to_disk(...)`, and parallel bulk export via `data/export_ostia_argo_tiffs.py`; and `data/dataset_ostia_argo_disk.py` (`OstiaArgoTiffDataset`) for loading the exported GeoTIFF pairs back from the manifest CSV.  
+- Additional standalone raw-source datasets: `data/dataset_ostia_argo.py` (`OstiaArgoTileDataset`) for CSV-driven OSTIA condition tile retrieval plus date-matched EN4 profile extraction from `argo_file_path`, with each Argo profile resampled onto the fixed 50-level GLORYS depth grid, optional temporal-window averaging via `days`, and georeferenced GeoTIFF export via `save_to_disk(...)`; and `data/dataset_ostia_argo_disk.py` (`OstiaArgoTiffDataset`) for loading the exported GeoTIFF pairs back from the manifest CSV.  
 - Config layout:  
   - `configs/px_space/`: active pixel-space diffusion configs  
   - `configs/lat_space/`: latent-space config set (`model_config.yaml`, `training_config.yaml`, `data_config.yaml`, `ae_config.yaml`)  
