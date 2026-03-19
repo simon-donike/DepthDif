@@ -11,6 +11,8 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
+MISSING_TEXT = "__missing__"
+
 
 def _parse_mask_flag_metadata(mask_attrs: dict[str, object]) -> dict[str, int]:
     """Map OSTIA mask flag names to bit values from the NetCDF metadata."""
@@ -81,6 +83,13 @@ def _parse_ostia_date_yyyymmdd(path: Path) -> int:
     return int(m.group(1))
 
 
+def _parse_glorys_date_yyyymmdd(path: Path) -> int:
+    m = re.search(r"_(\d{8})(?:_R\d{8})?\.nc$", path.name)
+    if m is None:
+        raise RuntimeError(f"Cannot parse GLORYS date from filename: {path.name}")
+    return int(m.group(1))
+
+
 def _path_from_depth_v2(path: Path) -> str:
     """Return path string anchored at the `depth_v2` segment when present."""
     resolved = path.resolve()
@@ -90,6 +99,47 @@ def _path_from_depth_v2(path: Path) -> str:
         return resolved.as_posix()
     depth_v2_idx = parts.index("depth_v2")
     return Path(*parts[depth_v2_idx:]).as_posix()
+
+
+def _stable_text(value: str) -> str:
+    """Write one explicit sentinel for missing text to avoid mixed CSV dtype inference."""
+    text = str(value).strip()
+    return text if text else MISSING_TEXT
+
+
+def _scan_glorys_weekly(glorys_dir: Path) -> list[tuple[int, str]]:
+    files = sorted(glorys_dir.glob("*.nc"))
+    if not files:
+        raise RuntimeError(f"No GLORYS weekly files found in: {glorys_dir}")
+
+    out: list[tuple[int, str]] = []
+    for path in files:
+        out.append((_parse_glorys_date_yyyymmdd(path), _path_from_depth_v2(path)))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def _match_nearest_days(
+    query_dates: np.ndarray,
+    candidate_rows: list[tuple[int, str]],
+) -> dict[int, tuple[int, str, int]]:
+    if not candidate_rows:
+        return {}
+
+    candidate_days = np.asarray([row[0] for row in candidate_rows], dtype=np.int32)
+    candidate_paths = [row[1] for row in candidate_rows]
+
+    mapping: dict[int, tuple[int, str, int]] = {}
+    unique_dates = np.unique(query_dates[query_dates > 0])
+    for day in unique_dates.tolist():
+        nearest_idx = int(np.argmin(np.abs(candidate_days.astype(np.int64) - int(day))))
+        matched_day = int(candidate_days[nearest_idx])
+        mapping[int(day)] = (
+            matched_day,
+            candidate_paths[nearest_idx],
+            int(abs(matched_day - int(day))),
+        )
+    return mapping
 
 
 def _build_patch_grid(
@@ -304,7 +354,14 @@ def _write_patch_daily_csv(
     path: Path,
     records: list[PatchRecord],
     ostia_files: list[Path],
+    glorys_rows: list[tuple[int, str]],
 ) -> None:
+    ostia_days = np.asarray(
+        [_parse_ostia_date_yyyymmdd(ostia_path) for ostia_path in ostia_files],
+        dtype=np.int32,
+    )
+    date_to_glorys = _match_nearest_days(ostia_days, glorys_rows)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -322,12 +379,18 @@ def _write_patch_daily_csv(
                 "invalid_percentage",
                 "phase",
                 "ostia_file_path",
+                "matched_glorys_date",
+                "matched_glorys_file_path",
+                "matched_glorys_abs_day_delta",
             ]
         )
         # Stream rows directly to disk to keep memory stable for large (patches x timesteps).
         for ostia_path in ostia_files:
             day = _parse_ostia_date_yyyymmdd(ostia_path)
             day_path = _path_from_depth_v2(ostia_path)
+            matched_glorys_date, matched_glorys_path, matched_glorys_delta = (
+                date_to_glorys.get(int(day), (0, "", 0))
+            )
             for rec in records:
                 writer.writerow(
                     [
@@ -343,6 +406,9 @@ def _write_patch_daily_csv(
                         f"{rec.invalid_percentage:.4f}",
                         rec.phase,
                         day_path,
+                        int(matched_glorys_date),
+                        _stable_text(matched_glorys_path),
+                        int(matched_glorys_delta),
                     ]
                 )
 
@@ -352,6 +418,7 @@ def build_ostia_patch_daily_index(
     ostia_dir: Path,
     output_daily_csv: Path,
     output_spatial_csv: Path | None = None,
+    glorys_dir: Path = Path("/data1/datasets/depth_v2/glorys_weekly"),
     tile_size: int = 128,
     resolution_deg: float | None = None,
     invalid_threshold: float = 0.2,
@@ -363,6 +430,7 @@ def build_ostia_patch_daily_index(
     if tile_size < 2:
         raise ValueError("tile_size must be >= 2.")
     ostia_files = _ostia_files(ostia_dir)
+    glorys_rows = _scan_glorys_weekly(glorys_dir)
     reference_path = ostia_files[0]
 
     with xr.open_dataset(
@@ -416,7 +484,7 @@ def build_ostia_patch_daily_index(
 
     if output_spatial_csv is not None:
         _write_patch_spatial_csv(output_spatial_csv, records)
-    _write_patch_daily_csv(output_daily_csv, records, ostia_files)
+    _write_patch_daily_csv(output_daily_csv, records, ostia_files, glorys_rows)
 
     return output_daily_csv, output_spatial_csv
 
@@ -446,6 +514,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("/data1/datasets/depth_v2/ostia_patch_index_spatial.csv"),
         help="Optional patch-only CSV (written before daily expansion).",
+    )
+    parser.add_argument(
+        "--glorys-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/glorys_weekly"),
+        help="Directory containing weekly GLORYS NetCDF files used for nearest-date matching.",
     )
     parser.add_argument(
         "--tile-size",
@@ -512,6 +586,7 @@ def main() -> None:
         ostia_dir=args.ostia_dir,
         output_daily_csv=args.output_daily_csv,
         output_spatial_csv=args.output_spatial_csv,
+        glorys_dir=args.glorys_dir,
         tile_size=args.tile_size,
         resolution_deg=args.resolution_deg,
         invalid_threshold=args.invalid_threshold,

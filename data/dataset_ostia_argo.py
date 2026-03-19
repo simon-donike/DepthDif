@@ -14,6 +14,8 @@ import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 from torch.utils.data import Dataset
 
+MISSING_TEXT_VALUES = frozenset({"", "__missing__", "nan", "none", "null"})
+
 
 class OstiaArgoTileDataset(Dataset):
     """CSV-driven OSTIA patch dataset with Argo linkage metadata.
@@ -182,6 +184,11 @@ class OstiaArgoTileDataset(Dataset):
         return parsed if parsed > 0 else 0
 
     @staticmethod
+    def _normalize_index_text(value: Any) -> str:
+        raw = str(value).strip()
+        return "" if raw.lower() in MISSING_TEXT_VALUES else raw
+
+    @staticmethod
     def _bbox_lookup_key(*, lat0: Any, lat1: Any, lon0: Any, lon1: Any) -> str:
         # Normalize bbox orientation so fallback patch keys stay stable across rows.
         lat_lo = min(float(lat0), float(lat1))
@@ -284,7 +291,8 @@ class OstiaArgoTileDataset(Dataset):
 
     def _resolve_index_path(self, value: Any) -> Path:
         # Support absolute paths, CSV-relative paths, and `depth_v2/...` anchored paths.
-        path = Path(str(value).strip())
+        normalized = self._normalize_index_text(value)
+        path = Path(normalized)
         if path.is_absolute():
             return path
         if path.parts and path.parts[0] == "depth_v2":
@@ -1220,7 +1228,7 @@ class OstiaArgoTileDataset(Dataset):
 
         out = df.copy()
         # Build normalized helper columns used for filtering.
-        out["_argo_path"] = out[self._argo_path_col].astype(str).str.strip()
+        out["_argo_path"] = out[self._argo_path_col].map(self._normalize_index_text)
         out["_target_date"] = pd.to_numeric(out["date"], errors="coerce").fillna(0).astype(np.int64)
 
         # Require non-empty path and valid date.
@@ -1614,7 +1622,7 @@ if __name__ == "__main__":
     if True:
         # Get Dataset and get sample
         dataset = OstiaArgoTileDataset(
-            "/work/data/depth_v2/ostia_patch_index_daily_0p1.csv",
+            "/work/data/depth_v2/ostia_patch_index_daily.csv",
             split="train",
             days=14,
             return_argo_profiles=True,

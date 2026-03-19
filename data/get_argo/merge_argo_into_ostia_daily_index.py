@@ -5,6 +5,14 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+MISSING_TEXT = "__missing__"
+
+
+def _stable_text(value: str) -> str:
+    """Write one explicit sentinel for missing text to avoid mixed CSV dtype inference."""
+    text = str(value).strip()
+    return text if text else MISSING_TEXT
+
 
 def _build_argo_lookup(
     argo_match_csv: Path,
@@ -93,7 +101,7 @@ def merge_argo_into_daily_index(
             row["argo_valid"] = "1" if day_count > 0 else "0"
             row["argo_profile_count"] = str(day_count)
             row["argo_month_key"] = month_key
-            row["argo_file_path"] = month_file.get(month_key, "")
+            row["argo_file_path"] = _stable_text(month_file.get(month_key, ""))
             writer.writerow(row)
 
     return output_csv
@@ -152,4 +160,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

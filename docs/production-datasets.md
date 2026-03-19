@@ -39,6 +39,7 @@ Recommended native-grid OSTIA patch-index build:
 ```bash  
 /work/envs/depth/bin/python data/get_ostia/build_ostia_patch_time_index.py \  
   --ostia-dir /data1/datasets/depth_v2/ostia \  
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \  
   --output-spatial-csv /data1/datasets/depth_v2/ostia_patch_index_spatial.csv \  
   --output-daily-csv /data1/datasets/depth_v2/ostia_patch_index_daily.csv \  
   --tile-size 128 \  
@@ -66,10 +67,12 @@ Daily OSTIA index rows are:
   - patch bounds  
   - split label  
   - OSTIA file path for that day  
+  - nearest weekly GLORYS file metadata for that day  
   
 ARGO is then attached date-wise:  
 - EN4 `JULD` is converted to `YYYYMMDD`  
 - each ARGO profile day is matched to the nearest OSTIA day in the same month  
+- each ARGO profile day is also matched to the nearest weekly GLORYS file across the weekly archive  
 - that match metadata is merged into the daily patch CSV  
   
 Datetime match command:  
@@ -78,6 +81,7 @@ Datetime match command:
 /work/envs/depth/bin/python data/get_argo/build_argo_datetime_match_index.py \  
   --argo-dir /data1/datasets/depth_v2/en4_profiles \  
   --ostia-dir /data1/datasets/depth_v2/ostia \  
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \  
   --output-csv /data1/datasets/depth_v2/argo_profile_datetime_match.csv  
 ```  
   
@@ -117,6 +121,11 @@ Columns typically added during ARGO merge:
 - `argo_profile_count`  
 - `argo_month_key`  
 - `argo_file_path`  
+
+Columns now written during CSV generation for nearest weekly GLORYS lookup:  
+- `matched_glorys_date`  
+- `matched_glorys_file_path`  
+- `matched_glorys_abs_day_delta`  
   
 ## 4) Current Dataset Versions  
 Snapshot numbers below were measured/recomputed on **March 10, 2026**.  

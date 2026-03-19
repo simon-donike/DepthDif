@@ -9,6 +9,8 @@ import numpy as np
 import xarray as xr
 from h5py import is_hdf5
 
+MISSING_TEXT = "__missing__"
+
 
 def _path_from_depth_v2(path: Path) -> str:
     """Return path string anchored at the `depth_v2` segment when present."""
@@ -19,6 +21,12 @@ def _path_from_depth_v2(path: Path) -> str:
         return resolved.as_posix()
     depth_v2_idx = parts.index("depth_v2")
     return Path(*parts[depth_v2_idx:]).as_posix()
+
+
+def _stable_text(value: str) -> str:
+    """Write one explicit sentinel for missing text to avoid mixed CSV dtype inference."""
+    text = str(value).strip()
+    return text if text else MISSING_TEXT
 
 
 def _scan_ostia_by_month(ostia_dir: Path) -> dict[str, list[tuple[int, str]]]:
@@ -47,6 +55,13 @@ def _parse_argo_month(path: Path) -> str | None:
     return m.group(1) if m is not None else None
 
 
+def _parse_glorys_date_yyyymmdd(path: Path) -> int:
+    m = re.search(r"_(\d{8})(?:_R\d{8})?\.nc$", path.name)
+    if m is None:
+        raise RuntimeError(f"Cannot parse GLORYS date from filename: {path.name}")
+    return int(m.group(1))
+
+
 def _juld_to_yyyymmdd(juld_days: np.ndarray) -> np.ndarray:
     out = np.zeros(juld_days.shape, dtype=np.int32)
     valid = np.isfinite(juld_days) & (juld_days < 90000.0) & (juld_days > -20000.0)
@@ -62,21 +77,37 @@ def _juld_to_yyyymmdd(juld_days: np.ndarray) -> np.ndarray:
     return out
 
 
-def _match_ostia_days(
-    profile_dates: np.ndarray,
-    ostia_rows: list[tuple[int, str]],
-) -> dict[int, tuple[int, str]]:
-    if not ostia_rows:
-        return {}
-    ostia_days = np.asarray([r[0] for r in ostia_rows], dtype=np.int32)
-    ostia_paths = [r[1] for r in ostia_rows]
+def _scan_glorys_weekly(glorys_dir: Path) -> list[tuple[int, str]]:
+    files = sorted(glorys_dir.glob("*.nc"))
+    if not files:
+        raise RuntimeError(f"No GLORYS weekly files found in: {glorys_dir}")
 
-    mapping: dict[int, tuple[int, str]] = {}
-    unique_dates = np.unique(profile_dates[profile_dates > 0])
+    out: list[tuple[int, str]] = []
+    for path in files:
+        out.append((_parse_glorys_date_yyyymmdd(path), _path_from_depth_v2(path)))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def _match_nearest_days(
+    query_dates: np.ndarray,
+    candidate_rows: list[tuple[int, str]],
+) -> dict[int, tuple[int, str, int]]:
+    if not candidate_rows:
+        return {}
+    candidate_days = np.asarray([row[0] for row in candidate_rows], dtype=np.int32)
+    candidate_paths = [row[1] for row in candidate_rows]
+
+    mapping: dict[int, tuple[int, str, int]] = {}
+    unique_dates = np.unique(query_dates[query_dates > 0])
     for d in unique_dates.tolist():
-        # Per-month nearest-date match keeps the temporal lookup deterministic.
-        nearest_idx = int(np.argmin(np.abs(ostia_days.astype(np.int64) - int(d))))
-        mapping[int(d)] = (int(ostia_days[nearest_idx]), ostia_paths[nearest_idx])
+        nearest_idx = int(np.argmin(np.abs(candidate_days.astype(np.int64) - int(d))))
+        matched_day = int(candidate_days[nearest_idx])
+        mapping[int(d)] = (
+            matched_day,
+            candidate_paths[nearest_idx],
+            int(abs(matched_day - int(d))),
+        )
     return mapping
 
 
@@ -84,6 +115,7 @@ def build_argo_datetime_match_csv(
     *,
     argo_dir: Path,
     ostia_dir: Path,
+    glorys_dir: Path,
     output_csv: Path,
 ) -> Path:
     argo_files = sorted(argo_dir.glob("EN.4.2.2.f.profiles.g10.*.nc"))
@@ -91,6 +123,7 @@ def build_argo_datetime_match_csv(
         raise RuntimeError(f"No EN4 profile files found in: {argo_dir}")
 
     ostia_by_month = _scan_ostia_by_month(ostia_dir)
+    glorys_rows = _scan_glorys_weekly(glorys_dir)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
 
     row_id = 0
@@ -105,6 +138,9 @@ def build_argo_datetime_match_csv(
                 "argo_file_path",
                 "matched_ostia_date",
                 "matched_ostia_file_path",
+                "matched_glorys_date",
+                "matched_glorys_file_path",
+                "matched_glorys_abs_day_delta",
             ]
         )
 
@@ -129,15 +165,22 @@ def build_argo_datetime_match_csv(
                     np.asarray(ds["JULD"].to_numpy(), dtype=np.float64)
                 )
 
-            date_to_ostia = _match_ostia_days(
-                profile_dates=profile_dates,
-                ostia_rows=ostia_by_month.get(month_key, []),
+            date_to_ostia = _match_nearest_days(
+                query_dates=profile_dates,
+                candidate_rows=ostia_by_month.get(month_key, []),
+            )
+            date_to_glorys = _match_nearest_days(
+                query_dates=profile_dates,
+                candidate_rows=glorys_rows,
             )
 
             for profile_idx, d in enumerate(profile_dates.tolist()):
                 if int(d) <= 0:
                     continue
-                matched_date, matched_path = date_to_ostia.get(int(d), (0, ""))
+                matched_date, matched_path, _ = date_to_ostia.get(int(d), (0, "", 0))
+                matched_glorys_date, matched_glorys_path, matched_glorys_delta = (
+                    date_to_glorys.get(int(d), (0, "", 0))
+                )
                 writer.writerow(
                     [
                         row_id,
@@ -146,7 +189,10 @@ def build_argo_datetime_match_csv(
                         int(profile_idx),
                         _path_from_depth_v2(argo_path),
                         int(matched_date),
-                        matched_path,
+                        _stable_text(matched_path),
+                        int(matched_glorys_date),
+                        _stable_text(matched_glorys_path),
+                        int(matched_glorys_delta),
                     ]
                 )
                 row_id += 1
@@ -173,6 +219,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory containing OSTIA daily files.",
     )
     parser.add_argument(
+        "--glorys-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/glorys_weekly"),
+        help="Directory containing weekly GLORYS NetCDF files.",
+    )
+    parser.add_argument(
         "--output-csv",
         type=Path,
         default=Path("/data1/datasets/depth_v2/argo_profile_datetime_match.csv"),
@@ -187,6 +239,7 @@ def main() -> None:
     out = build_argo_datetime_match_csv(
         argo_dir=args.argo_dir,
         ostia_dir=args.ostia_dir,
+        glorys_dir=args.glorys_dir,
         output_csv=args.output_csv,
     )
     print(f"Wrote Argo datetime match CSV: {out}")
