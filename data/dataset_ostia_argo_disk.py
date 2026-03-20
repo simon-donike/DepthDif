@@ -187,6 +187,21 @@ class OstiaArgoTiffDataset(Dataset):
         return out
 
     @staticmethod
+    def _glorys_horizontal_ocean_mask(glorys_patch: np.ndarray) -> np.ndarray:
+        """Build a single-band ocean mask from the GLORYS surface layer."""
+        patch = np.asarray(glorys_patch, dtype=np.float32)
+        if patch.ndim != 3:
+            raise RuntimeError(
+                "Expected GLORYS patch with shape (C,H,W) when building land mask, "
+                f"got {tuple(patch.shape)}"
+            )
+        if patch.shape[0] == 0:
+            raise RuntimeError("Cannot build GLORYS land mask from an empty depth stack.")
+
+        # Use the shallowest GLORYS layer only so the mask stays purely horizontal.
+        return np.isfinite(patch[:1]).astype(np.float32, copy=False)
+
+    @staticmethod
     def _assert_raster_alignment(
         *,
         reference_path: Path,
@@ -285,8 +300,8 @@ class OstiaArgoTiffDataset(Dataset):
             )
 
         valid_mask_np = np.isfinite(x_np)
-        # Use GLORYS support as the structural ocean mask so land stays masked even where Argo is sparse.
-        land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
+        # Use only the GLORYS surface support so the ocean mask is 2D and cannot vary by depth.
+        land_mask_np = self._glorys_horizontal_ocean_mask(y_np)
         eo = torch.from_numpy(np.nan_to_num(eo_np, nan=0.0, posinf=0.0, neginf=0.0))
         x = torch.from_numpy(np.nan_to_num(x_np, nan=0.0, posinf=0.0, neginf=0.0))
         y = torch.from_numpy(np.nan_to_num(y_np, nan=0.0, posinf=0.0, neginf=0.0))
@@ -345,12 +360,18 @@ class OstiaArgoTiffDataset(Dataset):
             raise RuntimeError(
                 f"depth_level={depth_level} is out of range for sample with {int(x.shape[0])} depth bands."
             )
-        if int(y.shape[0]) <= depth_level or int(valid_mask.shape[0]) <= depth_level or int(land_mask.shape[0]) <= depth_level:
+        if int(y.shape[0]) <= depth_level or int(valid_mask.shape[0]) <= depth_level:
             raise RuntimeError(
-                "Expected x, y, valid_mask, and land_mask to all include the requested depth level: "
+                "Expected x, y, and valid_mask to all include the requested depth level: "
                 f"depth_level={depth_level}, x={tuple(x.shape)}, y={tuple(y.shape)}, "
-                f"valid_mask={tuple(valid_mask.shape)}, land_mask={tuple(land_mask.shape)}"
+                f"valid_mask={tuple(valid_mask.shape)}"
             )
+        if int(land_mask.shape[0]) not in {1, int(x.shape[0])}:
+            raise RuntimeError(
+                "Expected land_mask to be either a single horizontal mask or per-depth mask: "
+                f"x={tuple(x.shape)}, land_mask={tuple(land_mask.shape)}"
+            )
+        land_mask_level = 0 if int(land_mask.shape[0]) == 1 else depth_level
 
         panels.append((np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32), "eo[0]"))
         panels.append(
@@ -374,8 +395,8 @@ class OstiaArgoTiffDataset(Dataset):
         )
         panels.append(
             (
-                np.asarray(land_mask[depth_level].detach().cpu().numpy(), dtype=np.float32),
-                f"land_mask[{depth_level}]",
+                np.asarray(land_mask[land_mask_level].detach().cpu().numpy(), dtype=np.float32),
+                "land_mask[0]" if land_mask_level == 0 and int(land_mask.shape[0]) == 1 else f"land_mask[{depth_level}]",
             )
         )
 
@@ -439,4 +460,3 @@ if __name__ == "__main__":
         f"valid_mask shape: {tuple(sample['valid_mask'].shape)}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
-

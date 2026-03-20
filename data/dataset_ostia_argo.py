@@ -600,6 +600,22 @@ class OstiaArgoTileDataset(Dataset):
         patch[(~np.isfinite(patch)) | (patch > 1.0e6)] = np.nan
         return patch
 
+    @staticmethod
+    def _glorys_horizontal_ocean_mask(glorys_patch: np.ndarray) -> np.ndarray:
+        """Build a strictly horizontal ocean mask from the GLORYS surface layer."""
+        patch = np.asarray(glorys_patch, dtype=np.float32)
+        if patch.ndim != 3:
+            raise RuntimeError(
+                "Expected GLORYS patch with shape (C,H,W) when building land mask, "
+                f"got {tuple(patch.shape)}"
+            )
+        if patch.shape[0] == 0:
+            raise RuntimeError("Cannot build GLORYS land mask from an empty depth stack.")
+
+        # GLORYS land/ocean support is horizontal. Use only the shallowest native level so the
+        # returned mask cannot vary by depth and coastal bathymetry does not leak deeper support.
+        return np.isfinite(patch[:1]).astype(np.float32, copy=False)
+
     def _load_glorys_patch_h5netcdf(
         self,
         *,
@@ -2324,6 +2340,12 @@ class OstiaArgoTileDataset(Dataset):
                 y_valid = y_count > 0
                 y_np[y_valid] = y_sum[y_valid] / y_count[y_valid].astype(np.float32)
                 y = torch.from_numpy(y_np)
+        if y.shape[0] > 0:
+            land_mask = torch.from_numpy(
+                self._glorys_horizontal_ocean_mask(y.detach().cpu().numpy())
+            )
+        else:
+            land_mask = torch.zeros((1, self.tile_size, self.tile_size), dtype=torch.float32)
 
         # Default x/valid_mask are empty and will be filled if Argo data is available.
         if self.return_argo_profiles:
@@ -2427,6 +2449,7 @@ class OstiaArgoTileDataset(Dataset):
             "eo": eo,
             "valid_mask": valid_mask,
             "valid_mask_1d": valid_mask_1d,
+            "land_mask": land_mask,
             "info": {
                 "index": int(idx),
                 "patch_id": row.get("patch_id"),
