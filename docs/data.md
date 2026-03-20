@@ -125,12 +125,12 @@ Per `__getitem__` behavior:
 - returns: `x`, `y`, `eo`, `valid_mask`, `valid_mask_1d`, `info`  
   
 Disk export helper:  
-- `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one georeferenced OSTIA GeoTIFF to `ostia/<basename>.tif` and one georeferenced Argo GeoTIFF to `argo/<basename>.tif` with the same basename for later pairing  
-- default Argo export keeps the first three GLORYS-aligned depth layers via `argo_depth_indices=(0, 1, 2)` and writes missing Argo pixels as `NaN`  
-- GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform, north-up row order, and GLORYS depth metadata for exported Argo bands  
-- each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
-- `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, shuffles export order by default in contiguous blocks (`--shuffle`, optional `--shuffle-seed`, `--shuffle-block-size`, default `100`) so partial output spans the timeseries better without fully randomizing file access, writes TIFFs in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end  
-- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
+- `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one georeferenced OSTIA GeoTIFF to `ostia/<basename>.tif`, one georeferenced Argo GeoTIFF to `argo/<basename>.tif`, and one georeferenced GLORYS GeoTIFF to `glorys/<basename>.tif` with the same basename for aligned loading later
+- Argo and GLORYS are always exported as the full GLORYS-aligned depth stack, which is currently 50 bands with the standard GLORYS depth axis, and missing Argo pixels are written as `NaN`
+- all GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform, north-up row order, and GLORYS depth metadata for the exported subsurface bands
+- each successful export appends one row to `ostia_argo_tiff_index.csv` with one relative output path per exported TIFF, source paths normalized relative to `depth_v2`, temporal-window metadata for OSTIA, Argo, and GLORYS, and `argo_valid_spatial_observation_count` computed from the max-collapsed Argo stack over depth
+- `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, shuffles export order by default in contiguous blocks (`--shuffle`, optional `--shuffle-seed`, `--shuffle-block-size`, default `100`) so partial output spans the timeseries better without fully randomizing file access, writes TIFF triplets in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end
+- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk, verifies GeoTIFF alignment across the exported rasters, and returns `eo`, Argo `x`, GLORYS `y`, `valid_mask`, `valid_mask_1d`, `land_mask`, `date`, plus optional `coords` and `info`
   
 Current scope note:  
 - profile extraction remains date-based within the monthly EN4 file, while vertical alignment is now performed against the GLORYS depth axis before the profile samples are tiled into the patch grid  

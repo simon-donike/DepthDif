@@ -11,13 +11,16 @@ import torch
 from torch.utils.data import Dataset
 import yaml
 
+MISSING_TEXT_VALUES = frozenset({"", "__missing__", "nan", "none", "null"})
+
 
 class OstiaArgoTiffDataset(Dataset):
-    """Dataset that loads paired OSTIA/Argo GeoTIFFs written by the export script."""
+    """Dataset that loads georeferenced OSTIA/Argo/GLORYS GeoTIFF exports."""
 
     DEFAULT_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
     DEFAULT_CSV_PATH = "/work/data/depth_v3/ostia_argo_tiff_index.csv"
     REQUIRED_PATH_COLUMNS = ("ostia_tif_path", "argo_tif_path")
+    GLORYS_PATH_CANDIDATE_COLUMNS = ("glorys_tif_path",)
     SPLIT_CANDIDATE_COLUMNS = ("phase", "split")
 
     def __init__(
@@ -47,6 +50,11 @@ class OstiaArgoTiffDataset(Dataset):
         missing_cols = [col for col in self.REQUIRED_PATH_COLUMNS if col not in df.columns]
         if missing_cols:
             raise RuntimeError(f"Index is missing required columns: {missing_cols}")
+        self._glorys_path_col = None
+        for candidate in self.GLORYS_PATH_CANDIDATE_COLUMNS:
+            if candidate in df.columns:
+                self._glorys_path_col = candidate
+                break
 
         split_col = None
         for candidate in self.SPLIT_CANDIDATE_COLUMNS:
@@ -126,12 +134,57 @@ class OstiaArgoTiffDataset(Dataset):
         return path if path.is_absolute() else self.csv_dir / path
 
     @staticmethod
-    def _load_tiff(path: Path) -> np.ndarray:
+    def _load_tiff(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
         with rasterio.open(path) as ds:
             arr = ds.read().astype(np.float32, copy=False)
+            meta = {
+                "height": int(ds.height),
+                "width": int(ds.width),
+                "transform": ds.transform,
+                "crs": ds.crs.to_string() if ds.crs is not None else "",
+                "band_descriptions": tuple(str(desc or "") for desc in ds.descriptions),
+            }
         if arr.ndim != 3:
             raise RuntimeError(f"Unexpected TIFF shape at {path}: {tuple(arr.shape)}")
-        return arr
+        return arr, meta
+
+    @staticmethod
+    def _assert_raster_alignment(
+        *,
+        reference_path: Path,
+        reference_meta: dict[str, Any],
+        other_path: Path,
+        other_meta: dict[str, Any],
+    ) -> None:
+        if (
+            int(reference_meta["height"]) != int(other_meta["height"])
+            or int(reference_meta["width"]) != int(other_meta["width"])
+        ):
+            raise RuntimeError(
+                "GeoTIFF shape mismatch between exported rasters: "
+                f"{reference_path} ({reference_meta['height']}x{reference_meta['width']}) vs "
+                f"{other_path} ({other_meta['height']}x{other_meta['width']})"
+            )
+        if str(reference_meta["crs"]) != str(other_meta["crs"]):
+            raise RuntimeError(
+                "GeoTIFF CRS mismatch between exported rasters: "
+                f"{reference_path} ({reference_meta['crs']}) vs "
+                f"{other_path} ({other_meta['crs']})"
+            )
+
+        ref_transform = reference_meta["transform"]
+        other_transform = other_meta["transform"]
+        if not ref_transform.almost_equals(other_transform):
+            raise RuntimeError(
+                "GeoTIFF transform mismatch between exported rasters: "
+                f"{reference_path} ({tuple(ref_transform)}) vs "
+                f"{other_path} ({tuple(other_transform)})"
+            )
+
+    @staticmethod
+    def _normalize_index_text(value: Any) -> str:
+        raw = str(value).strip()
+        return "" if raw.lower() in MISSING_TEXT_VALUES else raw
 
     @staticmethod
     def _parse_date_int(value: Any) -> int:
@@ -152,28 +205,59 @@ class OstiaArgoTiffDataset(Dataset):
         row = self._rows[int(idx)]
         ostia_path = self._resolve_index_path(row["ostia_tif_path"])
         argo_path = self._resolve_index_path(row["argo_tif_path"])
+        glorys_path: Path | None = None
+        if self._glorys_path_col is not None:
+            glorys_raw = self._normalize_index_text(row.get(self._glorys_path_col, ""))
+            if glorys_raw != "":
+                glorys_path = self._resolve_index_path(glorys_raw)
 
-        eo_np = self._load_tiff(ostia_path)
-        x_np = self._load_tiff(argo_path)
+        eo_np, eo_meta = self._load_tiff(ostia_path)
+        x_np, x_meta = self._load_tiff(argo_path)
         if eo_np.shape[0] != 1:
             raise RuntimeError(
                 f"Expected single-band OSTIA GeoTIFF at {ostia_path}, got shape {tuple(eo_np.shape)}"
             )
+        self._assert_raster_alignment(
+            reference_path=ostia_path,
+            reference_meta=eo_meta,
+            other_path=argo_path,
+            other_meta=x_meta,
+        )
+
+        if glorys_path is not None:
+            y_np, y_meta = self._load_tiff(glorys_path)
+            self._assert_raster_alignment(
+                reference_path=ostia_path,
+                reference_meta=eo_meta,
+                other_path=glorys_path,
+                other_meta=y_meta,
+            )
+        else:
+            # Older exports only stored OSTIA/Argo pairs; keep them readable.
+            y_np = x_np.copy()
+
+        if y_np.shape != x_np.shape:
+            raise RuntimeError(
+                "Expected GLORYS and Argo GeoTIFFs to share the same band layout: "
+                f"{tuple(y_np.shape)} != {tuple(x_np.shape)}"
+            )
 
         valid_mask_np = np.isfinite(x_np)
+        # Use GLORYS support as the structural ocean mask so land stays masked even where Argo is sparse.
+        land_mask_np = np.isfinite(y_np).astype(np.float32, copy=False)
         eo = torch.from_numpy(np.nan_to_num(eo_np, nan=0.0, posinf=0.0, neginf=0.0))
         x = torch.from_numpy(np.nan_to_num(x_np, nan=0.0, posinf=0.0, neginf=0.0))
+        y = torch.from_numpy(np.nan_to_num(y_np, nan=0.0, posinf=0.0, neginf=0.0))
         valid_mask = torch.from_numpy(valid_mask_np.astype(np.bool_, copy=False))
-        # The exported dataset contains observed Argo layers only, so use them as both
-        # conditioning and target to keep the existing training loop contract satisfied.
-        y = x.clone()
-        land_mask = valid_mask.clone()
+        land_mask = torch.from_numpy(land_mask_np)
+        valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
 
         sample: dict[str, Any] = {
             "eo": eo,
             "x": x,
             "y": y,
             "valid_mask": valid_mask,
+            "valid_mask_1d": valid_mask_1d,
             "land_mask": land_mask,
             "date": self._parse_date_int(row.get("date", 19700115)),
         }
@@ -301,6 +385,24 @@ if __name__ == "__main__":
     print(f"Sample keys: {list(sample.keys())}")
     print(
         f"eo shape: {tuple(sample['eo'].shape)}, x shape: {tuple(sample['x'].shape)}, "
+        f"y shape: {tuple(sample['y'].shape)}, "
         f"valid_mask shape: {tuple(sample['valid_mask'].shape)}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
+
+
+"""
+
+/work/envs/depth/bin/python data/export_ostia_argo_tiffs.py \
+  --csv-path /data1/datasets/depth_v2/ostia_patch_index_daily.csv \
+  --output-root /work/data/depth_prod \
+  --days 7 \
+  --num-workers 10 \
+  --prefetch-factor 4 \
+  --shuffle \
+  --shuffle-block-size 500 \
+  --flush-every 100 \
+  --start-index 0
+
+
+"""

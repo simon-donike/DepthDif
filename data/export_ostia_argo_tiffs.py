@@ -18,7 +18,7 @@ from data.dataset_ostia_argo import OstiaArgoTileDataset
 
 
 class _ParallelTiffExportDataset(Dataset):
-    """Dataset wrapper that exports one OSTIA/Argo sample per item access."""
+    """Dataset wrapper that exports one OSTIA/Argo/GLORYS sample per item access."""
 
     def __init__(
         self,
@@ -27,14 +27,12 @@ class _ParallelTiffExportDataset(Dataset):
         export_indices: list[int],
         output_root: Path,
         manifest_path: Path,
-        argo_depth_indices: tuple[int, ...],
         overwrite: bool,
     ) -> None:
         self.dataset = dataset
         self.export_indices = export_indices
         self.output_root = output_root
         self.manifest_path = manifest_path
-        self.argo_depth_indices = argo_depth_indices
         self.overwrite = bool(overwrite)
 
     def __len__(self) -> int:
@@ -46,7 +44,6 @@ class _ParallelTiffExportDataset(Dataset):
             export_idx,
             output_root=self.output_root,
             manifest_path=self.manifest_path,
-            argo_depth_indices=self.argo_depth_indices,
             overwrite=self.overwrite,
             write_manifest=False,
         )
@@ -110,7 +107,8 @@ def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Export OstiaArgoTileDataset samples as paired GeoTIFFs using a multi-worker "
+            "Export OstiaArgoTileDataset samples as georeferenced OSTIA/ARGO/GLORYS "
+            "GeoTIFF triplets using a multi-worker "
             "PyTorch DataLoader, then write one manifest CSV in the main process."
         )
     )
@@ -124,7 +122,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-root",
         type=Path,
         default=Path("/work/data/depth_v3"),
-        help="Directory containing the output argo/ and ostia/ folders.",
+        help="Directory containing the output argo/, glorys/, and ostia/ folders.",
     )
     parser.add_argument(
         "--manifest-path",
@@ -182,16 +180,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional maximum number of samples to export.",
     )
     parser.add_argument(
-        "--argo-depth-indices",
-        type=int,
-        nargs="+",
-        default=(0, 1, 2),
-        help="Argo depth layers to write into the multi-band TIFF.",
-    )
-    parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Rewrite TIFF pairs even if they already exist.",
+        help="Rewrite TIFF triplets even if they already exist.",
     )
     parser.add_argument(
         "--flush-every",
@@ -262,7 +253,6 @@ def main() -> None:
         export_indices=export_indices,
         output_root=args.output_root,
         manifest_path=manifest_path,
-        argo_depth_indices=tuple(int(idx) for idx in args.argo_depth_indices),
         overwrite=bool(args.overwrite),
     )
 
@@ -282,7 +272,7 @@ def main() -> None:
     records: list[dict[str, Any]] = []
     written_count = 0
     flush_every = max(int(args.flush_every), 1)
-    with tqdm(total=len(export_dataset), desc="Exporting OSTIA/Argo TIFF pairs") as pbar:
+    with tqdm(total=len(export_dataset), desc="Exporting OSTIA/ARGO/GLORYS TIFF triplets") as pbar:
         for record in loader:
             records.append(record)
             written_count += int(record.get("files_written", 0))

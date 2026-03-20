@@ -444,8 +444,11 @@ class OstiaArgoTileDataset(Dataset):
             lat_axis=lat_axis,
             lon_axis=lon_axis,
         )
-        mask_patch_i = np.rint(mask_patch).astype(np.int64, copy=False)
-        land_pixels = np.isfinite(mask_patch) & ((mask_patch_i & land_bit) != 0)
+        finite_mask = np.isfinite(mask_patch)
+        mask_patch_i = np.zeros(mask_patch.shape, dtype=np.int64)
+        # Cast only finite mask values so NaN interpolation gaps do not emit noisy warnings.
+        mask_patch_i[finite_mask] = np.rint(mask_patch[finite_mask]).astype(np.int64, copy=False)
+        land_pixels = finite_mask & ((mask_patch_i & land_bit) != 0)
         if np.any(land_pixels):
             # Use NaN here so temporal averaging ignores land, then __getitem__ collapses leftovers to 0.
             patch = patch.copy()
@@ -1452,15 +1455,34 @@ class OstiaArgoTileDataset(Dataset):
             return ""
         return "|".join(f"{float(depth_value):.3f}" for depth_value in depth_values.tolist())
 
-    def _selected_glorys_depths_for_export(
-        self,
-        *,
-        row: dict[str, Any],
-        argo_depth_indices: tuple[int, ...],
-    ) -> np.ndarray | None:
-        if len(argo_depth_indices) == 0:
-            return None
+    @staticmethod
+    def _count_valid_spatial_observations_from_stack(values: np.ndarray) -> int:
+        stack = np.asarray(values, dtype=np.float32)
+        if stack.ndim != 3:
+            raise RuntimeError(
+                "Expected Argo stack with shape (C,H,W) when counting valid spatial observations, "
+                f"got {tuple(stack.shape)}"
+            )
 
+        finite_mask = np.isfinite(stack)
+        if not np.any(finite_mask):
+            return 0
+
+        # Collapse the saved 3D Argo stack exactly the way the manifest metric is defined:
+        # max across depth channels, then count finite/non-zero spatial pixels.
+        collapsed = np.where(finite_mask, stack, -np.inf).max(axis=0)
+        valid_spatial = np.isfinite(collapsed) & (~np.isclose(collapsed, 0.0, atol=1.0e-8))
+        return int(valid_spatial.sum())
+
+    @classmethod
+    def _count_valid_spatial_observations_from_argo_tif(cls, argo_tif_path: Path) -> int:
+        import rasterio
+
+        with rasterio.open(argo_tif_path) as ds:
+            argo_stack = ds.read().astype(np.float32, copy=False)
+        return cls._count_valid_spatial_observations_from_stack(argo_stack)
+
+    def _glorys_depths_for_export(self, *, row: dict[str, Any]) -> np.ndarray:
         preferred_path: Path | None = None
         if getattr(self, "_glorys_path_col", None) is not None:
             raw_path = self._normalize_index_text(row.get(self._glorys_path_col, ""))
@@ -1469,18 +1491,35 @@ class OstiaArgoTileDataset(Dataset):
 
         glorys_depths = self._get_glorys_target_depths(
             preferred_path=preferred_path,
-            required=False,
+            required=True,
         )
-        if glorys_depths is None:
-            return None
+        return np.asarray(glorys_depths, dtype=np.float64)
 
-        max_requested = max(int(depth_idx) for depth_idx in argo_depth_indices)
-        if max_requested >= int(glorys_depths.size):
-            raise RuntimeError(
-                "Requested GLORYS-aligned Argo export layer is out of range: "
-                f"requested_max={max_requested}, available_levels={glorys_depths.size}"
-            )
-        return glorys_depths[np.asarray(argo_depth_indices, dtype=np.int64)]
+    def _relative_source_index_path(self, value: Any) -> str:
+        normalized = self._normalize_index_text(value)
+        if normalized == "":
+            return ""
+
+        resolved = self._resolve_index_path(normalized)
+        if self._depth_v2_root is None:
+            return normalized
+        try:
+            rel_path = resolved.relative_to(self._depth_v2_root)
+        except ValueError:
+            return normalized
+        return (Path("depth_v2") / rel_path).as_posix()
+
+    @staticmethod
+    def _bbox_wkt(*, lat0: float, lat1: float, lon0: float, lon1: float) -> str:
+        lon_lo = min(float(lon0), float(lon1))
+        lon_hi = max(float(lon0), float(lon1))
+        lat_lo = min(float(lat0), float(lat1))
+        lat_hi = max(float(lat0), float(lat1))
+        return (
+            f"POLYGON(({lon_lo:.6f} {lat_lo:.6f}, {lon_hi:.6f} {lat_lo:.6f}, "
+            f"{lon_hi:.6f} {lat_hi:.6f}, {lon_lo:.6f} {lat_hi:.6f}, "
+            f"{lon_lo:.6f} {lat_lo:.6f}))"
+        )
 
     def _build_export_record(
         self,
@@ -1493,7 +1532,8 @@ class OstiaArgoTileDataset(Dataset):
         filename: str,
         argo_tif_path: Path,
         ostia_tif_path: Path,
-        argo_depth_indices: tuple[int, ...],
+        glorys_tif_path: Path | None,
+        glorys_depths_for_export: np.ndarray,
         files_written: bool,
     ) -> dict[str, Any]:
         lat0 = float(row["lat0"])
@@ -1503,10 +1543,7 @@ class OstiaArgoTileDataset(Dataset):
         centroid_lat = 0.5 * (lat0 + lat1)
         centroid_lon = 0.5 * (lon0 + lon1)
         basename = argo_tif_path.stem
-        selected_glorys_depths = self._selected_glorys_depths_for_export(
-            row=row,
-            argo_depth_indices=argo_depth_indices,
-        )
+        band_count = int(glorys_depths_for_export.size)
 
         record: dict[str, Any] = dict(row)
         record.update(
@@ -1516,33 +1553,45 @@ class OstiaArgoTileDataset(Dataset):
                 "filename": filename,
                 "centroid_lat": float(centroid_lat),
                 "centroid_lon": float(centroid_lon),
-                "ostia_tif_path": ostia_tif_path.resolve().as_posix(),
-                "argo_tif_path": argo_tif_path.resolve().as_posix(),
+                "geometry_wkt": self._bbox_wkt(lat0=lat0, lat1=lat1, lon0=lon0, lon1=lon1),
+                "ostia_tif_path": ostia_tif_path.relative_to(output_root).as_posix(),
+                "argo_tif_path": argo_tif_path.relative_to(output_root).as_posix(),
+                "glorys_tif_path": (
+                    glorys_tif_path.relative_to(output_root).as_posix()
+                    if glorys_tif_path is not None
+                    else ""
+                ),
                 "ostia_filename": ostia_tif_path.name,
                 "argo_filename": argo_tif_path.name,
-                "ostia_rel_path": ostia_tif_path.relative_to(output_root).as_posix(),
-                "argo_rel_path": argo_tif_path.relative_to(output_root).as_posix(),
-                "manifest_csv_path": manifest_path.resolve().as_posix(),
+                "glorys_filename": glorys_tif_path.name if glorys_tif_path is not None else "",
                 "crs": "EPSG:4326",
                 "tile_size": int(self.tile_size),
                 "output_units": self.output_units,
-                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
                 "argo_depth_semantics": "glorys_depth_index",
-                "argo_glorys_depth_m": self._format_depth_values(selected_glorys_depths),
-                "argo_band_count": int(len(argo_depth_indices)),
+                "argo_band_count": band_count,
+                "glorys_band_count": band_count,
                 "ostia_band_count": 1,
                 "files_written": int(files_written),
-                "resolved_ostia_source_path": str(self._resolve_index_path(row[self._ostia_path_col])),
-                "resolved_argo_source_path": (
-                    str(self._resolve_index_path(row[self._argo_path_col]))
+                self._ostia_path_col: self._relative_source_index_path(row[self._ostia_path_col]),
+                self._argo_path_col: (
+                    self._relative_source_index_path(row[self._argo_path_col])
                     if self._argo_path_col is not None
+                    else ""
+                ),
+                self._glorys_path_col: (
+                    self._relative_source_index_path(row[self._glorys_path_col])
+                    if self._glorys_path_col is not None
                     else ""
                 ),
                 "temporal_window_days": int(info.get("temporal_window_days", self.days)),
                 "temporal_rows_count": int(info.get("temporal_rows_count", 0)),
                 "temporal_ostia_days_used": int(info.get("temporal_ostia_days_used", 0)),
+                "temporal_glorys_days_used": int(info.get("temporal_glorys_days_used", 0)),
                 "temporal_argo_days_used": int(info.get("temporal_argo_days_used", 0)),
                 "valid_mask_1d_pixels": int(info.get("valid_mask_1d_pixels", 0)),
+                "argo_valid_spatial_observation_count": int(
+                    info.get("argo_valid_spatial_observation_count", 0)
+                ),
                 "export_skipped_reason": str(info.get("export_skipped_reason", "")),
             }
         )
@@ -1553,20 +1602,17 @@ class OstiaArgoTileDataset(Dataset):
         *,
         row: dict[str, Any],
         x: torch.Tensor,
+        y: torch.Tensor,
         eo: torch.Tensor,
         valid_mask: torch.Tensor,
-        argo_depth_indices: tuple[int, ...],
+        glorys_depths_for_export: np.ndarray,
         argo_tif_path: Path,
         ostia_tif_path: Path,
+        glorys_tif_path: Path,
     ) -> None:
-        argo_np = np.asarray(
-            x[list(argo_depth_indices)].detach().cpu().numpy(),
-            dtype=np.float32,
-        )
-        valid_np = np.asarray(
-            valid_mask[list(argo_depth_indices)].detach().cpu().numpy(),
-            dtype=bool,
-        )
+        argo_np = np.asarray(x.detach().cpu().numpy(), dtype=np.float32)
+        glorys_np = np.asarray(y.detach().cpu().numpy(), dtype=np.float32)
+        valid_np = np.asarray(valid_mask.detach().cpu().numpy(), dtype=bool)
         # Missing Argo pixels are encoded as NaN so downstream loaders can infer validity directly.
         argo_np = np.where(valid_np, argo_np, np.nan).astype(np.float32, copy=False)
         eo_np = np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32)
@@ -1578,10 +1624,15 @@ class OstiaArgoTileDataset(Dataset):
         centroid_lat = 0.5 * (lat0 + lat1)
         centroid_lon = 0.5 * (lon0 + lon1)
         basename = argo_tif_path.stem
-        selected_glorys_depths = self._selected_glorys_depths_for_export(
-            row=row,
-            argo_depth_indices=argo_depth_indices,
+        depth_m_values = (
+            glorys_depths_for_export.tolist()
+            if glorys_depths_for_export.size > 0
+            else []
         )
+        depth_indices = tuple(range(int(glorys_depths_for_export.size)))
+        glorys_source_raw = ""
+        if self._glorys_path_col is not None:
+            glorys_source_raw = self._normalize_index_text(row.get(self._glorys_path_col, ""))
 
         common_tags = {
             "sample_basename": basename,
@@ -1615,14 +1666,12 @@ class OstiaArgoTileDataset(Dataset):
             band_descriptions=tuple(
                 (
                     f"argo_glorys_level_{depth_idx}_{float(depth_m):.3f}m"
-                    if selected_glorys_depths is not None
+                    if np.isfinite(depth_m)
                     else f"argo_glorys_level_{depth_idx}"
                 )
                 for depth_idx, depth_m in zip(
-                    argo_depth_indices,
-                    selected_glorys_depths.tolist()
-                    if selected_glorys_depths is not None
-                    else [np.nan] * len(argo_depth_indices),
+                    depth_indices,
+                    depth_m_values,
                     strict=False,
                 )
             ),
@@ -1634,9 +1683,42 @@ class OstiaArgoTileDataset(Dataset):
                     if self._argo_path_col is not None
                     else ""
                 ),
-                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in argo_depth_indices),
+                "argo_depth_indices": "|".join(str(depth_idx) for depth_idx in depth_indices),
                 "argo_depth_semantics": "glorys_depth_index",
-                "argo_glorys_depth_m": self._format_depth_values(selected_glorys_depths),
+                "argo_glorys_depth_m": self._format_depth_values(glorys_depths_for_export),
+            },
+        )
+        self._write_geotiff(
+            glorys_tif_path,
+            glorys_np,
+            lat0=lat0,
+            lat1=lat1,
+            lon0=lon0,
+            lon1=lon1,
+            band_descriptions=tuple(
+                (
+                    f"glorys_thetao_level_{depth_idx}_{float(depth_m):.3f}m"
+                    if np.isfinite(depth_m)
+                    else f"glorys_thetao_level_{depth_idx}"
+                )
+                for depth_idx, depth_m in zip(
+                    depth_indices,
+                    depth_m_values,
+                    strict=False,
+                )
+            ),
+            tags={
+                **common_tags,
+                "product": "glorys",
+                "source_file": (
+                    str(self._resolve_index_path(glorys_source_raw))
+                    if glorys_source_raw != ""
+                    else ""
+                ),
+                "glorys_var_name": self.glorys_var_name,
+                "glorys_depth_indices": "|".join(str(depth_idx) for depth_idx in depth_indices),
+                "glorys_depth_semantics": "glorys_depth_index",
+                "glorys_depth_m": self._format_depth_values(glorys_depths_for_export),
             },
         )
 
@@ -1646,7 +1728,7 @@ class OstiaArgoTileDataset(Dataset):
         output_root: str | Path = "/work/data/depth_v3",
         *,
         manifest_path: str | Path | None = None,
-        argo_depth_indices: tuple[int, ...] = (0, 1, 2),
+        argo_depth_indices: tuple[int, ...] | None = None,
         overwrite: bool = False,
         write_manifest: bool = True,
     ) -> dict[str, Any]:
@@ -1654,45 +1736,56 @@ class OstiaArgoTileDataset(Dataset):
             raise RuntimeError("save_to_disk requires return_argo_profiles=True.")
 
         row = dict(self._rows[int(idx)])
-        argo_depth_indices = tuple(int(depth_idx) for depth_idx in argo_depth_indices)
-        if len(argo_depth_indices) == 0:
-            raise ValueError("argo_depth_indices must contain at least one layer index.")
-        if min(argo_depth_indices) < 0:
-            raise ValueError("argo_depth_indices must be non-negative.")
+        # Full-stack export is now mandatory so Argo and GLORYS stay vertically aligned on disk.
+        _ = argo_depth_indices
+        glorys_depths_for_export = self._glorys_depths_for_export(row=row)
+        export_band_count = int(glorys_depths_for_export.size)
+        if export_band_count < 1:
+            raise RuntimeError("Full-stack export requires at least one GLORYS depth band.")
 
         output_root = Path(output_root)
         argo_dir = output_root / "argo"
+        glorys_dir = output_root / "glorys"
         ostia_dir = output_root / "ostia"
         argo_dir.mkdir(parents=True, exist_ok=True)
+        glorys_dir.mkdir(parents=True, exist_ok=True)
         ostia_dir.mkdir(parents=True, exist_ok=True)
 
         basename = self._export_basename_from_row(row)
         filename = f"{basename}.tif"
         argo_tif_path = argo_dir / filename
+        glorys_tif_path = glorys_dir / filename
         ostia_tif_path = ostia_dir / filename
         if manifest_path is None:
             manifest_path = output_root / "ostia_argo_tiff_index.csv"
         else:
             manifest_path = Path(manifest_path)
 
-        if argo_tif_path.exists() != ostia_tif_path.exists() and not overwrite:
+        export_paths = (argo_tif_path, glorys_tif_path, ostia_tif_path)
+        export_exists = tuple(path.exists() for path in export_paths)
+        if any(export_exists) and not all(export_exists) and not overwrite:
             raise FileExistsError(
-                "Found only one half of an exported OSTIA/Argo pair. "
+                "Found a partial OSTIA/ARGO/GLORYS export set. "
                 "Delete the partial export or rerun with overwrite=True."
             )
 
-        if argo_tif_path.exists() and ostia_tif_path.exists() and not overwrite:
+        if all(export_exists) and not overwrite:
             # Resumed exports can skip disk-complete samples before expensive sample materialization.
             record = self._build_export_record(
                 idx=int(idx),
                 row=row,
-                info={},
+                info={
+                    "argo_valid_spatial_observation_count": (
+                        self._count_valid_spatial_observations_from_argo_tif(argo_tif_path)
+                    ),
+                },
                 output_root=output_root,
                 manifest_path=manifest_path,
                 filename=filename,
                 argo_tif_path=argo_tif_path,
                 ostia_tif_path=ostia_tif_path,
-                argo_depth_indices=argo_depth_indices,
+                glorys_tif_path=glorys_tif_path,
+                glorys_depths_for_export=glorys_depths_for_export,
                 files_written=False,
             )
             if write_manifest:
@@ -1701,18 +1794,35 @@ class OstiaArgoTileDataset(Dataset):
 
         sample = self.__getitem__(int(idx))
         x = sample["x"]
+        y = sample["y"]
         eo = sample["eo"]
         valid_mask = sample["valid_mask"]
         valid_mask_1d = sample["valid_mask_1d"]
         info = sample.get("info", {})
 
-        if x.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
+        if x.ndim != 3 or y.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
             raise RuntimeError(
                 "Expected sample tensors with shape (C,H,W): "
-                f"x={tuple(x.shape)}, eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
+                f"x={tuple(x.shape)}, y={tuple(y.shape)}, "
+                f"eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
             )
         if eo.shape[0] != 1:
             raise RuntimeError(f"Expected single-band OSTIA tensor, got shape {tuple(eo.shape)}")
+        if y.shape != x.shape:
+            raise RuntimeError(
+                "Expected GLORYS target shape to match Argo shape for export: "
+                f"{tuple(y.shape)} != {tuple(x.shape)}"
+            )
+        if x.shape[0] != export_band_count:
+            raise RuntimeError(
+                "Expected Argo export stack to cover the full GLORYS depth axis: "
+                f"tensor_bands={x.shape[0]}, glorys_depth_levels={export_band_count}"
+            )
+        if y.shape[0] != export_band_count:
+            raise RuntimeError(
+                "Expected GLORYS export stack to cover the full GLORYS depth axis: "
+                f"tensor_bands={y.shape[0]}, glorys_depth_levels={export_band_count}"
+            )
         if valid_mask.shape != x.shape:
             raise RuntimeError(
                 "Expected valid_mask shape to match x shape: "
@@ -1723,15 +1833,19 @@ class OstiaArgoTileDataset(Dataset):
                 "Expected valid_mask_1d shape to be (1,H,W): "
                 f"{tuple(valid_mask_1d.shape)} != {(1, self.tile_size, self.tile_size)}"
             )
-        if x.shape[0] <= max(argo_depth_indices):
-            raise RuntimeError(
-                "Requested Argo layers are not available in this sample: "
-                f"requested={argo_depth_indices}, available_channels={x.shape[0]}"
-            )
 
         valid_mask_1d_pixels = int(valid_mask_1d.sum().item())
+        argo_stack_for_count = np.where(
+            np.asarray(valid_mask.detach().cpu().numpy(), dtype=bool),
+            np.asarray(x.detach().cpu().numpy(), dtype=np.float32),
+            np.nan,
+        ).astype(np.float32, copy=False)
+        argo_valid_spatial_observation_count = self._count_valid_spatial_observations_from_stack(
+            argo_stack_for_count
+        )
+        info = dict(info)
+        info["argo_valid_spatial_observation_count"] = argo_valid_spatial_observation_count
         if valid_mask_1d_pixels < 4:
-            info = dict(info)
             info["valid_mask_1d_pixels"] = valid_mask_1d_pixels
             info["export_skipped_reason"] = "valid_mask_1d_pixels_lt_4"
             return self._build_export_record(
@@ -1743,20 +1857,23 @@ class OstiaArgoTileDataset(Dataset):
                 filename=filename,
                 argo_tif_path=argo_tif_path,
                 ostia_tif_path=ostia_tif_path,
-                argo_depth_indices=argo_depth_indices,
+                glorys_tif_path=glorys_tif_path,
+                glorys_depths_for_export=glorys_depths_for_export,
                 files_written=False,
             )
 
         files_written = False
-        if overwrite or (not argo_tif_path.exists() and not ostia_tif_path.exists()):
+        if overwrite or not any(export_exists):
             self._write_sample_tiffs(
                 row=row,
                 x=x,
+                y=y,
                 eo=eo,
                 valid_mask=valid_mask,
-                argo_depth_indices=argo_depth_indices,
+                glorys_depths_for_export=glorys_depths_for_export,
                 argo_tif_path=argo_tif_path,
                 ostia_tif_path=ostia_tif_path,
+                glorys_tif_path=glorys_tif_path,
             )
             files_written = True
 
@@ -1769,7 +1886,8 @@ class OstiaArgoTileDataset(Dataset):
             filename=filename,
             argo_tif_path=argo_tif_path,
             ostia_tif_path=ostia_tif_path,
-            argo_depth_indices=argo_depth_indices,
+            glorys_tif_path=glorys_tif_path,
+            glorys_depths_for_export=glorys_depths_for_export,
             files_written=files_written,
         )
         if write_manifest:
