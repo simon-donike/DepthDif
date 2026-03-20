@@ -19,9 +19,11 @@ class OstiaArgoTiffDataset(Dataset):
 
     DEFAULT_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
     DEFAULT_CSV_PATH = "/work/data/depth_v3/ostia_argo_tiff_index.csv"
-    REQUIRED_PATH_COLUMNS = ("ostia_tif_path", "argo_tif_path")
+    REQUIRED_PATH_COLUMNS = ("ostia_tif_path", "argo_tif_path", "glorys_tif_path")
     GLORYS_PATH_CANDIDATE_COLUMNS = ("glorys_tif_path",)
     SPLIT_CANDIDATE_COLUMNS = ("phase", "split")
+    GLORYS_PACK_SCALE = 100.0
+    GLORYS_PACK_NODATA = np.int16(-32768)
 
     def __init__(
         self,
@@ -55,6 +57,11 @@ class OstiaArgoTiffDataset(Dataset):
             if candidate in df.columns:
                 self._glorys_path_col = candidate
                 break
+        if self._glorys_path_col is None:
+            raise RuntimeError(
+                "Index is missing GLORYS TIFF path column. "
+                f"Expected one of {list(self.GLORYS_PATH_CANDIDATE_COLUMNS)}."
+            )
 
         split_col = None
         for candidate in self.SPLIT_CANDIDATE_COLUMNS:
@@ -136,17 +143,48 @@ class OstiaArgoTiffDataset(Dataset):
     @staticmethod
     def _load_tiff(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
         with rasterio.open(path) as ds:
-            arr = ds.read().astype(np.float32, copy=False)
+            arr = ds.read()
             meta = {
                 "height": int(ds.height),
                 "width": int(ds.width),
                 "transform": ds.transform,
                 "crs": ds.crs.to_string() if ds.crs is not None else "",
                 "band_descriptions": tuple(str(desc or "") for desc in ds.descriptions),
+                "dtype": str(ds.dtypes[0]).lower() if ds.count > 0 else "",
+                "nodata": ds.nodata,
+                "tags": dict(ds.tags()),
             }
         if arr.ndim != 3:
             raise RuntimeError(f"Unexpected TIFF shape at {path}: {tuple(arr.shape)}")
         return arr, meta
+
+    @classmethod
+    def _decode_glorys_tiff(
+        cls,
+        *,
+        path: Path,
+        arr: np.ndarray,
+        meta: dict[str, Any],
+    ) -> np.ndarray:
+        dtype = str(meta.get("dtype", "")).lower()
+        tags = meta.get("tags", {})
+        encoding = str(tags.get("value_encoding", "")).strip().lower()
+        expected_encoding = "packed_int16_celsius_x100"
+        if dtype != "int16" or encoding != expected_encoding:
+            raise RuntimeError(
+                "Packed-only GLORYS loading expects int16 GeoTIFFs tagged with "
+                f"value_encoding={expected_encoding!r}, got dtype={dtype!r}, "
+                f"encoding={encoding!r} at {path}"
+            )
+
+        scale = float(tags.get("scale_factor", "0.01"))
+        add_offset = float(tags.get("add_offset", "0.0"))
+        packed_nodata = int(tags.get("packed_nodata", str(int(cls.GLORYS_PACK_NODATA))))
+        out = arr.astype(np.float32, copy=False)
+        nodata_mask = arr == np.int16(packed_nodata)
+        out = out * np.float32(scale) + np.float32(add_offset)
+        out[nodata_mask] = np.nan
+        return out
 
     @staticmethod
     def _assert_raster_alignment(
@@ -205,14 +243,17 @@ class OstiaArgoTiffDataset(Dataset):
         row = self._rows[int(idx)]
         ostia_path = self._resolve_index_path(row["ostia_tif_path"])
         argo_path = self._resolve_index_path(row["argo_tif_path"])
-        glorys_path: Path | None = None
-        if self._glorys_path_col is not None:
-            glorys_raw = self._normalize_index_text(row.get(self._glorys_path_col, ""))
-            if glorys_raw != "":
-                glorys_path = self._resolve_index_path(glorys_raw)
+        glorys_raw = self._normalize_index_text(row.get(self._glorys_path_col, ""))
+        if glorys_raw == "":
+            raise RuntimeError(
+                "Packed GLORYS disk dataset requires a non-empty glorys_tif_path in every row."
+            )
+        glorys_path = self._resolve_index_path(glorys_raw)
 
-        eo_np, eo_meta = self._load_tiff(ostia_path)
-        x_np, x_meta = self._load_tiff(argo_path)
+        eo_np_raw, eo_meta = self._load_tiff(ostia_path)
+        x_np_raw, x_meta = self._load_tiff(argo_path)
+        eo_np = eo_np_raw.astype(np.float32, copy=False)
+        x_np = x_np_raw.astype(np.float32, copy=False)
         if eo_np.shape[0] != 1:
             raise RuntimeError(
                 f"Expected single-band OSTIA GeoTIFF at {ostia_path}, got shape {tuple(eo_np.shape)}"
@@ -224,17 +265,18 @@ class OstiaArgoTiffDataset(Dataset):
             other_meta=x_meta,
         )
 
-        if glorys_path is not None:
-            y_np, y_meta = self._load_tiff(glorys_path)
-            self._assert_raster_alignment(
-                reference_path=ostia_path,
-                reference_meta=eo_meta,
-                other_path=glorys_path,
-                other_meta=y_meta,
-            )
-        else:
-            # Older exports only stored OSTIA/Argo pairs; keep them readable.
-            y_np = x_np.copy()
+        y_np_raw, y_meta = self._load_tiff(glorys_path)
+        self._assert_raster_alignment(
+            reference_path=ostia_path,
+            reference_meta=eo_meta,
+            other_path=glorys_path,
+            other_meta=y_meta,
+        )
+        y_np = self._decode_glorys_tiff(
+            path=glorys_path,
+            arr=y_np_raw,
+            meta=y_meta,
+        )
 
         if y_np.shape != x_np.shape:
             raise RuntimeError(

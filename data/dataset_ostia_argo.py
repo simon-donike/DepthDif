@@ -36,6 +36,8 @@ class OstiaArgoTileDataset(Dataset):
     GLORYS_DEPTH_COORD_NAME = "depth"
     GLORYS_RELATIVE_DEPTH_CUTOFF = 0.10
     GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M = 10.0
+    GLORYS_PACK_SCALE = 100.0
+    GLORYS_PACK_NODATA = np.int16(-32768)
 
     def __init__(
         self,
@@ -1370,12 +1372,20 @@ class OstiaArgoTileDataset(Dataset):
         lon0: float,
         lon1: float,
         band_descriptions: tuple[str, ...],
+        dtype: str = "float32",
+        nodata: float | int = np.nan,
+        predictor: int = 3,
         tags: dict[str, Any] | None = None,
     ) -> None:
         import rasterio
         from rasterio.transform import from_bounds
 
-        data = np.asarray(values, dtype=np.float32)
+        if dtype == "float32":
+            data = np.asarray(values, dtype=np.float32)
+        elif dtype == "int16":
+            data = np.asarray(values, dtype=np.int16)
+        else:
+            raise RuntimeError(f"Unsupported GeoTIFF export dtype: {dtype}")
         if data.ndim == 2:
             data = data[np.newaxis, :, :]
         elif data.ndim != 3:
@@ -1408,18 +1418,44 @@ class OstiaArgoTileDataset(Dataset):
             width=int(width),
             height=int(height),
             count=int(count),
-            dtype="float32",
+            dtype=dtype,
             crs="EPSG:4326",
             transform=transform,
-            nodata=np.nan,
+            nodata=nodata,
             compress="deflate",
-            predictor=3,
+            predictor=int(predictor),
         ) as dst:
             dst.write(north_up)
             for band_idx, desc in enumerate(band_descriptions, start=1):
                 dst.set_band_description(band_idx, str(desc))
             if tags:
                 dst.update_tags(**{key: str(value) for key, value in tags.items() if value is not None})
+
+    @classmethod
+    def _pack_glorys_int16(cls, values: np.ndarray) -> np.ndarray:
+        glorys = np.asarray(values, dtype=np.float32)
+        if glorys.ndim != 3:
+            raise RuntimeError(
+                "Expected GLORYS stack with shape (C,H,W) for int16 packing, "
+                f"got {tuple(glorys.shape)}"
+            )
+
+        packed = np.full(glorys.shape, cls.GLORYS_PACK_NODATA, dtype=np.int16)
+        finite_mask = np.isfinite(glorys)
+        if not np.any(finite_mask):
+            return packed
+
+        scaled = np.rint(glorys[finite_mask] * np.float32(cls.GLORYS_PACK_SCALE)).astype(
+            np.int32,
+            copy=False,
+        )
+        int16_info = np.iinfo(np.int16)
+        valid_min = int(int16_info.min) + 1
+        valid_max = int(int16_info.max)
+        if np.any((scaled < valid_min) | (scaled > valid_max)):
+            raise RuntimeError("Packed GLORYS value exceeded int16 range after x100 scaling.")
+        packed[finite_mask] = scaled.astype(np.int16, copy=False)
+        return packed
 
     @staticmethod
     def _append_manifest_record(manifest_path: Path, record: dict[str, Any]) -> None:
@@ -1690,7 +1726,7 @@ class OstiaArgoTileDataset(Dataset):
         )
         self._write_geotiff(
             glorys_tif_path,
-            glorys_np,
+            self._pack_glorys_int16(glorys_np),
             lat0=lat0,
             lat1=lat1,
             lon0=lon0,
@@ -1719,7 +1755,15 @@ class OstiaArgoTileDataset(Dataset):
                 "glorys_depth_indices": "|".join(str(depth_idx) for depth_idx in depth_indices),
                 "glorys_depth_semantics": "glorys_depth_index",
                 "glorys_depth_m": self._format_depth_values(glorys_depths_for_export),
+                "glorys_storage_format": "packed_int16_celsius_x100",
+                "value_encoding": "packed_int16_celsius_x100",
+                "scale_factor": "0.01",
+                "add_offset": "0.0",
+                "packed_nodata": str(int(self.GLORYS_PACK_NODATA)),
             },
+            dtype="int16",
+            nodata=int(self.GLORYS_PACK_NODATA),
+            predictor=2,
         )
 
     def save_to_disk(
