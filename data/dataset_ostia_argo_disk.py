@@ -319,6 +319,7 @@ class OstiaArgoTiffDataset(Dataset):
         self,
         idx: int,
         output_path: str | Path | None = None,
+        depth_level: int = 0,
     ) -> Path:
         """Save one sample as a single matplotlib figure in the repo temp directory."""
         import matplotlib.pyplot as plt
@@ -332,6 +333,7 @@ class OstiaArgoTiffDataset(Dataset):
         land_mask = sample["land_mask"]
         y = sample["y"]
         info = sample.get("info", {})
+        depth_level = int(depth_level)
 
         if eo.ndim != 3 or x.ndim != 3 or valid_mask.ndim != 3 or land_mask.ndim != 3 or y.ndim != 3:
             raise RuntimeError(
@@ -339,37 +341,43 @@ class OstiaArgoTiffDataset(Dataset):
                 f"eo={tuple(eo.shape)}, x={tuple(x.shape)}, y={tuple(y.shape)}, "
                 f"valid_mask={tuple(valid_mask.shape)}, land_mask={tuple(land_mask.shape)}"
             )
+        if depth_level < 0 or depth_level >= int(x.shape[0]):
+            raise RuntimeError(
+                f"depth_level={depth_level} is out of range for sample with {int(x.shape[0])} depth bands."
+            )
+        if int(y.shape[0]) <= depth_level or int(valid_mask.shape[0]) <= depth_level or int(land_mask.shape[0]) <= depth_level:
+            raise RuntimeError(
+                "Expected x, y, valid_mask, and land_mask to all include the requested depth level: "
+                f"depth_level={depth_level}, x={tuple(x.shape)}, y={tuple(y.shape)}, "
+                f"valid_mask={tuple(valid_mask.shape)}, land_mask={tuple(land_mask.shape)}"
+            )
 
         panels.append((np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32), "eo[0]"))
-        for channel_idx in range(x.shape[0]):
-            panels.append(
-                (
-                    np.asarray(x[channel_idx].detach().cpu().numpy(), dtype=np.float32),
-                    f"x[{channel_idx}]",
-                )
+        panels.append(
+            (
+                np.asarray(x[depth_level].detach().cpu().numpy(), dtype=np.float32),
+                f"x[{depth_level}]",
             )
-        for channel_idx in range(y.shape[0]):
-            panels.append(
-                (
-                    np.asarray(y[channel_idx].detach().cpu().numpy(), dtype=np.float32),
-                    f"y[{channel_idx}]",
-                )
+        )
+        panels.append(
+            (
+                np.asarray(y[depth_level].detach().cpu().numpy(), dtype=np.float32),
+                f"y[{depth_level}]",
             )
-        for channel_idx in range(valid_mask.shape[0]):
-            # Cast boolean masks to float so imshow produces a stable binary visualization.
-            panels.append(
-                (
-                    np.asarray(valid_mask[channel_idx].detach().cpu().numpy(), dtype=np.float32),
-                    f"valid_mask[{channel_idx}]",
-                )
+        )
+        # Cast boolean masks to float so imshow produces a stable binary visualization.
+        panels.append(
+            (
+                np.asarray(valid_mask[depth_level].detach().cpu().numpy(), dtype=np.float32),
+                f"valid_mask[{depth_level}]",
             )
-        for channel_idx in range(land_mask.shape[0]):
-            panels.append(
-                (
-                    np.asarray(land_mask[channel_idx].detach().cpu().numpy(), dtype=np.float32),
-                    f"land_mask[{channel_idx}]",
-                )
+        )
+        panels.append(
+            (
+                np.asarray(land_mask[depth_level].detach().cpu().numpy(), dtype=np.float32),
+                f"land_mask[{depth_level}]",
             )
+        )
 
         if output_path is None:
             output_path = Path("temp") / f"ostia_argo_tiff_sample_{int(idx)}.png"
@@ -402,7 +410,7 @@ class OstiaArgoTiffDataset(Dataset):
         info_ax.text(
             0.0,
             1.0,
-            f"idx={int(idx)}\ndate={sample['date']}\ncoords={coords_text}\n\ninfo={info_text}",
+            f"idx={int(idx)}\ndepth_level={depth_level}\ndate={sample['date']}\ncoords={coords_text}\n\ninfo={info_text}",
             ha="left",
             va="top",
             fontsize=9,
@@ -413,14 +421,14 @@ class OstiaArgoTiffDataset(Dataset):
         for ax in axes_flat[n_panels:]:
             ax.set_axis_off()
 
-        fig.suptitle(f"OstiaArgoTiffDataset sample {int(idx)}", fontsize=12)
+        fig.suptitle(f"OstiaArgoTiffDataset sample {int(idx)} depth {depth_level}", fontsize=12)
         fig.savefig(out_path, dpi=160)
         plt.close(fig)
         return out_path
 
 
 if __name__ == "__main__":
-    dataset = OstiaArgoTiffDataset(split="all")
+    dataset = OstiaArgoTiffDataset(csv_path="/work/data/depth_prod/ostia_argo_tiff_index.csv", split="all")
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     dataset.save_sample_figure_to_temp(0)
@@ -432,19 +440,3 @@ if __name__ == "__main__":
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
 
-
-"""
-
-/work/envs/depth/bin/python data/export_ostia_argo_tiffs.py \
-  --csv-path /data1/datasets/depth_v2/ostia_patch_index_daily.csv \
-  --output-root /work/data/depth_prod \
-  --days 7 \
-  --num-workers 10 \
-  --prefetch-factor 4 \
-  --shuffle \
-  --shuffle-block-size 500 \
-  --flush-every 100 \
-  --start-index 0
-
-
-"""

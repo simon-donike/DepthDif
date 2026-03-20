@@ -292,3 +292,20 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+"""
+
+/work/envs/depth/bin/python data/export_ostia_argo_tiffs.py \
+  --csv-path /data1/datasets/depth_v2/ostia_patch_index_daily.csv \
+  --output-root /work/data/depth_prod \
+  --days 7 \
+  --num-workers 10 \
+  --prefetch-factor 4 \
+  --shuffle \
+  --shuffle-block-size 500 \
+  --flush-every 100 \
+  --start-index 0
+
+
+"""
