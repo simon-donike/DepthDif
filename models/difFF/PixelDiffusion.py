@@ -1478,6 +1478,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             return
 
         x, y, eo, valid_mask, land_mask, coords, date = self._cached_val_example
+        target = x if self.ambient_occlusion_enabled else y
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
         total_steps = 0
@@ -1512,13 +1513,13 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
-        y_denorm = temperature_normalize(mode="denorm", tensor=y)
+        target_denorm = temperature_normalize(mode="denorm", tensor=target)
         eo_denorm = (
             temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
         )
 
-        recon_batch_size = int(y_denorm.size(0))
-        recon_mse = torch.mean((y_hat_denorm - y_denorm) ** 2)
+        recon_batch_size = int(target_denorm.size(0))
+        recon_mse = torch.mean((y_hat_denorm - target_denorm) ** 2)
         recon_psnr = None
         recon_ssim = None
         # Calculate PSNR and SSIM over samples and bands and average them,
@@ -1526,7 +1527,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         try:
             from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
-            y_np = y_denorm.detach().float().cpu().numpy()
+            y_np = target_denorm.detach().float().cpu().numpy()
             y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
             if y_np.ndim == 2:
                 y_np = y_np[None, None, ...]
@@ -1597,7 +1598,9 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sync_dist=self._should_sync_dist(),
                 batch_size=recon_batch_size,
             )
-        self._log_validation_triplet_stats(x=x_denorm, y=y_denorm, y_hat=y_hat_denorm)
+        self._log_validation_triplet_stats(
+            x=x_denorm, y=target_denorm, y_hat=y_hat_denorm
+        )
         self._log_common_batch_stats(
             y_hat_denorm,
             prefix="val_pred",
@@ -1606,7 +1609,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
         )
         self._log_common_batch_stats(
-            y_denorm,
+            target_denorm,
             prefix="val_target",
             batch_size=recon_batch_size,
             on_step=False,
@@ -1618,7 +1621,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             x=x_denorm,
             eo=eo_denorm,
             y_hat=y_hat_denorm_for_plot,
-            y_target=y_denorm,
+            y_target=target_denorm,
             valid_mask=valid_mask,
             land_mask=land_mask,
             prefix="val_imgs",
@@ -1629,7 +1632,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         log_wandb_depth_level_reconstruction_grid(
             logger=self.logger,
             y_hat=y_hat_denorm_for_plot,
-            y_target=y_denorm,
+            y_target=target_denorm,
             valid_mask=valid_mask,
             eo=eo_denorm,
             land_mask=land_mask,
@@ -1647,15 +1650,15 @@ class PixelDiffusionConditional(pl.LightningModule):
                 total_steps=total_steps,
                 sampler=sampler_for_val,
                 conditioning_image=x,
-                ground_truth=y,
+                ground_truth=target,
                 valid_mask=valid_mask,
                 land_mask=land_mask,
                 prefix="val_imgs",
                 cmap=PLOT_CMAP,
             )
         # Drop local tensor refs from this heavy validation path promptly.
-        del recon_mse, y_hat, pred, pred_batch, y, x
-        del y_denorm, y_hat_denorm, y_hat_denorm_for_plot, x_denorm, eo_denorm
+        del recon_mse, y_hat, pred, pred_batch, y, x, target
+        del target_denorm, y_hat_denorm, y_hat_denorm_for_plot, x_denorm, eo_denorm
         gc.collect()
 
     def on_validation_epoch_end(self) -> None:
@@ -1709,20 +1712,24 @@ class PixelDiffusionConditional(pl.LightningModule):
                 self.ambient_apply_to_noisy_branch
             )
 
+        # Ambient mode is self-supervised on x: condition on a further-corrupted x and
+        # reconstruct the original x over the original observed support. Standard mode
+        # keeps the original y-target training path.
+        target = x if self.ambient_occlusion_enabled else y
         model_condition = self._prepare_condition_for_model(
             condition_x, condition_valid_mask, eo=eo
         )
-        y_t = self.input_T(y)
+        target_t = self.input_T(target)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            y_t, prefix="train_target", batch_size=int(y.size(0))
+            target_t, prefix="train_target", batch_size=int(target.size(0))
         )
         self._log_pre_diffusion_stats(
-            model_condition, prefix="train_condition", batch_size=int(y.size(0))
+            model_condition, prefix="train_condition", batch_size=int(target.size(0))
         )
         # Conditional p_loss uses x as context while learning selected denoising target.
         loss = self.model.p_loss(
-            y_t,
+            target_t,
             model_condition,
             valid_mask=original_valid_mask,
             land_mask=land_mask,
@@ -1742,7 +1749,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=True,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=target.size(0),
         )
 
         if self.ambient_occlusion_enabled and further_valid_mask is not None:
@@ -1759,7 +1766,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=False,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
             self.log(
                 "train/ambient_observed_fraction_original",
@@ -1768,7 +1775,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=False,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
             self.log(
                 "train/ambient_observed_fraction_further",
@@ -1777,7 +1784,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=False,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
@@ -1788,10 +1795,12 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_step=True,
                 on_epoch=False,
                 logger=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
 
-        self._log_common_batch_stats(y, prefix="train", batch_size=int(y.size(0)))
+        self._log_common_batch_stats(
+            target, prefix="train", batch_size=int(target.size(0))
+        )
         return loss
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -1832,20 +1841,23 @@ class PixelDiffusionConditional(pl.LightningModule):
                 self.ambient_apply_to_noisy_branch
             )
 
+        # Keep validation aligned with training: ambient mode evaluates the
+        # self-supervised x-reconstruction objective, while standard mode uses y.
+        target = x if self.ambient_occlusion_enabled else y
         model_condition = self._prepare_condition_for_model(
             condition_x, condition_valid_mask, eo=eo
         )
-        y_t = self.input_T(y)
+        target_t = self.input_T(target)
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            y_t, prefix="val_target", batch_size=int(y.size(0))
+            target_t, prefix="val_target", batch_size=int(target.size(0))
         )
         self._log_pre_diffusion_stats(
-            model_condition, prefix="val_condition", batch_size=int(y.size(0))
+            model_condition, prefix="val_condition", batch_size=int(target.size(0))
         )
         # Same training objective for validation; full reverse-chain recon is logged at epoch end.
         loss = self.model.p_loss(
-            y_t,
+            target_t,
             model_condition,
             valid_mask=original_valid_mask,
             land_mask=land_mask,
@@ -1865,7 +1877,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=True,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=target.size(0),
         )
         loss_ckpt = torch.nan_to_num(loss.detach(), nan=1e9, posinf=1e9, neginf=1e9)
         self.log(
@@ -1876,7 +1888,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             prog_bar=False,
             logger=True,
             sync_dist=True,
-            batch_size=y.size(0),
+            batch_size=target.size(0),
         )
 
         if self.ambient_occlusion_enabled and further_valid_mask is not None:
@@ -1893,7 +1905,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
             self.log(
                 "val/ambient_observed_fraction_original",
@@ -1902,7 +1914,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
             self.log(
                 "val/ambient_observed_fraction_further",
@@ -1911,7 +1923,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 logger=True,
                 sync_dist=True,
-                batch_size=y.size(0),
+                batch_size=target.size(0),
             )
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:

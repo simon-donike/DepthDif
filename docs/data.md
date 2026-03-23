@@ -67,9 +67,8 @@ Default outputs in `depth_v2`:
 - `/data1/datasets/depth_v2/ostia_patch_index_daily.csv`  
   
 ## Implemented Dataset  
-Current configs support `eo_4band` and `ostia`.  
-- `configs/px_space/data_config.yaml`: legacy same-source `eo_4band`  
-- `configs/px_space/data_ostia.yaml`: OSTIA-conditioned `ostia`  
+Current active pixel-space config supports `ostia_argo_disk`.  
+- `configs/px_space/data_ostia_argo_disk.yaml`: exported GeoTIFF manifest-backed `ostia_argo_disk`  
 - `configs/lat_space/data_config.yaml`: latent-workflow data preset (currently `eo_4band` default)  
 For latent training flow, see [Autoencoder + Latent Diffusion](autoencoder.md).  
   

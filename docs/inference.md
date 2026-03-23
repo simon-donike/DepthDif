@@ -27,8 +27,7 @@ At the top of `inference.py`, set:
   
 ### Note on default paths  
 The script constants should be set explicitly. In this repository, the actively used configs are:  
-- EO/OSTIA setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia.yaml`, `configs/px_space/training_config.yaml`  
-- legacy same-source EO setup: swap to `configs/px_space/data_config.yaml`  
+- OSTIA + Argo disk setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
   
 ## Workflow 2: Direct `predict_step`  
 The model inference entry point is:  
@@ -56,22 +55,22 @@ Common optional keys:
 - `x0_denoise_samples`: per-step x0 predictions (if requested)  
 - `sampler`: sampler used for prediction  
   
-## Example (`eo_4band` config)  
+## Example (`ostia_argo_disk` config)  
 ```python  
 import torch  
   
 from data.datamodule import DepthTileDataModule  
-from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset  
+from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset  
 from models.difFF import PixelDiffusionConditional  
   
 model_config = "configs/px_space/model_config.yaml"  
-data_config = "configs/px_space/data_ostia.yaml"  
+data_config = "configs/px_space/data_ostia_argo_disk.yaml"  
 train_config = "configs/px_space/training_config.yaml"  
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"  
   
-dataset = SurfaceTempPatch4BandsLightDataset.from_config(data_config, split="all")  
-datamodule = DepthTileDataModule(dataset=dataset)  
-datamodule.setup("fit")  
+train_dataset = OstiaArgoTiffDataset.from_config(data_config, split="train")  
+val_dataset = OstiaArgoTiffDataset.from_config(data_config, split="val")  
+datamodule = DepthTileDataModule(dataset=train_dataset, val_dataset=val_dataset)  
   
 model = PixelDiffusionConditional.from_config(  
     model_config_path=model_config,  
@@ -92,8 +91,6 @@ with torch.no_grad():
 y_hat = pred["y_hat"]  
 y_hat_denorm = pred["y_hat_denorm"]  
 ```  
-  
-For `dataset_variant="ostia"`, use `SurfaceTempPatchOstiaLightDataset`; the overlap CSV with `ostia_npy_path` is selected automatically from `dataset_variant`.  
   
 ## Sampler Choice  
 Validation/inference sampler can be switched via training config:  

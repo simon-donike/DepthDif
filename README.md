@@ -37,36 +37,32 @@ python -m pip install -r requirements.txt
   
 DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image.  
   
-Ambient-occlusion training (paper-faithful objective for occluded tasks) is available via `model.ambient_occlusion.*`: the model receives a further-corrupted mask/input during training while loss is evaluated on the originally observed pixels. At timestep `t`, clean target `x_0` is noised as  
+Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the originally observed `x` pixels. At timestep `t`, clean target `x_0` is noised as  
 `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, with `epsilon ~ N(0, I)`.  
-With an observed mask `m` and further-corrupted training mask `m' <= m`, the network predicts noise from the ambient input (`x_t * m'`, condition) and is optimized with  
+With an observed mask `m` and further-corrupted training mask `m' <= m`, the network predicts from the ambient input (`x_t * m'`, condition) and is optimized with  
 `L = E[ || (epsilon - epsilon_theta(x_t * m', cond, t)) * m ||_2^2 ]`.  
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.  
 ![depthdif_schema](docs/assets/depthdif_schema.png)  
   
 ## Training  
   
-EO + multiband training:  
-  
+OSTIA + Argo disk training:  
+
 ```bash  
 python train.py \  
-  --data-config configs/px_space/data_ostia.yaml \  
+  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config.yaml  
 ```  
-  
-Legacy same-source EO config: `configs/px_space/data_config.yaml`  
-  
+
 Ambient-occlusion objective example:  
-  
+
 ```bash  
 python train.py \  
-  --data-config configs/px_space/data_ostia.yaml \  
+  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
   --train-config configs/px_space/training_config.yaml \  
-  --model-config configs/px_space/model_config.yaml \  
-  --set model.model.ambient_occlusion.enabled=true \  
-  --set model.model.ambient_occlusion.further_drop_prob=0.1 \  
-  --set training.wandb.run_name=ambient_synth_v1  
+  --model-config configs/px_space/model_config_ambient.yaml \  
+  --set training.wandb.run_name=ambient_ostia_argo_disk_v1  
 ```  
   
 Notes:  
@@ -82,8 +78,7 @@ Use `inference.py`:
   
 1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:  
-   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia.yaml`, `configs/px_space/training_config.yaml`  
-   (legacy same-source EO uses `configs/px_space/data_config.yaml`).  
+   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
 2. Choose `MODE` (`"dataloader"` or `"random"`).  
 3. Run:  
   
