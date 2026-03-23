@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import tempfile
 import sys
 from typing import Any
 
@@ -101,7 +102,23 @@ def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
         for export_index in sorted(merged_records)
     ]
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame.from_records(ordered_records).to_csv(manifest_path, index=False)
+    # Replace the manifest atomically so concurrent dataset readers never see a
+    # truncated CSV while the exporter is flushing progress.
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=manifest_path.parent,
+        prefix=f"{manifest_path.stem}.",
+        suffix=manifest_path.suffix,
+        delete=False,
+    ) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+    try:
+        pd.DataFrame.from_records(ordered_records).to_csv(tmp_path, index=False)
+        tmp_path.replace(manifest_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -24,6 +24,7 @@ class OstiaArgoTiffDataset(Dataset):
     SPLIT_CANDIDATE_COLUMNS = ("phase", "split")
     GLORYS_PACK_SCALE = 100.0
     GLORYS_PACK_NODATA = np.int16(-32768)
+    EXPORT_SKIPPED_REASON_COLUMN = "export_skipped_reason"
 
     def __init__(
         self,
@@ -79,8 +80,9 @@ class OstiaArgoTiffDataset(Dataset):
         elif self.split != "all":
             raise ValueError("split must be one of: 'all', 'train', 'val'")
 
+        df = self._filter_available_exports(df)
         if len(df) == 0:
-            raise RuntimeError("Dataset is empty after split filtering.")
+            raise RuntimeError("Dataset is empty after split/export-availability filtering.")
 
         self._rows = df.to_dict(orient="records")
 
@@ -135,6 +137,19 @@ class OstiaArgoTiffDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self._rows)
+
+    @classmethod
+    def _filter_available_exports(cls, df: pd.DataFrame) -> pd.DataFrame:
+        if cls.EXPORT_SKIPPED_REASON_COLUMN not in df.columns:
+            return df.reset_index(drop=True)
+
+        skipped_reason = (
+            df[cls.EXPORT_SKIPPED_REASON_COLUMN].fillna("").astype(str).str.strip().str.lower()
+        )
+        # Export manifests can include rows that were intentionally skipped and therefore
+        # never produced TIFFs. Keep only rows without a concrete skip reason.
+        available_mask = skipped_reason.isin(MISSING_TEXT_VALUES)
+        return df.loc[available_mask].reset_index(drop=True)
 
     def _resolve_index_path(self, path_value: Any) -> Path:
         path = Path(str(path_value))
@@ -264,6 +279,15 @@ class OstiaArgoTiffDataset(Dataset):
                 "Packed GLORYS disk dataset requires a non-empty glorys_tif_path in every row."
             )
         glorys_path = self._resolve_index_path(glorys_raw)
+        missing_paths = [
+            str(path) for path in (ostia_path, argo_path, glorys_path) if not path.exists()
+        ]
+        if missing_paths:
+            raise FileNotFoundError(
+                "Manifest row points to missing exported TIFFs. "
+                f"idx={int(idx)}, export_index={row.get('export_index', '')}, "
+                f"missing_paths={missing_paths}"
+            )
 
         eo_np_raw, eo_meta = self._load_tiff(ostia_path)
         x_np_raw, x_meta = self._load_tiff(argo_path)
@@ -345,16 +369,25 @@ class OstiaArgoTiffDataset(Dataset):
         eo = sample["eo"]
         x = sample["x"]
         valid_mask = sample["valid_mask"]
+        valid_mask_1d = sample["valid_mask_1d"]
         land_mask = sample["land_mask"]
         y = sample["y"]
         info = sample.get("info", {})
         depth_level = int(depth_level)
 
-        if eo.ndim != 3 or x.ndim != 3 or valid_mask.ndim != 3 or land_mask.ndim != 3 or y.ndim != 3:
+        if (
+            eo.ndim != 3
+            or x.ndim != 3
+            or valid_mask.ndim != 3
+            or valid_mask_1d.ndim != 3
+            or land_mask.ndim != 3
+            or y.ndim != 3
+        ):
             raise RuntimeError(
                 "Expected image-like sample tensors with shape (C,H,W): "
                 f"eo={tuple(eo.shape)}, x={tuple(x.shape)}, y={tuple(y.shape)}, "
-                f"valid_mask={tuple(valid_mask.shape)}, land_mask={tuple(land_mask.shape)}"
+                f"valid_mask={tuple(valid_mask.shape)}, valid_mask_1d={tuple(valid_mask_1d.shape)}, "
+                f"land_mask={tuple(land_mask.shape)}"
             )
         if depth_level < 0 or depth_level >= int(x.shape[0]):
             raise RuntimeError(
@@ -389,8 +422,8 @@ class OstiaArgoTiffDataset(Dataset):
         # Cast boolean masks to float so imshow produces a stable binary visualization.
         panels.append(
             (
-                np.asarray(valid_mask[depth_level].detach().cpu().numpy(), dtype=np.float32),
-                f"valid_mask[{depth_level}]",
+                np.asarray(valid_mask_1d[0].detach().cpu().numpy(), dtype=np.float32),
+                "valid_mask_1d[0]",
             )
         )
         panels.append(
@@ -452,7 +485,7 @@ if __name__ == "__main__":
     dataset = OstiaArgoTiffDataset(csv_path="/work/data/depth_prod/ostia_argo_tiff_index.csv", split="all")
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
-    dataset.save_sample_figure_to_temp(0)
+    dataset.save_sample_figure_to_temp(1)
     print(f"Sample keys: {list(sample.keys())}")
     print(
         f"eo shape: {tuple(sample['eo'].shape)}, x shape: {tuple(sample['x'].shape)}, "
