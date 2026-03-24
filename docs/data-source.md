@@ -69,7 +69,7 @@ Example ARGO profile in 3D:
 Important: `z` shows the netCDF dimension (400), not actual depth. 
 
 ## Raw Product Notes
-Representative raw GLORYS variables:
+Representative raw GLORYS variables:  
 | Variable | Dimensions | Description | Units |
 |---|---|---|---|
 | `bottomT` | `(time, latitude, longitude)` | Sea floor potential temperature | `degrees_C` |

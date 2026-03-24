@@ -26,6 +26,21 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 - Exported Argo GeoTIFFs remain georeferenced in `EPSG:4326` and store GLORYS depth-aligned band metadata.
 
 ## Visual Diagnostics
+### Archive-wide ARGO depth frequencies
+![img](assets/argo_corrected_depth_histogram.png)
+
+- This histogram aggregates finite `DEPH_CORRECTED` values across the scanned EN4 / ARGO archive.
+- It shows why the nearest-depth cutoff becomes more restrictive with depth: profile support is dense near the surface and sparse deeper down.
+- The dotted GLORYS markers indicate the fixed target depths used by the alignment step.
+
+### EN4 level slots versus corrected depth
+![img](assets/argo_corrected_depth_distribution.png)
+
+- This figure compares EN4 level index on the horizontal axis against corrected depth in meters on the vertical axis.
+- The heatmap shows how often each EN4 level slot lands at a given physical depth across the archive.
+- The white curve marks the median corrected depth per EN4 level, and the dashed curves mark the P10 and P90 depth envelopes.
+- The top panel counts how many valid profiles contribute to each EN4 level slot, and the right panel shows the marginal depth histogram over all valid corrected depths.
+
 ### ARGO on a GLORYS grid
 ![img](assets/argo_on_glorys_grid_3D.gif)
 
