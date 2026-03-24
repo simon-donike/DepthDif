@@ -17,7 +17,7 @@ model:
     further_drop_prob: 0.1 # Mild extra corruption over already-observed Argo pixels.
     apply_to_noisy_branch: true # Applies the further-corrupted mask to the noisy target branch.
     shared_spatial_mask: true # Shares one spatial further-mask across all depth channels.
-    min_kept_observed_pixels: 50 # Keep a non-trivial number of observed channel-pixels after further corruption.
+    min_kept_observed_pixels: 4 # Keep a non-trivial number of observed channel-pixels after further corruption.
     require_x0_parameterization: true # Ambient objective stays tied to x0 parameterization.
   post_process:
     gaussian_blur:

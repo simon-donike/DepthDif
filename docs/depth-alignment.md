@@ -29,6 +29,7 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 ### ARGO on a GLORYS grid
 ![img](assets/argo_on_glorys_grid_3D.gif)
 
+- This 3D view shows the final depth-aligned ARGO representation used for training after projection onto the fixed GLORYS depth grid.
 - Floor axes: spatial patch dimensions.
 - Vertical axis: the 50 GLORYS target levels, labeled in meters.
 - Occupied voxels: aligned ARGO values after depth projection.

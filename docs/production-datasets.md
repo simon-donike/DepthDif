@@ -191,6 +191,9 @@ Sample Image:
   
 Train-set valid-fraction histogram:  
 ![OSTIA 0.1 deg hist](assets/argo_observations_histogram_7days.png)  
+
+Median valid pixels per spatial patch:  
+![Median valid pixels per patch](assets/argo_valid_pixels_per_patch.png)  
   
   
 ## 6) End-To-End Build Order
