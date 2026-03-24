@@ -25,7 +25,7 @@ Relevant helper scripts:
 - `data/get_glorys/download_glorys_monthly.sh`
 - `data/get_glorys/download_glorys_weekly.sh`
 
-GLORYS depth distribution:
+GLORYS depth distribution:  
 ![img](assets/depth_levels.png)
 
 
@@ -40,7 +40,7 @@ OSTIA is a satellite- and in-situ-derived ocean surface temperature product that
 - Temporal sampling: one daily SST snapshot at `12:00 UTC`
 - Geometry: global 2D grid
 
-OSTIA example tile:
+OSTIA example tile:  
 ![img](assets/dataset_ostia.png)
 
 ## Product C: EN4 / ARGO Profiles
@@ -57,14 +57,14 @@ EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected 
 Relevant helper script:
 - `data/get_argo/download_en4_profiles.sh`
 
-Archive-wide corrected-depth histogram with GLORYS reference levels:
+Archive-wide corrected-depth histogram with GLORYS reference levels:  
 ![img](assets/argo_corrected_depth_histogram.png)
 
 - The histogram aggregates finite `DEPH_CORRECTED` values over the scanned EN4 archive.
 - Sampling density is concentrated in the upper ocean and decreases with depth.
 - The dotted GLORYS depth markers show the discrete reference levels used elsewhere in the project.
 
-Example ARGO profile in 3D:
+Example ARGO profile in 3D:  
 ![img](assets/argo_profile_3D.gif)
 
 ## Raw Product Notes
