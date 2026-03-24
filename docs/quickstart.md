@@ -51,3 +51,4 @@ For EO multiband runs, use:
 - `DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_disk.yaml"`  
 - `TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"`  
 Remember to wire through your dataloaders in the config. Alternatively, pass the inputs individually through PL's `predict_step`.  
+  

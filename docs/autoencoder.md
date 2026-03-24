@@ -105,3 +105,4 @@ set -euo pipefail
 - Very aggressive compression can smooth fine vertical gradients.  
 - If spatial downsampling is introduced later, small-scale structures become harder to preserve.  
 - Latent diffusion training stability is sensitive to AE normalization, latent channel count, and mask handling consistency.  
+  

@@ -251,3 +251,4 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `scheduler.reduce_on_plateau.cooldown` | `0` | Epoch cooldown after LR reduction. |  
 | `scheduler.reduce_on_plateau.min_lr` | `1.0e-6` | Lower bound for LR. |  
 | `scheduler.reduce_on_plateau.eps` | `1.0e-8` | Minimum effective LR change. |  
+  

@@ -147,3 +147,4 @@ out = h + residual_projection(x)
 - FiLM is applied per sample and per channel, with spatial broadcasting over `H x W`  
 - injection is multiplicative + additive (`1 + scale`, `shift`), so near-zero FiLM output behaves close to identity  
 - timestep context and geo/date context are both active in each conditioned block, but with different operations (additive time, FiLM coord/date)  
+  

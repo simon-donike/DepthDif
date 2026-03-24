@@ -96,3 +96,4 @@ python inference.py
 - Full documentation: `docs/` (or build/serve with MkDocs).  
 - Autoencoder + latent workflow guide: `docs/autoencoder.md`.  
 - Experiments page: `docs/experiments.md`.  
+  

@@ -71,15 +71,15 @@ In implementation, \(\delta =\) `model.ambient_occlusion.further_drop_prob`.
   
 With `mask_loss_with_valid_pixels=true`, the loss was computed on missing pixels:  
   
-\[  
-\mathcal{L}_{\text{prev}}(\theta)  
-=  
-\frac{  
-\left\|(1-A)\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2  
-}{  
-\|(1-A)\|_1  
-},  
-\]  
+\[
+\mathcal{L}_{\text{prev}}(\theta)
+=
+\frac{
+\left\|(1-A)\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2
+}{
+\|(1-A)\|_1
+},
+\]
   
 where:  
   
@@ -94,31 +94,31 @@ Conditioning used the original sparse input/mask pair \((x, A)\) (plus EO, if en
   
 Define:  
   
-\[  
-\tilde{x} = \tilde{A}\odot x.  
-\]  
+\[
+\tilde{x} = \tilde{A}\odot x.
+\]
   
 The model condition is built from \((\tilde{x}, \tilde{A}, \text{EO})\) instead of \((x, A, \text{EO})\).  
   
 Optionally (enabled by default), the noisy branch is also masked:  
   
-\[  
-\tilde{x}_t = \tilde{A}\odot x_t.  
-\]  
+\[
+\tilde{x}_t = \tilde{A}\odot x_t.
+\]
   
 ### 4.2 Loss Region and Target  
   
 The implemented ambient mode uses `loss_mask_mode="observed"`, so supervision mask is \(A\) (not \(1-A\), and not \(\tilde{A}\)). In ambient mode, the diffusion target is also switched from `y` to the original `x`:  
   
-\[  
-\mathcal{L}_{\text{ambient}}(\theta)  
-=  
-\frac{  
-\left\|A\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2  
-}{  
-\|A\|_1  
-}.  
-\]  
+\[
+\mathcal{L}_{\text{ambient}}(\theta)
+=
+\frac{
+\left\|A\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2
+}{
+\|A\|_1
+}.
+\]
   
 If `land_mask` is provided, the effective mask is \(A\odot L\), exactly matching existing ocean-gating behavior.  
   
@@ -126,9 +126,9 @@ If `land_mask` is provided, the effective mask is \(A\odot L\), exactly matching
   
 The procedure matches the paper’s core structure:  
   
-\[  
-J_{\mathrm{corr}}(\theta)=\frac12\,\mathbb{E}\left[\left\|A\left(h_{\theta}(\tilde{A}\,x_t,\tilde{A},t)-x_0\right)\right\|_2^2\right],  
-\]  
+\[
+J_{\mathrm{corr}}(\theta)=\frac12\,\mathbb{E}\left[\left\|A\left(h_{\theta}(\tilde{A}\,x_t,\tilde{A},t)-x_0\right)\right\|_2^2\right],
+\]
   
 up to the repository’s existing normalization/parameterization conventions and per-mask normalization by mask cardinality. In this repository, that clean target is the original sparse-observation tensor `x` for ambient mode, while the standard non-ambient path continues to target `y`.  
   
@@ -184,4 +184,5 @@ up to the repository’s existing normalization/parameterization conventions and
 The old setup primarily asked the model to reconstruct hidden regions given fixed observed context.  
   
 The new setup introduces random context removal during training while preserving supervision on the original observed support. This makes the learning problem closer to the ambient objective: robustly estimate clean content under stochastic measurement degradation, not only under one fixed missingness pattern per sample.  
+  
   

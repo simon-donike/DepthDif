@@ -100,3 +100,4 @@ Validation/inference sampler can be switched via training config:
   - `ddim_eta`  
   
 The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.  
+  

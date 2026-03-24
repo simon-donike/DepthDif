@@ -88,3 +88,4 @@ Default progression:
 3. Move to Option B or C only if baseline evidence shows temporal inductive bias is needed.  
   
 This sequence maximizes implementation safety while still creating a clear upgrade path toward stronger temporal modeling.  
+  

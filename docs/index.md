@@ -44,3 +44,4 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 - [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference  
 - [Development](development.md): known issues, TODOs, and roadmap  
 - [API Reference](api.md): auto-generated module reference via `mkdocstrings`  
+  

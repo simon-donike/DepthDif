@@ -29,3 +29,4 @@ Implemented schedule options in code:
   
 Example schedule profile image:  
 ![noise_schedules](assets/noise_schedules.png){ width="85%" }  
+  
