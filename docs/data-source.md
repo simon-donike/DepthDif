@@ -11,6 +11,10 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 | EN4 / ARGO profiles | in-situ temperature observations | profile-specific corrected depths | `TEMP`, `DEPH_CORRECTED` |
 
 ## Product A: GLORYS Reanalysis
+![GLORYS banner](assets/glorys_banner.png)
+
+GLORYS is a global ocean reanalysis product that provides physically consistent 3D temperature fields on a fixed depth grid.
+
 - Provider: Copernicus Marine Service
 - Product family: Global Ocean Physics Reanalysis
 - Source model used here: `MERCATOR GLORYS12V1`
@@ -26,6 +30,10 @@ GLORYS depth distribution:
 
 
 ## Product B: OSTIA Surface EO
+![OSTIA banner](assets/ostia_banner.png)
+
+OSTIA is a satellite- and in-situ-derived ocean surface temperature product that provides daily global sea-surface temperature fields.
+
 - Provider: Copernicus Marine Service / UKMO OSTIA stream
 - Dataset used here: `SST_GLO_SST_L4_REP_OBSERVATIONS_010_011`
 - Native variable used here: `analysed_sst`
@@ -36,6 +44,10 @@ OSTIA example tile:
 ![img](assets/dataset_ostia.png)
 
 ## Product C: EN4 / ARGO Profiles
+![ARGO banner](assets/argo_banner.png)
+
+EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected depth samples that capture sparse but physically grounded vertical structure.
+
 - Provider: UK Met Office Hadley Centre EN4
 - Dataset family: EN4.2.2 profile archives
 - Raw variables used here: `TEMP`, `DEPH_CORRECTED`
