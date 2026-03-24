@@ -65,7 +65,8 @@ Archive-wide corrected-depth histogram with GLORYS reference levels:
 - The dotted GLORYS depth markers show the discrete reference levels used elsewhere in the project.
 
 Example ARGO profile in 3D:  
-![img](assets/argo_profile_3D.gif)
+![img](assets/argo_profile_3D.gif)  
+Important: `z` shows the netCDF dimension (400), not actual depth. 
 
 ## Raw Product Notes
 Representative raw GLORYS variables:
