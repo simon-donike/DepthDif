@@ -20,24 +20,20 @@ Inference/sampling did not change. This is a training-objective change only.
   
 ## Visual Walkthrough  
   
-![Ambient objective step-by-step example](assets/sample_12370_t653.png)  
+![Ambient objective step-by-step example](assets/ambient_occlusion_sample_ex.png)  
   
-How to read this image from left to right (each row is one depth band):  
+This figure shows one real training sample and the exact split that ambient occlusion creates between observations the model still receives and observations that are temporarily hidden from it.  
   
-1. `x0 (clean x)`: the clean target field used by ambient diffusion training.  
-2. `A (orig mask)`: original observed/valid mask from the dataset (`valid_mask`).  
-3. `x = A * x0`: sparse input after first occlusion (this is the normal conditioning input before ambient mode).  
-4. `B (random keep)`: random keep/drop mask sampled during training only.  
-5. `A_tilde = B * A`: further-corrupted mask; it can only remove points from `A`, never add new ones.  
-6. `x_tilde = A_tilde * x`: the actual harder condition given to the model in ambient mode.  
-7. `x_t (noisy x0)`: diffusion forward-noised target branch at timestep `t`.  
-8. `A_tilde * x_t`: optional masking of the noisy branch (enabled by default in this implementation).  
+From left to right, top to bottom:  
   
-Key point in context of this figure:  
-- Input to the model is based on `A_tilde` (harder than original `A`),  
-- but the loss is still weighted on the original mask `A` (not on `A_tilde`).  
+1. **Argo max over channels**: the original sparse Argo observations in the patch, collapsed across depth so the observed track pattern is easy to see.  
+2. **Points model still sees**: the subset of those Argo observations that remains after the extra ambient masking step. These are the measurements still available to the model as input.  
+3. **Points withheld from model**: the Argo observations that were originally present in the sample but were removed by the extra ambient masking step.  
+4. **Seen/withheld mask**: the same split shown as a categorical mask, with green for pixels the model still sees, red for pixels withheld from the model, and black for locations with no Argo observation in the first place.  
+5. **OSTIA**: the surface conditioning field for the same patch.  
+6. **GLORYS surface level**: the target ocean field at the shallowest GLORYS level for the same patch, plotted on the same blue-to-red color scale as OSTIA.  
   
-That is the core difference from the standard training path in this repo: ambient uses extra corruption for conditioning difficulty and keeps supervision anchored to the original observation support of `x`.  
+What matters in this figure is the contrast between panels 1, 2, and 3: ambient occlusion does not invent a new sampling pattern from scratch. It starts from the real sparse Argo observations already present in the dataset, then removes an additional subset of them so the model has to work from a stricter, harder version of the same sample.  
   
 ## 1. Top-Level Perspective  
   
