@@ -44,7 +44,7 @@ Training step (`training_step`) calls conditional diffusion `p_loss` on standard
   
 Behavior:  
 - sample random timestep `t`  
-- forward diffuse `y` to noisy target branch  
+- forward diffuse the selected training target to the noisy target branch  
 - predict either:  
   - noise (`epsilon` parameterization), or  
   - clean sample (`x0` parameterization)  
@@ -56,6 +56,7 @@ Loss options:
 Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):  
 - sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)  
 - feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask  
+- switch the diffusion target from `y` to the original sparse-observation tensor `x`  
 - optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)  
 - compute masked MSE on the originally observed subset (`A`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
@@ -66,7 +67,7 @@ Current EO config (`configs/px_space/model_config.yaml`) uses:
   
 Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
   
-This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`), not over the full `y` image.  
+This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`) of `y`, not over the full `y` image.  
   
 ## Inference Flow  
 Prediction entry point is `predict_step`.  

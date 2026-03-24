@@ -24,7 +24,7 @@ Inference/sampling did not change. This is a training-objective change only.
   
 How to read this image from left to right (each row is one depth band):  
   
-1. `x0 (clean y)`: the clean target field used by diffusion training.  
+1. `x0 (clean x)`: the clean target field used by ambient diffusion training.  
 2. `A (orig mask)`: original observed/valid mask from the dataset (`valid_mask`).  
 3. `x = A * x0`: sparse input after first occlusion (this is the normal conditioning input before ambient mode).  
 4. `B (random keep)`: random keep/drop mask sampled during training only.  
@@ -37,7 +37,7 @@ Key point in context of this figure:
 - Input to the model is based on `A_tilde` (harder than original `A`),  
 - but the loss is still weighted on the original mask `A` (not on `A_tilde`).  
   
-That is the core difference from the sparse-holdout style objective: sparse holdout trains on a held-out subset itself, while ambient uses extra corruption for conditioning difficulty and keeps supervision anchored to the original observation support.  
+That is the core difference from the standard training path in this repo: ambient uses extra corruption for conditioning difficulty and keeps supervision anchored to the original observation support of `x`.  
   
 ## 1. Top-Level Perspective  
   
@@ -51,13 +51,13 @@ The new procedure adds a second stochastic corruption stage during training:
 4. Feed the model condition built from \(\tilde{A}\)-corrupted input.  
 5. Supervise the prediction on the **original** observed subset \(A\), not on \(\tilde{A}\).  
   
-Intuition: the model is forced to infer values in pixels that are sometimes hidden by the additional corruption, while still being evaluated where ground truth is known from the original observation set.  
+Intuition: the model is forced to reconstruct original observed `x` values from a stricter subset of those same observations.  
   
 ## 2. Notation  
   
 For one sample:  
   
-- \(x_0 \in \mathbb{R}^{C \times H \times W}\): clean diffusion target (in this repo: normalized `y`).  
+- \(x_0 \in \mathbb{R}^{C \times H \times W}\): clean diffusion target (in ambient mode in this repo: normalized `x`).  
 - \(A \in \{0,1\}^{C \times H \times W}\): original validity/observation mask (`valid_mask`).  
 - \(x = A \odot x_0\): original sparse observed input (in this repo, `x` already carries this structure).  
 - \(t \sim \mathrm{Unif}\{0,\dots,T-1\}\): diffusion timestep.  
@@ -106,9 +106,9 @@ Optionally (enabled by default), the noisy branch is also masked:
 \tilde{x}_t = \tilde{A}\odot x_t.  
 \]  
   
-### 4.2 Loss Region  
+### 4.2 Loss Region and Target  
   
-The implemented ambient mode uses `loss_mask_mode="observed"`, so supervision mask is \(A\) (not \(1-A\), and not \(\tilde{A}\)):  
+The implemented ambient mode uses `loss_mask_mode="observed"`, so supervision mask is \(A\) (not \(1-A\), and not \(\tilde{A}\)). In ambient mode, the diffusion target is also switched from `y` to the original `x`:  
   
 \[  
 \mathcal{L}_{\text{ambient}}(\theta)  
@@ -130,7 +130,7 @@ The procedure matches the paper’s core structure:
 J_{\mathrm{corr}}(\theta)=\frac12\,\mathbb{E}\left[\left\|A\left(h_{\theta}(\tilde{A}\,x_t,\tilde{A},t)-x_0\right)\right\|_2^2\right],  
 \]  
   
-up to the repository’s existing normalization/parameterization conventions and per-mask normalization by mask cardinality.  
+up to the repository’s existing normalization/parameterization conventions and per-mask normalization by mask cardinality. In this repository, that clean target is the original sparse-observation tensor `x` for ambient mode, while the standard non-ambient path continues to target `y`.  
   
 ## 5. What Changed vs What Stayed the Same  
   
@@ -138,8 +138,9 @@ up to the repository’s existing normalization/parameterization conventions and
   
 1. **Two-stage masking during training** (\(A \rightarrow \tilde{A}\)).  
 2. **Condition path uses \(\tilde{A}\)** and \(\tilde{x}\).  
-3. **Loss region switches to observed mask \(A\)** in ambient mode.  
-4. New ambient metrics are logged:  
+3. **Diffusion target switches to original `x`** in ambient mode.  
+4. **Loss region switches to observed mask \(A\)** in ambient mode.  
+5. New ambient metrics are logged:  
    - `train/ambient_further_drop_fraction`  
    - `train/ambient_observed_fraction_original`  
    - `train/ambient_observed_fraction_further`  
@@ -151,7 +152,7 @@ up to the repository’s existing normalization/parameterization conventions and
 2. Dataset generation of original corruption mask \(A\) is unchanged.  
 3. Optional land-mask gating remains identical.  
 4. If ambient mode is disabled, behavior remains backward-compatible with previous training flow.  
-5. Important: disabling ambient does **not** imply full-image loss. With `model.mask_loss_with_valid_pixels=true` (current default), loss reverts to missing-pixel masking (`1 - valid_mask`), not all of \(Y\).  
+5. Important: disabling ambient does **not** imply full-image loss. With `model.mask_loss_with_valid_pixels=true` (current default), loss reverts to missing-pixel masking (`1 - valid_mask`) on `y`, not all of \(Y\).  
   
 ## 6. Implemented Safety and Constraints  
   
