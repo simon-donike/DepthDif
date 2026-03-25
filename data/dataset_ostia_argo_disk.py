@@ -33,12 +33,21 @@ class OstiaArgoTiffDataset(Dataset):
         split: str = "all",
         return_info: bool = True,
         return_coords: bool = True,
+        synthetic_mode: bool = False,
+        synthetic_pixel_count: int = 20,
+        random_seed: int = 7,
     ) -> None:
         self.csv_path = Path(csv_path)
         self.csv_dir = self.csv_path.parent
         self.split = str(split).strip().lower()
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
+        self.synthetic_mode = bool(synthetic_mode)
+        self.synthetic_pixel_count = int(synthetic_pixel_count)
+        self.random_seed = int(random_seed)
+
+        if self.synthetic_pixel_count < 1:
+            raise ValueError("synthetic_pixel_count must be >= 1")
 
         if not self.csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {self.csv_path}")
@@ -113,6 +122,15 @@ class OstiaArgoTiffDataset(Dataset):
             ),
             return_coords=bool(
                 cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=True)
+            ),
+            synthetic_mode=bool(
+                cls._cfg_get(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+            ),
+            synthetic_pixel_count=int(
+                cls._cfg_get(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+            ),
+            random_seed=int(
+                cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
             ),
         )
 
@@ -269,6 +287,40 @@ class OstiaArgoTiffDataset(Dataset):
         cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
         return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
 
+    def _build_synthetic_x_from_glorys(
+        self,
+        *,
+        y_np: np.ndarray,
+        idx: int,
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        horizontal_valid = np.isfinite(y_np).any(axis=0)
+        candidate_flat = np.flatnonzero(horizontal_valid.reshape(-1))
+        if candidate_flat.size == 0:
+            raise RuntimeError("Synthetic mode found no finite GLORYS pixels to sample from.")
+
+        rng = np.random.default_rng(self.random_seed + int(idx))
+        pixel_count_std = max(1.0, 0.1 * float(self.synthetic_pixel_count))
+        sampled_pixel_count = int(np.rint(rng.normal(self.synthetic_pixel_count, pixel_count_std)))
+        sampled_pixel_count = int(
+            np.clip(
+                sampled_pixel_count,
+                max(1, int(np.floor(0.9 * self.synthetic_pixel_count))),
+                max(1, int(np.ceil(1.1 * self.synthetic_pixel_count))),
+            )
+        )
+        sampled_pixel_count = min(sampled_pixel_count, int(candidate_flat.size))
+
+        selected_flat = rng.choice(candidate_flat, size=sampled_pixel_count, replace=False)
+        selected_mask_2d = np.zeros(horizontal_valid.shape, dtype=bool)
+        selected_mask_2d.reshape(-1)[selected_flat] = True
+
+        x_np = np.full_like(y_np, np.nan, dtype=np.float32)
+        selected_mask_3d = np.broadcast_to(selected_mask_2d[None, :, :], y_np.shape)
+        # Copy full GLORYS depth columns at sampled pixels so x becomes a sparse profile tensor.
+        x_np[selected_mask_3d] = y_np[selected_mask_3d]
+        valid_mask_np = np.isfinite(x_np)
+        return x_np, valid_mask_np, int(sampled_pixel_count)
+
     def __getitem__(self, idx: int) -> dict[str, Any]:
         row = self._rows[int(idx)]
         ostia_path = self._resolve_index_path(row["ostia_tif_path"])
@@ -323,7 +375,14 @@ class OstiaArgoTiffDataset(Dataset):
                 f"{tuple(y_np.shape)} != {tuple(x_np.shape)}"
             )
 
-        valid_mask_np = np.isfinite(x_np)
+        synthetic_pixel_count: int | None = None
+        if self.synthetic_mode:
+            x_np, valid_mask_np, synthetic_pixel_count = self._build_synthetic_x_from_glorys(
+                y_np=y_np,
+                idx=int(idx),
+            )
+        else:
+            valid_mask_np = np.isfinite(x_np)
         # Use only the GLORYS surface support so the ocean mask is 2D and cannot vary by depth.
         land_mask_np = self._glorys_horizontal_ocean_mask(y_np)
         eo = torch.from_numpy(np.nan_to_num(eo_np, nan=0.0, posinf=0.0, neginf=0.0))
@@ -351,7 +410,11 @@ class OstiaArgoTiffDataset(Dataset):
             lon_center = self._center_lon_deg(lon0, lon1)
             sample["coords"] = torch.tensor([lat_center, lon_center], dtype=torch.float32)
         if self.return_info:
-            sample["info"] = row
+            info = dict(row)
+            if self.synthetic_mode:
+                info["synthetic_mode"] = True
+                info["synthetic_pixel_count"] = int(synthetic_pixel_count or 0)
+            sample["info"] = info
         return sample
 
     def save_sample_figure_to_temp(

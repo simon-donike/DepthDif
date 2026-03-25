@@ -369,6 +369,13 @@ def build_dataset(
             return_coords=bool(
                 ds_cfg_value(ds_cfg, "output.return_coords", "return_coords", default=True)
             ),
+            synthetic_mode=bool(
+                ds_cfg_value(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+            ),
+            synthetic_pixel_count=int(
+                ds_cfg_value(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+            ),
+            random_seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
         )
     raise ValueError(
         "Unsupported dataset variant in data config. "

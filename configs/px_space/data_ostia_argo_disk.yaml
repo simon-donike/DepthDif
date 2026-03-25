@@ -6,6 +6,9 @@ dataset:
   output:
     return_info: false # Keep training batches lean; enable only for debugging manifest metadata.
     return_coords: true # Required by the coord/date-conditioning model preset.
+  synthetic:
+    enabled: false # If true, ignore exported Argo x and rebuild it from sparse GLORYS profile columns.
+    pixel_count: 20 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
   runtime:
     random_seed: 7 # Seed used for deterministic dataset-side behavior where applicable.
 
