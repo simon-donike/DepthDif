@@ -31,6 +31,8 @@ With default `dim_mults=[1,2,4,8]`:
 - bottleneck block with attention  
 - 3 upsampling stages with skip connections  
 - final ConvNeXt block + `1x1` output conv to `generated_channels`  
+
+For the ambient EO preset in `configs/px_space/model_config_ambient.yaml`, the U-Net base width is increased to `dim: 96`. This keeps the same depth (`dim_mults=[1,2,4,8]`) but gives the denoiser more capacity when moving from earlier low-channel setups to the current 50 generated channels + 52 condition channels.  
   
 Time conditioning:  
 - sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks  

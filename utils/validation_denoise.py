@@ -589,6 +589,7 @@ def log_wandb_conditional_reconstruction_grid(
     *,
     logger: Any,
     x: torch.Tensor,
+    y: torch.Tensor | None = None,
     y_hat: torch.Tensor,
     y_target: torch.Tensor,
     valid_mask: torch.Tensor | None = None,
@@ -604,6 +605,7 @@ def log_wandb_conditional_reconstruction_grid(
     Args:
         logger (Any): Logger instance used for experiment tracking.
         x (torch.Tensor): Tensor input for the computation.
+        y (torch.Tensor | None): Tensor input for the computation.
         y_hat (torch.Tensor): Tensor input for the computation.
         y_target (torch.Tensor): Tensor input for the computation.
         valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
@@ -639,8 +641,16 @@ def log_wandb_conditional_reconstruction_grid(
     try:
         total_rows = num_to_plot * channels_to_plot
         show_valid_panel = bool(show_valid_mask_panel and valid_mask is not None)
-        ncols = 3
+        show_target_panel = True
+        if y is not None and y_target.shape == y.shape:
+            # Avoid duplicating the GLORYS panel in the common production validation path.
+            show_target_panel = not torch.equal(y_target.detach(), y.detach())
+        ncols = 2
+        if y is not None:
+            ncols += 1
         if eo is not None:
+            ncols += 1
+        if show_target_panel:
             ncols += 1
         if show_valid_panel:
             ncols += 1
@@ -673,10 +683,16 @@ def log_wandb_conditional_reconstruction_grid(
                     # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
                     valid_np = valid_band.detach().cpu().numpy() > 0.5
                     x_img[~valid_np] = 0.0
+                if y is not None:
+                    y_img = _plot_band_image(y, i, band_idx=band_idx, mask=land_band)
+                else:
+                    y_img = None
                 if land_band is not None:
                     # Zero land pixels right before rendering full reconstruction panels.
                     ocean_np = land_band.detach().cpu().numpy() > 0.5
                     x_img[~ocean_np] = 0.0
+                    if y_img is not None:
+                        y_img[~ocean_np] = 0.0
                     y_hat_img[~ocean_np] = 0.0
                     y_target_img[~ocean_np] = 0.0
 
@@ -686,6 +702,13 @@ def log_wandb_conditional_reconstruction_grid(
                 if row_idx == 0:
                     axes[row_idx, col].set_title("Input")
                 col += 1
+
+                if y_img is not None:
+                    axes[row_idx, col].imshow(y_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].set_axis_off()
+                    if row_idx == 0:
+                        axes[row_idx, col].set_title("GLORYS")
+                    col += 1
 
                 if eo is not None:
                     eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=land_band)
@@ -704,11 +727,12 @@ def log_wandb_conditional_reconstruction_grid(
                     axes[row_idx, col].set_title("Reconstruction")
                 col += 1
 
-                axes[row_idx, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
-                axes[row_idx, col].set_axis_off()
-                if row_idx == 0:
-                    axes[row_idx, col].set_title("Target")
-                col += 1
+                if show_target_panel:
+                    axes[row_idx, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].set_axis_off()
+                    if row_idx == 0:
+                        axes[row_idx, col].set_title("Target")
+                    col += 1
 
                 if show_valid_panel:
                     if valid_band is not None:
@@ -957,6 +981,131 @@ def log_wandb_depth_level_reconstruction_grid(
                 )
 
         fig.tight_layout()
+        experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})
+    finally:
+        if fig is not None:
+            plt.close(fig)
+
+
+def log_wandb_glorys_profile_comparison(
+    *,
+    logger: Any,
+    x: torch.Tensor,
+    y_hat: torch.Tensor,
+    y_target: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+    prefix: str = "val_imgs",
+    image_key: str = "glorys_profile_comparison",
+    sample_idx: int = 0,
+) -> None:
+    """Log a grid of full-depth profile comparisons at observed validation pixels.
+
+    Args:
+        logger (Any): Logger instance used for experiment tracking.
+        x (torch.Tensor): Conditioning tensor containing sparse Argo-aligned profiles.
+        y_hat (torch.Tensor): Reconstructed tensor in denormalized space.
+        y_target (torch.Tensor): GLORYS target tensor in denormalized space.
+        valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        prefix (str): Input value.
+        image_key (str): Input value.
+        sample_idx (int): Zero-based index for selecting a sample or batch.
+
+    Returns:
+        None: No value is returned.
+    """
+    if logger is None or not hasattr(logger, "experiment"):
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+
+    try:
+        import wandb
+    except Exception:
+        return
+
+    if x.ndim != 4 or y_hat.ndim != 4 or y_target.ndim != 4:
+        return
+    if int(x.size(0)) <= 0 or int(x.size(1)) <= 0:
+        return
+    if x.shape != y_hat.shape or x.shape != y_target.shape:
+        return
+
+    sample_i = int(max(0, min(int(sample_idx), int(x.size(0)) - 1)))
+    valid_mask_i = _mask_for_sample(valid_mask, sample_i)
+    if valid_mask_i is None:
+        return
+    if valid_mask_i.ndim == 3:
+        observed_map = valid_mask_i.detach().bool().any(dim=0)
+    elif valid_mask_i.ndim == 2:
+        observed_map = valid_mask_i.detach().bool()
+    else:
+        return
+
+    observed_coords = torch.nonzero(observed_map, as_tuple=False)
+    if int(observed_coords.size(0)) <= 0:
+        return
+
+    num_profiles = min(9, int(observed_coords.size(0)))
+    # Randomly subsample observed locations so the figure covers different profile shapes.
+    chosen = observed_coords[
+        torch.randperm(int(observed_coords.size(0)), device=observed_coords.device)[
+            :num_profiles
+        ]
+    ]
+
+    depth_idx = np.arange(int(y_target.size(1)), dtype=np.int32)
+    fig = None
+    try:
+        fig, axes = plt.subplots(3, 3, figsize=(15.0, 15.0), squeeze=False)
+        axes_flat = axes.reshape(-1)
+        for plot_idx, ax in enumerate(axes_flat):
+            if plot_idx >= num_profiles:
+                ax.set_axis_off()
+                continue
+
+            row_i = int(chosen[plot_idx, 0].item())
+            col_i = int(chosen[plot_idx, 1].item())
+            x_profile = x[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            y_hat_profile = y_hat[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            y_target_profile = y_target[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            observed_profile = valid_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
+
+            # Plot depth bands in ascending index order so every subplot reads top-to-bottom consistently.
+            ax.plot(
+                y_target_profile,
+                depth_idx,
+                label="GLORYS target",
+                color="black",
+                linewidth=2.0,
+            )
+            ax.plot(
+                y_hat_profile,
+                depth_idx,
+                label="Reconstruction",
+                color="tab:orange",
+                linewidth=1.8,
+            )
+            if bool(np.any(observed_profile)):
+                ax.plot(
+                    x_profile[observed_profile],
+                    depth_idx[observed_profile],
+                    label="Argo conditioning",
+                    color="tab:blue",
+                    marker="o",
+                    linewidth=1.4,
+                    markersize=3.5,
+                )
+            ax.invert_yaxis()
+            ax.set_xlabel("Temperature (deg C)")
+            ax.set_ylabel("GLORYS depth band")
+            ax.set_title(f"Pixel ({row_i}, {col_i})")
+            ax.grid(True, alpha=0.25)
+            if plot_idx == 0:
+                ax.legend(loc="best")
+
+        fig.suptitle(f"Sample {sample_i} profile comparisons", fontsize=14)
+        fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.98])
         experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})
     finally:
         if fig is not None:

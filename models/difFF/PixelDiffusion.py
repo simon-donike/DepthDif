@@ -21,8 +21,8 @@ from utils.validation_denoise import (
     build_evenly_spaced_capture_steps,
     log_wandb_diffusion_schedule_profile,
     log_wandb_conditional_reconstruction_grid,
-    log_wandb_depth_level_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
+    log_wandb_glorys_profile_comparison,
 )
 
 
@@ -1489,13 +1489,6 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         if self._cached_val_example is None:
             return
-        # Keep Lightning sanity check cheap: do not run the reverse diffusion chain here.
-        if (
-            self.skip_full_reconstruction_in_sanity_check
-            and self.trainer is not None
-            and self.trainer.sanity_checking
-        ):
-            return
 
         x, y, eo, valid_mask, land_mask, coords, date = self._cached_val_example
         target = x if self.ambient_occlusion_enabled else y
@@ -1533,6 +1526,7 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         # Denormalize data channels only (masks stay in 0/1 space).
         x_denorm = temperature_normalize(mode="denorm", tensor=x)
+        y_denorm = temperature_normalize(mode="denorm", tensor=y)
         target_denorm = temperature_normalize(mode="denorm", tensor=target)
         eo_denorm = (
             temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
@@ -1639,6 +1633,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
             x=x_denorm,
+            y=y_denorm,
             eo=eo_denorm,
             y_hat=y_hat_denorm_for_plot,
             y_target=target_denorm,
@@ -1649,18 +1644,15 @@ class PixelDiffusionConditional(pl.LightningModule):
             cmap=PLOT_CMAP,
             show_valid_mask_panel=False,
         )
-        log_wandb_depth_level_reconstruction_grid(
+        log_wandb_glorys_profile_comparison(
             logger=self.logger,
+            x=x_denorm,
             y_hat=y_hat_denorm_for_plot,
-            y_target=target_denorm,
+            y_target=y_denorm,
             valid_mask=valid_mask,
-            eo=eo_denorm,
-            land_mask=land_mask,
             prefix="val_imgs",
-            image_key="depth_level_reconstruction_grid",
-            band_indices=(0, 1, 3),
+            image_key="glorys_full_profile_comparison",
             sample_idx=0,
-            cmap=PLOT_CMAP,
         )
         if self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
