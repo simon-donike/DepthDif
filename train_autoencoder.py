@@ -1,3 +1,12 @@
+"""Train the depth autoencoder used by the latent workflow.
+
+This script loads the configured dataset/datamodule, builds the autoencoder
+Lightning module, restores checkpoints if configured, and runs the training job.
+
+Typical CLI:
+    /work/envs/depth/bin/python train_autoencoder.py --data-config configs/lat_space/data_config.yaml --train-config configs/lat_space/training_config.yaml --ae-config configs/lat_space/ae_config.yaml
+"""
+
 from __future__ import annotations
 
 import argparse

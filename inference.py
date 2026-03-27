@@ -1,3 +1,13 @@
+"""Run one-off inference with a configured checkpoint.
+
+This script loads the model and dataset configuration, restores a checkpoint,
+and generates predictions either from the dataloader or from synthetic random
+inputs depending on the in-file mode settings.
+
+Typical CLI:
+    /work/envs/depth/bin/python inference.py
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

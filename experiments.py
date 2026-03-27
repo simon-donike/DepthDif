@@ -1,9 +1,20 @@
+"""Run manual qualitative conditioning ablations on one sample.
+
+This script loads the configured model and checkpoint, creates a few fixed
+conditioning cases, runs `predict_step` on each one, and saves comparison plots
+plus compact tensor summaries for quick debugging.
+
+Typical CLI:
+    /work/envs/depth/bin/python experiments.py
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 
 from inference import (
@@ -125,6 +136,25 @@ def _plot_band_image(
     return image_plot.cpu().numpy().astype("float32")
 
 
+def _make_seen_withheld_rgb(
+    seen_mask_1d: torch.Tensor,
+    withheld_mask_1d: torch.Tensor,
+) -> np.ndarray:
+    """Render collapsed ambient visibility as green=seen, red=withheld, black=background."""
+    if seen_mask_1d.ndim != 2 or withheld_mask_1d.ndim != 2:
+        raise RuntimeError(
+            "Expected 2D masks for RGB visualization, "
+            f"got {tuple(seen_mask_1d.shape)} and {tuple(withheld_mask_1d.shape)}."
+        )
+
+    out = np.zeros((seen_mask_1d.shape[0], seen_mask_1d.shape[1], 3), dtype=np.float32)
+    seen_np = seen_mask_1d.detach().cpu().numpy().astype(bool, copy=False)
+    withheld_np = withheld_mask_1d.detach().cpu().numpy().astype(bool, copy=False)
+    out[withheld_np, 0] = 1.0
+    out[seen_np, 1] = 1.0
+    return out
+
+
 def _save_case_plot(
     *,
     case_name: str,
@@ -143,6 +173,21 @@ def _save_case_plot(
 
     valid_mask_i = _mask_for_sample(case_batch.get("valid_mask"))
     land_mask_i = _mask_for_sample(case_batch.get("land_mask"))
+    further_valid_mask_i = _mask_for_sample(pred.get("further_valid_mask"))
+    ambient_valid_mask_rgb = None
+    if valid_mask_i is not None and further_valid_mask_i is not None:
+        valid_mask_1d = (
+            valid_mask_i.any(dim=0) if valid_mask_i.ndim == 3 else valid_mask_i > 0.5
+        )
+        further_valid_mask_1d = (
+            further_valid_mask_i.any(dim=0)
+            if further_valid_mask_i.ndim == 3
+            else further_valid_mask_i > 0.5
+        )
+        withheld_mask_1d = valid_mask_1d & ~further_valid_mask_1d
+        ambient_valid_mask_rgb = _make_seen_withheld_rgb(
+            further_valid_mask_1d, withheld_mask_1d
+        )
 
     n_bands = int(y_hat_denorm.size(1)) if y_hat_denorm.ndim == 4 else 1
     ncols = 4 if eo_denorm is not None else 3
@@ -205,15 +250,20 @@ def _save_case_plot(
             col += 1
 
             if valid_mask_i is not None and valid_band is not None:
-                axes[band_idx, col].imshow(
-                    valid_band.detach().float().cpu().numpy(),
-                    cmap="gray",
-                    vmin=0.0,
-                    vmax=1.0,
-                )
+                if ambient_valid_mask_rgb is not None:
+                    axes[band_idx, col].imshow(ambient_valid_mask_rgb)
+                else:
+                    axes[band_idx, col].imshow(
+                        valid_band.detach().float().cpu().numpy(),
+                        cmap="gray",
+                        vmin=0.0,
+                        vmax=1.0,
+                    )
                 axes[band_idx, col].set_axis_off()
                 if band_idx == 0:
-                    axes[band_idx, col].set_title("Valid mask")
+                    axes[band_idx, col].set_title(
+                        "Ambient valid mask" if ambient_valid_mask_rgb is not None else "Valid mask"
+                    )
                 col += 1
 
             if land_mask_i is not None and land_band is not None:

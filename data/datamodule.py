@@ -38,7 +38,9 @@ class DepthTileDataModule(pl.LightningDataModule):
         self.val_fraction = float(val_fraction)
         self.seed = int(seed)
 
-        self.train_dataset: Subset | Dataset | None = None
+        # When callers pass explicit train/val datasets, keep the training dataset
+        # attached immediately so train_dataloader() does not depend on setup().
+        self.train_dataset: Subset | Dataset | None = dataset if val_dataset is not None else None
         self._train_val_split_done = val_dataset is not None
 
     def setup(self, stage: str | None = None) -> None:

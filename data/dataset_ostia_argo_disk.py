@@ -276,8 +276,14 @@ class OstiaArgoTiffDataset(Dataset):
     def _parse_date_int(value: Any) -> int:
         raw = str(value).strip()
         if raw.isdigit():
-            return int(raw)
-        return 19700115
+            date_int = int(raw)
+            month = (date_int // 100) % 100
+            day = date_int % 100
+            # Keep dataset dates compatible with the model's fixed non-leap calendar.
+            if month == 2 and day == 29:
+                return date_int - 1
+            return date_int
+        return 20100101
 
     @staticmethod
     def _center_lon_deg(lon0: float, lon1: float) -> float:

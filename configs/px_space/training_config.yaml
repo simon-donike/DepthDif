@@ -46,8 +46,8 @@ wandb:
   log_images_every_n_steps: 200 # Qualitative image logging cadence.
 
 dataloader:
-  batch_size: 4 # Conservative batch size for 50 depth levels plus conditioning channels.
-  val_batch_size: 2 # Smaller validation batch to leave room for qualitative sampling.
+  batch_size: 32 # Conservative batch size for 50 depth levels plus conditioning channels.
+  val_batch_size: 5 # Smaller validation batch to leave room for qualitative sampling.
   num_workers: 4 # Moderate worker count for TIFF-backed data loading.
   val_num_workers: 0 # Keep validation single-process for stability during sampling/logging.
   persistent_workers: true # Reuse train workers across epochs.

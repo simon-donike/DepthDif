@@ -1,3 +1,13 @@
+"""Train the main diffusion model from YAML configs.
+
+This script builds the dataset/datamodule, instantiates the configured pixel-space
+or latent diffusion model, restores checkpoints when requested, and launches the
+PyTorch Lightning training run.
+
+Typical CLI:
+    /work/envs/depth/bin/python train.py --data-config configs/px_space/data_ostia_argo_disk.yaml --train-config configs/px_space/training_config.yaml --model-config configs/px_space/model_config.yaml
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -407,6 +417,7 @@ def main(
     data_config_path: str = "configs/px_space/data_config.yaml",
     training_config_path: str = "configs/px_space/training_config.yaml",
     overrides: list[str] | None = None,
+    fast_dev_run: int = 0,
 ) -> None:
     # Determine rank before creating any run-scoped folders/files.
     """Run the script entry point.
@@ -655,6 +666,7 @@ def main(
         devices=devices,
         strategy=trainer_cfg.get("strategy", "auto"),
         precision=trainer_cfg.get("precision", "32-true"),
+        fast_dev_run=int(fast_dev_run) if int(fast_dev_run) > 0 else False,
         # Keep sanity checks enabled by default, but model-side logic keeps them lightweight.
         num_sanity_val_steps=int(trainer_cfg.get("num_sanity_val_steps", 2)),
         logger=logger,
@@ -711,6 +723,14 @@ def parse_args() -> argparse.Namespace:
             "Repeat --set for multiple overrides."
         ),
     )
+    parser.add_argument(
+        "--fast_dev_run",
+        "--fast-dev-run",
+        type=int,
+        default=0,
+        dest="fast_dev_run",
+        help="Run N batches for debugging (0 disables it, 1 behaves like true).",
+    )
     return parser.parse_args()
 
 
@@ -721,6 +741,7 @@ if __name__ == "__main__":
         data_config_path=args.data_config,
         training_config_path=args.training_config,
         overrides=args.config_overrides,
+        fast_dev_run=args.fast_dev_run,
     )
 
 """

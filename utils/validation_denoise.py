@@ -801,6 +801,8 @@ def log_wandb_conditional_reconstruction_grid(
             numer_per_band[valid_bands] / denom_per_band[valid_bands]
         )
 
+        # Keep per-band error metrics out of the image namespace in W&B.
+        metric_prefix = "val_absolute_band_error"
         l1_logs: dict[str, float] = {}
         band_x: list[int] = []
         band_y: list[float] = []
@@ -808,7 +810,7 @@ def log_wandb_conditional_reconstruction_grid(
             if not bool(valid_bands[band_idx].item()):
                 continue
             band_val = float(l1_per_band[band_idx].item())
-            l1_logs[f"{prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = band_val
+            l1_logs[f"{metric_prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = band_val
             band_x.append(int(band_idx))
             band_y.append(band_val)
 
@@ -819,7 +821,7 @@ def log_wandb_conditional_reconstruction_grid(
         # Optional compact view: all bands in a single plot panel for this validation pass.
         experiment.log(
             {
-                f"{prefix}/recon_l1_generated_deg_by_band": wandb.plot.line_series(
+                f"{metric_prefix}/recon_l1_generated_deg_by_band": wandb.plot.line_series(
                     xs=band_x,
                     ys=[band_y],
                     keys=["L1 (deg)"],

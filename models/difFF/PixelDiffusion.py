@@ -1271,8 +1271,26 @@ class PixelDiffusionConditional(pl.LightningModule):
         return_intermediates = bool(batch.get("return_intermediates", False))
         intermediate_step_indices = batch.get("intermediate_step_indices")
 
-        model_condition = self._prepare_condition_for_model(x, valid_mask, eo=eo)
-        known_values, known_mask = self._extract_known_values_and_mask(x, valid_mask)
+        condition_x = x
+        condition_valid_mask = valid_mask
+        further_valid_mask: torch.Tensor | None = None
+        if self.ambient_occlusion_enabled:
+            further_valid_mask = self._build_ambient_further_valid_mask(
+                valid_mask, reference=x
+            )
+            if further_valid_mask is None:
+                raise RuntimeError(
+                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                )
+            condition_x = x * further_valid_mask
+            condition_valid_mask = further_valid_mask
+
+        model_condition = self._prepare_condition_for_model(
+            condition_x, condition_valid_mask, eo=eo
+        )
+        known_values, known_mask = self._extract_known_values_and_mask(
+            condition_x, condition_valid_mask
+        )
 
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         x0_denoise_samples: list[tuple[int, torch.Tensor]] = []
@@ -1325,6 +1343,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             "denoise_samples": denoise_samples,
             "x0_denoise_samples": x0_denoise_samples,
             "sampler": sampler,
+            # Keep the ambient keep-mask available for downstream visualization.
+            "further_valid_mask": further_valid_mask,
         }
 
     def _log_validation_triplet_stats(
