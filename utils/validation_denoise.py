@@ -379,9 +379,15 @@ def log_wandb_diffusion_schedule_profile(
     reverse_t = torch.as_tensor(reverse_t_list, dtype=torch.long).clamp(
         min=0, max=int(alpha_cumprod.numel() - 1)
     )
-    forward_t = torch.arange(0, int(total_steps), dtype=torch.long).clamp(
-        min=0, max=int(alpha_cumprod.numel() - 1)
-    )
+    # For DDIM, reverse steps live on a sparse subset of the training-time schedule.
+    # Reuse the same mapped timesteps in forward order so both panels describe the
+    # same trajectory rather than comparing sparse reverse steps to dense early train steps.
+    if hasattr(sampler, "ddim_train_steps"):
+        forward_t = torch.flip(reverse_t, dims=[0])
+    else:
+        forward_t = torch.arange(0, int(total_steps), dtype=torch.long).clamp(
+            min=0, max=int(alpha_cumprod.numel() - 1)
+        )
 
     def _schedule_terms(t_idx: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """Helper that computes schedule terms.
