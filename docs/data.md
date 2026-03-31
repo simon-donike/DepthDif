@@ -130,7 +130,7 @@ Disk export helper:
 - GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform and a north-up row order  
 - each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
 - `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, shuffles export order by default in contiguous blocks (`--shuffle`, optional `--shuffle-seed`, `--shuffle-block-size`, default `100`) so partial output spans the timeseries better without fully randomizing file access, writes TIFFs in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end  
-- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
+- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk, normalizes `eo`/`x`/`y` with `utils.normalizations.temperature_normalize`, and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
 - optional synthetic mode (`dataset.synthetic.enabled=true`) ignores exported Argo `x`, samples sparse horizontal pixels from the GLORYS target, copies the full depth profile at each selected pixel into `x`, and rebuilds `valid_mask` from that synthetic sparse input; the sampled count is Gaussian around `dataset.synthetic.pixel_count` and clamped to `+-10%`  
   
 Current scope note:  

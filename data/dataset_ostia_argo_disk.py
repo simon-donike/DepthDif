@@ -11,6 +11,8 @@ import torch
 from torch.utils.data import Dataset
 import yaml
 
+from utils.normalizations import temperature_normalize
+
 MISSING_TEXT_VALUES = frozenset({"", "__missing__", "nan", "none", "null"})
 
 
@@ -391,9 +393,16 @@ class OstiaArgoTiffDataset(Dataset):
             valid_mask_np = np.isfinite(x_np)
         # Use only the GLORYS surface support so the ocean mask is 2D and cannot vary by depth.
         land_mask_np = self._glorys_horizontal_ocean_mask(y_np)
-        eo = torch.from_numpy(np.nan_to_num(eo_np, nan=0.0, posinf=0.0, neginf=0.0))
-        x = torch.from_numpy(np.nan_to_num(x_np, nan=0.0, posinf=0.0, neginf=0.0))
-        y = torch.from_numpy(np.nan_to_num(y_np, nan=0.0, posinf=0.0, neginf=0.0))
+        eo = torch.from_numpy(eo_np)
+        x = torch.from_numpy(x_np)
+        y = torch.from_numpy(y_np)
+        # Match the normalized temperature contract used by the training/inference stack.
+        eo = temperature_normalize(mode="norm", tensor=eo)
+        x = temperature_normalize(mode="norm", tensor=x)
+        y = temperature_normalize(mode="norm", tensor=y)
+        eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+        y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
         valid_mask = torch.from_numpy(valid_mask_np.astype(np.bool_, copy=False))
         land_mask = torch.from_numpy(land_mask_np)
         valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
@@ -435,12 +444,13 @@ class OstiaArgoTiffDataset(Dataset):
         sample = self.__getitem__(int(idx))
         panels: list[tuple[np.ndarray, str]] = []
 
-        eo = sample["eo"]
-        x = sample["x"]
+        # Convert normalized tensors back to Celsius for local debug figures.
+        eo = temperature_normalize(mode="denorm", tensor=sample["eo"])
+        x = temperature_normalize(mode="denorm", tensor=sample["x"])
         valid_mask = sample["valid_mask"]
         valid_mask_1d = sample["valid_mask_1d"]
         land_mask = sample["land_mask"]
-        y = sample["y"]
+        y = temperature_normalize(mode="denorm", tensor=sample["y"])
         info = sample.get("info", {})
         depth_level = int(depth_level)
 
