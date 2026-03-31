@@ -7,9 +7,9 @@ training:
     beta_start: 1.0e-4 # Noise level at the first timestep.
     beta_end: 2.0e-2 # Noise level at the final timestep.
   validation_sampling:
-    sampler: "ddim" # Faster validation sampler for the heavier 50-level target stack.
-    ddim_num_timesteps: 100 # Validation DDIM steps.
-    ddim_eta: 0.0 # Deterministic DDIM validation.
+    sampler: "ddpm" # Use the full validation reverse chain to match the training diffusion schedule.
+    ddim_num_timesteps: 100 # Validation DDIM steps when sampler="ddim".
+    ddim_eta: 0.0 # Deterministic DDIM validation when sampler="ddim".
     log_intermediates: false # Disable dense intermediate image logging by default.
     skip_full_reconstruction_in_sanity_check: true # Keep startup sanity validation lightweight.
     max_full_reconstruction_samples: 2 # Cap qualitative reconstruction logging to a small sample count.
