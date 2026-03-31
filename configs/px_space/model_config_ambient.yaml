@@ -33,8 +33,33 @@ model:
     embed_dim: null # Defaults to unet.dim when left null.
 
   unet:
-    dim: 96 # Wider base width to better match the 50-output / 52-condition channel setup.
+    dim: 96 # Wider base width to better match the 50-output / 52-condition channel setup. Other Common values: 48 for 16x16, 64 for 32x32, 96 for 48x48, 128 for 64x64.
     dim_mults: [1, 2, 4, 8] # Keep the established U-Net depth while reducing width.
     with_time_emb: true # Enable timestep embeddings in the denoiser.
     output_mean_scale: false # Optional output mean correction remains disabled.
     residual: false # Predict the denoised output directly instead of a residual.
+
+# UNet Dimensionality Examples
+#dim_48:
+#  - 48 @ 128x128
+#  - 96 @ 64x64
+#  - 192 @ 32x32
+#  - 384 @ 16x16
+
+#dim_64:
+#  - 64 @ 128x128
+#  - 128 @ 64x64
+#  - 256 @ 32x32
+#  - 512 @ 16x16
+
+#dim_96:
+#  - 96 @ 128x128
+#  - 192 @ 64x64
+#  - 384 @ 32x32
+#  - 768 @ 16x16
+
+#dim_128:
+#  - 128 @ 128x128
+#  - 256 @ 64x64
+#  - 512 @ 32x32
+#  - 1024 @ 16x16
