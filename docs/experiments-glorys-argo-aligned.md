@@ -5,6 +5,13 @@ It starts with experiments based on the on-disk dataset, where exported OSTIA / 
 
 For the earlier synthetic-first runs, see [Synthetic And Early Experiments](experiments.md). For the production-result summary page, see [Production Results](experiments-production.md).
 
+## Roadmap
+- [ ] 250 px ambient diffusion target - running
+- [ ] harder target, 100 pixels
+- [ ] 20 pixels like in the actual data from continued checkpoint
+- [ ] 20 pixels like in the actual data from scratch
+- [ ] fine-tuning on actual Argo data from whichever checkpoint works best
+
 ## Scope
 This section is intended for:
 - experiments based on the on-disk dataset
