@@ -79,5 +79,6 @@ nav:
       - Synthetic Dataset: data.md
   - Experiments:
       - Synthetic + Early Experiments: experiments.md
+      - GLORYS/Argo Aligned Experiments: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
   - API Reference: api.md
