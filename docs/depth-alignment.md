@@ -56,12 +56,12 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 - Acceptance decreases with depth as ARGO sampling becomes sparser.
 
 ### Example aligned profiles
-<img src="assets/profile_comparison_good_alignment.png" alt="Example of good ARGO-to-GLORYS profile alignment" width="75%">
+<img src="../assets/profile_comparison_good_alignment.png" alt="Example of good ARGO-to-GLORYS profile alignment" width="75%">
 
 - This example shows a typical well-aligned case: the sparse ARGO `x` points sit close to the GLORYS profile at the same pixel, so the projected profile shape is consistent across the observed depth range.
 - In practice, this is the common outcome. The depth projection is usually very good when local vertical structure is smooth and the nearest-depth cutoff retains enough support.
 
-<img src="assets/profile_comparison_bad_alignment.png" alt="Example of weaker ARGO-to-GLORYS profile alignment" width="75%">
+<img src="../assets/profile_comparison_bad_alignment.png" alt="Example of weaker ARGO-to-GLORYS profile alignment" width="75%">
 
 - This second example shows that the alignment is not perfect in every case. At some locations, the sparse ARGO observations and the GLORYS profile disagree more noticeably over part of the observed depth range.
 - These mismatches can happen when the local profile structure changes quickly with depth, when observations are sparse at the relevant levels, or when the nearest valid ARGO samples are still relatively far from the GLORYS target depths even though they pass the cutoff.
