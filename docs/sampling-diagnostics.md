@@ -16,10 +16,10 @@ Potential improvement directions:
 - parameterization choices (`x0` vs `epsilon`)  
   
 Intermediate reconstructions over the denoising path:  
-![intermediate_steps](assets/intermediate_steps.png){ width="40%" }  
+![intermediate_steps](assets/figures/intermediate_steps.png){ width="40%" }  
   
 MAE trend across intermediate denoising steps:  
-![mae_vs_intermediate](assets/mae_vs_intermediate.png){ width="50%" }  
+![mae_vs_intermediate](assets/figures/mae_vs_intermediate.png){ width="50%" }  
   
 Implemented schedule options in code:  
 - `linear`  
@@ -28,5 +28,5 @@ Implemented schedule options in code:
 - `sigmoid`  
   
 Example schedule profile image:  
-![noise_schedules](assets/noise_schedules.png){ width="85%" }  
+![noise_schedules](assets/figures/noise_schedules.png){ width="85%" }  
   

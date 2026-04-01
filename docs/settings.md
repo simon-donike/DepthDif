@@ -60,7 +60,7 @@ Runtime effect:
 - useful for inpainting-style stability  
   
 Illustration:  
-![img](assets/clamped_pixels.png)  
+![img](assets/figures/clamped_pixels.png)  
   
 ### Coordinate/date FiLM conditioning  
 Config:  

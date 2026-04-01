@@ -1,5 +1,5 @@
 <p align="center">  
-  <img src="assets/banner_depthdif.png" width="65%" style="border-radius: 12px;" />  
+  <img src="assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />  
 </p>  
   
 # Densifying Sparse Ocean Depth Observations  
@@ -17,7 +17,7 @@ The repository currently supports:
   
 ## Model Description  
   
-![depthdif_schema](assets/depthdif_schema.png)  
+![depthdif_schema](assets/figures/depthdif_schema.png)  
   
 DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
   

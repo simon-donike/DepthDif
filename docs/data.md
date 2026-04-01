@@ -5,7 +5,7 @@ Current training data combines two different upstream sources:
 - sea-surface EO condition (`eo`) from OSTIA (`analysed_sst`)  
   
 Dataset example for 50% occlusion:  
-![img](assets/dataset_50percMask.png)  
+![img](assets/data/dataset_50percMask.png)  
   
 ## On-Disk Export Format (Sub-Surface Reanalysis)  
 The data export script is `data/dataset_to_disk.py`.  
@@ -49,7 +49,7 @@ Temporal resolution/alignment note:
 - compared to prior monthly composite-only workflow, EO is now a fixed 15th-day snapshot for each overlapping month  
   
 Visual reference of the OSTIA-conditioned dataset:  
-![img](assets/dataset_ostia.png)  
+![img](assets/data/dataset_ostia.png)  
   
 ## OSTIA Patch-Time Index CSV (Spatial x Daily)  
 For raw OSTIA-only indexing (before adding profile sources), use  
@@ -101,7 +101,7 @@ Cross-source structure notes (OSTIA surface vs reanalysis depth):
 - Divergence between OSTIA surface patterns and deeper reanalysis targets generally increases with depth, so correspondence weakens for deeper levels.  
   
 EO + multiband example:  
-![img](assets/eo_dataset_example.png)  
+![img](assets/data/eo_dataset_example.png)  
   
 ### Raw OSTIA + Argo Profiles (standalone)  
 `OstiaArgoTileDataset` (`data/dataset_ostia_argo.py`) is independent from the synthetic `eo_4band/ostia` datasets and reads raw-source files directly:  
@@ -159,7 +159,7 @@ The dataset creates sparse `x` using stochastic trajectory-style corruption:
 - legacy rectangular masking remains available via `mask_strategy="rectangles"`  
   
 Continuous submarine-like streak example (`mask_strategy="tracks"`):  
-![img](assets/dataset_streaks.png)  
+![img](assets/data/dataset_streaks.png)  
   
 ### Validity and land masks  
 - masks are derived from finite-value checks and configured fill-value logic  

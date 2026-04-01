@@ -55,7 +55,7 @@ Current default semantics:
 - the spatial CSV already includes a WKT polygon column for each patch  
   
 Spatial split visualization:  
-![OSTIA train val land patch map](assets/train_val_split_0p1.png)  
+![OSTIA train val land patch map](assets/data/train_val_split_0p1.png)  
   
 ## 2) Temporal Sampling
 After the spatial patch grid exists, the production dataset expands it across time.  
@@ -168,10 +168,10 @@ Counts:
 - rows with `argo_valid=0`: `197,225` (`21.16%`)  
   
 Sample Image:  
-![OSTIA 0.1 deg sample](assets/argo_ostia_sample_5.png)  
+![OSTIA 0.1 deg sample](assets/data/argo_ostia_sample_5.png)  
   
 Train-set valid-fraction histogram:  
-![OSTIA 0.1 deg hist](assets/argo_observations_histogram.png)  
+![OSTIA 0.1 deg hist](assets/data/argo_observations_histogram.png)  
   
 ### Version C: 0.1 Degree, 7-Day Aggregate  
 Interpretation:  
@@ -187,13 +187,13 @@ Counts:
 - average observations for valid tiles: about `20.5`  
   
 Sample Image:  
-![OSTIA 0.1 deg sample](assets/argo_ostia_sample_0p1_7days.png)  
+![OSTIA 0.1 deg sample](assets/data/argo_ostia_sample_0p1_7days.png)  
   
 Train-set valid-fraction histogram:  
-![OSTIA 0.1 deg hist](assets/argo_observations_histogram_7days.png)  
+![OSTIA 0.1 deg hist](assets/data/argo_observations_histogram_7days.png)  
 
 Median valid pixels per spatial patch:  
-![Median valid pixels per patch](assets/argo_valid_pixels_per_patch.png)  
+![Median valid pixels per patch](assets/data/argo_valid_pixels_per_patch.png)  
   
   
 ## 6) End-To-End Build Order

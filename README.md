@@ -1,5 +1,5 @@
 <p align="center">  
-  <img src="docs/assets/banner_depthdif.png" width="65%" style="border-radius: 12px;" />  
+  <img src="docs/assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />  
 </p>  
   
 <p align="center">  
@@ -42,7 +42,7 @@ Ambient-occlusion training is available via `model.ambient_occlusion.*`: the mod
 With an observed mask `m` and further-corrupted training mask `m' <= m`, the network predicts from the ambient input (`x_t * m'`, condition) and is optimized with  
 `L = E[ || (epsilon - epsilon_theta(x_t * m', cond, t)) * m ||_2^2 ]`.  
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.  
-![depthdif_schema](docs/assets/depthdif_schema.png)  
+![depthdif_schema](docs/assets/figures/depthdif_schema.png)  
   
 ## Training  
   

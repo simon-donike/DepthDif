@@ -1,0 +1,19 @@
+dataset:
+  core:
+    dataset_variant: "ostia_argo_disk" # Selects the exported OSTIA/ARGO/GLORYS GeoTIFF manifest dataset in train.py.
+    dataloader_type: "light" # The current training runner supports only "light" dataset loading.
+    manifest_csv_path: "/work/data/depth_prod/ostia_argo_tiff_index.csv" # Working manifest with relative ostia/argo/glorys TIFF paths.
+  output:
+    return_info: false # Keep training batches lean; enable only for debugging manifest metadata.
+    return_coords: true # Required by the coord/date-conditioning model preset.
+  synthetic:
+    enabled: true # Rebuild sparse x from GLORYS profile columns instead of using exported Argo x.
+    pixel_count: 250 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
+  runtime:
+    random_seed: 7 # Seed used for deterministic dataset-side behavior where applicable.
+
+split:
+  val_fraction: 0.2 # Kept for compatibility; explicit manifest phase labels are used by train.py.
+
+dataloader:
+  val_shuffle: false # Keep qualitative validation comparisons stable across epochs.

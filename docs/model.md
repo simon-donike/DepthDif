@@ -2,7 +2,7 @@
 DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.  
   
 Model schema:  
-![depthdif_schema](assets/depthdif_schema.png)  
+![depthdif_schema](assets/figures/depthdif_schema.png)  
   
 Core stack:  
 - Lightning wrapper: `PixelDiffusionConditional`  

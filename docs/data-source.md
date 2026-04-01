@@ -11,7 +11,7 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 | EN4 / ARGO profiles | in-situ temperature observations | profile-specific corrected depths | `TEMP`, `DEPH_CORRECTED` |
 
 ## Product A: GLORYS Reanalysis
-![GLORYS banner](assets/glorys_banner.png)
+![GLORYS banner](assets/data/glorys_banner.png)
 
 GLORYS is a global ocean reanalysis product that provides physically consistent 3D temperature fields on a fixed depth grid.
 
@@ -26,11 +26,11 @@ Relevant helper scripts:
 - `data/get_glorys/download_glorys_weekly.sh`
 
 GLORYS depth distribution:  
-![img](assets/depth_levels.png)
+![img](assets/data/depth_levels.png)
 
 
 ## Product B: OSTIA Surface EO
-![OSTIA banner](assets/ostia_banner.png)
+![OSTIA banner](assets/data/ostia_banner.png)
 
 OSTIA is a satellite- and in-situ-derived ocean surface temperature product that provides daily global sea-surface temperature fields.
 
@@ -41,10 +41,10 @@ OSTIA is a satellite- and in-situ-derived ocean surface temperature product that
 - Geometry: global 2D grid
 
 OSTIA example tile:  
-![img](assets/dataset_ostia.png)
+![img](assets/data/dataset_ostia.png)
 
 ## Product C: EN4 / ARGO Profiles
-![ARGO banner](assets/argo_banner.png)
+![ARGO banner](assets/data/argo_banner.png)
 
 EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected depth samples that capture sparse but physically grounded vertical structure.
 
@@ -58,14 +58,14 @@ Relevant helper script:
 - `data/get_argo/download_en4_profiles.sh`
 
 Archive-wide corrected-depth histogram with GLORYS reference levels:  
-![img](assets/argo_corrected_depth_histogram.png)
+![img](assets/data/argo_corrected_depth_histogram.png)
 
 - The histogram aggregates finite `DEPH_CORRECTED` values over the scanned EN4 archive.
 - Sampling density is concentrated in the upper ocean and decreases with depth.
 - The dotted GLORYS depth markers show the discrete reference levels used elsewhere in the project.
 
 Example ARGO profile in 3D:  
-![img](assets/argo_profile_3D.gif)  
+![img](assets/data/argo_profile_3D.gif)  
 Important: `z` shows the netCDF dimension (400), not actual depth. 
 
 ## Raw Product Notes

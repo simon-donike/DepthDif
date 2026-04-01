@@ -20,7 +20,7 @@ Inference/sampling did not change. This is a training-objective change only.
   
 ## Visual Walkthrough  
   
-![Ambient objective step-by-step example](assets/ambient_occlusion_sample_ex.png)  
+![Ambient objective step-by-step example](assets/figures/ambient_occlusion_sample_ex.png)  
   
 This figure shows one real training sample and the exact split that ambient occlusion creates between observations the model still receives and observations that are temporarily hidden from it.  
   
