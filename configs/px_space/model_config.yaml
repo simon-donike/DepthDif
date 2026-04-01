@@ -33,7 +33,7 @@ model:
     embed_dim: null # Defaults to unet.dim when left null.
 
   unet:
-    dim: 32 # Conservative base width for the 50-output / 52-condition channel setup.
+    dim: 96 # Conservative base width for the 50-output / 52-condition channel setup.
     dim_mults: [1, 2, 4, 8] # Keep the established U-Net depth while reducing width.
     with_time_emb: true # Enable timestep embeddings in the denoiser.
     output_mean_scale: false # Optional output mean correction remains disabled.

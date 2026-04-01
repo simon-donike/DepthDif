@@ -677,6 +677,14 @@ def main(
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
     )
 
+    if is_global_zero:
+        # Print dataset sample counts explicitly because Lightning startup output
+        # focuses on batch counts and device setup rather than total examples.
+        print(
+            "Dataset summary: "
+            f"train_samples={len(train_dataset)}, val_samples={len(val_dataset)}"
+        )
+
     # Start (or resume) training.
     trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
 
