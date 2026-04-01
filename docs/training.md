@@ -47,7 +47,7 @@ When enabled, training logs:
   
 See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full derivation, figure walkthrough, and paper citation.  
   
-Note: turning `model.ambient_occlusion.enabled` back to `false` does not switch to full-image loss. With `model.mask_loss_with_valid_pixels=true`, loss falls back to missing pixels (`1 - valid_mask`).  
+Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask`.  
 For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enabled=false`.  
   
 ## Important Config Notes  

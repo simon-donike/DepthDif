@@ -614,12 +614,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         output: torch.Tensor,
         condition: torch.Tensor,
         *,
-        valid_mask: torch.Tensor | None = None,
+        loss_mask: torch.Tensor | None = None,
         further_valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
         apply_further_corruption_to_noisy_branch: bool = False,
-        loss_mask_mode: str = "missing",
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -628,12 +627,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         Args:
             output (torch.Tensor): Tensor input for the computation.
             condition (torch.Tensor): Tensor input for the computation.
-            valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            loss_mask (torch.Tensor | None): Mask tensor selecting the supervised pixels.
             further_valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
             apply_further_corruption_to_noisy_branch (bool): Boolean flag controlling behavior.
-            loss_mask_mode (str): Input value.
             coord (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
 
@@ -666,18 +664,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         target = noise if self.parameterization == "epsilon" else output
 
         # apply loss
-        if not mask_loss:
-            return self.loss_fn(target, prediction)
-        if loss_mask_mode not in {"missing", "observed", "none"}:
-            raise ValueError(
-                "loss_mask_mode must be one of {'missing', 'observed', 'none'} "
-                f"(got '{loss_mask_mode}')."
-            )
-        if loss_mask_mode == "none":
+        if not mask_loss or loss_mask is None:
             return self.loss_fn(target, prediction)
 
         generated_mask = self._build_valid_mask(
-            valid_mask, target, mode=loss_mask_mode
+            loss_mask, target, mode="observed"
         )
         if generated_mask is None:
             return self.loss_fn(target, prediction)

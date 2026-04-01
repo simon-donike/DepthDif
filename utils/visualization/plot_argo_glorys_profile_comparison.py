@@ -80,7 +80,7 @@ def _plot_profiles(
     sample = dataset[int(sample_idx)]
     x = temperature_normalize(mode="denorm", tensor=sample["x"]).detach().float()
     y = temperature_normalize(mode="denorm", tensor=sample["y"]).detach().float()
-    valid_mask = sample["valid_mask"].detach().bool()
+    valid_mask = sample["x_valid_mask"].detach().bool()
 
     if x.ndim != 3 or y.ndim != 3 or valid_mask.ndim != 3:
         raise RuntimeError(

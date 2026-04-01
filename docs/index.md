@@ -25,7 +25,7 @@ In the OSTIA setup, EO surface conditioning comes from mid-month OSTIA SST snaps
   
 Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.  
 For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize  
-`L = E[ || (epsilon - epsilon_theta(x_t * m', cond, t)) * m ||_2^2 ]` (predict on stronger corruption, score on original observations).  
+`L` on the original `x` support intersected with valid target support (`x_valid_mask ∩ y_valid_mask`) while conditioning on the stronger corruption `m'`.  
   
 ## Documentation Map  
 - [Quick Start](quickstart.md): environment setup + fastest train/infer path  

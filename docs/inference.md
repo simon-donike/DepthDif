@@ -33,12 +33,14 @@ The script constants should be set explicitly. In this repository, the actively 
 The model inference entry point is:  
 - `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`  
   
-Minimum required batch key:  
+Minimum required batch keys:  
 - `x`  
-  
+- `x_valid_mask`  
+- `y_valid_mask`  
+
 Common optional keys:  
 - `eo`  
-- `valid_mask`  
+- `x_valid_mask_1d`  
 - `land_mask`  
 - `coords`  
 - `date`  
@@ -50,7 +52,7 @@ Common optional keys:
 ### Returned outputs  
 `predict_step` returns a dictionary containing:  
 - `y_hat`: standardized prediction  
-- `y_hat_denorm`: temperature-denormalized prediction  
+- `y_hat_denorm`: temperature-denormalized prediction, masked to `NaN` where `y_valid_mask==0`  
 - `denoise_samples`: reverse samples (if requested)  
 - `x0_denoise_samples`: per-step x0 predictions (if requested)  
 - `sampler`: sampler used for prediction  

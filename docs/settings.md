@@ -25,7 +25,7 @@ Config (`model_config_*`):
 - `model.condition_use_valid_mask`  
   
 Runtime effect:  
-- controls how `condition = [eo?, x, valid_mask?]` is assembled  
+- controls how `condition = [eo?, x, x_valid_mask?]` is assembled  
 - channel count is validated against expected `condition_channels`  
   
 ### Diffusion target parameterization  
@@ -41,15 +41,16 @@ Config:
 - `model.mask_loss_with_valid_pixels`  
   
 Runtime effect:  
-- if enabled, loss is computed on missing pixels (`1 - valid_mask`)  
-- optionally gated by `land_mask` to focus on ocean pixels  
+- if enabled, loss uses the task-valid support instead of the old missing-pixel mask  
+- standard mode: `y_valid_mask` over the full `y` target  
+- ambient mode: `x_valid_mask ∩ y_valid_mask` over the `x` target  
 - mask alignment preserves per-band semantics (`B x C x H x W`) unless a single shared mask channel is explicitly used  
   
 ### Inference output composition  
 Runtime effect:  
-- final output keeps observed pixels from `x` where `valid_mask=1`  
-- model predictions are used where `valid_mask=0`  
-- `land_mask` is then applied to zero land pixels  
+- direct `y` prediction keeps the generated field and masks invalid `y_valid_mask` support to `NaN`  
+- ambient `x` completion leaves known-pixel enforcement to `clamp_known_pixels` during sampling  
+- both modes then mask invalid `y_valid_mask` support to `NaN`  
   
 ### Known-pixel clamping during sampling  
 Config:  
@@ -156,15 +157,15 @@ Defaults below refer to `configs/px_space/data_ostia_argo_disk.yaml` unless note
 | `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path resumes training. |  
 | `model.load_checkpoint` | `false` | `false/null` disables warm start; checkpoint path loads model `state_dict` only (no Lightning optimizer/trainer resume). |  
 | `model.generated_channels` | `50` | Number of predicted GLORYS depth channels. |  
-| `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + valid mask (`1`). |  
-| `model.condition_mask_channels` | `1` | Number of valid-mask condition channels. |  
+| `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`). |  
+| `model.condition_mask_channels` | `1` | Number of `x_valid_mask` condition channels. |  
 | `model.condition_include_eo` | `true` | Includes `batch["eo"]` as condition input. |  
-| `model.condition_use_valid_mask` | `true` | Includes valid mask in condition input. |  
+| `model.condition_use_valid_mask` | `true` | Includes `x_valid_mask` in condition input. |  
 | `model.clamp_known_pixels` | `false` | Clamps known pixels each reverse step for inpainting-style stability. |  
-| `model.mask_loss_with_valid_pixels` | `true` | Computes loss on missing pixels (`1-valid_mask`) with optional gating. |  
+| `model.mask_loss_with_valid_pixels` | `true` | Computes loss on the task-valid supervision mask (`y_valid_mask` in standard mode, `x_valid_mask ∩ y_valid_mask` in ambient mode). |  
 | `model.parameterization` | `"x0"` | Diffusion training target (`"epsilon"` or `"x0"`). |  
 | `model.log_intermediates` | `true` | Default validation intermediate logging behavior. |  
-| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise on original observed pixels). |  
+| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise `x` on `x_valid_mask ∩ y_valid_mask`). |  
 | `model.ambient_occlusion.further_drop_prob` | `0.1` | Additional drop probability `delta` applied on already observed pixels during training. |  
 | `model.ambient_occlusion.apply_to_noisy_branch` | `true` | Applies the further mask to the noisy target branch in `p_loss` (`~A x_t`). |  
 | `model.ambient_occlusion.shared_spatial_mask` | `true` | Uses one spatial further-mask per sample and shares it across channels. |  

@@ -602,7 +602,7 @@ class OstiaArgoTileDataset(Dataset):
 
     @staticmethod
     def _glorys_horizontal_ocean_mask(glorys_patch: np.ndarray) -> np.ndarray:
-        """Build a strictly horizontal ocean mask from the GLORYS surface layer."""
+        """Build a single-band horizontal ocean mask from the GLORYS surface layer."""
         patch = np.asarray(glorys_patch, dtype=np.float32)
         if patch.ndim != 3:
             raise RuntimeError(
@@ -612,8 +612,8 @@ class OstiaArgoTileDataset(Dataset):
         if patch.shape[0] == 0:
             raise RuntimeError("Cannot build GLORYS land mask from an empty depth stack.")
 
-        # GLORYS land/ocean support is horizontal. Use only the shallowest native level so the
-        # returned mask cannot vary by depth and coastal bathymetry does not leak deeper support.
+        # Keep land/ocean support horizontal; per-depth GLORYS support is returned separately via
+        # y_valid_mask so deeper below-bathymetry cells do not overload land_mask semantics.
         return np.isfinite(patch[:1]).astype(np.float32, copy=False)
 
     def _load_glorys_patch_h5netcdf(
@@ -1856,15 +1856,15 @@ class OstiaArgoTileDataset(Dataset):
         x = sample["x"]
         y = sample["y"]
         eo = sample["eo"]
-        valid_mask = sample["valid_mask"]
-        valid_mask_1d = sample["valid_mask_1d"]
+        x_valid_mask = sample["x_valid_mask"]
+        x_valid_mask_1d = sample["x_valid_mask_1d"]
         info = sample.get("info", {})
 
-        if x.ndim != 3 or y.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
+        if x.ndim != 3 or y.ndim != 3 or eo.ndim != 3 or x_valid_mask.ndim != 3:
             raise RuntimeError(
                 "Expected sample tensors with shape (C,H,W): "
                 f"x={tuple(x.shape)}, y={tuple(y.shape)}, "
-                f"eo={tuple(eo.shape)}, valid_mask={tuple(valid_mask.shape)}"
+                f"eo={tuple(eo.shape)}, x_valid_mask={tuple(x_valid_mask.shape)}"
             )
         if eo.shape[0] != 1:
             raise RuntimeError(f"Expected single-band OSTIA tensor, got shape {tuple(eo.shape)}")
@@ -1883,20 +1883,20 @@ class OstiaArgoTileDataset(Dataset):
                 "Expected GLORYS export stack to cover the full GLORYS depth axis: "
                 f"tensor_bands={y.shape[0]}, glorys_depth_levels={export_band_count}"
             )
-        if valid_mask.shape != x.shape:
+        if x_valid_mask.shape != x.shape:
             raise RuntimeError(
-                "Expected valid_mask shape to match x shape: "
-                f"{tuple(valid_mask.shape)} != {tuple(x.shape)}"
+                "Expected x_valid_mask shape to match x shape: "
+                f"{tuple(x_valid_mask.shape)} != {tuple(x.shape)}"
             )
-        if valid_mask_1d.ndim != 3 or valid_mask_1d.shape != (1, self.tile_size, self.tile_size):
+        if x_valid_mask_1d.ndim != 3 or x_valid_mask_1d.shape != (1, self.tile_size, self.tile_size):
             raise RuntimeError(
-                "Expected valid_mask_1d shape to be (1,H,W): "
-                f"{tuple(valid_mask_1d.shape)} != {(1, self.tile_size, self.tile_size)}"
+                "Expected x_valid_mask_1d shape to be (1,H,W): "
+                f"{tuple(x_valid_mask_1d.shape)} != {(1, self.tile_size, self.tile_size)}"
             )
 
-        valid_mask_1d_pixels = int(valid_mask_1d.sum().item())
+        valid_mask_1d_pixels = int(x_valid_mask_1d.sum().item())
         argo_stack_for_count = np.where(
-            np.asarray(valid_mask.detach().cpu().numpy(), dtype=bool),
+            np.asarray(x_valid_mask.detach().cpu().numpy(), dtype=bool),
             np.asarray(x.detach().cpu().numpy(), dtype=np.float32),
             np.nan,
         ).astype(np.float32, copy=False)
@@ -1929,7 +1929,7 @@ class OstiaArgoTileDataset(Dataset):
                 x=x,
                 y=y,
                 eo=eo,
-                valid_mask=valid_mask,
+                valid_mask=x_valid_mask,
                 glorys_depths_for_export=glorys_depths_for_export,
                 argo_tif_path=argo_tif_path,
                 ostia_tif_path=ostia_tif_path,
@@ -1966,8 +1966,8 @@ class OstiaArgoTileDataset(Dataset):
         x = sample["x"]
         y = sample["y"]
         eo = sample["eo"]
-        valid_mask = sample["valid_mask"]
-        valid_mask_1d = sample["valid_mask_1d"]
+        valid_mask = sample["x_valid_mask"]
+        valid_mask_1d = sample["x_valid_mask_1d"]
         info = sample.get("info", {})
 
         if x.ndim != 3 or y.ndim != 3 or eo.ndim != 3 or valid_mask.ndim != 3:
@@ -2340,6 +2340,7 @@ class OstiaArgoTileDataset(Dataset):
                 y_valid = y_count > 0
                 y_np[y_valid] = y_sum[y_valid] / y_count[y_valid].astype(np.float32)
                 y = torch.from_numpy(y_np)
+        y_valid_mask = torch.isfinite(y)
         if y.shape[0] > 0:
             land_mask = torch.from_numpy(
                 self._glorys_horizontal_ocean_mask(y.detach().cpu().numpy())
@@ -2347,16 +2348,16 @@ class OstiaArgoTileDataset(Dataset):
         else:
             land_mask = torch.zeros((1, self.tile_size, self.tile_size), dtype=torch.float32)
 
-        # Default x/valid_mask are empty and will be filled if Argo data is available.
+        # Default x/x_valid_mask are empty and will be filled if Argo data is available.
         if self.return_argo_profiles:
             x = torch.zeros((n_glorys_levels, self.tile_size, self.tile_size), dtype=torch.float32)
-            valid_mask = torch.zeros(
+            x_valid_mask = torch.zeros(
                 (n_glorys_levels, self.tile_size, self.tile_size),
                 dtype=torch.bool,
             )
         else:
             x = torch.empty((0, self.tile_size, self.tile_size), dtype=torch.float32)
-            valid_mask = torch.empty(
+            x_valid_mask = torch.empty(
                 (0, self.tile_size, self.tile_size),
                 dtype=torch.bool,
             )
@@ -2418,37 +2419,37 @@ class OstiaArgoTileDataset(Dataset):
                 x_count += count_day
                 argo_days_used += 1
 
-            valid_mask = x_count > 0
+            x_valid_mask = x_count > 0
             x = torch.zeros_like(x_sum, dtype=torch.float32)
-            x[valid_mask] = x_sum[valid_mask] / x_count[valid_mask].to(dtype=torch.float32)
-        # Collapse across all depth bands so each pixel is valid if any band has an observation.
-        if valid_mask.shape[0] > 0:
-            valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
+            x[x_valid_mask] = x_sum[x_valid_mask] / x_count[x_valid_mask].to(dtype=torch.float32)
+        # Collapse across all depth bands so each pixel is valid if any x band has an observation.
+        if x_valid_mask.shape[0] > 0:
+            x_valid_mask_1d = x_valid_mask.any(dim=0, keepdim=True)
         else:
-            valid_mask_1d = torch.zeros(
+            x_valid_mask_1d = torch.zeros(
                 (1, self.tile_size, self.tile_size),
                 dtype=torch.bool,
             )
 
         surface_valid_pixels = 0
         surface_ostia_argo_mae_deg: float | None = None
-        if x.shape[0] > 0 and valid_mask.shape[0] > 0:
+        if x.shape[0] > 0 and x_valid_mask.shape[0] > 0:
             # Compute surface-only error on observed Argo pixels:
             # Argo level 0 vs. OSTIA surface eo[0].
-            surface_valid = valid_mask[0]
+            surface_valid = x_valid_mask[0]
             surface_valid_pixels = int(surface_valid.sum().item())
             if surface_valid_pixels > 0:
                 surface_ostia_argo_mae_deg = float(
                     torch.abs(x[0][surface_valid] - eo[0][surface_valid]).mean().item()
                 )
 
-        # Final sample contract: Argo raster (x), OSTIA patch (eo), Argo valid mask, metadata.
         sample: dict[str, Any] = {
             "x": x,
             "y": y,
             "eo": eo,
-            "valid_mask": valid_mask,
-            "valid_mask_1d": valid_mask_1d,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": y_valid_mask,
+            "x_valid_mask_1d": x_valid_mask_1d,
             "land_mask": land_mask,
             "info": {
                 "index": int(idx),
@@ -2468,7 +2469,7 @@ class OstiaArgoTileDataset(Dataset):
                 "argo_depth_semantics": "glorys_depth_index",
                 "surface_ostia_argo_valid_pixels": int(surface_valid_pixels),
                 "surface_ostia_argo_mae_deg": surface_ostia_argo_mae_deg,
-                "valid_mask_1d_pixels": int(valid_mask_1d.sum().item()),
+                "valid_mask_1d_pixels": int(x_valid_mask_1d.sum().item()),
             },
         }
         return sample
@@ -2483,7 +2484,7 @@ if __name__ == "__main__":
         print(f"Sample keys: {list(sample.keys())}")
         print(f"x shape: {tuple(sample['x'].shape)}")
         print(f"eo shape: {tuple(sample['eo'].shape)}")
-        print(f"valid_mask shape: {tuple(sample['valid_mask'].shape)}")
+        print(f"x_valid_mask shape: {tuple(sample['x_valid_mask'].shape)}")
         
         # save as PNG for a few random samples to visually inspect Argo/OSTIA alignment and interpolation behavior
         import random
@@ -2500,7 +2501,7 @@ if __name__ == "__main__":
             rand_i = random.randint(0, len(dataset) - 1)
             batch = dataset[rand_i]
             max_v = batch['x'].max().item()
-            valid_pixels = batch["valid_mask_1d"].sum().item()
+            valid_pixels = batch["x_valid_mask_1d"].sum().item()
             if max_v > 0:
                 c_val += 1
                 c_avg_num.append(valid_pixels)

@@ -83,9 +83,11 @@ def _build_case_batch(
         case["eo"] = torch.zeros_like(case["eo"])
     if disable_x and "x" in case:
         case["x"] = torch.zeros_like(case["x"])
-    if force_all_invalid and "valid_mask" in case:
-        # valid_mask=0 everywhere means no observed x pixels are marked as known.
-        case["valid_mask"] = torch.zeros_like(case["valid_mask"])
+    if force_all_invalid and "x_valid_mask" in case:
+        # x_valid_mask=0 everywhere means no observed x pixels are marked as known.
+        case["x_valid_mask"] = torch.zeros_like(case["x_valid_mask"])
+    if force_all_invalid and "x_valid_mask_1d" in case:
+        case["x_valid_mask_1d"] = torch.zeros_like(case["x_valid_mask_1d"])
 
     return case
 
@@ -93,10 +95,14 @@ def _build_case_batch(
 def _summarize_tensor(name: str, tensor: torch.Tensor) -> str:
     """Format compact summary statistics for one tensor."""
     t = tensor.detach().float()
+    finite = t[torch.isfinite(t)]
+    if int(finite.numel()) <= 0:
+        return f"{name}: shape={tuple(t.shape)} finite=0"
     return (
         f"{name}: shape={tuple(t.shape)} "
-        f"min={t.min().item():.4f} max={t.max().item():.4f} "
-        f"mean={t.mean().item():.4f} std={t.std(unbiased=False).item():.4f}"
+        f"min={finite.min().item():.4f} max={finite.max().item():.4f} "
+        f"mean={finite.mean().item():.4f} std={finite.std(unbiased=False).item():.4f} "
+        f"finite={int(finite.numel())}"
     )
 
 
@@ -171,7 +177,7 @@ def _save_case_plot(
     if "eo" in case_batch:
         eo_denorm = temperature_normalize(mode="denorm", tensor=case_batch["eo"].detach().float())
 
-    valid_mask_i = _mask_for_sample(case_batch.get("valid_mask"))
+    valid_mask_i = _mask_for_sample(case_batch.get("x_valid_mask"))
     land_mask_i = _mask_for_sample(case_batch.get("land_mask"))
     further_valid_mask_i = _mask_for_sample(pred.get("further_valid_mask"))
     ambient_valid_mask_rgb = None
@@ -392,8 +398,8 @@ def main() -> None:
         print(_summarize_tensor("input_x", case_batch["x"]))
         if "eo" in case_batch:
             print(_summarize_tensor("input_eo", case_batch["eo"]))
-        if "valid_mask" in case_batch:
-            print(_summarize_tensor("input_valid_mask", case_batch["valid_mask"]))
+        if "x_valid_mask" in case_batch:
+            print(_summarize_tensor("input_x_valid_mask", case_batch["x_valid_mask"]))
         if "coords" in case_batch:
             print(f"coords: {case_batch['coords'].detach().cpu().numpy().tolist()}")
         if "date" in case_batch:

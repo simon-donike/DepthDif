@@ -15,12 +15,12 @@ The model learns to generate `y` while conditioning on observed channels (`x`, o
 Two conditioning layouts are supported by code/config:  
   
 - Single-band task: `x -> y`  
-- EO multiband task: `[eo, x, valid_mask] -> y`  
+- EO multiband task: `[eo, x, x_valid_mask] -> y`  
   
 Condition assembly happens in `_prepare_condition_for_model`:  
 - optionally prepend `eo` (`condition_include_eo=true`)  
 - append data channels from `x`  
-- optionally append valid-mask channels (`condition_use_valid_mask=true`)  
+- optionally append `x_valid_mask` channels (`condition_use_valid_mask=true`)  
 - enforce channel count equals `model.condition_channels`  
   
 ## Architecture Summary  
@@ -53,14 +53,17 @@ Behavior:
   
 Loss options:  
 - unmasked MSE (default behavior when masking disabled)  
-- masked MSE over missing pixels (`1 - valid_mask`) with optional ocean gating via `land_mask`  
+- masked MSE with mode-specific supervision support:  
+  - standard mode: over `y_valid_mask` on the full `y` target  
+  - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` on the degraded `x` target  
+  - the horizontal `land_mask` remains available in the batch contract, but the task-valid masks already define the supervised support  
   
 Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):  
 - sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)  
 - feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask  
 - switch the diffusion target from `y` to the original sparse-observation tensor `x`  
 - optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)  
-- compute masked MSE on the originally observed subset (`A`, not `~A`)  
+- compute masked MSE on the originally valid `x` support intersected with valid `y` support (`A ∩ Y`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
   
 Current EO config (`configs/px_space/model_config.yaml`) uses:  
@@ -69,7 +72,7 @@ Current EO config (`configs/px_space/model_config.yaml`) uses:
   
 Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
   
-This means: if ambient mode is disabled, training loss is still masked on missing pixels (`1 - valid_mask`) of `y`, not over the full `y` image.  
+This means: if ambient mode is disabled, training loss is pulled over all valid `y` pixels via `y_valid_mask`.  
   
 ## Inference Flow  
 Prediction entry point is `predict_step`.  
@@ -91,9 +94,9 @@ Output dictionary from `predict_step`:
 ## Post-Processing in Lightning Inference  
 After denormalization, inference can apply:  
 - optional Gaussian blur (`model.post_process.gaussian_blur.*`)  
-- merge observed pixels from `x` (where `valid_mask=1`) with generated pixels (where `valid_mask=0`)  
-- zero land pixels using `land_mask`  
-  
+- direct `y` prediction: keep the generated field and set `y_valid_mask==0` pixels to `NaN`  
+- ambient `x` completion: return the model prediction as-is after optional sampler-time `clamp_known_pixels`, then set `y_valid_mask==0` pixels to `NaN`  
+
 This post-processing is centralized in `predict_step`.  
   
 ## Validation Diagnostics  
@@ -106,5 +109,5 @@ When available, full reconstruction logging includes:
 - PSNR/SSIM (if `skimage` is installed)  
 - qualitative reconstruction grid  
 - denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)  
-- reconstruction plotting applies `land_mask` and does not copy observed `valid_mask` pixels into the displayed prediction panel  
+- reconstruction plotting keeps the unmerged model prediction panel and masks invalid output support through `y_valid_mask`  
   

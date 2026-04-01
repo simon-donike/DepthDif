@@ -223,7 +223,7 @@ class OstiaArgoTiffDataset(Dataset):
 
     @staticmethod
     def _glorys_horizontal_ocean_mask(glorys_patch: np.ndarray) -> np.ndarray:
-        """Build a single-band ocean mask from the GLORYS surface layer."""
+        """Build a single-band horizontal ocean mask from the GLORYS surface layer."""
         patch = np.asarray(glorys_patch, dtype=np.float32)
         if patch.ndim != 3:
             raise RuntimeError(
@@ -233,7 +233,8 @@ class OstiaArgoTiffDataset(Dataset):
         if patch.shape[0] == 0:
             raise RuntimeError("Cannot build GLORYS land mask from an empty depth stack.")
 
-        # Use the shallowest GLORYS layer only so the mask stays purely horizontal.
+        # Keep land/ocean support horizontal; per-depth target support is returned separately via
+        # y_valid_mask so downstream code can distinguish bathymetry from land masking.
         return np.isfinite(patch[:1]).astype(np.float32, copy=False)
 
     @staticmethod
@@ -299,9 +300,12 @@ class OstiaArgoTiffDataset(Dataset):
         self,
         *,
         y_np: np.ndarray,
+        y_valid_mask_np: np.ndarray,
         idx: int,
     ) -> tuple[np.ndarray, np.ndarray, int]:
-        horizontal_valid = np.isfinite(y_np).any(axis=0)
+        # Synthetic ambient mode rebuilds x and x_valid_mask directly from the target
+        # support, so only pixels with at least one valid y depth can be sampled.
+        horizontal_valid = np.asarray(y_valid_mask_np, dtype=bool).any(axis=0)
         candidate_flat = np.flatnonzero(horizontal_valid.reshape(-1))
         if candidate_flat.size == 0:
             raise RuntimeError("Synthetic mode found no finite GLORYS pixels to sample from.")
@@ -324,10 +328,11 @@ class OstiaArgoTiffDataset(Dataset):
 
         x_np = np.full_like(y_np, np.nan, dtype=np.float32)
         selected_mask_3d = np.broadcast_to(selected_mask_2d[None, :, :], y_np.shape)
-        # Copy full GLORYS depth columns at sampled pixels so x becomes a sparse profile tensor.
-        x_np[selected_mask_3d] = y_np[selected_mask_3d]
-        valid_mask_np = np.isfinite(x_np)
-        return x_np, valid_mask_np, int(sampled_pixel_count)
+        x_valid_mask_np = selected_mask_3d & np.asarray(y_valid_mask_np, dtype=bool)
+        # Copy the valid target support only; invalid y depths stay NaN and therefore do not
+        # become synthetic x observations.
+        x_np[x_valid_mask_np] = y_np[x_valid_mask_np]
+        return x_np, x_valid_mask_np, int(sampled_pixel_count)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         row = self._rows[int(idx)]
@@ -383,15 +388,16 @@ class OstiaArgoTiffDataset(Dataset):
                 f"{tuple(y_np.shape)} != {tuple(x_np.shape)}"
             )
 
+        y_valid_mask_np = np.isfinite(y_np)
         synthetic_pixel_count: int | None = None
         if self.synthetic_mode:
-            x_np, valid_mask_np, synthetic_pixel_count = self._build_synthetic_x_from_glorys(
+            x_np, x_valid_mask_np, synthetic_pixel_count = self._build_synthetic_x_from_glorys(
                 y_np=y_np,
+                y_valid_mask_np=y_valid_mask_np,
                 idx=int(idx),
             )
         else:
-            valid_mask_np = np.isfinite(x_np)
-        # Use only the GLORYS surface support so the ocean mask is 2D and cannot vary by depth.
+            x_valid_mask_np = np.isfinite(x_np)
         land_mask_np = self._glorys_horizontal_ocean_mask(y_np)
         eo = torch.from_numpy(eo_np)
         x = torch.from_numpy(x_np)
@@ -403,16 +409,18 @@ class OstiaArgoTiffDataset(Dataset):
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-        valid_mask = torch.from_numpy(valid_mask_np.astype(np.bool_, copy=False))
+        x_valid_mask = torch.from_numpy(x_valid_mask_np.astype(np.bool_, copy=False))
+        y_valid_mask = torch.from_numpy(y_valid_mask_np.astype(np.bool_, copy=False))
         land_mask = torch.from_numpy(land_mask_np)
-        valid_mask_1d = valid_mask.any(dim=0, keepdim=True)
+        x_valid_mask_1d = x_valid_mask.any(dim=0, keepdim=True)
 
         sample: dict[str, Any] = {
             "eo": eo,
             "x": x,
             "y": y,
-            "valid_mask": valid_mask,
-            "valid_mask_1d": valid_mask_1d,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": y_valid_mask,
+            "x_valid_mask_1d": x_valid_mask_1d,
             "land_mask": land_mask,
             "date": self._parse_date_int(row.get("date", 19700115)),
         }
@@ -447,8 +455,8 @@ class OstiaArgoTiffDataset(Dataset):
         # Convert normalized tensors back to Celsius for local debug figures.
         eo = temperature_normalize(mode="denorm", tensor=sample["eo"])
         x = temperature_normalize(mode="denorm", tensor=sample["x"])
-        valid_mask = sample["valid_mask"]
-        valid_mask_1d = sample["valid_mask_1d"]
+        valid_mask = sample["x_valid_mask"]
+        valid_mask_1d = sample["x_valid_mask_1d"]
         land_mask = sample["land_mask"]
         y = temperature_normalize(mode="denorm", tensor=sample["y"])
         info = sample.get("info", {})
@@ -569,6 +577,6 @@ if __name__ == "__main__":
     print(
         f"eo shape: {tuple(sample['eo'].shape)}, x shape: {tuple(sample['x'].shape)}, "
         f"y shape: {tuple(sample['y'].shape)}, "
-        f"valid_mask shape: {tuple(sample['valid_mask'].shape)}"
+        f"x_valid_mask shape: {tuple(sample['x_valid_mask'].shape)}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")

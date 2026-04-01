@@ -16,4 +16,4 @@ split:
   val_fraction: 0.2 # Kept for compatibility; explicit manifest phase labels are used by train.py.
 
 dataloader:
-  val_shuffle: false # Keep qualitative validation comparisons stable across epochs.
+  val_shuffle: true # Enable validation shuffling for the current experimentation workflow.

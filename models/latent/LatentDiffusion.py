@@ -306,7 +306,9 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         batch: dict[str, Any],
     ) -> dict[str, Any]:
         prepared = dict(batch)
-        prepared["valid_mask"] = self._collapse_mask_channels(batch.get("valid_mask"))
+        prepared["x_valid_mask"] = self._collapse_mask_channels(batch.get("x_valid_mask"))
+        prepared["y_valid_mask"] = self._collapse_mask_channels(batch.get("y_valid_mask"))
+        prepared["x_valid_mask_1d"] = self._collapse_mask_channels(batch.get("x_valid_mask_1d"))
         prepared["land_mask"] = self._collapse_mask_channels(batch.get("land_mask"))
         return prepared
 

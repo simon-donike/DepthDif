@@ -197,7 +197,7 @@ def _plot_sample_figure(
     x = sample["x"].detach().float().cpu()
     y = sample["y"].detach().float().cpu()
     eo = sample["eo"].detach().float().cpu()
-    valid_mask = sample["valid_mask"].detach().cpu().bool()
+    valid_mask = sample["x_valid_mask"].detach().cpu().bool()
     valid_mask_1d = valid_mask.any(dim=0)
     further_valid_mask = further_valid_mask.detach().cpu().bool()
     seen_mask_1d = further_valid_mask.any(dim=0)
@@ -423,7 +423,7 @@ def main() -> None:
         else int(args.min_kept_observed_pixels)
     )
     further_valid_mask = _build_ambient_further_valid_mask(
-        sample["valid_mask"],
+        sample["x_valid_mask"],
         further_drop_prob=further_drop_prob,
         shared_spatial_mask=shared_spatial_mask,
         min_kept_observed_pixels=min_kept_observed_pixels,

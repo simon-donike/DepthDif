@@ -77,8 +77,9 @@ For latent training flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
 - `eo`: channel 0 condition  
 - `x`: corrupted deeper channels (channels 1..3)  
 - `y`: clean deeper channels (channels 1..3)  
-- `valid_mask`: per-channel validity mask for `y`  
-- `land_mask`: per-channel land/ocean mask  
+- `x_valid_mask`: per-channel validity mask for the corrupted `x` input  
+- `y_valid_mask`: per-channel validity mask for the clean `y` target  
+- `land_mask`: horizontal land/ocean mask  
 - `date`: parsed integer date (`YYYYMMDD`)  
 - optional: `coords`, `info`  
   
@@ -120,9 +121,11 @@ Per `__getitem__` behavior:
 - opens the row-linked EN4 monthly file from `argo_file_path` for each available day in the window  
 - converts `JULD` to `YYYYMMDD`, selects profiles matching each day, independently resamples each profile onto the fixed 50-level GLORYS depth axis, rasterizes to `(50, tile_size, tile_size)`, then temporally averages using per-pixel observation counts so overlapping Argo observations are properly averaged without treating real `0°C` values as missing  
 - returns `x` with shape `(50, 128, 128)` (or `(50, tile_size, tile_size)` for other tile sizes), aligned to the full GLORYS depth grid  
-- returns Argo-driven `valid_mask` with the same shape as `x`, where invalid channels are rejected because they are out of Argo depth range or fail the nearest-depth cutoff  
-- returns GLORYS-driven `land_mask` with shape `(1, tile_size, tile_size)`, built from the shallowest GLORYS level only so land/ocean support is strictly horizontal rather than depth-dependent  
-- returns: `x`, `y`, `eo`, `valid_mask`, `valid_mask_1d`, `land_mask`, `info`  
+- returns `x_valid_mask` with the same shape as `x`, where invalid channels are rejected because they are out of Argo depth range or fail the nearest-depth cutoff  
+- returns `y_valid_mask` with the same shape as `y`, marking per-depth GLORYS support after temporal averaging  
+- returns `x_valid_mask_1d` with shape `(1, tile_size, tile_size)`, marking spatial columns where Argo contributes at least one valid depth level  
+- returns GLORYS-driven `land_mask` with shape `(1, tile_size, tile_size)`, built from the shallowest GLORYS level so land/ocean support stays purely horizontal  
+- returns: `x`, `y`, `eo`, `x_valid_mask`, `y_valid_mask`, `x_valid_mask_1d`, `land_mask`, `info`  
   
 Disk export helper:  
 - `save_to_disk(idx, output_root="/work/data/depth_v3")` writes one OSTIA GeoTIFF to `ostia/<basename>.tif` and one Argo GeoTIFF to `argo/<basename>.tif` with the same basename for later pairing  
@@ -130,8 +133,8 @@ Disk export helper:
 - GeoTIFFs are written in `EPSG:4326` with bbox-derived geotransform and a north-up row order  
 - each successful export appends one row to `ostia_argo_tiff_index.csv` with centroid, filenames, output paths, source paths, and temporal-window metadata  
 - `data/export_ostia_argo_tiffs.py` runs the same export in parallel through a `DataLoader`, shuffles export order by default in contiguous blocks (`--shuffle`, optional `--shuffle-seed`, `--shuffle-block-size`, default `100`) so partial output spans the timeseries better without fully randomizing file access, writes TIFFs in worker processes, and writes the manifest periodically from the main process (`--flush-every`, default `100`) plus once at the end  
-- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk, normalizes `eo`/`x`/`y` with `utils.normalizations.temperature_normalize`, and returns `eo`, `x`, `valid_mask`, `date`, plus optional `coords` and `info`  
-- optional synthetic mode (`dataset.synthetic.enabled=true`) ignores exported Argo `x`, samples sparse horizontal pixels from the GLORYS target, copies the full depth profile at each selected pixel into `x`, and rebuilds `valid_mask` from that synthetic sparse input; the sampled count is Gaussian around `dataset.synthetic.pixel_count` and clamped to `+-10%`  
+- `OstiaArgoTiffDataset` (`data/dataset_ostia_argo_disk.py`) reads that manifest CSV back from disk, normalizes `eo`/`x`/`y` with `utils.normalizations.temperature_normalize`, returns `x_valid_mask`, `y_valid_mask`, `x_valid_mask_1d`, and keeps `land_mask` as a horizontal single-band mask  
+- optional synthetic mode (`dataset.synthetic.enabled=true`) ignores exported Argo `x`, samples sparse horizontal pixels from the GLORYS target, rebuilds `x` and `x_valid_mask` directly from `y` and `y_valid_mask`, and copies only valid depth support into the synthetic sparse input; the sampled count is Gaussian around `dataset.synthetic.pixel_count` and clamped to `+-10%`  
   
 Current scope note:  
 - profile extraction remains date-based within the monthly EN4 file, while vertical alignment is now performed against the GLORYS depth axis before the profile samples are tiled into the patch grid  
@@ -163,9 +166,10 @@ Continuous submarine-like streak example (`mask_strategy="tracks"`):
   
 ### Validity and land masks  
 - masks are derived from finite-value checks and configured fill-value logic  
-- `valid_mask` is used for both conditioning and masked-loss options in the model  
-- `land_mask` is used to suppress land influence in masked loss and optional output post-processing  
-- masked loss is computed over generated pixels (`1 - valid_mask`), optionally ocean-gated by `land_mask`  
+- `x_valid_mask` is used for conditioning support and ambient-task supervision  
+- `y_valid_mask` defines valid target/output support, including post-processing to `NaN` outside valid GLORYS depths  
+- `land_mask` stays as a horizontal ocean/land summary mask in the batch contract  
+- masked loss uses `y_valid_mask` in standard mode and `x_valid_mask ∩ y_valid_mask` in ambient mode  
   
 ### EO degradation options (`eo_4band` vs `ostia`)  
 If enabled in config:  

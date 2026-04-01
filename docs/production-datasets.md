@@ -108,7 +108,7 @@ Interpretation:
 
 ## 3) Depth Alignment Summary
 - ARGO profile temperatures are resampled onto the GLORYS `depth` coordinate before tile aggregation.
-- The raw dataset currently uses the full 50 GLORYS depth levels for `x`, `y`, and `valid_mask`.
+- The raw dataset currently uses the full 50 GLORYS depth levels for `x`, `y`, `x_valid_mask`, and `y_valid_mask`.
 - Targets outside the observed ARGO depth range, or outside the nearest-depth cutoff, remain invalid.
 - The detailed profile-level procedure is documented on [Depth Alignment](depth-alignment.md).
 

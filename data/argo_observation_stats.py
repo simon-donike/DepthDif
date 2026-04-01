@@ -344,7 +344,7 @@ def main() -> None:
 
         sample = dataset[idx]
         # Use collapsed 1D validity so fractions are computed per patch pixel per day.
-        valid_mask_1d = sample["valid_mask_1d"]
+        valid_mask_1d = sample["x_valid_mask_1d"]
         obs_fraction = (
             float(valid_mask_1d.sum().item() / int(valid_mask_1d.numel()))
             if int(valid_mask_1d.numel()) > 0

@@ -11,7 +11,7 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 ## Target Grid
 - The raw dataset uses the full 50 GLORYS depth levels as the target channel axis.
 - Depth alignment is applied profile-by-profile before spatial rasterization.
-- `x`, `y`, and `valid_mask` therefore share the same GLORYS-aligned depth layout.
+- `x`, `y`, `x_valid_mask`, and `y_valid_mask` therefore share the same GLORYS-aligned depth layout.
 
 ## Per-Profile Alignment Procedure
 1. Read finite `(DEPH_CORRECTED, TEMP)` pairs from one EN4 / ARGO profile.
@@ -22,7 +22,7 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 
 ## Output Semantics
 - In `data/dataset_ostia_argo.py`, ARGO is resampled onto the GLORYS depth axis before tile aggregation.
-- `valid_mask` marks aligned target depths that passed the profile-range and nearest-depth checks.
+- `x_valid_mask` marks aligned Argo depths that passed the profile-range and nearest-depth checks.
 - Exported Argo GeoTIFFs remain georeferenced in `EPSG:4326` and store GLORYS depth-aligned band metadata.
 
 ## Visual Diagnostics

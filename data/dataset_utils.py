@@ -20,12 +20,13 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
     DEFAULT_CONFIG_PATH = "configs/px_space/data_config.yaml"
     FORCE_DISABLE_EO_DEGRADATION = False
     ENABLE_EO_DROPOUT = True
-    PLOT_COLUMNS = ("eo", "x", "y", "valid_mask", "land_mask")
+    PLOT_COLUMNS = ("eo", "x", "y", "x_valid_mask", "y_valid_mask", "land_mask")
     PLOT_TITLES = {
         "eo": "EO (band 0)",
         "x": "Input x",
         "y": "Target y",
-        "valid_mask": "Valid mask",
+        "x_valid_mask": "X valid mask",
+        "y_valid_mask": "Y valid mask",
         "land_mask": "Land mask",
     }
     PLOT_OUTPUT_PATH = "temp/example_depth_tile_4bands.png"
@@ -378,11 +379,11 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             )
         y_np = y_np_all[self.target_band_start:end_exclusive]
 
-        # Keep a per-depth structural mask so shallow valid bands are preserved
-        # even when deeper bands are invalid at the same pixel.
-        land_mask_np = (
+        # Keep per-depth target support separate from the horizontal land/ocean support mask.
+        y_valid_mask_np = (
             np.isfinite(y_np) & (~np.isclose(y_np, 0.0, atol=1e-8))
         ).astype(np.float32, copy=False)
+        land_mask_np = y_valid_mask_np.any(axis=0, keepdims=True).astype(np.float32, copy=False)
 
         # to Torch
         eo = torch.from_numpy(eo_np)
@@ -430,7 +431,8 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             land_mask = self._apply_geometric_augment(land_mask, k_rot, flip_h, flip_v)
 
         y_clean = y
-        valid_mask = v.clone()
+        y_valid_mask = v.clone()
+        x_valid_mask = y_valid_mask.clone()
         y_corrupt = y_clean.clone()
 
         # Corrupt x with one shared spatial trajectory mask across all depth bands.
@@ -440,7 +442,7 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             target_hidden = int(round(self.mask_fraction * h * w))
             target_hidden = max(0, min(target_hidden, h * w))
             if target_hidden > 0:
-                preferred = ((valid_mask > 0.5) & (land_mask > 0.5)).any(dim=0)
+                preferred = ((x_valid_mask > 0.5) & (land_mask > 0.5)).any(dim=0)
                 if self.mask_strategy == "tracks":
                     target_observed = max(0, (h * w) - target_hidden)
                     if target_observed <= 0:
@@ -453,7 +455,7 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                 else:
                     hide_mask = self._generate_rectangle_mask((h, w), target_hidden)
                 for band_idx in range(channels):
-                    valid_mask[band_idx, hide_mask] = False
+                    x_valid_mask[band_idx, hide_mask] = False
                     y_corrupt[band_idx, hide_mask] = 0.0
 
         # Keep tensors finite before returning a batch dict.
@@ -467,12 +469,15 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                 eo = torch.zeros_like(eo)
 
         date = self._parse_date_yyyymmdd(row.get("source_file"))
+        x_valid_mask_1d = x_valid_mask.any(dim=0, keepdim=True)
 
         sample: dict[str, Any] = {
             "eo": eo,
             "x": x,
             "y": y,
-            "valid_mask": valid_mask,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": y_valid_mask,
+            "x_valid_mask_1d": x_valid_mask_1d,
             "land_mask": land_mask,
             "date": date,
         }
@@ -723,14 +728,15 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             eo_t = sample["eo"][0]
             x_t = sample["x"]
             y_t = sample["y"]
-            valid_mask_t = sample["valid_mask"]
+            x_valid_mask_t = sample["x_valid_mask"]
+            y_valid_mask_t = sample["y_valid_mask"]
             land_mask_t = sample["land_mask"]
 
             eo = temperature_normalize(mode="denorm", tensor=eo_t)
             x = temperature_normalize(mode="denorm", tensor=x_t)
             y = temperature_normalize(mode="denorm", tensor=y_t)
 
-            eo_img = minmax_stretch(eo, mask=valid_mask_t[0], nodata_value=None).numpy()
+            eo_img = minmax_stretch(eo, mask=land_mask_t[0], nodata_value=None).numpy()
             num_bands = int(x.shape[0])
             n_cols = len(self.PLOT_COLUMNS)
             fig, axes = plt.subplots(
@@ -740,19 +746,21 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                 squeeze=False,
             )
             for band_idx in range(num_bands):
-                mask_band = valid_mask_t[band_idx]
-                land_band = land_mask_t[band_idx]
+                x_mask_band = x_valid_mask_t[band_idx]
+                y_mask_band = y_valid_mask_t[band_idx]
+                land_band = land_mask_t[0]
                 x_img = minmax_stretch(
-                    x[band_idx], mask=mask_band, nodata_value=None
+                    x[band_idx], mask=land_band, nodata_value=None
                 ).numpy()
                 y_img = minmax_stretch(
-                    y[band_idx], mask=mask_band, nodata_value=None
+                    y[band_idx], mask=land_band, nodata_value=None
                 ).numpy()
                 band_views = {
                     "eo": eo_img,
                     "x": x_img,
                     "y": y_img,
-                    "valid_mask": mask_band.cpu().numpy(),
+                    "x_valid_mask": x_mask_band.cpu().numpy(),
+                    "y_valid_mask": y_mask_band.cpu().numpy(),
                     "land_mask": land_band.cpu().numpy(),
                 }
 
@@ -761,7 +769,7 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                         raise KeyError(
                             f"Unknown plot column '{col_name}' for {self.__class__.__name__}."
                         )
-                    if col_name in {"valid_mask", "land_mask"}:
+                    if col_name in {"x_valid_mask", "y_valid_mask", "land_mask"}:
                         axes[band_idx, col_idx].imshow(
                             band_views[col_name], cmap="gray", vmin=0.0, vmax=1.0
                         )

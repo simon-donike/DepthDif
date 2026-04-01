@@ -4,12 +4,12 @@ model: # Model Settings
   resume_checkpoint: false #"logs/2026-02-11_17-11-24/best.ckpt"  # false/null starts from scratch; set to a .ckpt path to continue training.
   load_checkpoint: false #"logs/2026-02-11_17-11-24/best.ckpt"  # false/null disables warm start; set to a .ckpt path to load model state_dict only (no PL optimizer/trainer state).
   generated_channels: 3 # Predict 3-band temperature profile target y.
-  condition_channels: 5 # EO (1) + corrupted temp channels x (3) + valid mask (1).
-  condition_mask_channels: 1 # One valid-mask channel is concatenated to the model condition.
+  condition_channels: 5 # EO (1) + corrupted temp channels x (3) + collapsed x_valid_mask (1).
+  condition_mask_channels: 1 # One x_valid_mask channel is concatenated to the model condition.
   condition_include_eo: true # Include batch["eo"] as extra condition channel.
-  condition_use_valid_mask: true # Use valid_mask as conditioning input in addition to EO + x.
+  condition_use_valid_mask: true # Use x_valid_mask as conditioning input in addition to EO + x.
   clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
-  mask_loss_with_valid_pixels: true # If true, loss is computed over missing pixels (1-valid_mask), with optional land/ocean gating.
+  mask_loss_with_valid_pixels: true # Uses task-valid supervision masks: y_valid_mask in standard mode, x_valid_mask ∩ y_valid_mask in ambient mode.
   parameterization: "x0" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
   ambient_occlusion:

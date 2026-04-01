@@ -9,12 +9,13 @@ class SurfaceTempPatch4BandsLightDataset(SurfaceTempPatchBaseLightDataset):
     DEFAULT_CONFIG_PATH = "configs/px_space/data_config.yaml"
     FORCE_DISABLE_EO_DEGRADATION = False
     ENABLE_EO_DROPOUT = True
-    PLOT_COLUMNS = ("eo", "x", "y", "valid_mask", "land_mask")
+    PLOT_COLUMNS = ("eo", "x", "y", "x_valid_mask", "y_valid_mask", "land_mask")
     PLOT_TITLES = {
         "eo": "EO (band 0)",
         "x": "Input x",
         "y": "Target y",
-        "valid_mask": "Valid mask",
+        "x_valid_mask": "X valid mask",
+        "y_valid_mask": "Y valid mask",
         "land_mask": "Land mask",
     }
     PLOT_OUTPUT_PATH = "temp/example_depth_tile_4bands.png"
@@ -33,8 +34,8 @@ if __name__ == "__main__":
         f"y shape: {sample['y'].shape}"
     )
     print(
-        "Valid mask sum: "
-        f"{sample['valid_mask'].sum().item()}, "
+        "X valid mask sum: "
+        f"{sample['x_valid_mask'].sum().item()}, "
         f"Land mask sum: {sample['land_mask'].sum().item()}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
@@ -56,8 +57,8 @@ if __name__ == "__main__":
             f"Zero count in x: {zero_count} / {total_count} ({100 * zero_count / total_count:.2f}%)"
         )
         # count 0s in mask
-        mask_zero_count = (sample["valid_mask"] == 0.0).sum().item()
-        mask_total_count = sample["valid_mask"].numel()
+        mask_zero_count = (sample["x_valid_mask"] == 0.0).sum().item()
+        mask_total_count = sample["x_valid_mask"].numel()
         print(
-            f"Zero count in valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)"
+            f"Zero count in x_valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)"
         )

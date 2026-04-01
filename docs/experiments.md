@@ -101,7 +101,7 @@ Setup:
 How sparse target works in this experiment:  
 - start from valid observed `x` pixels  
 - randomly hide a fraction of those observed pixels from model input  
-- compute loss only on the hidden subset (not on the full image). This is the main difference to the `ambient`-style training, where the loss is pulled over all pixels that are  `valid_mask==1`.  
+- compute loss only on the hidden subset (not on the full image). This is the main difference to the `ambient`-style training, where the loss is pulled over the ambient support mask `x_valid_mask ∩ y_valid_mask`.  
   
 Observation:  
 - reconstruction quality remains strong on the synthetic setup with EO + degradation  

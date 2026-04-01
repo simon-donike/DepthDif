@@ -12,7 +12,7 @@ Before this change, the model saw one masked input and trained mostly on the pix
   
 Now, during training only, we do one extra step: we hide some of the still-visible pixels again at random. So the model gets a harder, more incomplete input.  
   
-The important part is the loss target: we still score the model on the original known pixels (from the first mask), not only on the pixels that stayed visible after the second random drop.  
+The important part is the loss target: ambient mode now scores the model on the degraded `x` target only where the input is actually valid and the GLORYS depth support is valid.  
   
 Why this matters: it avoids a weak objective where the model can learn shortcuts from the currently visible subset, and instead teaches it to recover stable structure under extra random occlusion.  
   
@@ -41,11 +41,11 @@ DepthDif previously trained a conditional diffusion model with a **single corrup
   
 The new procedure adds a second stochastic corruption stage during training:  
   
-1. Start from the original observation mask \(A\) (from `valid_mask`).  
+1. Start from the original observation mask \(A\) (from `x_valid_mask`).  
 2. Sample an additional random keep/drop operator \(B\).  
 3. Form a further-corrupted mask \(\tilde{A} = B \odot A\).  
 4. Feed the model condition built from \(\tilde{A}\)-corrupted input.  
-5. Supervise the prediction on the **original** observed subset \(A\), not on \(\tilde{A}\).  
+5. Supervise the prediction on the ambient support mask \(S = A \odot Y\), where \(A\) is `x_valid_mask` and \(Y\) is `y_valid_mask`.  
   
 Intuition: the model is forced to reconstruct original observed `x` values from a stricter subset of those same observations.  
   
@@ -54,7 +54,7 @@ Intuition: the model is forced to reconstruct original observed `x` values from 
 For one sample:  
   
 - \(x_0 \in \mathbb{R}^{C \times H \times W}\): clean diffusion target (in ambient mode in this repo: normalized `x`).  
-- \(A \in \{0,1\}^{C \times H \times W}\): original validity/observation mask (`valid_mask`).  
+- \(A \in \{0,1\}^{C \times H \times W}\): original validity/observation mask (`x_valid_mask`).  
 - \(x = A \odot x_0\): original sparse observed input (in this repo, `x` already carries this structure).  
 - \(t \sim \mathrm{Unif}\{0,\dots,T-1\}\): diffusion timestep.  
 - \(x_t = \sqrt{\bar{\alpha}_t}\,x_0 + \sqrt{1-\bar{\alpha}_t}\,\epsilon,\ \epsilon\sim\mathcal{N}(0,I)\): noisy target branch sample.  
@@ -104,19 +104,25 @@ Optionally (enabled by default), the noisy branch is also masked:
   
 ### 4.2 Loss Region and Target  
   
-The implemented ambient mode uses `loss_mask_mode="observed"`, so supervision mask is \(A\) (not \(1-A\), and not \(\tilde{A}\)). In ambient mode, the diffusion target is also switched from `y` to the original `x`:  
-  
+The implemented ambient mode uses the degraded input target `x`, and supervises it only where the input and target supports both make sense. The ambient supervision mask is:  
+
+\[
+S = A \odot Y,
+\]
+
+where \(A\) is `x_valid_mask` and \(Y\) is `y_valid_mask`. This means ambient supervision stays on the actually valid input pixels after degradation, for both synthetic and proper Argo ambient inputs.  
+
 \[
 \mathcal{L}_{\text{ambient}}(\theta)
 =
 \frac{
-\left\|A\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2
+\left\|S\odot\left(\text{target}_t-\hat{x}_{\theta}\right)\right\|_2^2
 }{
-\|A\|_1
+\|S\|_1
 }.
 \]
   
-If `land_mask` is provided, the effective mask is \(A\odot L\), exactly matching existing ocean-gating behavior.  
+`land_mask` no longer changes the diffusion loss support in the current training path; the implemented loss mask is exactly the task-valid mask \(S = A \odot Y\).  
   
 ### 4.3 Relation to Paper Objective  
   
@@ -135,7 +141,7 @@ up to the repository’s existing normalization/parameterization conventions and
 1. **Two-stage masking during training** (\(A \rightarrow \tilde{A}\)).  
 2. **Condition path uses \(\tilde{A}\)** and \(\tilde{x}\).  
 3. **Diffusion target switches to original `x`** in ambient mode.  
-4. **Loss region switches to observed mask \(A\)** in ambient mode.  
+4. **Loss region switches to the valid ambient support mask \(A \odot Y\)** in ambient mode.  
 5. New ambient metrics are logged:  
    - `train/ambient_further_drop_fraction`  
    - `train/ambient_observed_fraction_original`  
@@ -146,9 +152,8 @@ up to the repository’s existing normalization/parameterization conventions and
   
 1. Inference/sampler algorithms (DDPM/DDIM) are unchanged.  
 2. Dataset generation of original corruption mask \(A\) is unchanged.  
-3. Optional land-mask gating remains identical.  
-4. If ambient mode is disabled, behavior remains backward-compatible with previous training flow.  
-5. Important: disabling ambient does **not** imply full-image loss. With `model.mask_loss_with_valid_pixels=true` (current default), loss reverts to missing-pixel masking (`1 - valid_mask`) on `y`, not all of \(Y\).  
+3. The dataset still returns the horizontal `land_mask` in the batch contract, but the diffusion loss is driven by task-valid masks instead of land-mask gating.  
+4. If ambient mode is disabled, the model and samplers stay the same while the objective reverts to direct `y` reconstruction over `y_valid_mask`.  
   
 ## 6. Implemented Safety and Constraints  
   
@@ -172,7 +177,7 @@ up to the repository’s existing normalization/parameterization conventions and
 - Ambient loss execution:  
   - `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
     - `DenoisingDiffusionConditionalProcess.p_loss(...)`  
-    - `loss_mask_mode="observed"`  
+    - ambient loss mask = `x_valid_mask` intersected with `y_valid_mask`  
     - optional `apply_further_corruption_to_noisy_branch`  
   
 ## 8. Practical Interpretation  

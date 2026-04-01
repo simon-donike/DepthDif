@@ -4,16 +4,16 @@ model:
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
   load_checkpoint: false # false/null disables warm start; set to a .ckpt path to load model weights only.
   generated_channels: 50 # Predict the full 50-level GLORYS temperature stack.
-  condition_channels: 52 # OSTIA (1) + corrupted Argo stack (50) + collapsed valid mask (1).
-  condition_mask_channels: 1 # Collapse valid_mask across depth to keep conditioning lighter than a 50-channel mask.
+  condition_channels: 52 # OSTIA (1) + corrupted Argo stack (50) + collapsed x_valid_mask (1).
+  condition_mask_channels: 1 # Collapse x_valid_mask across depth to keep conditioning lighter than a 50-channel mask.
   condition_include_eo: true # Include batch["eo"] as an extra condition channel.
-  condition_use_valid_mask: true # Concatenate a valid-mask channel to the condition tensor.
+  condition_use_valid_mask: true # Concatenate x_valid_mask to the condition tensor.
   clamp_known_pixels: false # Sampling-time clamping is optional; leave it off for the default training preset.
-  mask_loss_with_valid_pixels: true # Ambient training still evaluates loss through the valid-pixel masking path.
+  mask_loss_with_valid_pixels: true # Ambient training supervises x on x_valid_mask ∩ y_valid_mask; standard mode uses y_valid_mask.
   parameterization: "x0" # Required by the ambient objective when require_x0_parameterization=true.
   log_intermediates: false # Training config can still override validation logging behavior.
   ambient_occlusion:
-    enabled: true # Enable the ambient-diffusion style objective for sparse Argo supervision.
+    enabled: true # Enable ambient x-reconstruction on x_valid_mask ∩ y_valid_mask with further-corrupted input.
     further_drop_prob: 0.33 # Mild extra corruption over already-observed Argo pixels.
     apply_to_noisy_branch: true # Applies the further-corrupted mask to the noisy target branch.
     shared_spatial_mask: true # Shares one spatial further-mask across all depth channels.

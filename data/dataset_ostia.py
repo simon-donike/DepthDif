@@ -68,8 +68,8 @@ if __name__ == "__main__":
         f"y shape: {sample['y'].shape}"
     )
     print(
-        "Valid mask sum: "
-        f"{sample['valid_mask'].sum().item()}, "
+        "X valid mask sum: "
+        f"{sample['x_valid_mask'].sum().item()}, "
         f"Land mask sum: {sample['land_mask'].sum().item()}"
     )
     print(f"Coords: {sample.get('coords', 'N/A')}")
@@ -91,8 +91,8 @@ if __name__ == "__main__":
             f"Zero count in x: {zero_count} / {total_count} ({100 * zero_count / total_count:.2f}%)"
         )
         # count 0s in mask
-        mask_zero_count = (sample["valid_mask"] == 0.0).sum().item()
-        mask_total_count = sample["valid_mask"].numel()
+        mask_zero_count = (sample["x_valid_mask"] == 0.0).sum().item()
+        mask_total_count = sample["x_valid_mask"].numel()
         print(
-            f"Zero count in valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)"
+            f"Zero count in x_valid_mask: {mask_zero_count} / {mask_total_count} ({100 * mask_zero_count / mask_total_count:.2f}%)"
         )

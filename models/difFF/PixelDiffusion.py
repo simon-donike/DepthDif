@@ -250,12 +250,14 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
-        # Cached validation mini-batch (x, y, eo, valid_mask, land_mask, coords, date)
+        # Cached validation mini-batch
+        # (x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date)
         # used for one epoch-end full reverse-diffusion reconstruction pass.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
                 torch.Tensor,
+                torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
                 torch.Tensor | None,
@@ -516,9 +518,11 @@ class PixelDiffusionConditional(pl.LightningModule):
             return
         sync_dist = self._should_sync_dist() if on_epoch else False
 
+        mean_v, std_v, min_v, max_v = self._finite_tensor_summary(tensor)
+
         self.log(
             f"stats/{prefix}_batch_mean",
-            tensor.mean(),
+            mean_v,
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
@@ -527,7 +531,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         self.log(
             f"stats/{prefix}_batch_std",
-            tensor.std(),
+            std_v,
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
@@ -536,7 +540,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         self.log(
             f"stats/{prefix}_batch_min",
-            tensor.min(),
+            min_v,
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
@@ -545,7 +549,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         self.log(
             f"stats/{prefix}_batch_max",
-            tensor.max(),
+            max_v,
             on_step=on_step,
             on_epoch=on_epoch,
             logger=True,
@@ -697,7 +701,27 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing computed outputs.
         """
-        return tensor.min(), tensor.mean(), tensor.std(unbiased=False)
+        finite = tensor[torch.isfinite(tensor)]
+        if int(finite.numel()) <= 0:
+            zero = torch.zeros((), device=tensor.device, dtype=tensor.dtype)
+            return zero, zero, zero
+        return finite.min(), finite.mean(), finite.std(unbiased=False)
+
+    @staticmethod
+    def _finite_tensor_summary(
+        tensor: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return finite-only summary stats so NaN-masked outputs remain loggable."""
+        finite = tensor[torch.isfinite(tensor)]
+        if int(finite.numel()) <= 0:
+            zero = torch.zeros((), device=tensor.device, dtype=tensor.dtype)
+            return zero, zero, zero, zero
+        return (
+            finite.mean(),
+            finite.std(unbiased=False),
+            finite.min(),
+            finite.max(),
+        )
 
     def _build_validation_sampler(
         self, train_betas: torch.Tensor
@@ -821,7 +845,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             return None
         if valid_mask is None:
             raise RuntimeError(
-                "condition_use_valid_mask=true requires batch['valid_mask']."
+                "condition_use_valid_mask=true requires batch['x_valid_mask']."
             )
 
         mask = valid_mask
@@ -929,6 +953,65 @@ class PixelDiffusionConditional(pl.LightningModule):
             ]
             flat_further[batch_idx, observed_idx[choose]] = 1.0
         return flat_further.view_as(further_mask)
+
+    def _build_ambient_loss_mask(
+        self,
+        *,
+        reference: torch.Tensor,
+        x_valid_mask: torch.Tensor | None,
+        y_valid_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        gate_mask: torch.Tensor | None = None
+        if y_valid_mask is not None:
+            gate_mask = (y_valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+            gate_mask = self._align_valid_mask_to_reference(
+                gate_mask, reference, mask_name="y_valid_mask"
+            )
+        if x_valid_mask is not None:
+            x_observed_mask = (x_valid_mask > 0.5).to(
+                dtype=reference.dtype,
+                device=reference.device,
+            )
+            x_observed_mask = self._align_valid_mask_to_reference(
+                x_observed_mask, reference, mask_name="x_valid_mask"
+            )
+            gate_mask = (
+                x_observed_mask if gate_mask is None else (gate_mask * x_observed_mask)
+            )
+        return gate_mask
+
+    def _build_standard_loss_mask(
+        self,
+        *,
+        reference: torch.Tensor,
+        y_valid_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        if y_valid_mask is None:
+            return None
+        loss_mask = (y_valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+        return self._align_valid_mask_to_reference(
+            loss_mask, reference, mask_name="y_valid_mask"
+        )
+
+    def _build_task_supervision_mask(
+        self,
+        *,
+        reference: torch.Tensor,
+        x_valid_mask: torch.Tensor | None,
+        y_valid_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        # Standard mode supervises the full valid y field. Ambient mode supervises the
+        # original x support, but only at depths where y/GLORYS is actually valid.
+        if self.ambient_occlusion_enabled:
+            return self._build_ambient_loss_mask(
+                reference=reference,
+                x_valid_mask=x_valid_mask,
+                y_valid_mask=y_valid_mask,
+            )
+        return self._build_standard_loss_mask(
+            reference=reference,
+            y_valid_mask=y_valid_mask,
+        )
 
     def _prepare_condition_for_model(
         self,
@@ -1170,24 +1253,27 @@ class PixelDiffusionConditional(pl.LightningModule):
             sigma=[sigma, sigma],
         )
 
-    def _apply_postprocess_zero_land_pixels(
-        self, tensor: torch.Tensor, land_mask: torch.Tensor | None
+    def _apply_postprocess_invalid_to_nan(
+        self, tensor: torch.Tensor, valid_mask: torch.Tensor | None
     ) -> torch.Tensor:
-        """Helper that computes apply postprocess zero land pixels.
+        """Mask invalid denormalized output pixels to NaN using the task-valid mask.
 
         Args:
             tensor (torch.Tensor): Tensor input for the computation.
-            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            valid_mask (torch.Tensor | None): Mask tensor selecting valid output support.
 
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        if land_mask is None:
+        if valid_mask is None:
             return tensor
         if tensor.ndim not in (3, 4):
             return tensor
-        ocean_mask = (land_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
-        return tensor * ocean_mask
+        keep_mask = (valid_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
+        keep_mask = self._align_valid_mask_to_reference(
+            keep_mask, tensor, mask_name="y_valid_mask"
+        )
+        return torch.where(keep_mask > 0.5, tensor, torch.full_like(tensor, float("nan")))
 
     def _apply_postprocess_merge_observed_pixels(
         self,
@@ -1243,7 +1329,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                     f"Observed tensor shape {tuple(observed.shape)} does not match "
                     f"generated shape {tuple(generated.shape)}."
                 )
-        # Keep known observations from x and only use model predictions on missing pixels.
+        # Ambient inference can preserve the originally observed x values while letting the
+        # model fill the rest of the x support.
         return (generated * (1.0 - keep_mask)) + (observed * keep_mask)
 
     @torch.no_grad()
@@ -1262,8 +1349,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         x = batch["x"]
         eo = batch.get("eo")
-        valid_mask = batch.get("valid_mask")
-        land_mask = batch.get("land_mask")
+        valid_mask = batch["x_valid_mask"]
+        y_valid_mask = batch["y_valid_mask"]
         coords = batch.get("coords")
         date = batch.get("date")
         sampler = batch.get("sampler", self.val_sampler)
@@ -1280,7 +1367,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
             if further_valid_mask is None:
                 raise RuntimeError(
-                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                    "ambient_occlusion.enabled=true requires batch['x_valid_mask']."
                 )
             condition_x = x * further_valid_mask
             condition_valid_mask = further_valid_mask
@@ -1318,22 +1405,18 @@ class PixelDiffusionConditional(pl.LightningModule):
                 date=date,
             )
 
-        # Keep all post-processing centralized in Lightning inference.
-        y_hat_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
-        y_hat_denorm = self._apply_postprocess_gaussian_blur(y_hat_denorm)
-        # Keep an unmerged version for visualization so reconstruction panels
-        # show model output (plus land masking) rather than observed-pixel copy-in.
-        y_hat_denorm_for_plot = self._apply_postprocess_zero_land_pixels(
-            y_hat_denorm, land_mask
+        # Keep all post-processing centralized in Lightning inference. The final returned
+        # field is the model prediction after optional sampler-time known-pixel clamping;
+        # do not overwrite it again here with observed x values.
+        generated_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
+        generated_denorm = self._apply_postprocess_gaussian_blur(generated_denorm)
+        y_hat_denorm_for_plot = self._apply_postprocess_invalid_to_nan(
+            generated_denorm,
+            y_valid_mask,
         )
-        x_denorm = temperature_normalize(mode="denorm", tensor=x)
-        y_hat_denorm = self._apply_postprocess_merge_observed_pixels(
-            generated=y_hat_denorm,
-            observed=x_denorm,
-            valid_mask=valid_mask,
-        )
-        y_hat_denorm = self._apply_postprocess_zero_land_pixels(
-            y_hat_denorm, land_mask
+        y_hat_denorm = self._apply_postprocess_invalid_to_nan(
+            generated_denorm,
+            y_valid_mask,
         )
 
         return {
@@ -1490,7 +1573,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         if self._cached_val_example is None:
             return
 
-        x, y, eo, valid_mask, land_mask, coords, date = self._cached_val_example
+        x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date = self._cached_val_example
         target = x if self.ambient_occlusion_enabled else y
         denoise_samples: list[tuple[int, torch.Tensor]] = []
         sampler_for_val = None
@@ -1498,7 +1581,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         pred_batch: dict[str, Any] = {
             "x": x,
             "eo": eo,
-            "valid_mask": valid_mask,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": y_valid_mask,
             "land_mask": land_mask,
             "coords": coords,
             "date": date,
@@ -1531,47 +1615,84 @@ class PixelDiffusionConditional(pl.LightningModule):
         eo_denorm = (
             temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
         )
+        eval_mask = self._build_task_supervision_mask(
+            reference=target_denorm,
+            x_valid_mask=x_valid_mask,
+            y_valid_mask=y_valid_mask,
+        )
+        y_denorm_masked = self._apply_postprocess_invalid_to_nan(y_denorm, y_valid_mask)
+        target_denorm_masked = self._apply_postprocess_invalid_to_nan(target_denorm, eval_mask)
 
         recon_batch_size = int(target_denorm.size(0))
-        recon_mse = torch.mean((y_hat_denorm - target_denorm) ** 2)
+        if eval_mask is None:
+            eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(target_denorm)
+        else:
+            eval_support = (
+                (eval_mask > 0.5)
+                & torch.isfinite(y_hat_denorm)
+                & torch.isfinite(target_denorm)
+            )
+        if bool(eval_support.any().item()):
+            recon_mse = ((y_hat_denorm - target_denorm) ** 2)[eval_support].mean()
+        else:
+            recon_mse = torch.zeros((), device=target_denorm.device, dtype=target_denorm.dtype)
         recon_psnr = None
         recon_ssim = None
-        # Calculate PSNR and SSIM over samples and bands and average them,
-        # if skimage is available and each slice has valid data range.
+        # Calculate PSNR over the same supervised support as the loss. SSIM is only
+        # computed when an entire band is valid because masked irregular subsets do
+        # not define a stable structural-similarity window.
         try:
             from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
             y_np = target_denorm.detach().float().cpu().numpy()
             y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
+            eval_mask_np = (
+                (eval_mask > 0.5).detach().cpu().numpy()
+                if eval_mask is not None
+                else None
+            )
             if y_np.ndim == 2:
                 y_np = y_np[None, None, ...]
                 y_hat_np = y_hat_np[None, None, ...]
+                if eval_mask_np is not None:
+                    eval_mask_np = eval_mask_np[None, None, ...]
             elif y_np.ndim == 3:
                 y_np = y_np[:, None, ...]
                 y_hat_np = y_hat_np[:, None, ...]
+                if eval_mask_np is not None:
+                    eval_mask_np = eval_mask_np[:, None, ...]
             psnr_vals: list[float] = []
             ssim_vals: list[float] = []
             for sample_idx in range(y_np.shape[0]):
                 for band_idx in range(y_np.shape[1]):
                     y_band = y_np[sample_idx, band_idx]
                     y_hat_band = y_hat_np[sample_idx, band_idx]
-                    data_range = float(y_band.max() - y_band.min())
+                    if eval_mask_np is not None:
+                        band_mask = eval_mask_np[sample_idx, band_idx] > 0.5
+                    else:
+                        band_mask = np.isfinite(y_band) & np.isfinite(y_hat_band)
+                    if not np.any(band_mask):
+                        continue
+                    y_band_valid = y_band[band_mask]
+                    y_hat_band_valid = y_hat_band[band_mask]
+                    data_range = float(y_band_valid.max() - y_band_valid.min())
                     if data_range <= 0.0:
                         continue
                     psnr_vals.append(
                         float(
                             peak_signal_noise_ratio(
-                                y_band, y_hat_band, data_range=data_range
+                                y_band_valid, y_hat_band_valid, data_range=data_range
                             )
                         )
                     )
-                    ssim_vals.append(
-                        float(
-                            structural_similarity(
-                                y_band, y_hat_band, data_range=data_range
+                    if bool(np.all(band_mask)):
+                        ssim_vals.append(
+                            float(
+                                structural_similarity(
+                                    y_band, y_hat_band, data_range=data_range
+                                )
                             )
                         )
-                    )
             if psnr_vals:
                 recon_psnr = float(sum(psnr_vals) / len(psnr_vals))
             if ssim_vals:
@@ -1613,7 +1734,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 batch_size=recon_batch_size,
             )
         self._log_validation_triplet_stats(
-            x=x_denorm, y=target_denorm, y_hat=y_hat_denorm
+            x=x_denorm, y=target_denorm_masked, y_hat=y_hat_denorm
         )
         self._log_common_batch_stats(
             y_hat_denorm,
@@ -1623,7 +1744,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
         )
         self._log_common_batch_stats(
-            target_denorm,
+            target_denorm_masked,
             prefix="val_target",
             batch_size=recon_batch_size,
             on_step=False,
@@ -1633,11 +1754,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
             x=x_denorm,
-            y=y_denorm,
+            y=y_denorm_masked,
             eo=eo_denorm,
             y_hat=y_hat_denorm_for_plot,
-            y_target=target_denorm,
-            valid_mask=valid_mask,
+            y_target=target_denorm_masked,
+            valid_mask=x_valid_mask,
             land_mask=land_mask,
             prefix="val_imgs",
             image_key="x_y_full_reconstruction",
@@ -1648,8 +1769,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             logger=self.logger,
             x=x_denorm,
             y_hat=y_hat_denorm_for_plot,
-            y_target=y_denorm,
-            valid_mask=valid_mask,
+            y_target=y_denorm_masked,
+            valid_mask=x_valid_mask,
             prefix="val_imgs",
             image_key="glorys_full_profile_comparison",
             sample_idx=0,
@@ -1663,7 +1784,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sampler=sampler_for_val,
                 conditioning_image=x,
                 ground_truth=target,
-                valid_mask=valid_mask,
+                valid_mask=x_valid_mask,
                 land_mask=land_mask,
                 prefix="val_imgs",
                 cmap=PLOT_CMAP,
@@ -1699,7 +1820,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         x = batch["x"]
         y = batch["y"]
         eo = batch.get("eo")
-        valid_mask = batch.get("valid_mask")
+        valid_mask = batch["x_valid_mask"]
+        y_valid_mask = batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
@@ -1707,7 +1829,6 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_valid_mask = valid_mask
         original_valid_mask = valid_mask
         further_valid_mask: torch.Tensor | None = None
-        loss_mask_mode = "missing"
         apply_further_corruption_to_noisy_branch = False
         if self.ambient_occlusion_enabled:
             further_valid_mask = self._build_ambient_further_valid_mask(
@@ -1715,19 +1836,22 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
             if further_valid_mask is None:
                 raise RuntimeError(
-                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                    "ambient_occlusion.enabled=true requires batch['x_valid_mask']."
                 )
             condition_x = x * further_valid_mask
             condition_valid_mask = further_valid_mask
-            loss_mask_mode = "observed"
             apply_further_corruption_to_noisy_branch = (
                 self.ambient_apply_to_noisy_branch
             )
 
-        # Ambient mode is self-supervised on x: condition on a further-corrupted x and
-        # reconstruct the original x over the original observed support. Standard mode
-        # keeps the original y-target training path.
+        # Standard mode reconstructs y over y_valid_mask. Ambient mode reconstructs the
+        # original x support, but only at depths where y/GLORYS is valid.
         target = x if self.ambient_occlusion_enabled else y
+        loss_mask = self._build_task_supervision_mask(
+            reference=target,
+            x_valid_mask=valid_mask,
+            y_valid_mask=y_valid_mask,
+        )
         model_condition = self._prepare_condition_for_model(
             condition_x, condition_valid_mask, eo=eo
         )
@@ -1743,12 +1867,10 @@ class PixelDiffusionConditional(pl.LightningModule):
         loss = self.model.p_loss(
             target_t,
             model_condition,
-            valid_mask=original_valid_mask,
-            land_mask=land_mask,
+            loss_mask=loss_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
-            loss_mask_mode=loss_mask_mode,
             coord=coords,
             date=date,
         )
@@ -1828,7 +1950,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         x = batch["x"]
         y = batch["y"]
         eo = batch.get("eo")
-        valid_mask = batch.get("valid_mask")
+        valid_mask = batch["x_valid_mask"]
+        y_valid_mask = batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
@@ -1836,7 +1959,6 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_valid_mask = valid_mask
         original_valid_mask = valid_mask
         further_valid_mask: torch.Tensor | None = None
-        loss_mask_mode = "missing"
         apply_further_corruption_to_noisy_branch = False
         if self.ambient_occlusion_enabled:
             further_valid_mask = self._build_ambient_further_valid_mask(
@@ -1844,18 +1966,22 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
             if further_valid_mask is None:
                 raise RuntimeError(
-                    "ambient_occlusion.enabled=true requires batch['valid_mask']."
+                    "ambient_occlusion.enabled=true requires batch['x_valid_mask']."
                 )
             condition_x = x * further_valid_mask
             condition_valid_mask = further_valid_mask
-            loss_mask_mode = "observed"
             apply_further_corruption_to_noisy_branch = (
                 self.ambient_apply_to_noisy_branch
             )
 
-        # Keep validation aligned with training: ambient mode evaluates the
-        # self-supervised x-reconstruction objective, while standard mode uses y.
+        # Keep validation aligned with training: standard mode uses y_valid_mask over y,
+        # ambient mode uses x_valid_mask ∩ y_valid_mask over the x target.
         target = x if self.ambient_occlusion_enabled else y
+        loss_mask = self._build_task_supervision_mask(
+            reference=target,
+            x_valid_mask=valid_mask,
+            y_valid_mask=y_valid_mask,
+        )
         model_condition = self._prepare_condition_for_model(
             condition_x, condition_valid_mask, eo=eo
         )
@@ -1871,12 +1997,10 @@ class PixelDiffusionConditional(pl.LightningModule):
         loss = self.model.p_loss(
             target_t,
             model_condition,
-            valid_mask=original_valid_mask,
-            land_mask=land_mask,
+            loss_mask=loss_mask,
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
-            loss_mask_mode=loss_mask_mode,
             coord=coords,
             date=date,
         )
@@ -1954,8 +2078,11 @@ class PixelDiffusionConditional(pl.LightningModule):
             # Cache up to N validation samples from the first val batch for one
             # epoch-end full reverse-diffusion reconstruction pass.
             n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
-            cached_valid_mask = (
+            cached_x_valid_mask = (
                 valid_mask[:n_cache].detach() if valid_mask is not None else None
+            )
+            cached_y_valid_mask = (
+                y_valid_mask[:n_cache].detach() if y_valid_mask is not None else None
             )
             cached_land_mask = (
                 land_mask[:n_cache].detach() if land_mask is not None else None
@@ -1967,7 +2094,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                 x[:n_cache].detach(),
                 y[:n_cache].detach(),
                 cached_eo,
-                cached_valid_mask,
+                cached_x_valid_mask,
+                cached_y_valid_mask,
                 cached_land_mask,
                 cached_coords,
                 cached_date,

@@ -293,30 +293,29 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
         self,
         target: torch.Tensor,
         recon: torch.Tensor,
-        valid_mask: torch.Tensor | None,
+        y_valid_mask: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.masked_only:
             return F.l1_loss(recon, target), F.mse_loss(recon, target)
 
-        aligned_valid = self._align_mask_to_reference(valid_mask, target)
+        aligned_valid = self._align_mask_to_reference(y_valid_mask, target)
         if aligned_valid is None:
             return F.l1_loss(recon, target), F.mse_loss(recon, target)
 
-        missing = (1.0 - aligned_valid).clamp(0.0, 1.0)
-        denom = missing.sum()
+        denom = aligned_valid.sum()
         if float(denom.item()) <= 0.0:
             return F.l1_loss(recon, target), F.mse_loss(recon, target)
 
-        abs_diff = (recon - target).abs() * missing
-        sq_diff = ((recon - target) ** 2) * missing
+        abs_diff = (recon - target).abs() * aligned_valid
+        sq_diff = ((recon - target) ** 2) * aligned_valid
         return abs_diff.sum() / denom, sq_diff.sum() / denom
 
     def _shared_step(self, batch: dict[str, Any], *, prefix: str) -> torch.Tensor:
         y = batch["y"]
-        valid_mask = batch.get("valid_mask")
+        y_valid_mask = batch.get("y_valid_mask")
 
         recon = self.model(y)
-        loss_l1, loss_l2 = self._recon_losses(y, recon, valid_mask)
+        loss_l1, loss_l2 = self._recon_losses(y, recon, y_valid_mask)
         loss = (self.recon_l1_weight * loss_l1) + (self.recon_l2_weight * loss_l2)
 
         self.log(
