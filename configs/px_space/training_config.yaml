@@ -48,7 +48,7 @@ wandb:
 dataloader:
   batch_size: 48 # Conservative batch size for 50 depth levels plus conditioning channels.
   val_batch_size: 5 # Smaller validation batch to leave room for qualitative sampling.
-  num_workers: 8 # Moderate worker count for TIFF-backed data loading.
+  num_workers: 6 # Moderate worker count for TIFF-backed data loading.
   val_num_workers: 0 # Keep validation single-process for stability during sampling/logging.
   persistent_workers: true # Reuse train workers across epochs.
   val_persistent_workers: false # Validation workers are disabled, so persistence stays off.
