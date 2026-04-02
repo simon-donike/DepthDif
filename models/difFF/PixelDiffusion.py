@@ -491,6 +491,16 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         return torch.distributed.is_available() and torch.distributed.is_initialized()
 
+    def _is_global_zero(self) -> bool:
+        """Return whether the current process is the global-zero Lightning rank.
+
+        Returns:
+            bool: True when running on the primary rank or without a trainer.
+        """
+        if self.trainer is None:
+            return True
+        return bool(self.trainer.is_global_zero)
+
     def _log_common_batch_stats(
         self,
         tensor: torch.Tensor,
@@ -1544,6 +1554,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         if (
             self.trainer is not None
             and self.trainer.sanity_checking
+            and self._is_global_zero()
             and not self._logged_schedule_profile_in_sanity
         ):
             sampler_for_profile = (
@@ -1570,6 +1581,10 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             None: No value is returned.
         """
+        # DDP ranks can cache different validation samples, so rank-local diagnostics
+        # must not issue sync-dist logs or ranks can enter different collective paths.
+        if not self._is_global_zero():
+            return
         if self._cached_val_example is None:
             return
 
@@ -1708,7 +1723,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=self._should_sync_dist(),
+            sync_dist=False,
             batch_size=recon_batch_size,
         )
         if recon_psnr is not None:
@@ -1719,7 +1734,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-                sync_dist=self._should_sync_dist(),
+                sync_dist=False,
                 batch_size=recon_batch_size,
             )
         if recon_ssim is not None:
@@ -1730,7 +1745,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=self._should_sync_dist(),
+                sync_dist=False,
                 batch_size=recon_batch_size,
             )
         self._log_validation_triplet_stats(
@@ -2074,7 +2089,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 batch_size=y.size(0),
             )
 
-        if batch_idx == 0 and self._cached_val_example is None:
+        if batch_idx == 0 and self._cached_val_example is None and self._is_global_zero():
             # Cache up to N validation samples from the first val batch for one
             # epoch-end full reverse-diffusion reconstruction pass.
             n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))

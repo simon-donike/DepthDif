@@ -102,12 +102,13 @@ This post-processing is centralized in `predict_step`.
 ## Validation Diagnostics  
 Validation computes two paths:  
 - per-batch validation loss (`validation_step`) using the same objective as training  
-- one full reverse-diffusion reconstruction per epoch from cached first validation batch (`on_validation_epoch_end`)  
-  
+- one full reverse-diffusion reconstruction per epoch from the global-rank-0 cached first validation batch (`on_validation_epoch_end`)  
+
 When available, full reconstruction logging includes:  
 - MSE  
 - PSNR/SSIM (if `skimage` is installed)  
 - qualitative reconstruction grid  
 - denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)  
 - reconstruction plotting keeps the unmerged model prediction panel and masks invalid output support through `y_valid_mask`  
+- these epoch-end diagnostics stay rank-local on global rank 0 to avoid DDP logging mismatches for optional metrics like PSNR/SSIM  
   

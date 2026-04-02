@@ -113,6 +113,7 @@ From `training_config` trainer section:
 - mixed precision (`precision`)  
 - optional validation cap via `val_batches_per_epoch` or `limit_val_batches`  
 - gradient clipping (`gradient_clip_val`)  
+- epoch-end full-reconstruction validation diagnostics run on global rank 0 only; regular `validation_step` loss metrics still use distributed reduction  
   
 ## Learning Rate Behavior  
 `PixelDiffusionConditional` supports:  
