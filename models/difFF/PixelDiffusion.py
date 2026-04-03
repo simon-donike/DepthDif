@@ -491,16 +491,6 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         return torch.distributed.is_available() and torch.distributed.is_initialized()
 
-    def _is_global_zero(self) -> bool:
-        """Return whether the current process is the global-zero Lightning rank.
-
-        Returns:
-            bool: True when running on the primary rank or without a trainer.
-        """
-        if self.trainer is None:
-            return True
-        return bool(self.trainer.is_global_zero)
-
     def _log_common_batch_stats(
         self,
         tensor: torch.Tensor,
@@ -625,8 +615,6 @@ class PixelDiffusionConditional(pl.LightningModule):
             None: No value is returned.
         """
         if not self.wandb_verbose:
-            return
-        if self.trainer is not None and not self.trainer.is_global_zero:
             return
         if self.global_step % self.log_images_every_n_steps != 0:
             return
@@ -1540,6 +1528,58 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
 
+    def _log_full_reconstruction_placeholders(self) -> None:
+        """Emit placeholder metrics so every rank logs the same validation keys."""
+        placeholder = torch.zeros((1, 1, 1, 1), device=self.device, dtype=torch.float32)
+        placeholder_scalar = torch.zeros((), device=self.device, dtype=torch.float32)
+        # Validation epoch-end diagnostics are optional, but the metric keys must stay
+        # aligned across ranks so Lightning does not see different logging paths.
+        self.log(
+            "val/recon_mse_full_recon",
+            placeholder_scalar,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=False,
+            batch_size=1,
+        )
+        self.log(
+            "val/recon_psnr_full_recon",
+            placeholder_scalar,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=False,
+            batch_size=1,
+        )
+        self.log(
+            "val/recon_ssim_full_recon",
+            placeholder_scalar,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+            batch_size=1,
+        )
+        self._log_validation_triplet_stats(x=placeholder, y=placeholder, y_hat=placeholder)
+        self._log_common_batch_stats(
+            placeholder,
+            prefix="val_pred",
+            batch_size=1,
+            on_step=False,
+            on_epoch=True,
+        )
+        self._log_common_batch_stats(
+            placeholder,
+            prefix="val_target",
+            batch_size=1,
+            on_step=False,
+            on_epoch=True,
+        )
+
     def on_validation_epoch_start(self) -> None:
         # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
         """Compute on validation epoch start and return the result.
@@ -1554,7 +1594,6 @@ class PixelDiffusionConditional(pl.LightningModule):
         if (
             self.trainer is not None
             and self.trainer.sanity_checking
-            and self._is_global_zero()
             and not self._logged_schedule_profile_in_sanity
         ):
             sampler_for_profile = (
@@ -1581,140 +1620,164 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             None: No value is returned.
         """
-        # DDP ranks can cache different validation samples, so rank-local diagnostics
-        # must not issue sync-dist logs or ranks can enter different collective paths.
-        if not self._is_global_zero():
-            return
         if self._cached_val_example is None:
+            self._log_full_reconstruction_placeholders()
             return
 
-        x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date = self._cached_val_example
-        target = x if self.ambient_occlusion_enabled else y
-        denoise_samples: list[tuple[int, torch.Tensor]] = []
-        sampler_for_val = None
-        total_steps = 0
-        pred_batch: dict[str, Any] = {
-            "x": x,
-            "eo": eo,
-            "x_valid_mask": x_valid_mask,
-            "y_valid_mask": y_valid_mask,
-            "land_mask": land_mask,
-            "coords": coords,
-            "date": date,
-            "sampler": self.val_sampler,
-        }
-        if self.log_intermediates:
-            sampler_for_val = (
-                self.val_sampler if self.val_sampler is not None else self.model.sampler
-            )
-            total_steps = int(sampler_for_val.num_timesteps)
-            denoise_capture_steps = build_evenly_spaced_capture_steps(
-                total_steps=total_steps,
-                num_frames=16,
-            )
-            pred_batch["return_intermediates"] = True
-            pred_batch["intermediate_step_indices"] = denoise_capture_steps
-
-        # Use Lightning's inference path for full-validation reconstruction.
-        pred = self.predict_step(pred_batch, batch_idx=0)
-        y_hat = pred["y_hat"]
-        y_hat_denorm = pred["y_hat_denorm"]
-        y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
-        denoise_samples = pred["denoise_samples"]
-        x0_denoise_samples = pred.get("x0_denoise_samples", [])
-
-        # Denormalize data channels only (masks stay in 0/1 space).
-        x_denorm = temperature_normalize(mode="denorm", tensor=x)
-        y_denorm = temperature_normalize(mode="denorm", tensor=y)
-        target_denorm = temperature_normalize(mode="denorm", tensor=target)
-        eo_denorm = (
-            temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
-        )
-        eval_mask = self._build_task_supervision_mask(
-            reference=target_denorm,
-            x_valid_mask=x_valid_mask,
-            y_valid_mask=y_valid_mask,
-        )
-        y_denorm_masked = self._apply_postprocess_invalid_to_nan(y_denorm, y_valid_mask)
-        target_denorm_masked = self._apply_postprocess_invalid_to_nan(target_denorm, eval_mask)
-
-        recon_batch_size = int(target_denorm.size(0))
-        if eval_mask is None:
-            eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(target_denorm)
-        else:
-            eval_support = (
-                (eval_mask > 0.5)
-                & torch.isfinite(y_hat_denorm)
-                & torch.isfinite(target_denorm)
-            )
-        if bool(eval_support.any().item()):
-            recon_mse = ((y_hat_denorm - target_denorm) ** 2)[eval_support].mean()
-        else:
-            recon_mse = torch.zeros((), device=target_denorm.device, dtype=target_denorm.dtype)
-        recon_psnr = None
-        recon_ssim = None
-        # Calculate PSNR over the same supervised support as the loss. SSIM is only
-        # computed when an entire band is valid because masked irregular subsets do
-        # not define a stable structural-similarity window.
         try:
-            from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-
-            y_np = target_denorm.detach().float().cpu().numpy()
-            y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
-            eval_mask_np = (
-                (eval_mask > 0.5).detach().cpu().numpy()
-                if eval_mask is not None
-                else None
+            x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date = (
+                self._cached_val_example
             )
-            if y_np.ndim == 2:
-                y_np = y_np[None, None, ...]
-                y_hat_np = y_hat_np[None, None, ...]
-                if eval_mask_np is not None:
-                    eval_mask_np = eval_mask_np[None, None, ...]
-            elif y_np.ndim == 3:
-                y_np = y_np[:, None, ...]
-                y_hat_np = y_hat_np[:, None, ...]
-                if eval_mask_np is not None:
-                    eval_mask_np = eval_mask_np[:, None, ...]
-            psnr_vals: list[float] = []
-            ssim_vals: list[float] = []
-            for sample_idx in range(y_np.shape[0]):
-                for band_idx in range(y_np.shape[1]):
-                    y_band = y_np[sample_idx, band_idx]
-                    y_hat_band = y_hat_np[sample_idx, band_idx]
+            target = x if self.ambient_occlusion_enabled else y
+            denoise_samples: list[tuple[int, torch.Tensor]] = []
+            sampler_for_val = None
+            total_steps = 0
+            pred_batch: dict[str, Any] = {
+                "x": x,
+                "eo": eo,
+                "x_valid_mask": x_valid_mask,
+                "y_valid_mask": y_valid_mask,
+                "land_mask": land_mask,
+                "coords": coords,
+                "date": date,
+                "sampler": self.val_sampler,
+            }
+            if self.log_intermediates:
+                sampler_for_val = (
+                    self.val_sampler if self.val_sampler is not None else self.model.sampler
+                )
+                total_steps = int(sampler_for_val.num_timesteps)
+                denoise_capture_steps = build_evenly_spaced_capture_steps(
+                    total_steps=total_steps,
+                    num_frames=16,
+                )
+                pred_batch["return_intermediates"] = True
+                pred_batch["intermediate_step_indices"] = denoise_capture_steps
+
+            # Use Lightning's inference path for full-validation reconstruction.
+            pred = self.predict_step(pred_batch, batch_idx=0)
+            y_hat = pred["y_hat"]
+            y_hat_denorm = pred["y_hat_denorm"]
+            y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
+            denoise_samples = pred["denoise_samples"]
+            x0_denoise_samples = pred.get("x0_denoise_samples", [])
+
+            # Denormalize data channels only (masks stay in 0/1 space).
+            x_denorm = temperature_normalize(mode="denorm", tensor=x)
+            y_denorm = temperature_normalize(mode="denorm", tensor=y)
+            target_denorm = temperature_normalize(mode="denorm", tensor=target)
+            eo_denorm = (
+                temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
+            )
+            eval_mask = self._build_task_supervision_mask(
+                reference=target_denorm,
+                x_valid_mask=x_valid_mask,
+                y_valid_mask=y_valid_mask,
+            )
+            y_denorm_masked = self._apply_postprocess_invalid_to_nan(y_denorm, y_valid_mask)
+            target_denorm_masked = self._apply_postprocess_invalid_to_nan(
+                target_denorm, eval_mask
+            )
+
+            recon_batch_size = int(target_denorm.size(0))
+            if eval_mask is None:
+                eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(target_denorm)
+            else:
+                eval_support = (
+                    (eval_mask > 0.5)
+                    & torch.isfinite(y_hat_denorm)
+                    & torch.isfinite(target_denorm)
+                )
+            if bool(eval_support.any().item()):
+                recon_mse = ((y_hat_denorm - target_denorm) ** 2)[eval_support].mean()
+            else:
+                recon_mse = torch.zeros(
+                    (), device=target_denorm.device, dtype=target_denorm.dtype
+                )
+            recon_psnr = torch.zeros(
+                (), device=target_denorm.device, dtype=target_denorm.dtype
+            )
+            recon_ssim = torch.zeros(
+                (), device=target_denorm.device, dtype=target_denorm.dtype
+            )
+            # Calculate PSNR over the same supervised support as the loss. SSIM is only
+            # computed when an entire band is valid because masked irregular subsets do
+            # not define a stable structural-similarity window.
+            try:
+                from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+
+                y_np = target_denorm.detach().float().cpu().numpy()
+                y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
+                eval_mask_np = (
+                    (eval_mask > 0.5).detach().cpu().numpy()
+                    if eval_mask is not None
+                    else None
+                )
+                if y_np.ndim == 2:
+                    y_np = y_np[None, None, ...]
+                    y_hat_np = y_hat_np[None, None, ...]
                     if eval_mask_np is not None:
-                        band_mask = eval_mask_np[sample_idx, band_idx] > 0.5
-                    else:
-                        band_mask = np.isfinite(y_band) & np.isfinite(y_hat_band)
-                    if not np.any(band_mask):
-                        continue
-                    y_band_valid = y_band[band_mask]
-                    y_hat_band_valid = y_hat_band[band_mask]
-                    data_range = float(y_band_valid.max() - y_band_valid.min())
-                    if data_range <= 0.0:
-                        continue
-                    psnr_vals.append(
-                        float(
-                            peak_signal_noise_ratio(
-                                y_band_valid, y_hat_band_valid, data_range=data_range
-                            )
-                        )
-                    )
-                    if bool(np.all(band_mask)):
-                        ssim_vals.append(
+                        eval_mask_np = eval_mask_np[None, None, ...]
+                elif y_np.ndim == 3:
+                    y_np = y_np[:, None, ...]
+                    y_hat_np = y_hat_np[:, None, ...]
+                    if eval_mask_np is not None:
+                        eval_mask_np = eval_mask_np[:, None, ...]
+                psnr_vals: list[float] = []
+                ssim_vals: list[float] = []
+                for sample_idx in range(y_np.shape[0]):
+                    for band_idx in range(y_np.shape[1]):
+                        y_band = y_np[sample_idx, band_idx]
+                        y_hat_band = y_hat_np[sample_idx, band_idx]
+                        if eval_mask_np is not None:
+                            band_mask = eval_mask_np[sample_idx, band_idx] > 0.5
+                        else:
+                            band_mask = np.isfinite(y_band) & np.isfinite(y_hat_band)
+                        if not np.any(band_mask):
+                            continue
+                        y_band_valid = y_band[band_mask]
+                        y_hat_band_valid = y_hat_band[band_mask]
+                        data_range = float(y_band_valid.max() - y_band_valid.min())
+                        if data_range <= 0.0:
+                            continue
+                        psnr_vals.append(
                             float(
-                                structural_similarity(
-                                    y_band, y_hat_band, data_range=data_range
+                                peak_signal_noise_ratio(
+                                    y_band_valid, y_hat_band_valid, data_range=data_range
                                 )
                             )
                         )
-            if psnr_vals:
-                recon_psnr = float(sum(psnr_vals) / len(psnr_vals))
-            if ssim_vals:
-                recon_ssim = float(sum(ssim_vals) / len(ssim_vals))
-        except Exception:
-            recon_psnr = None
-            recon_ssim = None
+                        if bool(np.all(band_mask)):
+                            ssim_vals.append(
+                                float(
+                                    structural_similarity(
+                                        y_band, y_hat_band, data_range=data_range
+                                    )
+                                )
+                            )
+                if psnr_vals:
+                    recon_psnr = torch.tensor(
+                        float(sum(psnr_vals) / len(psnr_vals)),
+                        device=target_denorm.device,
+                        dtype=target_denorm.dtype,
+                    )
+                if ssim_vals:
+                    recon_ssim = torch.tensor(
+                        float(sum(ssim_vals) / len(ssim_vals)),
+                        device=target_denorm.device,
+                        dtype=target_denorm.dtype,
+                    )
+            except Exception:
+                # Keep placeholder zeros so every rank still emits the same metric keys.
+                pass
+        except Exception as exc:
+            warnings.warn(
+                "Full validation reconstruction failed; logging placeholder metrics "
+                f"instead. Error: {exc}",
+                stacklevel=2,
+            )
+            self._log_full_reconstruction_placeholders()
+            return
 
         self.log(
             "val/recon_mse_full_recon",
@@ -1726,28 +1789,26 @@ class PixelDiffusionConditional(pl.LightningModule):
             sync_dist=False,
             batch_size=recon_batch_size,
         )
-        if recon_psnr is not None:
-            self.log(
-                "val/recon_psnr_full_recon",
-                float(recon_psnr),
-                on_step=False,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-                sync_dist=False,
-                batch_size=recon_batch_size,
-            )
-        if recon_ssim is not None:
-            self.log(
-                "val/recon_ssim_full_recon",
-                float(recon_ssim),
-                on_step=False,
-                on_epoch=True,
-                prog_bar=False,
-                logger=True,
-                sync_dist=False,
-                batch_size=recon_batch_size,
-            )
+        self.log(
+            "val/recon_psnr_full_recon",
+            recon_psnr,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=False,
+            batch_size=recon_batch_size,
+        )
+        self.log(
+            "val/recon_ssim_full_recon",
+            recon_ssim,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=False,
+            batch_size=recon_batch_size,
+        )
         self._log_validation_triplet_stats(
             x=x_denorm, y=target_denorm_masked, y_hat=y_hat_denorm
         )
@@ -2089,7 +2150,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 batch_size=y.size(0),
             )
 
-        if batch_idx == 0 and self._cached_val_example is None and self._is_global_zero():
+        if batch_idx == 0 and self._cached_val_example is None:
             # Cache up to N validation samples from the first val batch for one
             # epoch-end full reverse-diffusion reconstruction pass.
             n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
