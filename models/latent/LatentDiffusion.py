@@ -6,6 +6,7 @@ import warnings
 
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 
 from models.difFF.PixelDiffusion import PixelDiffusionConditional
 
@@ -301,16 +302,79 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             return m
         return m.amax(dim=1, keepdim=True)
 
+    def _downsample_mask_to_latent_grid(
+        self,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        if mask is None:
+            return None
+        downsample = int(getattr(self.autoencoder, "spatial_downsample", 1))
+        if downsample <= 1:
+            return mask
+
+        mask_was_3d = mask.ndim == 3
+        m = mask.unsqueeze(1) if mask_was_3d else mask
+        if m.ndim != 4:
+            return mask
+
+        # Latent-space masks should stay valid if any source pixel in the pooled block was valid.
+        pooled = F.max_pool2d(
+            m.to(dtype=torch.float32),
+            kernel_size=downsample,
+            stride=downsample,
+        )
+        if mask.dtype == torch.bool:
+            pooled_out: torch.Tensor = pooled > 0.5
+        else:
+            pooled_out = (pooled > 0.5).to(dtype=mask.dtype)
+        if mask_was_3d:
+            pooled_out = pooled_out.squeeze(1)
+        return pooled_out
+
     def _prepare_batch_for_latent_loss(
         self,
         batch: dict[str, Any],
     ) -> dict[str, Any]:
         prepared = dict(batch)
-        prepared["x_valid_mask"] = self._collapse_mask_channels(batch.get("x_valid_mask"))
-        prepared["y_valid_mask"] = self._collapse_mask_channels(batch.get("y_valid_mask"))
-        prepared["x_valid_mask_1d"] = self._collapse_mask_channels(batch.get("x_valid_mask_1d"))
-        prepared["land_mask"] = self._collapse_mask_channels(batch.get("land_mask"))
+        prepared["x_valid_mask"] = self._downsample_mask_to_latent_grid(
+            self._collapse_mask_channels(batch.get("x_valid_mask"))
+        )
+        prepared["y_valid_mask"] = self._downsample_mask_to_latent_grid(
+            self._collapse_mask_channels(batch.get("y_valid_mask"))
+        )
+        prepared["x_valid_mask_1d"] = self._downsample_mask_to_latent_grid(
+            self._collapse_mask_channels(batch.get("x_valid_mask_1d"))
+        )
+        prepared["land_mask"] = self._downsample_mask_to_latent_grid(
+            self._collapse_mask_channels(batch.get("land_mask"))
+        )
         return prepared
+
+    def _build_ambient_further_valid_mask(
+        self,
+        valid_mask: torch.Tensor | None,
+        *,
+        reference: torch.Tensor,
+    ) -> torch.Tensor | None:
+        latent_reference = self.input_T(reference)
+        return super()._build_ambient_further_valid_mask(
+            valid_mask,
+            reference=latent_reference,
+        )
+
+    def _build_task_supervision_mask(
+        self,
+        *,
+        reference: torch.Tensor,
+        x_valid_mask: torch.Tensor | None,
+        y_valid_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        latent_reference = self.input_T(reference)
+        return super()._build_task_supervision_mask(
+            reference=latent_reference,
+            x_valid_mask=x_valid_mask,
+            y_valid_mask=y_valid_mask,
+        )
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
         if self.autoencoder_frozen:

@@ -12,7 +12,6 @@ site/
 site/*
 ambient_diffusion.pdf
 docs/assets/ambient_diffusion.pdf
-tests/
 data/glorys_argo_alignment
 
 # temp file types
