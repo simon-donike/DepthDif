@@ -1659,6 +1659,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_hat = pred["y_hat"]
             y_hat_denorm = pred["y_hat_denorm"]
             y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
+            further_valid_mask = pred.get("further_valid_mask")
             denoise_samples = pred["denoise_samples"]
             x0_denoise_samples = pred.get("x0_denoise_samples", [])
 
@@ -1674,6 +1675,21 @@ class PixelDiffusionConditional(pl.LightningModule):
                 x_valid_mask=x_valid_mask,
                 y_valid_mask=y_valid_mask,
             )
+            generated_profile_mask: torch.Tensor | None = None
+            if x_valid_mask is not None and y_valid_mask is not None:
+                x_mask_bool = x_valid_mask > 0.5
+                y_mask_bool = y_valid_mask > 0.5
+                if self.ambient_occlusion_enabled:
+                    if further_valid_mask is not None:
+                        # Ambient plots should highlight the supervised support that was
+                        # withheld from the model, not the originally observed x support.
+                        generated_profile_mask = (
+                            x_mask_bool & y_mask_bool & ~(further_valid_mask > 0.5)
+                        )
+                else:
+                    # Standard and synthetic runs should plot valid y pixels that were
+                    # never available to the model through the sparse x conditioning.
+                    generated_profile_mask = y_mask_bool & ~x_mask_bool
             y_denorm_masked = self._apply_postprocess_invalid_to_nan(y_denorm, y_valid_mask)
             target_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 target_denorm, eval_mask
@@ -1846,7 +1862,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             x=x_denorm,
             y_hat=y_hat_denorm_for_plot,
             y_target=y_denorm_masked,
-            valid_mask=x_valid_mask,
+            conditioning_mask=x_valid_mask,
+            candidate_mask=generated_profile_mask,
             prefix="val_imgs",
             image_key="glorys_full_profile_comparison",
             sample_idx=0,

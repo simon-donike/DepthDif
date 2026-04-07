@@ -999,19 +999,21 @@ def log_wandb_glorys_profile_comparison(
     x: torch.Tensor,
     y_hat: torch.Tensor,
     y_target: torch.Tensor,
-    valid_mask: torch.Tensor | None = None,
+    conditioning_mask: torch.Tensor | None = None,
+    candidate_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     image_key: str = "glorys_profile_comparison",
     sample_idx: int = 0,
 ) -> None:
-    """Log a grid of full-depth profile comparisons at observed validation pixels.
+    """Log full-depth profile comparisons at generated-only validation pixels.
 
     Args:
         logger (Any): Logger instance used for experiment tracking.
         x (torch.Tensor): Conditioning tensor containing sparse Argo-aligned profiles.
         y_hat (torch.Tensor): Reconstructed tensor in denormalized space.
         y_target (torch.Tensor): GLORYS target tensor in denormalized space.
-        valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        conditioning_mask (torch.Tensor | None): Mask tensor marking known x pixels.
+        candidate_mask (torch.Tensor | None): Mask tensor selecting generated-only pixels.
         prefix (str): Input value.
         image_key (str): Input value.
         sample_idx (int): Zero-based index for selecting a sample or batch.
@@ -1038,24 +1040,27 @@ def log_wandb_glorys_profile_comparison(
         return
 
     sample_i = int(max(0, min(int(sample_idx), int(x.size(0)) - 1)))
-    valid_mask_i = _mask_for_sample(valid_mask, sample_i)
-    if valid_mask_i is None:
+    candidate_mask_i = _mask_for_sample(candidate_mask, sample_i)
+    conditioning_mask_i = _mask_for_sample(conditioning_mask, sample_i)
+    if candidate_mask_i is None or conditioning_mask_i is None:
         return
-    if valid_mask_i.ndim == 3:
-        observed_map = valid_mask_i.detach().bool().any(dim=0)
-    elif valid_mask_i.ndim == 2:
-        observed_map = valid_mask_i.detach().bool()
+    if candidate_mask_i.ndim == 3:
+        candidate_map = candidate_mask_i.detach().bool().any(dim=0)
+    elif candidate_mask_i.ndim == 2:
+        candidate_map = candidate_mask_i.detach().bool()
     else:
         return
 
-    observed_coords = torch.nonzero(observed_map, as_tuple=False)
-    if int(observed_coords.size(0)) <= 0:
+    candidate_coords = torch.nonzero(candidate_map, as_tuple=False)
+    # Skip the plot when no generated-only pixels exist; falling back to known pixels
+    # would make the diagnostic contradict the reconstruction task being visualized.
+    if int(candidate_coords.size(0)) <= 0:
         return
 
-    num_profiles = min(9, int(observed_coords.size(0)))
-    # Randomly subsample observed locations so the figure covers different profile shapes.
-    chosen = observed_coords[
-        torch.randperm(int(observed_coords.size(0)), device=observed_coords.device)[
+    num_profiles = min(9, int(candidate_coords.size(0)))
+    # Randomly subsample generated-only locations so the figure covers different profile shapes.
+    chosen = candidate_coords[
+        torch.randperm(int(candidate_coords.size(0)), device=candidate_coords.device)[
             :num_profiles
         ]
     ]
@@ -1075,7 +1080,9 @@ def log_wandb_glorys_profile_comparison(
             x_profile = x[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
             y_hat_profile = y_hat[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
             y_target_profile = y_target[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
-            observed_profile = valid_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
+            observed_profile = (
+                conditioning_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
+            )
 
             # Plot depth bands in ascending index order so every subplot reads top-to-bottom consistently.
             ax.plot(
@@ -1110,7 +1117,10 @@ def log_wandb_glorys_profile_comparison(
             if plot_idx == 0:
                 ax.legend(loc="best")
 
-        fig.suptitle(f"Sample {sample_i} profile comparisons", fontsize=14)
+        fig.suptitle(
+            f"Sample {sample_i} generated-only profile comparisons",
+            fontsize=14,
+        )
         fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.98])
         experiment.log({f"{prefix}/{image_key}": wandb.Image(fig)})
     finally:
