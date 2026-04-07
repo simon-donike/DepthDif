@@ -62,6 +62,7 @@ nav:
   - Home:
       - Overview: index.md
       - Development: development.md
+      - Tests: tests.md
   - Model:
       - Training: training.md
       - Inference: inference.md
