@@ -2,7 +2,7 @@
 model:
   model_type: "cond_px_dif" # Pixel-space conditional diffusion.
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
-  load_checkpoint: "logs/2026-04-01_11-51-09/last.ckpt" # false/null disables warm start; set to a .ckpt path to load model weights only.
+  load_checkpoint: "logs/selection/GLORYS_pretrained/best-epochepoch=087.ckpt" # false/null disables warm start; set to a .ckpt path to load model weights only.
   generated_channels: 50 # Predict the full 50-level GLORYS temperature stack.
   condition_channels: 52 # OSTIA (1) + corrupted Argo stack (50) + collapsed x_valid_mask (1).
   condition_mask_channels: 1 # Collapse x_valid_mask across depth to keep conditioning lighter than a 50-channel mask.
@@ -14,7 +14,7 @@ model:
   log_intermediates: false # Training config can still override validation logging behavior.
   ambient_occlusion:
     enabled: true # Enable ambient x-reconstruction on x_valid_mask ∩ y_valid_mask with further-corrupted input.
-    further_drop_prob: 0.33 # Mild extra corruption over already-observed Argo pixels.
+    further_drop_prob: 0.5 # extra corruption over already-observed Argo pixels.
     apply_to_noisy_branch: true # Applies the further-corrupted mask to the noisy target branch.
     shared_spatial_mask: true # Shares one spatial further-mask across all depth channels.
     min_kept_observed_pixels: 4 # Keep a non-trivial number of observed channel-pixels after further corruption.
