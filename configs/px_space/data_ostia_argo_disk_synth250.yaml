@@ -8,7 +8,7 @@ dataset:
     return_coords: true # Required by the coord/date-conditioning model preset.
   synthetic:
     enabled: true # Rebuild sparse x from GLORYS profile columns instead of using exported Argo x.
-    pixel_count: 250 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
+    pixel_count: 25 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
   runtime:
     random_seed: 7 # Seed used for deterministic dataset-side behavior where applicable.
 

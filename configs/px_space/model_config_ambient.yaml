@@ -14,7 +14,7 @@ model:
   log_intermediates: false # Training config can still override validation logging behavior.
   ambient_occlusion:
     enabled: true # Enable ambient x-reconstruction on x_valid_mask ∩ y_valid_mask with further-corrupted input.
-    further_drop_prob: 0.5 # extra corruption over already-observed Argo pixels.
+    further_drop_prob: 0.25 # extra corruption over already-observed Argo pixels.
     apply_to_noisy_branch: true # Applies the further-corrupted mask to the noisy target branch.
     shared_spatial_mask: true # Shares one spatial further-mask across all depth channels.
     min_kept_observed_pixels: 4 # Keep a non-trivial number of observed channel-pixels after further corruption.
