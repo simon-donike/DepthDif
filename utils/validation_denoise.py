@@ -8,8 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from utils.normalizations import temperature_normalize
-from utils.stretching import minmax_stretch
+from utils.normalizations import temperature_normalize, temperature_to_plot_unit
 
 
 def build_capture_indices(
@@ -212,12 +211,10 @@ def log_wandb_denoise_timestep_grid(
             mask_i = mask_i[0]
 
         image_t = sample_t[0, 0].detach().float()
-        image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
         image_t = temperature_normalize(mode="denorm", tensor=image_t)
-        if mask_i is not None:
-            ocean_mask = (mask_i > 0.5).to(dtype=image_t.dtype, device=image_t.device)
-            image_t = image_t * ocean_mask
-        image_plot = minmax_stretch(image_t, mask=mask_i, nodata_value=None)
+        image_plot = torch.from_numpy(
+            _temperature_band_to_plot_image(image_t, mask=mask_i)
+        ).to(device=image_t.device, dtype=image_t.dtype)
         image_plot = F.interpolate(
             image_plot.unsqueeze(0).unsqueeze(0),
             size=(tile_size_px, tile_size_px),
@@ -586,9 +583,27 @@ def _plot_band_image(
         raise RuntimeError(
             f"Expected tensor ndim in {{2,3,4}} for plotting, got {int(tensor.ndim)}."
         )
-    image_t = torch.nan_to_num(image_t, nan=0.0, posinf=0.0, neginf=0.0)
-    image_t = minmax_stretch(image_t, mask=mask, nodata_value=None)
-    return image_t.cpu().numpy().astype(np.float32)
+    return _temperature_band_to_plot_image(image_t, mask=mask)
+
+
+def _temperature_band_to_plot_image(
+    image_t: torch.Tensor,
+    *,
+    mask: torch.Tensor | None = None,
+) -> np.ndarray:
+    """Convert one denormalized temperature band into the shared plot color scale."""
+    image_t = image_t.detach().float()
+    finite_mask = torch.isfinite(image_t)
+    if mask is not None:
+        finite_mask = finite_mask & (mask > 0.5).to(device=image_t.device)
+    # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
+    image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
+    image_plot = torch.where(
+        finite_mask,
+        image_plot,
+        torch.zeros_like(image_plot),
+    )
+    return image_plot.cpu().numpy().astype(np.float32)
 
 
 def log_wandb_conditional_reconstruction_grid(

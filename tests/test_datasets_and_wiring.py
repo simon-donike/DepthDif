@@ -20,7 +20,8 @@ from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from train import apply_config_overrides, build_dataset, parse_config_override
-from utils.normalizations import temperature_normalize
+from utils.normalizations import temperature_normalize, temperature_to_plot_unit
+from utils.validation_denoise import _temperature_band_to_plot_image
 
 
 matplotlib.use("Agg")
@@ -317,6 +318,21 @@ class TestDatasetsAndWiring(unittest.TestCase):
             self.assertTrue(
                 torch.allclose(sample["coords"], torch.tensor([-1.0, 15.0]), atol=1e-5)
             )
+
+    def test_temperature_plotting_uses_shared_celsius_scale(self) -> None:
+        cool_context = torch.tensor([[10.0, 20.0]], dtype=torch.float32)
+        warm_context = torch.tensor([[20.0, 30.0]], dtype=torch.float32)
+
+        cool_plot = _temperature_band_to_plot_image(cool_context)
+        warm_plot = _temperature_band_to_plot_image(warm_context)
+        expected_twenty = float(
+            temperature_to_plot_unit(
+                torch.tensor(20.0, dtype=torch.float32), tensor_is_normalized=False
+            ).item()
+        )
+
+        self.assertAlmostEqual(float(cool_plot[0, 1]), expected_twenty, places=6)
+        self.assertAlmostEqual(float(warm_plot[0, 0]), expected_twenty, places=6)
 
     def test_datamodule_split_is_deterministic_and_loader_settings_are_applied(self) -> None:
         dataloader_cfg = {
