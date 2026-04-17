@@ -1541,7 +1541,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=1,
         )
         self.log(
@@ -1551,7 +1551,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=1,
         )
         self.log(
@@ -1561,7 +1561,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=False,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=1,
         )
         self._log_validation_triplet_stats(x=placeholder, y=placeholder, y_hat=placeholder)
@@ -1802,7 +1802,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=recon_batch_size,
         )
         self.log(
@@ -1812,7 +1812,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=recon_batch_size,
         )
         self.log(
@@ -1822,7 +1822,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_epoch=True,
             prog_bar=False,
             logger=True,
-            sync_dist=False,
+            sync_dist=True,
             batch_size=recon_batch_size,
         )
         self._log_validation_triplet_stats(
