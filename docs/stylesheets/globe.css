@@ -365,6 +365,54 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+.globe-mobile-block {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at top, rgba(79, 195, 247, 0.16), transparent 30%),
+    rgba(3, 12, 20, 0.9);
+}
+
+.globe-mobile-block[hidden] {
+  display: none !important;
+}
+
+.globe-mobile-block__card {
+  display: grid;
+  gap: 0.85rem;
+  width: min(34rem, 100%);
+  padding: 1.4rem;
+  border: 1px solid rgba(124, 200, 255, 0.18);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
+    rgba(5, 20, 32, 0.94);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.34);
+}
+
+.globe-mobile-block__eyebrow {
+  color: #7cc8ff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.globe-mobile-block__title {
+  margin: 0;
+  font-size: clamp(1.4rem, 1.5vw + 1rem, 2rem);
+  line-height: 1.15;
+}
+
+.globe-mobile-block__text {
+  margin: 0;
+  color: rgba(215, 233, 247, 0.84);
+}
+
 @media screen and (max-width: 900px) {
   .standalone-globe-shell {
     padding: 0;

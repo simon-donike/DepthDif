@@ -5,6 +5,22 @@
     "https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Widgets/widgets.css";
   const CESIUM_JS_SCRIPT_ID = "depthdif-cesium-js";
   const CESIUM_CSS_LINK_ID = "depthdif-cesium-css";
+  const MOBILE_BLOCK_MEDIA_QUERY = "(max-width: 900px), (pointer: coarse) and (max-width: 1024px)";
+
+  function shouldBlockOnMobile() {
+    if (typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia(MOBILE_BLOCK_MEDIA_QUERY).matches;
+  }
+
+  function setMobileBlockVisible(visible) {
+    const mobileBlock = document.getElementById("globe-mobile-block");
+    if (!mobileBlock) {
+      return;
+    }
+    mobileBlock.hidden = !visible;
+  }
 
   function ensureCesiumStylesheet() {
     if (document.getElementById(CESIUM_CSS_LINK_ID)) {
@@ -66,6 +82,16 @@
       return;
     }
 
+    if (shouldBlockOnMobile()) {
+      setMobileBlockVisible(true);
+      if (typeof window.destroyDepthDifCesiumGlobe === "function") {
+        window.destroyDepthDifCesiumGlobe();
+      }
+      return;
+    }
+
+    setMobileBlockVisible(false);
+
     ensureCesiumStylesheet();
     ensureCesiumScript()
       .then(function () {
@@ -83,4 +109,6 @@
   } else {
     document.addEventListener("DOMContentLoaded", maybeInitCesiumGlobe);
   }
+
+  window.addEventListener("resize", maybeInitCesiumGlobe);
 })();

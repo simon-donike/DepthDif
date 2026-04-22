@@ -264,9 +264,10 @@
       entity.billboard.verticalOrigin = Cesium.VerticalOrigin.BOTTOM;
       entity.billboard.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
       entity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
-      entity.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
       entity.billboard.pixelOffset = new Cesium.Cartesian2(0, options.pixelOffsetY);
-      entity.billboard.eyeOffset = new Cesium.Cartesian3(0, 0, options.eyeOffsetZ);
+      // Keep markers anchored to their geographic position instead of shifting
+      // them toward the camera, which makes them appear to drift while orbiting.
+      entity.billboard.eyeOffset = Cesium.Cartesian3.ZERO;
     });
   }
 
@@ -640,7 +641,6 @@
       width: 24,
       height: 24,
       pixelOffsetY: 0,
-      eyeOffsetZ: -10,
     });
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.pointsToggle.checked;
@@ -666,7 +666,6 @@
       width: 34,
       height: 34,
       pixelOffsetY: -2,
-      eyeOffsetZ: -12,
     });
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.fullSampleToggle.checked;
