@@ -11,6 +11,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from inference.export_cesium_globe_assets import (
+    _build_gdal2tiles_command,
     _read_raster_metadata,
     _sync_with_rclone,
     build_globe_config,
@@ -110,6 +111,60 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("rclone was not found", message)
+
+    def test_sync_with_rclone_streams_progress(self) -> None:
+        with mock.patch(
+            "inference.export_cesium_globe_assets.shutil.which",
+            return_value="/usr/bin/rclone",
+        ), mock.patch("inference.export_cesium_globe_assets.subprocess.run") as run_mock:
+            ok, message = _sync_with_rclone(Path("inference/outputs/example/globe"), "r2:bucket/path")
+
+        self.assertTrue(ok)
+        self.assertIn("completed successfully", message)
+        run_mock.assert_called_once_with(
+            [
+                "/usr/bin/rclone",
+                "sync",
+                "--progress",
+                "inference/outputs/example/globe",
+                "r2:bucket/path",
+            ],
+            check=True,
+            text=True,
+        )
+
+    def test_build_gdal2tiles_command_uses_nearest_neighbor_and_one_extra_zoom_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tif_path = Path(tmp_dir) / "prediction.tif"
+            output_dir = Path(tmp_dir) / "tiles"
+            with rasterio.open(
+                tif_path,
+                "w",
+                driver="GTiff",
+                height=128,
+                width=256,
+                count=1,
+                dtype="float32",
+                crs="EPSG:4326",
+                transform=from_origin(-180.0, 90.0, 360.0 / 256.0, 180.0 / 128.0),
+            ) as ds:
+                ds.write(np.ones((1, 128, 256), dtype=np.float32))
+
+            with mock.patch(
+                "inference.export_cesium_globe_assets.shutil.which",
+                return_value="/usr/bin/gdal2tiles.py",
+            ):
+                command = _build_gdal2tiles_command(
+                    tif_path,
+                    output_dir,
+                    extra_zoom_levels=1,
+                )
+
+        self.assertEqual(command[0], "/usr/bin/gdal2tiles.py")
+        self.assertIn("-r", command)
+        self.assertIn("near", command)
+        self.assertIn("-z", command)
+        self.assertIn("0-1", command)
 
 
 if __name__ == "__main__":

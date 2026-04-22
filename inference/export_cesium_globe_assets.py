@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -29,6 +30,8 @@ DEFAULT_TEMPLATE_PATH = Path("inference/transforms/globe-config.template.json")
 DEFAULT_COLOR_RAMP_PATH = Path("inference/transforms/temperature_blue_red_ramp.txt")
 DEFAULT_COLOR_SCALE_MIN_C = -5.0
 DEFAULT_COLOR_SCALE_MAX_C = 35.0
+DEFAULT_EXTRA_ZOOM_LEVELS = 1
+DEFAULT_TILE_SIZE = 256
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -143,21 +146,54 @@ def _colorize_raster(
     subprocess.run(command, check=True)
 
 
-def _run_gdal2tiles(input_path: Path, output_dir: Path) -> None:
+def _estimate_native_zoom_level(input_path: Path) -> int:
+    with rasterio.open(input_path) as ds:
+        bounds = ds.bounds
+        span_x = abs(float(bounds.right) - float(bounds.left))
+        span_y = abs(float(bounds.top) - float(bounds.bottom))
+        if ds.width <= 0 or ds.height <= 0 or span_x <= 0.0 or span_y <= 0.0:
+            return 0
+
+        # One extra level reduces visible overzoom artifacts while keeping the
+        # tile count close to the native pyramid size.
+        degrees_per_pixel = min(span_x / float(ds.width), span_y / float(ds.height))
+        world_pixels = 360.0 / degrees_per_pixel
+        return max(0, int(math.ceil(math.log2(world_pixels / float(DEFAULT_TILE_SIZE)))))
+
+
+def _build_gdal2tiles_command(
+    input_path: Path,
+    output_dir: Path,
+    *,
+    extra_zoom_levels: int,
+) -> list[str]:
     gdal2tiles_exe = shutil.which("gdal2tiles.py")
     if gdal2tiles_exe is None:
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
-    _ensure_clean_directory(output_dir)
-    command = [
+    max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
+    return [
         gdal2tiles_exe,
         "-p",
         "mercator",
+        "-r",
+        "near",
+        "-z",
+        f"0-{max_zoom}",
         "-w",
         "none",
         str(input_path),
         str(output_dir),
     ]
+
+
+def _run_gdal2tiles(input_path: Path, output_dir: Path, *, extra_zoom_levels: int) -> None:
+    _ensure_clean_directory(output_dir)
+    command = _build_gdal2tiles_command(
+        input_path,
+        output_dir,
+        extra_zoom_levels=extra_zoom_levels,
+    )
     subprocess.run(command, check=True)
 
 
@@ -169,28 +205,16 @@ def _sync_with_rclone(local_dir: Path, remote: str) -> tuple[bool, str]:
     command = [
         rclone_exe,
         "sync",
+        "--progress",
         str(local_dir),
         str(remote),
     ]
     try:
-        completed = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        subprocess.run(command, check=True, text=True)
     except subprocess.CalledProcessError as exc:
-        output_parts = [part.strip() for part in [exc.stdout, exc.stderr] if part and part.strip()]
-        suffix = f" Output: {' | '.join(output_parts)}" if output_parts else ""
-        return False, f"rclone sync failed with exit code {exc.returncode}.{suffix}"
+        return False, f"rclone sync failed with exit code {exc.returncode}."
 
-    output_parts = [
-        part.strip() for part in [completed.stdout, completed.stderr] if part and part.strip()
-    ]
-    message = "rclone sync completed successfully."
-    if output_parts:
-        message = f"{message} Output: {' | '.join(output_parts)}"
-    return True, message
+    return True, "rclone sync completed successfully."
 
 
 def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
@@ -290,6 +314,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "When provided, the generated globe directory is synced after export."
         ),
     )
+    parser.add_argument(
+        "--extra-zoom-levels",
+        type=int,
+        default=DEFAULT_EXTRA_ZOOM_LEVELS,
+        help=(
+            "Number of extra on-disk zoom levels written beyond the raster's estimated "
+            "native max zoom. Tiling always uses nearest-neighbor resampling."
+        ),
+    )
     return parser
 
 
@@ -318,7 +351,11 @@ def main() -> None:
         color_ramp_path=color_ramp_path,
     )
     prediction_tiles_dir = globe_dir / "prediction_tiles"
-    _run_gdal2tiles(prediction_colorized_path, prediction_tiles_dir)
+    _run_gdal2tiles(
+        prediction_colorized_path,
+        prediction_tiles_dir,
+        extra_zoom_levels=args.extra_zoom_levels,
+    )
 
     ground_truth_tiles_dir: Path | None = None
     if ground_truth_path is not None:
@@ -329,7 +366,11 @@ def main() -> None:
             color_ramp_path=color_ramp_path,
         )
         ground_truth_tiles_dir = globe_dir / "ground_truth_tiles"
-        _run_gdal2tiles(ground_truth_colorized_path, ground_truth_tiles_dir)
+        _run_gdal2tiles(
+            ground_truth_colorized_path,
+            ground_truth_tiles_dir,
+            extra_zoom_levels=args.extra_zoom_levels,
+        )
 
     copied_points_path: Path | None = None
     if points_path is not None:
@@ -391,6 +432,8 @@ def main() -> None:
         f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
     )
     print(f"- color ramp: {color_ramp_path}")
+    print(f"- extra zoom levels: {max(0, int(args.extra_zoom_levels))}")
+    print("- tile resampling: nearest-neighbor")
     if args.rclone_remote is not None:
         ok, message = _sync_with_rclone(globe_dir, args.rclone_remote)
         if ok:
