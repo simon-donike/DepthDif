@@ -3,7 +3,11 @@
     "https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Cesium.js";
   const CESIUM_CSS_URL =
     "https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Widgets/widgets.css";
-  const CESIUM_APP_SCRIPT_PATH = "javascripts/cesium-globe.js";
+  const LOADER_SCRIPT_BASE_URL =
+    document.currentScript && document.currentScript.src
+      ? new URL(".", document.currentScript.src).toString()
+      : new URL("./", document.baseURI).toString();
+  const CESIUM_APP_SCRIPT_PATH = "cesium-globe.js";
   const CESIUM_JS_SCRIPT_ID = "depthdif-cesium-js";
   const CESIUM_CSS_LINK_ID = "depthdif-cesium-css";
   const CESIUM_APP_SCRIPT_ID = "depthdif-cesium-app";
@@ -125,7 +129,9 @@
 
       const script = document.createElement("script");
       script.id = CESIUM_APP_SCRIPT_ID;
-      script.src = new URL(CESIUM_APP_SCRIPT_PATH, document.baseURI).toString();
+      // Resolve relative to the loader script itself so the globe page and the
+      // docs pages both fetch the local app script from the same folder.
+      script.src = new URL(CESIUM_APP_SCRIPT_PATH, LOADER_SCRIPT_BASE_URL).toString();
       script.async = true;
       script.onload = resolve;
       script.onerror = function () {
