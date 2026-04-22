@@ -54,6 +54,14 @@ def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> 
         sampler.parameterization = parameterization
 
 
+def _module_device_or_fallback(module: nn.Module, fallback: torch.device) -> torch.device:
+    """Return the module device, or a safe fallback when no parameters exist."""
+    first_param = next(module.parameters(), None)
+    if first_param is not None:
+        return first_param.device
+    return fallback
+
+
 class DenoisingDiffusionProcess(nn.Module):
 
     """Unconditional diffusion process module for training and sampling."""
@@ -153,7 +161,7 @@ class DenoisingDiffusionProcess(nn.Module):
 
         # read dimensions
         b, c, h, w = batch_size, self.generated_channels, *shape
-        device = next(self.model.parameters()).device
+        device = _module_device_or_fallback(self.model, fallback=torch.device("cpu"))
 
         # select sampler
         if sampler is None:
@@ -376,7 +384,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         # read dimensions
         b, c, h, w = condition.shape
-        device = next(self.model.parameters()).device
+        device = _module_device_or_fallback(self.model, fallback=condition.device)
         condition = condition.to(device)
         coord_emb = self._maybe_embed_coords(coord, condition, date=date)
 

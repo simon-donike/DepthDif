@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from export_global_inference import (
+from inference.export_global import (
     _argo_point_features_for_patch,
     build_global_mosaic,
     select_export_indices,

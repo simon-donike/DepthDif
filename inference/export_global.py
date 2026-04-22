@@ -5,7 +5,7 @@ provide an ISO week/year, the exporter picks the earliest available date in
 that week so the output stays one spatially complete raster rather than seven.
 
 Typical CLI:
-    /work/envs/depth/bin/python export_global_inference.py \
+    /work/envs/depth/bin/python inference/export_global.py \
       --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
       --year 2010 \
       --iso-week 1 \
@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import json
 from pathlib import Path
+import sys
 from typing import Any, Sequence
 
 import numpy as np
@@ -34,14 +35,19 @@ from torch import nn
 from tqdm import tqdm
 import yaml
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from data.datamodule import DepthTileDataModule
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
+from inference.core import build_model, choose_device, load_yaml, resolve_checkpoint_path
 from utils.normalizations import temperature_normalize
 
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
 DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
+DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 
 
 @dataclass(frozen=True)
@@ -581,7 +587,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("outputs"),
+        default=DEFAULT_OUTPUT_ROOT,
         help="Root directory that receives the run folder and GeoTIFF export.",
     )
     parser.add_argument(
@@ -636,8 +642,6 @@ def main() -> None:
     selected_rows = [dataset._rows[idx] for idx in selection.indices]
     selected_manifest = pd.DataFrame.from_records(selected_rows)
     selected_manifest.to_csv(run_dir / "selected_patches.csv", index=False)
-
-    from inference import build_model, choose_device, load_yaml, resolve_checkpoint_path
 
     model_cfg = load_yaml(args.model_config)
     batch_size = int(

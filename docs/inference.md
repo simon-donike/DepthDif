@@ -1,13 +1,13 @@
 # Inference  
 There are two practical inference workflows in this repository:  
-- run the standalone script `inference.py`  
+- run the standalone script `inference/run_single.py`  
 - call `PixelDiffusionConditional.predict_step(...)` directly  
   
 DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow configs (`configs/lat_space/*`).  
 For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).  
   
-## Workflow 1: Use `inference.py`  
-`inference.py` is a configurable script for quick prediction sanity checks.  
+## Workflow 1: Use `inference/run_single.py`  
+`inference/run_single.py` is a configurable script for quick prediction sanity checks.  
   
 ### What it supports  
 - load config files and instantiate model/datamodule  
@@ -18,7 +18,7 @@ For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion]
 - optional intermediate sample capture  
   
 ### Important script settings  
-At the top of `inference.py`, set:  
+At the top of `inference/run_single.py`, set:  
 - `MODEL_CONFIG_PATH`  
 - `DATA_CONFIG_PATH`  
 - `TRAIN_CONFIG_PATH`  
@@ -30,7 +30,7 @@ The script constants should be set explicitly. In this repository, the actively 
 - OSTIA + Argo disk setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
 
 ## Workflow 1b: Export One Global Top-Band Raster  
-Use `export_global_inference.py` when you want one spatially complete raster from the `ostia_argo_disk` manifest rather than a single sampled batch. The script:
+Use `inference/export_global.py` when you want one spatially complete raster from the `ostia_argo_disk` manifest rather than a single sampled batch. The script:
 - loads the configured checkpoint and disk-manifest dataset  
 - selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`  
 - runs batched `predict_step(...)` over all spatial patches for that day  
@@ -42,7 +42,7 @@ Use `export_global_inference.py` when you want one spatially complete raster fro
 
 Typical run:  
 ```bash
-/work/envs/depth/bin/python export_global_inference.py \
+/work/envs/depth/bin/python inference/export_global.py \
   --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --year 2010 \
@@ -50,12 +50,42 @@ Typical run:
   --device cuda
 ```  
 
-Outputs land under `outputs/<run_name>/` and include:
+Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_prediction.tif`: stitched global top-band prediction  
 - `<run_name>_glorys_top_band.tif`: stitched GLORYS top-band truth export by default  
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
 - `selected_patches.csv`: the manifest rows used for the run  
 - `run_summary.yaml`: checkpoint/config/date metadata for traceability  
+
+## Workflow 1c: Package One Run for the Cesium Globe
+Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
+- reads one completed `inference/outputs/<run_name>/` directory
+- tiles the stitched prediction and ground-truth GeoTIFFs with `gdal2tiles.py`
+- copies the Argo points GeoJSON into the hosted globe bundle
+- writes `globe/globe-config.json` for the static Cesium page
+
+Typical run:
+```bash
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+  --run-dir inference/outputs/<run_name> \
+  --public-base-url https://<bucket-or-site>/<run_name>/globe/
+```
+
+To upload the generated `globe/` folder in the same step, provide an `rclone` destination:
+```bash
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+  --run-dir inference/outputs/<run_name> \
+  --public-base-url https://<bucket-or-site>/<run_name>/globe/ \
+  --rclone-remote r2:<bucket>/<run_name>/globe
+```
+
+The hosted output lands under `inference/outputs/<run_name>/globe/` and includes:
+- `prediction_tiles/`: TMS imagery tiles for the prediction raster
+- `ground_truth_tiles/`: TMS imagery tiles for the GLORYS raster when present
+- `argo_points.geojson`: hosted point overlay
+- `globe-config.json`: the viewer manifest consumed by [Globe Viewer](globe.md)
+
+When serving from a bucket, enable CORS for the docs origin so the static MkDocs page can fetch the tiled layers and GeoJSON.
   
 ## Workflow 2: Direct `predict_step`  
 The model inference entry point is:  

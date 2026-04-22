@@ -40,15 +40,22 @@ Equivalent script wrappers:
 See [Autoencoder + Latent Diffusion](autoencoder.md) for architecture, goals, limitations, and workflow details.  
   
 ## Quick Inference  
-Set config/checkpoint constants at the top of `inference.py`, then run:  
-  
+Set config/checkpoint constants at the top of `inference/run_single.py`, then run:  
+
 ```bash  
-python inference.py  
+/work/envs/depth/bin/python inference/run_single.py  
 ```  
-  
+
 For EO multiband runs, use:  
 - `MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"`  
 - `DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_disk.yaml"`  
 - `TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"`  
 Remember to wire through your dataloaders in the config. Alternatively, pass the inputs individually through PL's `predict_step`.  
+
+To export one stitched world raster and prepare the hosted Cesium assets afterward, use:
+
+```bash
+/work/envs/depth/bin/python inference/export_global.py --year 2010 --iso-week 1
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py --run-dir inference/outputs/<run_name>
+```
   

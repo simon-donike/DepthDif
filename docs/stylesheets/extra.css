@@ -28,3 +28,65 @@
 .md-nav__title {
   border-bottom: 1px solid rgba(124, 200, 255, 0.22);
 }
+
+.globe-cta {
+  display: flex;
+  gap: 1.25rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2rem 0 2.5rem;
+  padding: 1.5rem;
+  border: 1px solid rgba(124, 200, 255, 0.24);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(9, 34, 56, 0.94), rgba(10, 54, 85, 0.94));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.globe-cta__eyebrow {
+  margin: 0 0 0.35rem;
+  color: #7cc8ff;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.globe-cta__title {
+  margin: 0 0 0.45rem;
+  color: #f0f8ff;
+}
+
+.globe-cta__text {
+  margin: 0;
+  max-width: 46rem;
+}
+
+.globe-cta__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.95rem 1.4rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7ed8ff, #42aef0);
+  color: #041625 !important;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 14px 28px rgba(66, 174, 240, 0.22);
+}
+
+.globe-cta__button:hover {
+  background: linear-gradient(135deg, #9ae1ff, #5ec2ff);
+}
+
+@media screen and (max-width: 960px) {
+  .globe-cta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .globe-cta__button {
+    width: 100%;
+  }
+}

@@ -71,19 +71,29 @@ Notes:
   
 ## Inference  
   
-Use `inference.py`:  
-  
-1. Set config/checkpoint constants at the top of `inference.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
+Use `inference/run_single.py`:  
+
+1. Set config/checkpoint constants at the top of `inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:  
    `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
 2. Choose `MODE` (`"dataloader"` or `"random"`).  
 3. Run:  
   
 ```bash  
-python inference.py  
+/work/envs/depth/bin/python inference/run_single.py  
 ```  
 
-For a full spatial export, use `export_global_inference.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, can use all visible CUDA devices, writes the stitched top-band prediction under `outputs/`, and by default also writes the matching GLORYS top-band raster plus a GeoJSON of observed Argo point locations. Use `--no-export-ground-truth` if you want prediction-only output.
+For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, writes the stitched top-band prediction under `inference/outputs/`, and by default also writes the matching GLORYS top-band raster plus a GeoJSON of observed Argo point locations.
+
+To package one exported run for the Cesium globe viewer in the docs, use:
+
+```bash
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+  --run-dir inference/outputs/<run_name> \
+  --public-base-url https://<bucket-or-site>/<run_name>/globe/
+```
+
+The docs viewer page lives at `docs/globe.md` and can load a hosted `globe-config.json`.
 
 ## Experiment Script
 

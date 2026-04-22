@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from inference import (
+from inference.core import (
     build_datamodule,
     build_dataset,
     build_model,

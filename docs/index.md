@@ -14,7 +14,19 @@ The repository currently supports:
 - [GitHub Repository](https://github.com/simon-donike/DepthDif)  
 - [Open Issues](https://github.com/simon-donike/DepthDif/issues)  
 - [Releases](https://github.com/simon-donike/DepthDif/releases)  
-  
+
+<div class="globe-cta">
+  <div class="globe-cta__body">
+    <p class="globe-cta__eyebrow">New viewer</p>
+    <h2 class="globe-cta__title">Inspect DepthDif outputs on a 3D globe</h2>
+    <p class="globe-cta__text">
+      Open the Cesium web viewer to compare the stitched top-level prediction,
+      the GLORYS top-band ground truth, and the observed Argo points on one globe.
+    </p>
+  </div>
+  <a class="globe-cta__button" href="globe/">Open 3D Globe</a>
+</div>
+
 ## Model Description  
   
 ![depthdif_schema](assets/figures/depthdif_schema.png)  
