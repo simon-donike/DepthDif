@@ -67,9 +67,9 @@ When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYY
 Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
 - reads one completed `inference/outputs/<run_name>/` directory
 - tiles the stitched prediction and ground-truth GeoTIFFs with `gdal2tiles.py`
-- copies the Argo points GeoJSON into the hosted globe bundle
-- copies the sampled full-profile GeoJSON and its `graphs/` folder into the hosted globe bundle
-- copies the train/val patch-split GeoJSON into the hosted globe bundle
+- rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
+- rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder
+- rewrites the train/val patch-split GeoJSON with rounded coordinates and only the `split` property
 - writes `globe/globe-config.json` for the static Cesium page
 
 Typical run:

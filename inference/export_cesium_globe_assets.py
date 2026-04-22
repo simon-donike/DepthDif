@@ -42,6 +42,15 @@ DEFAULT_TILE_SIZE = 256
 DEFAULT_CAMERA_LON = -38.56452881619089
 DEFAULT_CAMERA_LAT = 34.53988238358822
 DEFAULT_CAMERA_HEIGHT = 9_500_000.0
+DEFAULT_GEOJSON_COORD_PRECISION = 4
+FULL_SAMPLE_PROPERTY_KEYS = (
+    "graph_png_path",
+    "location_id",
+    "patch_id",
+    "pixel_row",
+    "pixel_col",
+)
+PATCH_SPLIT_PROPERTY_KEYS = ("split",)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -269,6 +278,56 @@ def _resolve_rclone_sync_source(
     return globe_dir, "globe assets"
 
 
+def _round_geojson_coordinates(value: Any, *, decimals: int) -> Any:
+    if isinstance(value, list):
+        return [
+            _round_geojson_coordinates(item, decimals=decimals) for item in value
+        ]
+    if isinstance(value, float):
+        return round(value, decimals)
+    return value
+
+
+def _rewrite_geojson(
+    source_path: Path,
+    destination_path: Path,
+    *,
+    allowed_property_keys: tuple[str, ...],
+    coordinate_precision: int = DEFAULT_GEOJSON_COORD_PRECISION,
+) -> None:
+    with source_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    features = []
+    for feature in payload.get("features", []):
+        geometry = dict(feature.get("geometry", {}))
+        geometry["coordinates"] = _round_geojson_coordinates(
+            geometry.get("coordinates", []),
+            decimals=coordinate_precision,
+        )
+        rewritten_feature = {
+            key: value
+            for key, value in feature.items()
+            if key not in {"geometry", "properties"}
+        }
+        rewritten_feature["geometry"] = geometry
+
+        filtered_properties = {
+            key: feature.get("properties", {}).get(key)
+            for key in allowed_property_keys
+            if key in feature.get("properties", {})
+        }
+        if filtered_properties:
+            rewritten_feature["properties"] = filtered_properties
+        features.append(rewritten_feature)
+
+    rewritten_payload = dict(payload)
+    rewritten_payload["features"] = features
+    with destination_path.open("w", encoding="utf-8") as f:
+        json.dump(rewritten_payload, f, separators=(",", ":"))
+        f.write("\n")
+
+
 def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
     if public_base_url is None:
         return f"./{name}"
@@ -457,17 +516,29 @@ def main() -> None:
     copied_points_path: Path | None = None
     if points_path is not None:
         copied_points_path = globe_dir / "argo_points.geojson"
-        shutil.copy2(points_path, copied_points_path)
+        _rewrite_geojson(
+            points_path,
+            copied_points_path,
+            allowed_property_keys=(),
+        )
 
     copied_patch_splits_path: Path | None = None
     if patch_splits_path is not None:
         copied_patch_splits_path = globe_dir / "patch_splits.geojson"
-        shutil.copy2(patch_splits_path, copied_patch_splits_path)
+        _rewrite_geojson(
+            patch_splits_path,
+            copied_patch_splits_path,
+            allowed_property_keys=PATCH_SPLIT_PROPERTY_KEYS,
+        )
 
     copied_full_sample_points_path: Path | None = None
     if full_sample_points_path is not None:
         copied_full_sample_points_path = globe_dir / "full_sample_locations.geojson"
-        shutil.copy2(full_sample_points_path, copied_full_sample_points_path)
+        _rewrite_geojson(
+            full_sample_points_path,
+            copied_full_sample_points_path,
+            allowed_property_keys=FULL_SAMPLE_PROPERTY_KEYS,
+        )
 
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():

@@ -29,16 +29,15 @@ extra:
       link: https://github.com/simon-donike/DepthDif
 
 extra_css:
-  - https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Widgets/widgets.css
   - stylesheets/extra.css
   - stylesheets/globe.css
 
 extra_javascript:
   - javascripts/mathjax.js
   - javascripts/remove-tab-tooltips.js
-  - https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Cesium.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
   - javascripts/cesium-globe.js
+  - javascripts/load-cesium-globe.js
 
 plugins:
   - search

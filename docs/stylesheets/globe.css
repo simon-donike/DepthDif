@@ -15,9 +15,9 @@
   left: 1rem;
   z-index: 2;
   display: flex;
+  flex-direction: column;
   gap: 0.85rem;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  align-items: stretch;
   max-width: min(42rem, calc(100% - 7rem));
   padding: 0.85rem 0.95rem;
   border: 1px solid rgba(124, 200, 255, 0.16);
@@ -26,6 +26,22 @@
   background:
     radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
     rgba(5, 20, 32, 0.76);
+}
+
+.globe-toolbar__header {
+  display: flex;
+  gap: 0.85rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.globe-toolbar__content {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.globe-toolbar.is-collapsed .globe-toolbar__content {
+  display: none;
 }
 
 .globe-toolbar__group {
@@ -43,6 +59,20 @@
   font-weight: 700;
 }
 
+.globe-toolbar__collapse-button {
+  padding: 0.5rem 0.85rem;
+  border: 1px solid rgba(124, 200, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4fbff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.globe-toolbar__collapse-button:hover {
+  filter: brightness(1.08);
+}
+
 .globe-toggle {
   display: inline-flex;
   gap: 0.55rem;
@@ -50,6 +80,10 @@
   padding: 0.42rem 0.7rem;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.globe-toggle input:disabled + span {
+  opacity: 0.68;
 }
 
 .globe-range {

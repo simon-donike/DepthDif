@@ -1,30 +1,12 @@
 (function () {
   const DEFAULT_GLOBE_CONFIG_URL =
     "https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe/globe-config.json";
-  const container = document.getElementById("depthdif-cesium-globe");
-  if (!container || typeof window.Cesium === "undefined") {
-    return;
-  }
-
-  const predictionToggle = document.getElementById("globe-toggle-prediction");
-  const groundTruthToggle = document.getElementById("globe-toggle-ground-truth");
-  const pointsToggle = document.getElementById("globe-toggle-points");
-  const fullSampleToggle = document.getElementById("globe-toggle-full-samples");
-  const patchSplitsToggle = document.getElementById("globe-toggle-patch-splits");
-  const opacitySlider = document.getElementById("globe-overlay-opacity");
-  const spinToggle = document.getElementById("globe-toggle-spin");
-  const resetButton = document.getElementById("globe-reset-camera");
-  const profilePopup = document.getElementById("globe-profile-popup");
-  const profilePopupTitle = document.getElementById("globe-profile-popup-title");
-  const profilePopupSubtitle = document.getElementById("globe-profile-popup-subtitle");
-  const profilePopupImage = document.getElementById("globe-profile-popup-image");
-  const profilePopupClose = document.getElementById("globe-profile-popup-close");
   const DEFAULT_CAMERA_DESTINATION = {
     lon: -38.56452881619089,
     lat: 34.53988238358822,
     height: 9500000.0,
   };
-  const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(5.0);
+  const SPIN_RATE_RADIANS_PER_SECOND = 5.0 * (Math.PI / 180.0);
   const TEMPERATURE_COLOR_STOPS = [
     { value: 0.0, rgb: [18, 38, 140] },
     { value: 4.0, rgb: [30, 86, 196] },
@@ -38,11 +20,55 @@
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const PATCH_SPLIT_ALPHA = 0.5;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
+  const TOOLBAR_AUTO_COLLAPSE_DELAY_MS = 3000;
   const PATCH_SPLIT_COLORS = {
-    train: Cesium.Color.fromCssColorString("#1f9d55"),
-    val: Cesium.Color.fromCssColorString("#d64545"),
+    train: "#1f9d55",
+    val: "#d64545",
   };
-  let profilePopupCloseTimer = null;
+
+  function getGlobeElements() {
+    const container = document.getElementById("depthdif-cesium-globe");
+    if (!container) {
+      return null;
+    }
+
+    return {
+      container: container,
+      predictionToggle: document.getElementById("globe-toggle-prediction"),
+      groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
+      pointsToggle: document.getElementById("globe-toggle-points"),
+      fullSampleToggle: document.getElementById("globe-toggle-full-samples"),
+      patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
+      toolbar: document.querySelector(".globe-toolbar"),
+      toolbarContent: document.getElementById("globe-toolbar-content"),
+      toolbarToggle: document.getElementById("globe-toggle-toolbar"),
+      opacitySlider: document.getElementById("globe-overlay-opacity"),
+      spinToggle: document.getElementById("globe-toggle-spin"),
+      resetButton: document.getElementById("globe-reset-camera"),
+      profilePopup: document.getElementById("globe-profile-popup"),
+      profilePopupTitle: document.getElementById("globe-profile-popup-title"),
+      profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
+      profilePopupImage: document.getElementById("globe-profile-popup-image"),
+      profilePopupClose: document.getElementById("globe-profile-popup-close"),
+    };
+  }
+
+  function nextInitToken() {
+    const nextToken = Number(window.__depthdifCesiumGlobeInitToken || 0) + 1;
+    window.__depthdifCesiumGlobeInitToken = nextToken;
+    return nextToken;
+  }
+
+  function getCurrentInitToken() {
+    return Number(window.__depthdifCesiumGlobeInitToken || 0);
+  }
+
+  function requestRender(state) {
+    if (!state || !state.viewer || state.viewer.isDestroyed()) {
+      return;
+    }
+    state.viewer.scene.requestRender();
+  }
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -68,6 +94,22 @@
       return null;
     }
     return new URL(assetUrl, configUrl).toString();
+  }
+
+  function markToggleUnavailable(toggle) {
+    if (!toggle) {
+      return;
+    }
+    toggle.checked = false;
+    toggle.disabled = true;
+    toggle.dataset.globeUnavailable = "true";
+  }
+
+  function setToggleLoading(toggle, loading) {
+    if (!toggle || toggle.dataset.globeUnavailable === "true") {
+      return;
+    }
+    toggle.disabled = loading;
   }
 
   function clamp(value, minValue, maxValue) {
@@ -119,7 +161,7 @@
 
   function splitColor(splitValue) {
     const normalized = String(splitValue || "").trim().toLowerCase();
-    return PATCH_SPLIT_COLORS[normalized] || Cesium.Color.WHITE;
+    return Cesium.Color.fromCssColorString(PATCH_SPLIT_COLORS[normalized] || "#ffffff");
   }
 
   function stylePatchSplitEntities(dataSource) {
@@ -144,18 +186,45 @@
     });
   }
 
-  function clearProfilePopupCloseTimer() {
-    if (profilePopupCloseTimer !== null) {
-      window.clearTimeout(profilePopupCloseTimer);
-      profilePopupCloseTimer = null;
+  function clearProfilePopupCloseTimer(state) {
+    if (state.profilePopupCloseTimer !== null) {
+      window.clearTimeout(state.profilePopupCloseTimer);
+      state.profilePopupCloseTimer = null;
     }
   }
 
-  function finalizeProfilePopupClose() {
+  function clearToolbarCollapseTimer(state) {
+    if (state.toolbarCollapseTimer !== null) {
+      window.clearTimeout(state.toolbarCollapseTimer);
+      state.toolbarCollapseTimer = null;
+    }
+  }
+
+  function setToolbarCollapsed(elements, collapsed) {
+    if (!elements.toolbar || !elements.toolbarToggle || !elements.toolbarContent) {
+      return;
+    }
+
+    elements.toolbar.classList.toggle("is-collapsed", collapsed);
+    elements.toolbarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    elements.toolbarToggle.textContent = collapsed ? "Show settings" : "Hide settings";
+  }
+
+  function scheduleToolbarAutoCollapse(state) {
+    clearToolbarCollapseTimer(state);
+    state.toolbarCollapseTimer = window.setTimeout(function () {
+      state.toolbarCollapseTimer = null;
+      setToolbarCollapsed(state.elements, true);
+    }, TOOLBAR_AUTO_COLLAPSE_DELAY_MS);
+  }
+
+  function finalizeProfilePopupClose(state) {
+    const profilePopup = state.elements.profilePopup;
+    const profilePopupImage = state.elements.profilePopupImage;
     if (!profilePopup) {
       return;
     }
-    clearProfilePopupCloseTimer();
+    clearProfilePopupCloseTimer(state);
     profilePopup.classList.remove("is-open", "is-closing");
     profilePopup.hidden = true;
     if (profilePopupImage) {
@@ -163,24 +232,30 @@
       profilePopupImage.removeAttribute("src");
       profilePopupImage.alt = "";
     }
+    requestRender(state);
   }
 
-  function closeProfilePopup() {
+  function closeProfilePopup(state) {
+    const profilePopup = state.elements.profilePopup;
     if (!profilePopup) {
       return;
     }
     if (profilePopup.hidden && !profilePopup.classList.contains("is-open")) {
-      finalizeProfilePopupClose();
+      finalizeProfilePopupClose(state);
       return;
     }
-    clearProfilePopupCloseTimer();
+    clearProfilePopupCloseTimer(state);
     profilePopup.classList.remove("is-open");
     profilePopup.classList.add("is-closing");
-    profilePopupCloseTimer = window.setTimeout(finalizeProfilePopupClose, PROFILE_POPUP_CLOSE_DELAY_MS);
+    state.profilePopupCloseTimer = window.setTimeout(function () {
+      finalizeProfilePopupClose(state);
+    }, PROFILE_POPUP_CLOSE_DELAY_MS);
+    requestRender(state);
   }
 
-  function showProfilePopup(entity, configUrl) {
-    if (!profilePopup || !profilePopupImage) {
+  function showProfilePopup(state, entity) {
+    const elements = state.elements;
+    if (!elements.profilePopup || !elements.profilePopupImage) {
       return;
     }
     const now = Cesium.JulianDate.now();
@@ -197,11 +272,11 @@
     const pixelRow = properties.pixel_row ? properties.pixel_row.getValue(now) : null;
     const pixelCol = properties.pixel_col ? properties.pixel_col.getValue(now) : null;
 
-    if (profilePopupTitle) {
-      profilePopupTitle.textContent = String(locationId);
+    if (elements.profilePopupTitle) {
+      elements.profilePopupTitle.textContent = String(locationId);
     }
-    if (profilePopupSubtitle) {
-      profilePopupSubtitle.textContent =
+    if (elements.profilePopupSubtitle) {
+      elements.profilePopupSubtitle.textContent =
         "Patch " +
         String(patchId || "") +
         ", pixel (" +
@@ -210,13 +285,14 @@
         String(pixelCol) +
         ")";
     }
-    profilePopupImage.src = new URL(String(graphPath), configUrl).toString();
-    profilePopupImage.alt = String(locationId) + " profile comparison";
-    clearProfilePopupCloseTimer();
-    profilePopup.hidden = false;
-    profilePopup.classList.remove("is-closing");
+    elements.profilePopupImage.src = new URL(String(graphPath), state.configUrl).toString();
+    elements.profilePopupImage.alt = String(locationId) + " profile comparison";
+    clearProfilePopupCloseTimer(state);
+    elements.profilePopup.hidden = false;
+    elements.profilePopup.classList.remove("is-closing");
     window.requestAnimationFrame(function () {
-      profilePopup.classList.add("is-open");
+      elements.profilePopup.classList.add("is-open");
+      requestRender(state);
     });
   }
 
@@ -239,8 +315,8 @@
     }
   }
 
-  function buildViewer() {
-    const viewer = new Cesium.Viewer("depthdif-cesium-globe", {
+  function buildViewer(container) {
+    const viewer = new Cesium.Viewer(container, {
       animation: false,
       baseLayer: false,
       baseLayerPicker: false,
@@ -249,6 +325,8 @@
       homeButton: false,
       infoBox: false,
       navigationHelpButton: false,
+      requestRenderMode: true,
+      maximumRenderTimeChange: Number.POSITIVE_INFINITY,
       sceneModePicker: false,
       selectionIndicator: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -264,18 +342,26 @@
       })
     );
     viewer.scene.globe.enableLighting = false;
+    viewer.clock.shouldAnimate = false;
     return viewer;
   }
 
-  function forceViewerResize(viewer) {
-    viewer.resolutionScale = window.devicePixelRatio || 1;
-    viewer.resize();
+  function forceViewerResize(state) {
+    if (!state.viewer || state.viewer.isDestroyed()) {
+      return;
+    }
+    state.viewer.resolutionScale = window.devicePixelRatio || 1;
+    state.viewer.resize();
     window.requestAnimationFrame(function () {
-      viewer.resize();
+      if (!state.viewer || state.viewer.isDestroyed()) {
+        return;
+      }
+      state.viewer.resize();
+      requestRender(state);
     });
   }
 
-  function watchContainerResize(viewer, element) {
+  function watchContainerResize(state, element) {
     if (typeof window.ResizeObserver === "undefined") {
       return function () {};
     }
@@ -284,7 +370,7 @@
     // rather than only the window. Otherwise Cesium can keep an older, shorter size.
     const observer = new window.ResizeObserver(function () {
       window.requestAnimationFrame(function () {
-        forceViewerResize(viewer);
+        forceViewerResize(state);
       });
     });
     observer.observe(element);
@@ -305,28 +391,36 @@
     return DEFAULT_CAMERA_DESTINATION;
   }
 
-  function flyToConfig(viewer, config) {
-    const destination = resolveCameraDestination(config);
+  function flyToConfig(state) {
+    const destination = resolveCameraDestination(state.config);
     if (
-      Number.isFinite(destination.lon) &&
-      Number.isFinite(destination.lat) &&
-      Number.isFinite(destination.height)
+      !Number.isFinite(destination.lon) ||
+      !Number.isFinite(destination.lat) ||
+      !Number.isFinite(destination.height)
     ) {
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(
-          destination.lon,
-          destination.lat,
-          destination.height
-        ),
-        orientation: {
-          heading: 0.0,
-          pitch: -Cesium.Math.PI_OVER_TWO,
-          roll: 0.0,
-        },
-        duration: 1.8,
-      });
       return;
     }
+
+    state.viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        destination.lon,
+        destination.lat,
+        destination.height
+      ),
+      orientation: {
+        heading: 0.0,
+        pitch: -Cesium.Math.PI_OVER_TWO,
+        roll: 0.0,
+      },
+      duration: 1.8,
+      complete: function () {
+        requestRender(state);
+      },
+      cancel: function () {
+        requestRender(state);
+      },
+    });
+    requestRender(state);
   }
 
   function setSpinEnabled(state, enabled) {
@@ -335,14 +429,15 @@
     // Cesium's onTick fires every frame, but clock.currentTime only advances
     // while animation is enabled, so keep the viewer clock in sync with the UI.
     state.viewer.clock.shouldAnimate = enabled;
-    if (spinToggle) {
-      spinToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
-      spinToggle.textContent = enabled ? "Stop Spin" : "Spin Globe";
+    if (state.elements.spinToggle) {
+      state.elements.spinToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+      state.elements.spinToggle.textContent = enabled ? "Stop Spin" : "Spin Globe";
     }
+    requestRender(state);
   }
 
   function attachSpinLoop(state) {
-    state.viewer.clock.onTick.addEventListener(function (clock) {
+    state.spinTickListener = function (clock) {
       if (!state.spinEnabled) {
         state.lastSpinTime = null;
         return;
@@ -350,6 +445,7 @@
 
       if (state.lastSpinTime === null) {
         state.lastSpinTime = Cesium.JulianDate.clone(clock.currentTime);
+        requestRender(state);
         return;
       }
 
@@ -359,128 +455,60 @@
       );
       state.lastSpinTime = Cesium.JulianDate.clone(clock.currentTime);
       if (deltaSeconds <= 0.0) {
+        requestRender(state);
         return;
       }
 
       // Rotate around the Earth's axis to keep the spin centered on the globe
       // rather than panning in screen space.
-      state.viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -SPIN_RATE_RADIANS_PER_SECOND * deltaSeconds);
-    });
+      state.viewer.scene.camera.rotate(
+        Cesium.Cartesian3.UNIT_Z,
+        -SPIN_RATE_RADIANS_PER_SECOND * deltaSeconds
+      );
+      requestRender(state);
+    };
+    state.viewer.clock.onTick.addEventListener(state.spinTickListener);
   }
 
-  function wireUi(state) {
-    predictionToggle.addEventListener("change", function () {
-      if (state.predictionLayer) {
-        state.predictionLayer.show = predictionToggle.checked;
-      }
-    });
-
-    groundTruthToggle.addEventListener("change", function () {
-      if (state.groundTruthLayer) {
-        state.groundTruthLayer.show = groundTruthToggle.checked;
-      }
-    });
-
-    pointsToggle.addEventListener("change", function () {
-      if (state.pointsDataSource) {
-        state.pointsDataSource.show = pointsToggle.checked;
-      }
-    });
-
-    if (fullSampleToggle) {
-      fullSampleToggle.addEventListener("change", function () {
-        if (state.fullSampleDataSource) {
-          state.fullSampleDataSource.show = fullSampleToggle.checked;
-        }
-        if (!fullSampleToggle.checked) {
-          closeProfilePopup();
-        }
-      });
-    }
-
-    if (patchSplitsToggle) {
-      patchSplitsToggle.addEventListener("change", function () {
-        if (state.patchSplitsDataSource) {
-          state.patchSplitsDataSource.show = patchSplitsToggle.checked;
-        }
-      });
-    }
-
-    opacitySlider.addEventListener("input", function () {
-      const alpha = Number(opacitySlider.value);
-      if (state.predictionLayer) {
-        state.predictionLayer.alpha = alpha;
-      }
-      if (state.groundTruthLayer) {
-        state.groundTruthLayer.alpha = alpha;
-      }
-    });
-
-    if (spinToggle) {
-      spinToggle.addEventListener("click", function () {
-        setSpinEnabled(state, !state.spinEnabled);
-      });
-    }
-
-    resetButton.addEventListener("click", function () {
-      if (state.viewer && state.config) {
-        flyToConfig(state.viewer, state.config);
-      }
-    });
-
-    if (profilePopupClose) {
-      profilePopupClose.addEventListener("click", closeProfilePopup);
-    }
-    if (profilePopup) {
-      profilePopup.addEventListener("click", function (event) {
-        if (event.target === profilePopup) {
-          closeProfilePopup();
-        }
-      });
-    }
-  }
-
-  async function addPredictionLayer(viewer, config, configUrl) {
-    const predictionUrl = resolveAssetUrl(config.prediction_tiles_url, configUrl);
+  async function addPredictionLayer(state) {
+    const predictionUrl = resolveAssetUrl(state.config.prediction_tiles_url, state.configUrl);
     if (!predictionUrl) {
-      predictionToggle.checked = false;
-      predictionToggle.disabled = true;
+      markToggleUnavailable(state.elements.predictionToggle);
       return null;
     }
     const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(predictionUrl, {
-      credit: config.credits && config.credits.prediction,
+      credit: state.config.credits && state.config.credits.prediction,
     });
-    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
     layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
-    layer.alpha = Number(opacitySlider.value);
-    layer.show = predictionToggle.checked;
+    layer.alpha = Number(state.elements.opacitySlider.value);
+    layer.show = state.elements.predictionToggle.checked;
+    requestRender(state);
     return layer;
   }
 
-  async function addGroundTruthLayer(viewer, config, configUrl) {
-    const groundTruthUrl = resolveAssetUrl(config.ground_truth_tiles_url, configUrl);
+  async function addGroundTruthLayer(state) {
+    const groundTruthUrl = resolveAssetUrl(state.config.ground_truth_tiles_url, state.configUrl);
     if (!groundTruthUrl) {
-      groundTruthToggle.checked = false;
-      groundTruthToggle.disabled = true;
+      markToggleUnavailable(state.elements.groundTruthToggle);
       return null;
     }
     const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(groundTruthUrl, {
-      credit: config.credits && config.credits.ground_truth,
+      credit: state.config.credits && state.config.credits.ground_truth,
     });
-    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
     layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
-    layer.alpha = Number(opacitySlider.value);
-    layer.show = groundTruthToggle.checked;
+    layer.alpha = Number(state.elements.opacitySlider.value);
+    layer.show = state.elements.groundTruthToggle.checked;
     return layer;
   }
 
-  async function addPointsLayer(viewer, config, configUrl) {
-    const pointsUrl = resolveAssetUrl(config.argo_points_url, configUrl);
+  async function addPointsLayer(state) {
+    const pointsUrl = resolveAssetUrl(state.config.argo_points_url, state.configUrl);
     if (!pointsUrl) {
-      pointsToggle.checked = false;
-      pointsToggle.disabled = true;
+      markToggleUnavailable(state.elements.pointsToggle);
       return null;
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(pointsUrl, {
@@ -489,82 +517,327 @@
       markerSize: 10,
       stroke: Cesium.Color.BLACK,
       strokeWidth: 1,
-      credit: config.credits && config.credits.points,
+      credit: state.config.credits && state.config.credits.points,
     });
-    viewer.dataSources.add(dataSource);
-    dataSource.show = pointsToggle.checked;
+    state.viewer.dataSources.add(dataSource);
+    dataSource.show = state.elements.pointsToggle.checked;
     return dataSource;
   }
 
-  async function addFullSampleLayer(viewer, config, configUrl) {
-    const fullSampleUrl = resolveAssetUrl(config.full_sample_points_url, configUrl);
+  async function addFullSampleLayer(state) {
+    const fullSampleUrl = resolveAssetUrl(state.config.full_sample_points_url, state.configUrl);
     if (!fullSampleUrl) {
-      if (fullSampleToggle) {
-        fullSampleToggle.checked = false;
-        fullSampleToggle.disabled = true;
-      }
+      markToggleUnavailable(state.elements.fullSampleToggle);
       return null;
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(fullSampleUrl, {
       clampToGround: true,
       markerColor: Cesium.Color.fromCssColorString("#ffd166"),
-      markerSize: 14,
+      markerSize: 21, // Bump the full-sample profile markers to ~1.5x their previous size.
       stroke: Cesium.Color.BLACK,
       strokeWidth: 1,
-      credit: config.credits && config.credits.full_sample_points,
+      credit: state.config.credits && state.config.credits.full_sample_points,
     });
-    viewer.dataSources.add(dataSource);
-    dataSource.show = fullSampleToggle ? fullSampleToggle.checked : true;
+    state.viewer.dataSources.add(dataSource);
+    dataSource.show = state.elements.fullSampleToggle.checked;
     return dataSource;
   }
 
-  async function addPatchSplitsLayer(viewer, config, configUrl) {
-    const patchSplitsUrl = resolveAssetUrl(config.patch_splits_url, configUrl);
+  async function addPatchSplitsLayer(state) {
+    const patchSplitsUrl = resolveAssetUrl(state.config.patch_splits_url, state.configUrl);
     if (!patchSplitsUrl) {
-      if (patchSplitsToggle) {
-        patchSplitsToggle.checked = false;
-        patchSplitsToggle.disabled = true;
-      }
+      markToggleUnavailable(state.elements.patchSplitsToggle);
       return null;
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(patchSplitsUrl, {
       clampToGround: true,
-      credit: config.credits && config.credits.patch_splits,
+      credit: state.config.credits && state.config.credits.patch_splits,
     });
     stylePatchSplitEntities(dataSource);
-    viewer.dataSources.add(dataSource);
-    dataSource.show = patchSplitsToggle ? patchSplitsToggle.checked : false;
+    state.viewer.dataSources.add(dataSource);
+    dataSource.show = state.elements.patchSplitsToggle.checked;
     return dataSource;
   }
 
-  (async function init() {
+  async function loadOptionalLayer(state, toggle, stateKey, promiseKey, loadLayer) {
+    if (state[stateKey]) {
+      return state[stateKey];
+    }
+    if (state[promiseKey]) {
+      return state[promiseKey];
+    }
+
+    setToggleLoading(toggle, true);
+    state[promiseKey] = loadLayer(state)
+      .then(function (layerOrSource) {
+        state[stateKey] = layerOrSource;
+        enforceOverlayOrder(state);
+        requestRender(state);
+        return layerOrSource;
+      })
+      .finally(function () {
+        state[promiseKey] = null;
+        setToggleLoading(toggle, false);
+      });
+
+    return state[promiseKey];
+  }
+
+  async function ensureGroundTruthLayer(state) {
+    return loadOptionalLayer(
+      state,
+      state.elements.groundTruthToggle,
+      "groundTruthLayer",
+      "groundTruthLayerLoadPromise",
+      addGroundTruthLayer
+    );
+  }
+
+  async function ensurePointsLayer(state) {
+    return loadOptionalLayer(
+      state,
+      state.elements.pointsToggle,
+      "pointsDataSource",
+      "pointsDataSourceLoadPromise",
+      addPointsLayer
+    );
+  }
+
+  async function ensureFullSampleLayer(state) {
+    return loadOptionalLayer(
+      state,
+      state.elements.fullSampleToggle,
+      "fullSampleDataSource",
+      "fullSampleDataSourceLoadPromise",
+      addFullSampleLayer
+    );
+  }
+
+  async function ensurePatchSplitsLayer(state) {
+    return loadOptionalLayer(
+      state,
+      state.elements.patchSplitsToggle,
+      "patchSplitsDataSource",
+      "patchSplitsDataSourceLoadPromise",
+      addPatchSplitsLayer
+    );
+  }
+
+  async function handleOptionalLayerToggle(state, toggle, stateKey, ensureLayer) {
+    if (!toggle) {
+      return;
+    }
+
+    if (!toggle.checked) {
+      if (state[stateKey]) {
+        state[stateKey].show = false;
+      }
+      requestRender(state);
+      return;
+    }
+
+    try {
+      const layerOrSource = await ensureLayer(state);
+      if (layerOrSource) {
+        layerOrSource.show = toggle.checked;
+        requestRender(state);
+      }
+    } catch (error) {
+      toggle.checked = false;
+      setToggleLoading(toggle, false);
+      console.error(error);
+    }
+  }
+
+  function wireUi(state) {
+    const elements = state.elements;
+    if (elements.toolbarToggle) {
+      elements.toolbarToggle.addEventListener("click", function () {
+        clearToolbarCollapseTimer(state);
+        const collapsed = elements.toolbar
+          ? elements.toolbar.classList.contains("is-collapsed")
+          : false;
+        setToolbarCollapsed(elements, !collapsed);
+        requestRender(state);
+      });
+    }
+
+    elements.predictionToggle.addEventListener("change", function () {
+      if (state.predictionLayer) {
+        state.predictionLayer.show = elements.predictionToggle.checked;
+      }
+      requestRender(state);
+    });
+
+    elements.groundTruthToggle.addEventListener("change", function () {
+      handleOptionalLayerToggle(
+        state,
+        elements.groundTruthToggle,
+        "groundTruthLayer",
+        ensureGroundTruthLayer
+      );
+    });
+
+    elements.pointsToggle.addEventListener("change", function () {
+      handleOptionalLayerToggle(
+        state,
+        elements.pointsToggle,
+        "pointsDataSource",
+        ensurePointsLayer
+      );
+    });
+
+    if (elements.fullSampleToggle) {
+      elements.fullSampleToggle.addEventListener("change", function () {
+        handleOptionalLayerToggle(
+          state,
+          elements.fullSampleToggle,
+          "fullSampleDataSource",
+          ensureFullSampleLayer
+        );
+        if (!elements.fullSampleToggle.checked) {
+          closeProfilePopup(state);
+        }
+      });
+    }
+
+    if (elements.patchSplitsToggle) {
+      elements.patchSplitsToggle.addEventListener("change", function () {
+        handleOptionalLayerToggle(
+          state,
+          elements.patchSplitsToggle,
+          "patchSplitsDataSource",
+          ensurePatchSplitsLayer
+        );
+      });
+    }
+
+    elements.opacitySlider.addEventListener("input", function () {
+      const alpha = Number(elements.opacitySlider.value);
+      if (state.predictionLayer) {
+        state.predictionLayer.alpha = alpha;
+      }
+      if (state.groundTruthLayer) {
+        state.groundTruthLayer.alpha = alpha;
+      }
+      requestRender(state);
+    });
+
+    if (elements.spinToggle) {
+      elements.spinToggle.addEventListener("click", function () {
+        setSpinEnabled(state, !state.spinEnabled);
+      });
+    }
+
+    elements.resetButton.addEventListener("click", function () {
+      if (state.viewer && state.config) {
+        flyToConfig(state);
+      }
+    });
+
+    if (elements.profilePopupClose) {
+      elements.profilePopupClose.addEventListener("click", function () {
+        closeProfilePopup(state);
+      });
+    }
+    if (elements.profilePopup) {
+      elements.profilePopup.addEventListener("click", function (event) {
+        if (event.target === elements.profilePopup) {
+          closeProfilePopup(state);
+        }
+      });
+    }
+  }
+
+  function cleanupState(state) {
+    if (!state) {
+      return;
+    }
+    clearProfilePopupCloseTimer(state);
+    clearToolbarCollapseTimer(state);
+    if (state.stopWatchingResize) {
+      state.stopWatchingResize();
+      state.stopWatchingResize = null;
+    }
+    if (state.handleWindowResize) {
+      window.removeEventListener("resize", state.handleWindowResize);
+      state.handleWindowResize = null;
+    }
+    if (state.viewer && !state.viewer.isDestroyed()) {
+      if (state.spinTickListener) {
+        state.viewer.clock.onTick.removeEventListener(state.spinTickListener);
+      }
+      state.viewer.destroy();
+    }
+    if (state.elements && state.elements.container) {
+      delete state.elements.container.dataset.globeInitialized;
+    }
+  }
+
+  function destroyDepthDifCesiumGlobe() {
+    nextInitToken();
+    cleanupState(window.__depthdifCesiumGlobeState || null);
+    window.__depthdifCesiumGlobeState = null;
+  }
+
+  async function initDepthDifCesiumGlobe() {
+    const elements = getGlobeElements();
+    if (!elements || typeof window.Cesium === "undefined") {
+      return false;
+    }
+
+    const activeState = window.__depthdifCesiumGlobeState || null;
+    if (activeState && activeState.elements.container === elements.container) {
+      return true;
+    }
+
+    destroyDepthDifCesiumGlobe();
+    const initToken = getCurrentInitToken();
+
     try {
       const loaded = await loadConfig();
-      const config = loaded.config;
-      const configUrl = loaded.configUrl;
-      const viewer = buildViewer();
+      if (initToken !== getCurrentInitToken()) {
+        return false;
+      }
+
+      const viewer = buildViewer(elements.container);
       const state = {
-        config: config,
-        configUrl: configUrl,
+        config: loaded.config,
+        configUrl: loaded.configUrl,
         viewer: viewer,
+        elements: elements,
         predictionLayer: null,
         groundTruthLayer: null,
         pointsDataSource: null,
         fullSampleDataSource: null,
         patchSplitsDataSource: null,
-        spinEnabled: true,
+        predictionLayerLoadPromise: null,
+        groundTruthLayerLoadPromise: null,
+        pointsDataSourceLoadPromise: null,
+        fullSampleDataSourceLoadPromise: null,
+        patchSplitsDataSourceLoadPromise: null,
+        spinEnabled: false,
         lastSpinTime: null,
+        profilePopupCloseTimer: null,
+        toolbarCollapseTimer: null,
+        stopWatchingResize: null,
+        handleWindowResize: null,
+        spinTickListener: null,
       };
+      window.__depthdifCesiumGlobeState = state;
 
-      state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
-      state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
-      state.patchSplitsDataSource = await addPatchSplitsLayer(viewer, config, configUrl);
-      state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
-      state.fullSampleDataSource = await addFullSampleLayer(viewer, config, configUrl);
+      state.predictionLayer = await addPredictionLayer(state);
+      if (initToken !== getCurrentInitToken()) {
+        cleanupState(state);
+        return false;
+      }
+
       enforceOverlayOrder(state);
       attachSpinLoop(state);
-      setSpinEnabled(state, true);
+      setSpinEnabled(state, false);
       wireUi(state);
+      setToolbarCollapsed(elements, false);
+      scheduleToolbarAutoCollapse(state);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
         const picked = viewer.scene.pick(movement.position);
         if (
@@ -575,17 +848,27 @@
         ) {
           return;
         }
-        showProfilePopup(picked.id, state.configUrl);
+        showProfilePopup(state, picked.id);
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-      flyToConfig(viewer, config);
-      forceViewerResize(viewer);
-      const stopWatchingResize = watchContainerResize(viewer, container);
-      window.addEventListener("resize", function () {
-        forceViewerResize(viewer);
-      });
-      window.addEventListener("beforeunload", stopWatchingResize, { once: true });
+      flyToConfig(state);
+      forceViewerResize(state);
+      state.stopWatchingResize = watchContainerResize(state, elements.container);
+      state.handleWindowResize = function () {
+        forceViewerResize(state);
+      };
+      window.addEventListener("resize", state.handleWindowResize);
+      elements.container.dataset.globeInitialized = "true";
+      requestRender(state);
+      return true;
     } catch (error) {
+      if (initToken === getCurrentInitToken()) {
+        destroyDepthDifCesiumGlobe();
+      }
       console.error(error);
+      return false;
     }
-  })();
+  }
+
+  window.initDepthDifCesiumGlobe = initDepthDifCesiumGlobe;
+  window.destroyDepthDifCesiumGlobe = destroyDepthDifCesiumGlobe;
 })();

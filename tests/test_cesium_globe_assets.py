@@ -19,6 +19,7 @@ from inference.export_cesium_globe_assets import (
     _build_gdal2tiles_command,
     _read_raster_metadata,
     _resolve_rclone_sync_source,
+    _rewrite_geojson,
     _sync_with_rclone,
     build_globe_config,
 )
@@ -245,6 +246,135 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
+
+    def test_rewrite_geojson_rounds_coordinates_and_drops_unused_point_properties(
+        self,
+    ) -> None:
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "id": "argo-1",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [12.1234567, -45.7654321],
+                    },
+                    "properties": {"profile_id": 7, "temperature": 18.4},
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.geojson"
+            destination_path = Path(tmp_dir) / "rewritten.geojson"
+            source_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            _rewrite_geojson(
+                source_path,
+                destination_path,
+                allowed_property_keys=(),
+            )
+
+            rewritten = json.loads(destination_path.read_text(encoding="utf-8"))
+
+        feature = rewritten["features"][0]
+        self.assertEqual(feature["id"], "argo-1")
+        self.assertEqual(feature["geometry"]["coordinates"], [12.1235, -45.7654])
+        self.assertNotIn("properties", feature)
+
+    def test_rewrite_geojson_keeps_only_required_popup_and_split_properties(self) -> None:
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [1.123456, 2.654321],
+                                [3.123456, 4.654321],
+                                [5.123456, 6.654321],
+                                [1.123456, 2.654321],
+                            ]
+                        ],
+                    },
+                    "properties": {
+                        "split": "train",
+                        "unused": "value",
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [-10.123456, 44.987654],
+                    },
+                    "properties": {
+                        "graph_png_path": "graphs/example.png",
+                        "location_id": "sample-17",
+                        "patch_id": "patch-3",
+                        "pixel_row": 9,
+                        "pixel_col": 11,
+                        "extra": "drop-me",
+                    },
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.geojson"
+            patch_destination_path = Path(tmp_dir) / "patch.geojson"
+            full_sample_destination_path = Path(tmp_dir) / "full_sample.geojson"
+            source_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            _rewrite_geojson(
+                source_path,
+                patch_destination_path,
+                allowed_property_keys=("split",),
+            )
+            _rewrite_geojson(
+                source_path,
+                full_sample_destination_path,
+                allowed_property_keys=(
+                    "graph_png_path",
+                    "location_id",
+                    "patch_id",
+                    "pixel_row",
+                    "pixel_col",
+                ),
+            )
+
+            rewritten_patch = json.loads(
+                patch_destination_path.read_text(encoding="utf-8")
+            )
+            rewritten_full_sample = json.loads(
+                full_sample_destination_path.read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            rewritten_patch["features"][0]["properties"],
+            {"split": "train"},
+        )
+        self.assertEqual(
+            rewritten_patch["features"][0]["geometry"]["coordinates"][0][0],
+            [1.1235, 2.6543],
+        )
+        self.assertEqual(
+            rewritten_full_sample["features"][1]["properties"],
+            {
+                "graph_png_path": "graphs/example.png",
+                "location_id": "sample-17",
+                "patch_id": "patch-3",
+                "pixel_row": 9,
+                "pixel_col": 11,
+            },
+        )
+        self.assertEqual(
+            rewritten_full_sample["features"][1]["geometry"]["coordinates"],
+            [-10.1235, 44.9877],
+        )
 
 
 if __name__ == "__main__":
