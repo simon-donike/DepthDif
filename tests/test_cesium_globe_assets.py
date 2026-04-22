@@ -11,6 +11,9 @@ import rasterio
 from rasterio.transform import from_origin
 
 from inference.export_cesium_globe_assets import (
+    DEFAULT_CAMERA_HEIGHT,
+    DEFAULT_CAMERA_LAT,
+    DEFAULT_CAMERA_LON,
     _build_parser,
     _build_gdal2tiles_command,
     _read_raster_metadata,
@@ -44,7 +47,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertAlmostEqual(metadata["north"], 20.0, places=6)
         self.assertAlmostEqual(metadata["south"], 18.0, places=6)
         self.assertEqual(metadata["credit"], "DepthDif global weekly inference export")
-        self.assertGreater(metadata["default_camera_destination"]["height"], 0.0)
+        self.assertAlmostEqual(
+            metadata["default_camera_destination"]["lon"],
+            DEFAULT_CAMERA_LON,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            metadata["default_camera_destination"]["lat"],
+            DEFAULT_CAMERA_LAT,
+            places=6,
+        )
+        self.assertEqual(metadata["default_camera_destination"]["height"], DEFAULT_CAMERA_HEIGHT)
 
     def test_build_globe_config_preserves_expected_urls_and_bounds(self) -> None:
         template = {

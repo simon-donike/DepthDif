@@ -10,7 +10,14 @@
   const groundTruthToggle = document.getElementById("globe-toggle-ground-truth");
   const pointsToggle = document.getElementById("globe-toggle-points");
   const opacitySlider = document.getElementById("globe-overlay-opacity");
+  const spinToggle = document.getElementById("globe-toggle-spin");
   const resetButton = document.getElementById("globe-reset-camera");
+  const DEFAULT_CAMERA_DESTINATION = {
+    lon: -38.56452881619089,
+    lat: 34.53988238358822,
+    height: 18000000.0,
+  };
+  const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(2.5);
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -92,24 +99,20 @@
     };
   }
 
-  function flyToConfig(viewer, config) {
-    if (
-      Number.isFinite(config.west) &&
-      Number.isFinite(config.south) &&
-      Number.isFinite(config.east) &&
-      Number.isFinite(config.north)
-    ) {
-      const rectangle = Cesium.Rectangle.fromDegrees(
-        config.west,
-        config.south,
-        config.east,
-        config.north
-      );
-      viewer.camera.flyTo({ destination: rectangle, duration: 1.8 });
-      return;
-    }
-
+  function resolveCameraDestination(config) {
     const destination = config.default_camera_destination || {};
+    if (
+      Number.isFinite(destination.lon) &&
+      Number.isFinite(destination.lat) &&
+      Number.isFinite(destination.height)
+    ) {
+      return destination;
+    }
+    return DEFAULT_CAMERA_DESTINATION;
+  }
+
+  function flyToConfig(viewer, config) {
+    const destination = resolveCameraDestination(config);
     if (
       Number.isFinite(destination.lon) &&
       Number.isFinite(destination.lat) &&
@@ -121,9 +124,51 @@
           destination.lat,
           destination.height
         ),
+        orientation: {
+          heading: 0.0,
+          pitch: -Cesium.Math.PI_OVER_TWO,
+          roll: 0.0,
+        },
         duration: 1.8,
       });
+      return;
     }
+  }
+
+  function setSpinEnabled(state, enabled) {
+    state.spinEnabled = enabled;
+    state.lastSpinTime = null;
+    if (spinToggle) {
+      spinToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+      spinToggle.textContent = enabled ? "Stop Spin" : "Spin Globe";
+    }
+  }
+
+  function attachSpinLoop(state) {
+    state.viewer.clock.onTick.addEventListener(function (clock) {
+      if (!state.spinEnabled) {
+        state.lastSpinTime = null;
+        return;
+      }
+
+      if (state.lastSpinTime === null) {
+        state.lastSpinTime = Cesium.JulianDate.clone(clock.currentTime);
+        return;
+      }
+
+      const deltaSeconds = Cesium.JulianDate.secondsDifference(
+        clock.currentTime,
+        state.lastSpinTime
+      );
+      state.lastSpinTime = Cesium.JulianDate.clone(clock.currentTime);
+      if (deltaSeconds <= 0.0) {
+        return;
+      }
+
+      // Rotate around the Earth's axis to keep the spin centered on the globe
+      // rather than panning in screen space.
+      state.viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -SPIN_RATE_RADIANS_PER_SECOND * deltaSeconds);
+    });
   }
 
   function wireUi(state) {
@@ -154,6 +199,12 @@
         state.groundTruthLayer.alpha = alpha;
       }
     });
+
+    if (spinToggle) {
+      spinToggle.addEventListener("click", function () {
+        setSpinEnabled(state, !state.spinEnabled);
+      });
+    }
 
     resetButton.addEventListener("click", function () {
       if (state.viewer && state.config) {
@@ -230,11 +281,15 @@
         predictionLayer: null,
         groundTruthLayer: null,
         pointsDataSource: null,
+        spinEnabled: false,
+        lastSpinTime: null,
       };
 
       state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
       state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
+      attachSpinLoop(state);
+      setSpinEnabled(state, false);
       wireUi(state);
       flyToConfig(viewer, config);
       forceViewerResize(viewer);

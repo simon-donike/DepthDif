@@ -124,6 +124,11 @@
   filter: brightness(1.08);
 }
 
+.globe-reset-button[aria-pressed="true"] {
+  background: linear-gradient(135deg, #7ed8ff, #42aef0);
+  color: #041625;
+}
+
 .globe-canvas {
   position: absolute;
   inset: 0;

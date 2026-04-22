@@ -32,6 +32,9 @@ DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_TILE_SIZE = 256
+DEFAULT_CAMERA_LON = -38.56452881619089
+DEFAULT_CAMERA_LAT = 34.53988238358822
+DEFAULT_CAMERA_HEIGHT = 18_000_000.0
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -97,22 +100,15 @@ def _read_raster_metadata(path: Path) -> dict[str, Any]:
     with rasterio.open(path) as ds:
         bounds = ds.bounds
         tags = ds.tags()
-        center_lon = 0.5 * (float(bounds.left) + float(bounds.right))
-        center_lat = 0.5 * (float(bounds.bottom) + float(bounds.top))
-        span_degrees = max(
-            abs(float(bounds.right) - float(bounds.left)),
-            abs(float(bounds.top) - float(bounds.bottom)),
-        )
-        camera_height = max(2_000_000.0, span_degrees * 111_000.0 * 3.0)
         return {
             "west": float(bounds.left),
             "south": float(bounds.bottom),
             "east": float(bounds.right),
             "north": float(bounds.top),
             "default_camera_destination": {
-                "lon": float(center_lon),
-                "lat": float(center_lat),
-                "height": float(camera_height),
+                "lon": DEFAULT_CAMERA_LON,
+                "lat": DEFAULT_CAMERA_LAT,
+                "height": DEFAULT_CAMERA_HEIGHT,
             },
             "credit": str(tags.get("source", path.name)),
         }
