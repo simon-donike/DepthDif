@@ -21,7 +21,7 @@
       <div class="globe-toolbar__group">
         <label class="globe-range" for="globe-overlay-opacity">
           <span class="globe-toolbar__label">Opacity</span>
-          <input id="globe-overlay-opacity" type="range" min="0.15" max="1" step="0.05" value="0.85" />
+          <input id="globe-overlay-opacity" type="range" min="0.15" max="1" step="0.05" value="1" />
         </label>
         <button id="globe-reset-camera" class="globe-reset-button" type="button">Reset View</button>
       </div>

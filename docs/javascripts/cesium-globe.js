@@ -53,6 +53,8 @@
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       timeline: false,
     });
+    viewer.useBrowserRecommendedResolution = false;
+    viewer.resolutionScale = window.devicePixelRatio || 1;
 
     viewer.imageryLayers.addImageryProvider(
       new Cesium.OpenStreetMapImageryProvider({
@@ -65,6 +67,7 @@
   }
 
   function forceViewerResize(viewer) {
+    viewer.resolutionScale = window.devicePixelRatio || 1;
     viewer.resize();
     window.requestAnimationFrame(function () {
       viewer.resize();
@@ -152,6 +155,8 @@
       credit: config.credits && config.credits.prediction,
     });
     const layer = viewer.imageryLayers.addImageryProvider(provider);
+    layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
+    layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
     layer.alpha = Number(opacitySlider.value);
     layer.show = predictionToggle.checked;
     return layer;
@@ -168,6 +173,8 @@
       credit: config.credits && config.credits.ground_truth,
     });
     const layer = viewer.imageryLayers.addImageryProvider(provider);
+    layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
+    layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
     layer.alpha = Number(opacitySlider.value);
     layer.show = groundTruthToggle.checked;
     return layer;
