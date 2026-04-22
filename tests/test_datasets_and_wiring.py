@@ -337,7 +337,7 @@ class TestDatasetsAndWiring(unittest.TestCase):
             [
                 [4.0, 5.0, 6.0, 7.0],
                 [8.0, 9.0, 10.0, 11.0],
-                [12.0, 13.0, 14.0, 15.0],
+                [0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
             ],
             dtype=np.float32,
@@ -348,15 +348,41 @@ class TestDatasetsAndWiring(unittest.TestCase):
                 zero_border_is_artifact=True,
             )
         )
-        np.testing.assert_allclose(repaired_ostia[-1, :], ostia_patch[-2, :], atol=0.0)
         np.testing.assert_allclose(
-            repaired_ostia[:-1, :], ostia_patch[:-1, :], atol=0.0
+            repaired_ostia[2:, :],
+            np.repeat(ostia_patch[1:2, :], 2, axis=0),
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            repaired_ostia[:2, :], ostia_patch[:2, :], atol=0.0
         )
         np.testing.assert_array_equal(
-            repaired_ostia_mask[-1, :], np.ones(4, dtype=bool)
+            repaired_ostia_mask[2:, :], np.ones((2, 4), dtype=bool)
         )
         np.testing.assert_array_equal(
-            repaired_ostia_mask[:-1, :], np.zeros((3, 4), dtype=bool)
+            repaired_ostia_mask[:2, :], np.zeros((2, 4), dtype=bool)
+        )
+
+        too_many_border_rows = np.array(
+            [
+                [4.0, 5.0, 6.0, 7.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_too_many, repaired_too_many_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                too_many_border_rows,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(
+            repaired_too_many, too_many_border_rows, atol=0.0
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_mask, np.zeros_like(too_many_border_rows, dtype=bool)
         )
 
         partial_edge = np.array(
@@ -379,24 +405,53 @@ class TestDatasetsAndWiring(unittest.TestCase):
             repaired_partial_mask, np.zeros_like(partial_edge, dtype=bool)
         )
 
-        unusable_adjacent = np.array(
+        blocked_top = np.array(
             [
                 [0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
-                [12.0, 13.0, 14.0, 15.0],
+                [np.nan, 2.0, 3.0, 4.0],
                 [16.0, 17.0, 18.0, 19.0],
             ],
             dtype=np.float32,
         )
-        repaired_unusable, repaired_unusable_mask = (
+        repaired_blocked_top, repaired_blocked_top_mask = (
             OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
-                unusable_adjacent,
+                blocked_top,
                 zero_border_is_artifact=True,
             )
         )
-        np.testing.assert_allclose(repaired_unusable, unusable_adjacent, atol=0.0)
+        np.testing.assert_allclose(repaired_blocked_top, blocked_top, atol=0.0)
         np.testing.assert_array_equal(
-            repaired_unusable_mask, np.zeros_like(unusable_adjacent, dtype=bool)
+            repaired_blocked_top_mask, np.zeros_like(blocked_top, dtype=bool)
+        )
+
+        mixed_edges = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [5.0, 6.0, 7.0, 8.0],
+                [np.nan, 10.0, 11.0, 12.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_mixed, repaired_mixed_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                mixed_edges,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(
+            repaired_mixed[0, :],
+            mixed_edges[1, :],
+            atol=0.0,
+        )
+        np.testing.assert_array_equal(
+            repaired_mixed_mask[0, :], np.ones(4, dtype=bool)
+        )
+        np.testing.assert_allclose(repaired_mixed[1:3, :], mixed_edges[1:3, :], atol=0.0)
+        np.testing.assert_allclose(repaired_mixed[-1, :], mixed_edges[-1, :], atol=0.0)
+        np.testing.assert_array_equal(
+            repaired_mixed_mask[1:, :], np.zeros((3, 4), dtype=bool)
         )
 
     def test_ostia_argo_tiff_dataset_border_helper_repairs_only_affected_glorys_bands(
@@ -407,14 +462,20 @@ class TestDatasetsAndWiring(unittest.TestCase):
                 [
                     [10.0, 11.0, 12.0, 13.0],
                     [14.0, 15.0, 16.0, 17.0],
-                    [18.0, 19.0, 20.0, 21.0],
+                    [np.nan, np.nan, np.nan, np.nan],
                     [np.nan, np.nan, np.nan, np.nan],
                 ],
                 [
-                    [np.nan, 31.0, 32.0, 33.0],
-                    [np.nan, 35.0, 36.0, 37.0],
-                    [np.nan, 39.0, 40.0, 41.0],
-                    [np.nan, 43.0, 44.0, 45.0],
+                    [np.nan, np.nan, 32.0, 33.0],
+                    [np.nan, np.nan, 36.0, 37.0],
+                    [np.nan, np.nan, 40.0, 41.0],
+                    [np.nan, np.nan, 44.0, 45.0],
+                ],
+                [
+                    [18.0, 19.0, 20.0, 21.0],
+                    [22.0, np.nan, 24.0, 25.0],
+                    [26.0, 27.0, 28.0, 29.0],
+                    [30.0, 31.0, 32.0, 33.0],
                 ],
             ],
             dtype=np.float32,
@@ -425,12 +486,51 @@ class TestDatasetsAndWiring(unittest.TestCase):
                 zero_border_is_artifact=False,
             )
         )
-        np.testing.assert_allclose(repaired[0, -1, :], glorys[0, -2, :], atol=0.0)
-        np.testing.assert_allclose(repaired[1, :, 0], glorys[1, :, 1], atol=0.0)
-        np.testing.assert_allclose(repaired[0, :-1, :], glorys[0, :-1, :], atol=0.0)
-        np.testing.assert_allclose(repaired[1, :, 1:], glorys[1, :, 1:], atol=0.0)
-        np.testing.assert_array_equal(repaired_mask[0, -1, :], np.ones(4, dtype=bool))
-        np.testing.assert_array_equal(repaired_mask[1, :, 0], np.ones(4, dtype=bool))
+        np.testing.assert_allclose(
+            repaired[0, 2:, :],
+            np.repeat(glorys[0, 1:2, :], 2, axis=0),
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            repaired[1, :, :2],
+            np.repeat(glorys[1, :, 2:3], 2, axis=1),
+            atol=0.0,
+        )
+        np.testing.assert_allclose(repaired[2], glorys[2], atol=0.0)
+        np.testing.assert_array_equal(
+            repaired_mask[0, 2:, :], np.ones((2, 4), dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_mask[1, :, :2], np.ones((4, 2), dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_mask[2], np.zeros_like(glorys[2], dtype=bool)
+        )
+
+        too_many_nan_cols = np.array(
+            [
+                [
+                    [10.0, np.nan, np.nan, np.nan],
+                    [14.0, np.nan, np.nan, np.nan],
+                    [18.0, np.nan, np.nan, np.nan],
+                    [22.0, np.nan, np.nan, np.nan],
+                ]
+            ],
+            dtype=np.float32,
+        )
+        repaired_too_many_nan_cols, repaired_too_many_nan_cols_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_stack(
+                too_many_nan_cols,
+                zero_border_is_artifact=False,
+            )
+        )
+        np.testing.assert_allclose(
+            repaired_too_many_nan_cols, too_many_nan_cols, atol=0.0
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_nan_cols_mask,
+            np.zeros_like(too_many_nan_cols, dtype=bool),
+        )
 
     def test_ostia_argo_tiff_dataset_repairs_returned_images_without_touching_masks(
         self,
@@ -442,7 +542,7 @@ class TestDatasetsAndWiring(unittest.TestCase):
                     [
                         [5.0, 6.0, 7.0, 8.0],
                         [9.0, 10.0, 11.0, 12.0],
-                        [13.0, 14.0, 15.0, 16.0],
+                        [0.0, 0.0, 0.0, 0.0],
                         [0.0, 0.0, 0.0, 0.0],
                     ]
                 ],
@@ -470,14 +570,14 @@ class TestDatasetsAndWiring(unittest.TestCase):
                     [
                         [10.0, 11.0, 12.0, 13.0],
                         [14.0, 15.0, 16.0, 17.0],
-                        [18.0, 19.0, 20.0, 21.0],
+                        [np.nan, np.nan, np.nan, np.nan],
                         [np.nan, np.nan, np.nan, np.nan],
                     ],
                     [
-                        [np.nan, 31.0, 32.0, 33.0],
-                        [np.nan, 35.0, 36.0, 37.0],
-                        [np.nan, 39.0, 40.0, 41.0],
-                        [np.nan, 43.0, 44.0, 45.0],
+                        [np.nan, np.nan, 32.0, 33.0],
+                        [np.nan, np.nan, 36.0, 37.0],
+                        [np.nan, np.nan, 40.0, 41.0],
+                        [np.nan, np.nan, 44.0, 45.0],
                     ],
                 ],
                 dtype=np.float32,
@@ -538,34 +638,59 @@ class TestDatasetsAndWiring(unittest.TestCase):
             denorm_x = temperature_normalize(mode="denorm", tensor=sample["x"])
 
             expected_bottom = torch.tensor(
-                [13.0, 14.0, 15.0, 16.0], dtype=torch.float32
+                [9.0, 10.0, 11.0, 12.0], dtype=torch.float32
             )
-            expected_left = torch.tensor([31.0, 35.0, 39.0, 43.0], dtype=torch.float32)
+            expected_center_cols = torch.tensor(
+                [
+                    [32.0, 32.0, 32.0, 33.0],
+                    [36.0, 36.0, 36.0, 37.0],
+                    [40.0, 40.0, 40.0, 41.0],
+                    [44.0, 44.0, 44.0, 45.0],
+                ],
+                dtype=torch.float32,
+            )
             self.assertTrue(
                 torch.allclose(denorm_eo[0, -1, :], expected_bottom, atol=1e-5)
             )
             self.assertTrue(
                 torch.allclose(
-                    denorm_y[0, -1, :],
-                    torch.tensor([18.0, 19.0, 20.0, 21.0]),
+                    denorm_eo[0, -2, :],
+                    expected_bottom,
                     atol=1e-5,
                 )
             )
-            self.assertTrue(torch.allclose(denorm_y[1, :, 0], expected_left, atol=1e-5))
+            self.assertTrue(
+                torch.allclose(
+                    denorm_y[0, -2:, :],
+                    torch.tensor(
+                        [
+                            [14.0, 15.0, 16.0, 17.0],
+                            [14.0, 15.0, 16.0, 17.0],
+                        ],
+                        dtype=torch.float32,
+                    ),
+                    atol=1e-5,
+                )
+            )
+            self.assertTrue(
+                torch.allclose(denorm_y[1], expected_center_cols, atol=1e-5)
+            )
 
             self.assertTrue(
                 torch.equal(
-                    sample["y_valid_mask"][0, -1, :], torch.ones(4, dtype=torch.bool)
+                    sample["y_valid_mask"][0, -2:, :],
+                    torch.ones((2, 4), dtype=torch.bool),
                 )
             )
             self.assertTrue(
                 torch.equal(
-                    sample["y_valid_mask"][1, :, 0], torch.ones(4, dtype=torch.bool)
+                    sample["y_valid_mask"][1, :, :2],
+                    torch.ones((4, 2), dtype=torch.bool),
                 )
             )
             self.assertTrue(
                 torch.equal(
-                    sample["land_mask"][0, -1, :], torch.ones(4, dtype=torch.float32)
+                    sample["land_mask"][0, -2:, :], torch.ones((2, 4), dtype=torch.float32)
                 )
             )
             self.assertTrue(

@@ -245,6 +245,9 @@
   function setSpinEnabled(state, enabled) {
     state.spinEnabled = enabled;
     state.lastSpinTime = null;
+    // Cesium's onTick fires every frame, but clock.currentTime only advances
+    // while animation is enabled, so keep the viewer clock in sync with the UI.
+    state.viewer.clock.shouldAnimate = enabled;
     if (spinToggle) {
       spinToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
       spinToggle.textContent = enabled ? "Stop Spin" : "Spin Globe";

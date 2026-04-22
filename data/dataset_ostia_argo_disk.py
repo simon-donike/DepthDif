@@ -319,6 +319,7 @@ class OstiaArgoTiffDataset(Dataset):
         *,
         zero_border_is_artifact: bool,
     ) -> tuple[np.ndarray, np.ndarray]:
+        max_border_repairs = 2
         patch = np.asarray(image, dtype=np.float32)
         if patch.ndim != 2:
             raise RuntimeError(
@@ -350,20 +351,107 @@ class OstiaArgoTiffDataset(Dataset):
                 return False
             return True
 
-        # Copy from the immediately adjacent interior edge so the fix behaves like
-        # a 1-pixel reflect without touching interior pixels or partial artifacts.
-        if _edge_is_artifact(repaired[0, :]) and _edge_is_usable(repaired[1, :]):
-            repaired[0, :] = repaired[1, :]
-            repaired_mask[0, :] = True
-        if _edge_is_artifact(repaired[-1, :]) and _edge_is_usable(repaired[-2, :]):
-            repaired[-1, :] = repaired[-2, :]
-            repaired_mask[-1, :] = True
-        if _edge_is_artifact(repaired[:, 0]) and _edge_is_usable(repaired[:, 1]):
-            repaired[:, 0] = repaired[:, 1]
-            repaired_mask[:, 0] = True
-        if _edge_is_artifact(repaired[:, -1]) and _edge_is_usable(repaired[:, -2]):
-            repaired[:, -1] = repaired[:, -2]
-            repaired_mask[:, -1] = True
+        def _count_leading_artifact_rows() -> int:
+            count = 0
+            for row_idx in range(repaired.shape[0]):
+                if not _edge_is_artifact(repaired[row_idx, :]):
+                    break
+                count += 1
+            return count
+
+        def _count_trailing_artifact_rows() -> int:
+            count = 0
+            for row_idx in range(repaired.shape[0] - 1, -1, -1):
+                if not _edge_is_artifact(repaired[row_idx, :]):
+                    break
+                count += 1
+            return count
+
+        def _count_leading_artifact_cols() -> int:
+            count = 0
+            for col_idx in range(repaired.shape[1]):
+                if not _edge_is_artifact(repaired[:, col_idx]):
+                    break
+                count += 1
+            return count
+
+        def _count_trailing_artifact_cols() -> int:
+            count = 0
+            for col_idx in range(repaired.shape[1] - 1, -1, -1):
+                if not _edge_is_artifact(repaired[:, col_idx]):
+                    break
+                count += 1
+            return count
+
+        while True:
+            changed = False
+
+            top_artifact_rows = _count_leading_artifact_rows()
+            if (
+                0 < top_artifact_rows <= max_border_repairs < repaired.shape[0]
+                and _edge_is_usable(repaired[top_artifact_rows, :])
+            ) or (
+                0 < top_artifact_rows < repaired.shape[0] <= max_border_repairs
+                and _edge_is_usable(repaired[top_artifact_rows, :])
+            ):
+                # Cap repairs to a small outer border width so large true land
+                # regions are not hallucinated into the tile.
+                for row_idx in range(top_artifact_rows - 1, -1, -1):
+                    repaired[row_idx, :] = repaired[row_idx + 1, :]
+                    repaired_mask[row_idx, :] = True
+                changed = True
+
+            bottom_artifact_rows = _count_trailing_artifact_rows()
+            if (
+                0 < bottom_artifact_rows <= max_border_repairs < repaired.shape[0]
+                and _edge_is_usable(
+                    repaired[repaired.shape[0] - 1 - bottom_artifact_rows, :]
+                )
+            ) or (
+                0 < bottom_artifact_rows < repaired.shape[0] <= max_border_repairs
+                and _edge_is_usable(
+                    repaired[repaired.shape[0] - 1 - bottom_artifact_rows, :]
+                )
+            ):
+                donor_row_idx = repaired.shape[0] - 1 - bottom_artifact_rows
+                for row_idx in range(donor_row_idx + 1, repaired.shape[0]):
+                    repaired[row_idx, :] = repaired[row_idx - 1, :]
+                    repaired_mask[row_idx, :] = True
+                changed = True
+
+            left_artifact_cols = _count_leading_artifact_cols()
+            if (
+                0 < left_artifact_cols <= max_border_repairs < repaired.shape[1]
+                and _edge_is_usable(repaired[:, left_artifact_cols])
+            ) or (
+                0 < left_artifact_cols < repaired.shape[1] <= max_border_repairs
+                and _edge_is_usable(repaired[:, left_artifact_cols])
+            ):
+                for col_idx in range(left_artifact_cols - 1, -1, -1):
+                    repaired[:, col_idx] = repaired[:, col_idx + 1]
+                    repaired_mask[:, col_idx] = True
+                changed = True
+
+            right_artifact_cols = _count_trailing_artifact_cols()
+            if (
+                0 < right_artifact_cols <= max_border_repairs < repaired.shape[1]
+                and _edge_is_usable(
+                    repaired[:, repaired.shape[1] - 1 - right_artifact_cols]
+                )
+            ) or (
+                0 < right_artifact_cols < repaired.shape[1] <= max_border_repairs
+                and _edge_is_usable(
+                    repaired[:, repaired.shape[1] - 1 - right_artifact_cols]
+                )
+            ):
+                donor_col_idx = repaired.shape[1] - 1 - right_artifact_cols
+                for col_idx in range(donor_col_idx + 1, repaired.shape[1]):
+                    repaired[:, col_idx] = repaired[:, col_idx - 1]
+                    repaired_mask[:, col_idx] = True
+                changed = True
+
+            if not changed:
+                break
         return repaired, repaired_mask
 
     @classmethod
