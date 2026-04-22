@@ -13,6 +13,7 @@ site/*
 ambient_diffusion.pdf
 docs/assets/ambient_diffusion.pdf
 data/glorys_argo_alignment
+outputs/*
 
 # temp file types
 *.csv

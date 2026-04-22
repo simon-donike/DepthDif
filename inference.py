@@ -18,6 +18,7 @@ import yaml
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
+from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
@@ -127,8 +128,36 @@ def build_dataset(
         return SurfaceTempPatch4BandsLightDataset.from_config(data_config_path, split="all")
     if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
         return SurfaceTempPatchOstiaLightDataset.from_config(data_config_path, split="all")
+    if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
+        return OstiaArgoTiffDataset(
+            csv_path=str(
+                ds_cfg_value(
+                    ds_cfg,
+                    "core.manifest_csv_path",
+                    "manifest_csv_path",
+                    default=OstiaArgoTiffDataset.DEFAULT_CSV_PATH,
+                )
+            ),
+            split="all",
+            return_info=bool(
+                ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
+            ),
+            return_coords=bool(
+                ds_cfg_value(ds_cfg, "output.return_coords", "return_coords", default=True)
+            ),
+            synthetic_mode=bool(
+                ds_cfg_value(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+            ),
+            synthetic_pixel_count=int(
+                ds_cfg_value(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+            ),
+            random_seed=int(
+                ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
+            ),
+        )
     raise ValueError(
-        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band', 'ostia']."
+        "Unsupported dataset variant "
+        f"'{dataset_variant}'. Expected one of ['eo_4band', 'ostia', 'ostia_argo_disk']."
     )
 
 

@@ -83,6 +83,8 @@ Use `inference.py`:
 python inference.py  
 ```  
 
+For a full spatial export, use `export_global_inference.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, can use all visible CUDA devices, writes the stitched top-band prediction under `outputs/`, and by default also writes the matching GLORYS top-band raster plus a GeoJSON of observed Argo point locations. Use `--no-export-ground-truth` if you want prediction-only output.
+
 ## Experiment Script
 
 Use `experiments.py` for quick qualitative ablations on a single dataloader sample. It loads the configured model and checkpoint, runs a few fixed conditioning cases (`eo_plus_x`, `x_only_no_eo`, `coords_date_only_no_eo_no_x`), saves comparison plots under `temp/images/`, and prints compact tensor statistics for each case.

@@ -28,6 +28,34 @@ At the top of `inference.py`, set:
 ### Note on default paths  
 The script constants should be set explicitly. In this repository, the actively used configs are:  
 - OSTIA + Argo disk setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
+
+## Workflow 1b: Export One Global Top-Band Raster  
+Use `export_global_inference.py` when you want one spatially complete raster from the `ostia_argo_disk` manifest rather than a single sampled batch. The script:
+- loads the configured checkpoint and disk-manifest dataset  
+- selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`  
+- runs batched `predict_step(...)` over all spatial patches for that day  
+- can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`  
+- streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM  
+- stitches `y_hat_denorm[:, 0, :, :]` into one large tiled GeoTIFF with internal overviews  
+- exports the matching GLORYS top-band raster by default via `--export-ground-truth` / `--no-export-ground-truth`  
+- writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
+
+Typical run:  
+```bash
+/work/envs/depth/bin/python export_global_inference.py \
+  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --checkpoint logs/<run>/best.ckpt \
+  --year 2010 \
+  --iso-week 1 \
+  --device cuda
+```  
+
+Outputs land under `outputs/<run_name>/` and include:
+- `<run_name>_prediction.tif`: stitched global top-band prediction  
+- `<run_name>_glorys_top_band.tif`: stitched GLORYS top-band truth export by default  
+- `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
+- `selected_patches.csv`: the manifest rows used for the run  
+- `run_summary.yaml`: checkpoint/config/date metadata for traceability  
   
 ## Workflow 2: Direct `predict_step`  
 The model inference entry point is:  
