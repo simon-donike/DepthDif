@@ -20,6 +20,7 @@
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const PATCH_SPLIT_ALPHA = 0.5;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
+  const BACKGROUND_PRELOAD_DELAY_MS = 180;
   const PATCH_SPLIT_COLORS = {
     train: "#1f9d55",
     val: "#d64545",
@@ -87,6 +88,24 @@
     state.viewer.scene.requestRender();
   }
 
+  function scheduleBackgroundTask(callback) {
+    if (typeof window.requestIdleCallback === "function") {
+      return window.requestIdleCallback(callback, { timeout: 1200 });
+    }
+    return window.setTimeout(callback, BACKGROUND_PRELOAD_DELAY_MS);
+  }
+
+  function cancelBackgroundTask(taskId) {
+    if (taskId === null || typeof taskId === "undefined") {
+      return;
+    }
+    if (typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(taskId);
+      return;
+    }
+    window.clearTimeout(taskId);
+  }
+
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
     const configParam = params.get("config");
@@ -131,23 +150,19 @@
 
     const selectedDateParts = resolveSelectedDateParts(config.selected_date);
     if (elements.pageTitle) {
-      if (selectedDateParts) {
-        const paddedWeek = String(selectedDateParts.isoWeek).padStart(2, "0");
-        elements.pageTitle.textContent =
-          "3D Global Visualization for Weekly Prediction " +
-          "in " +
-          String(selectedDateParts.isoYear) +
-          ", Week " +
-          paddedWeek;
-      } else {
-        elements.pageTitle.textContent = "3D Global Visualization for Weekly Prediction";
-      }
+      elements.pageTitle.textContent = "Densification of Sparce Ocean Variables";
     }
 
     if (elements.pageDescription) {
-      elements.pageDescription.textContent =
-        "Compare the weekly prediction, the GLORYS top-band ground truth, and the observed Argo locations. " +
-        "Selected full-profile locations carry a depth graph that opens on click.";
+      if (selectedDateParts) {
+        elements.pageDescription.textContent =
+          "Densifies deep sea measurements using diffusion. This 3D globe represents a weekly aggregate from week " +
+          String(selectedDateParts.isoWeek) +
+          " of year 2015.";
+      } else {
+        elements.pageDescription.textContent =
+          "Densifies deep sea measurements using diffusion.";
+      }
     }
   }
 
@@ -752,6 +767,36 @@
     );
   }
 
+  function preloadOptionalLayers(state) {
+    if (!state || state.preloadTaskId !== null) {
+      return;
+    }
+
+    state.preloadTaskId = scheduleBackgroundTask(function () {
+      state.preloadTaskId = null;
+      const loaders = [
+        ensureGroundTruthLayer,
+        ensurePointsLayer,
+        ensureFullSampleLayer,
+        ensurePatchSplitsLayer,
+      ];
+
+      // Warm hidden layers in the background so toggle changes become mostly
+      // instant without competing with the first visible prediction render.
+      loaders.reduce(function (chain, loadLayer) {
+        return chain.then(function () {
+          if (!window.__depthdifCesiumGlobeState || window.__depthdifCesiumGlobeState !== state) {
+            return null;
+          }
+          return loadLayer(state).catch(function (error) {
+            console.error(error);
+            return null;
+          });
+        });
+      }, Promise.resolve());
+    });
+  }
+
   async function handleOptionalLayerToggle(state, toggle, stateKey, ensureLayer) {
     if (!toggle) {
       return;
@@ -891,6 +936,8 @@
       window.removeEventListener("resize", state.handleWindowResize);
       state.handleWindowResize = null;
     }
+    cancelBackgroundTask(state.preloadTaskId);
+    state.preloadTaskId = null;
     if (state.viewer && !state.viewer.isDestroyed()) {
       if (state.spinTickListener) {
         state.viewer.clock.onTick.removeEventListener(state.spinTickListener);
@@ -950,6 +997,7 @@
         stopWatchingResize: null,
         handleWindowResize: null,
         spinTickListener: null,
+        preloadTaskId: null,
       };
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
@@ -985,6 +1033,7 @@
       };
       window.addEventListener("resize", state.handleWindowResize);
       elements.container.dataset.globeInitialized = "true";
+      preloadOptionalLayers(state);
       requestRender(state);
       return true;
     } catch (error) {

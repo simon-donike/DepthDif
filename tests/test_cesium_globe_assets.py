@@ -17,6 +17,7 @@ from inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     _build_parser,
     _build_gdal2tiles_command,
+    _estimate_native_zoom_level,
     _read_raster_metadata,
     _resolve_rclone_sync_source,
     _rewrite_geojson,
@@ -246,6 +247,26 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
+
+    def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tif_path = Path(tmp_dir) / "global_0p1deg.tif"
+            with rasterio.open(
+                tif_path,
+                "w",
+                driver="GTiff",
+                height=1800,
+                width=3600,
+                count=1,
+                dtype="float32",
+                crs="EPSG:4326",
+                transform=from_origin(-180.0, 90.0, 0.1, 0.1),
+            ) as ds:
+                ds.write(np.ones((1, 1800, 3600), dtype=np.float32))
+
+            zoom_level = _estimate_native_zoom_level(tif_path)
+
+        self.assertEqual(zoom_level, 4)
 
     def test_rewrite_geojson_rounds_coordinates_and_drops_unused_point_properties(
         self,

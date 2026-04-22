@@ -200,8 +200,8 @@ def _estimate_native_zoom_level(input_path: Path) -> int:
         if ds.width <= 0 or ds.height <= 0 or span_x <= 0.0 or span_y <= 0.0:
             return 0
 
-        # One extra level reduces visible overzoom artifacts while keeping the
-        # tile count close to the native pyramid size.
+        # Pick the first XYZ zoom whose world width meets or exceeds the raster's
+        # native world-equivalent width. Higher zooms only overzoom the source.
         degrees_per_pixel = min(span_x / float(ds.width), span_y / float(ds.height))
         world_pixels = 360.0 / degrees_per_pixel
         return max(
