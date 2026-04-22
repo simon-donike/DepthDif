@@ -12,6 +12,21 @@ Typical CLI:
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
   --export-ground-truth
+  
+  
+Run full including push:
+/work/envs/depth/bin/python inference/export_global.py \
+  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --year 2015 \
+  --iso-week 25 \
+  --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
+  --device cuda \
+  --export-ground-truth;
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+  --run-dir inference/outputs/global_top_band_20150615 \
+  --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production/globe \
+  --rclone-sync-scope globe
 
 
 """
