@@ -65,7 +65,6 @@ markdown_extensions:
 nav:
   - Home:
       - Overview: index.md
-      - Globe Viewer: globe.md
       - Development: development.md
       - Tests: tests.md
   - Model:
@@ -88,4 +87,5 @@ nav:
       - Synthetic + Early Experiments: experiments.md
       - GLORYS/Argo Aligned Experiments: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
+  - 3D Globe: globe.md
   - API Reference: api.md

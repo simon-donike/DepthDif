@@ -1,4 +1,6 @@
 (function () {
+  const DEFAULT_GLOBE_CONFIG_URL =
+    "https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/global_top_band_20150615/globe/globe-config.json";
   const container = document.getElementById("depthdif-cesium-globe");
   if (!container || typeof window.Cesium === "undefined") {
     return;
@@ -23,7 +25,7 @@
     if (configParam && configParam.trim() !== "") {
       return new URL(configParam, window.location.href).toString();
     }
-    return new URL("../assets/globe/globe-config.json", window.location.href).toString();
+    return DEFAULT_GLOBE_CONFIG_URL;
   }
 
   async function loadConfig() {
@@ -206,7 +208,9 @@
         pointsDataSource: null,
       };
 
-      selectedDateEl.textContent = config.selected_date ? String(config.selected_date) : "not set";
+      selectedDateEl.textContent = config.selected_date
+        ? "Date: " + String(config.selected_date)
+        : "Date: --";
       state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
       state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
@@ -215,16 +219,13 @@
 
       const hasHostedLayers = Boolean(config.prediction_tiles_url || config.ground_truth_tiles_url);
       if (hasHostedLayers) {
-        setStatus("Hosted overlays loaded successfully.", "success");
+        setStatus("Live", "success");
       } else {
-        setStatus(
-          "Loaded the placeholder config. Add a hosted globe-config.json to see overlays.",
-          "warning"
-        );
+        setStatus("No overlays", "warning");
       }
     } catch (error) {
       console.error(error);
-      setStatus("Failed to initialize the globe viewer. Check the browser console.", "error");
+      setStatus("Load failed", "error");
     }
   })();
 })();

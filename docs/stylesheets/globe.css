@@ -1,32 +1,41 @@
 .globe-page {
   display: grid;
-  gap: 1rem;
-  margin-top: 1.25rem;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.globe-stage {
+  position: relative;
 }
 
 .globe-toolbar {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  padding: 1rem 1.1rem;
-  border: 1px solid rgba(124, 200, 255, 0.18);
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  max-width: min(42rem, calc(100% - 7rem));
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(124, 200, 255, 0.16);
   border-radius: 18px;
+  backdrop-filter: blur(18px);
   background:
     radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
-    rgba(7, 24, 38, 0.88);
+    rgba(5, 20, 32, 0.76);
 }
 
 .globe-toolbar__group {
-  display: grid;
-  gap: 0.65rem;
-}
-
-.globe-toolbar__group--status {
-  align-content: start;
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .globe-toolbar__label {
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #7cc8ff;
@@ -37,21 +46,40 @@
   display: inline-flex;
   gap: 0.55rem;
   align-items: center;
+  padding: 0.42rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .globe-range {
-  display: grid;
+  display: inline-flex;
   gap: 0.65rem;
+  align-items: center;
 }
 
-.globe-status {
+.globe-meta {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.globe-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 2.4rem;
-  padding: 0.65rem 0.8rem;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
+  min-height: 2rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  backdrop-filter: blur(18px);
+  background: rgba(5, 20, 32, 0.76);
+  border: 1px solid rgba(124, 200, 255, 0.14);
   color: #d7e9f7;
+  font-size: 0.86rem;
+  font-weight: 600;
 }
 
 .globe-status[data-kind="success"] {
@@ -71,7 +99,7 @@
 
 .globe-reset-button {
   width: fit-content;
-  padding: 0.75rem 1rem;
+  padding: 0.55rem 0.9rem;
   border: 0;
   border-radius: 999px;
   background: linear-gradient(135deg, #1e5c89, #3f9ed7);
@@ -85,13 +113,48 @@
 }
 
 .globe-canvas {
-  min-height: 70vh;
+  min-height: 78vh;
   border: 1px solid rgba(124, 200, 255, 0.18);
-  border-radius: 20px;
+  border-radius: 24px;
   overflow: hidden;
   background: linear-gradient(180deg, #04131f, #061726);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.28);
 }
 
 .globe-canvas .cesium-widget {
   height: 100%;
+}
+
+.globe-footnote {
+  margin: 0;
+  color: rgba(215, 233, 247, 0.7);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+@media screen and (max-width: 900px) {
+  .globe-toolbar,
+  .globe-meta {
+    position: static;
+    max-width: none;
+  }
+
+  .globe-stage {
+    display: grid;
+    gap: 0.85rem;
+  }
+
+  .globe-toolbar {
+    order: 1;
+  }
+
+  .globe-meta {
+    order: 2;
+    justify-content: flex-start;
+  }
+
+  .globe-canvas {
+    order: 3;
+    min-height: 68vh;
+  }
 }
