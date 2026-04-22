@@ -19,7 +19,9 @@ def _parse_mask_flag_metadata(mask_attrs: dict[str, object]) -> dict[str, int]:
     raw_meanings = str(mask_attrs.get("flag_meanings", "")).strip()
     raw_masks = np.asarray(mask_attrs.get("flag_masks", ()), dtype=np.int64).reshape(-1)
     if raw_meanings == "" or raw_masks.size == 0:
-        raise RuntimeError("OSTIA mask variable is missing flag_meanings/flag_masks metadata.")
+        raise RuntimeError(
+            "OSTIA mask variable is missing flag_meanings/flag_masks metadata."
+        )
 
     flag_names = [part.strip() for part in raw_meanings.split() if part.strip()]
     if len(flag_names) != int(raw_masks.size):
@@ -47,7 +49,9 @@ def _parse_invalid_mask_flags(
         if invalid_names:
             allowed = ", ".join(sorted(allowed_flags))
             invalid = ", ".join(invalid_names)
-            raise ValueError(f"Unknown OSTIA mask flag(s): {invalid}. Allowed values: {allowed}.")
+            raise ValueError(
+                f"Unknown OSTIA mask flag(s): {invalid}. Allowed values: {allowed}."
+            )
     return parts
 
 
@@ -163,7 +167,9 @@ def _build_patch_grid(
         lat0 += patch_span_deg
 
     if not grid:
-        raise RuntimeError("Patch grid is empty. Check span/resolution and lat/lon bounds.")
+        raise RuntimeError(
+            "Patch grid is empty. Check span/resolution and lat/lon bounds."
+        )
     return grid
 
 
@@ -176,8 +182,12 @@ def _patch_axes(
 ) -> tuple[np.ndarray, np.ndarray]:
     # Axes are pixel centers; each pixel represents resolution_deg x resolution_deg.
     half = 0.5 * float(resolution_deg)
-    lat_axis = lat0 + half + (np.arange(tile_size, dtype=np.float64) * float(resolution_deg))
-    lon_axis = lon0 + half + (np.arange(tile_size, dtype=np.float64) * float(resolution_deg))
+    lat_axis = (
+        lat0 + half + (np.arange(tile_size, dtype=np.float64) * float(resolution_deg))
+    )
+    lon_axis = (
+        lon0 + half + (np.arange(tile_size, dtype=np.float64) * float(resolution_deg))
+    )
     return lat_axis, lon_axis
 
 
@@ -261,10 +271,7 @@ def _classify_patches_from_reference(
         mask_patch = mask_interp(query_points).reshape(tile_size, tile_size)
         mask_patch_i = np.rint(mask_patch).astype(np.int64, copy=False)
 
-        invalid = (
-            (~np.isfinite(mask_patch))
-            | ((mask_patch_i & invalid_flag_mask) != 0)
-        )
+        invalid = (~np.isfinite(mask_patch)) | ((mask_patch_i & invalid_flag_mask) != 0)
         invalid_fractions.append(float(np.mean(invalid)))
 
     invalid_fractions_np = np.asarray(invalid_fractions, dtype=np.float64)
@@ -445,8 +452,15 @@ def build_ostia_patch_daily_index(
     if resolution_deg is None:
         lat_step = float(np.median(np.abs(np.diff(lat))))
         lon_step = float(np.median(np.abs(np.diff(lon))))
-        if not np.isfinite(lat_step) or not np.isfinite(lon_step) or lat_step <= 0.0 or lon_step <= 0.0:
-            raise RuntimeError("Could not infer native OSTIA grid resolution from lat/lon axes.")
+        if (
+            not np.isfinite(lat_step)
+            or not np.isfinite(lon_step)
+            or lat_step <= 0.0
+            or lon_step <= 0.0
+        ):
+            raise RuntimeError(
+                "Could not infer native OSTIA grid resolution from lat/lon axes."
+            )
         if abs(lat_step - lon_step) > 1e-4:
             raise RuntimeError(
                 f"OSTIA native grid is not isotropic enough for one resolution value: "

@@ -1,6 +1,6 @@
 (function () {
   const DEFAULT_GLOBE_CONFIG_URL =
-    "https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/global_top_band_20150615/globe/globe-config.json";
+    "https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe/globe-config.json";
   const container = document.getElementById("depthdif-cesium-globe");
   if (!container || typeof window.Cesium === "undefined") {
     return;
@@ -9,13 +9,14 @@
   const predictionToggle = document.getElementById("globe-toggle-prediction");
   const groundTruthToggle = document.getElementById("globe-toggle-ground-truth");
   const pointsToggle = document.getElementById("globe-toggle-points");
+  const patchSplitsToggle = document.getElementById("globe-toggle-patch-splits");
   const opacitySlider = document.getElementById("globe-overlay-opacity");
   const spinToggle = document.getElementById("globe-toggle-spin");
   const resetButton = document.getElementById("globe-reset-camera");
   const DEFAULT_CAMERA_DESTINATION = {
     lon: -38.56452881619089,
     lat: 34.53988238358822,
-    height: 18000000.0,
+    height: 9500000.0,
   };
   const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(2.5);
   const TEMPERATURE_COLOR_STOPS = [
@@ -29,8 +30,15 @@
     { value: 30.0, rgb: [180, 16, 26] },
   ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
-  const POINT_PIXEL_SIZE = 10;
-  const POINT_OUTLINE_WIDTH = 2;
+  const POINT_PIXEL_SIZE = 6;
+  const POINT_OUTLINE_WIDTH = 1.5;
+  const PATCH_SPLIT_DASH_LENGTH = 18;
+  const PATCH_SPLIT_DASH_PATTERN = 255;
+  const PATCH_SPLIT_OUTLINE_WIDTH = 2.0;
+  const PATCH_SPLIT_COLORS = {
+    train: Cesium.Color.fromCssColorString("#1f9d55"),
+    val: Cesium.Color.fromCssColorString("#d64545"),
+  };
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -114,13 +122,68 @@
       }
 
       const observedTempC = Number(entity.properties.observed_temp_c.getValue(now));
-      entity.billboard = undefined;
+      entity.billboard = null;
+      entity.label = null;
       entity.point = new Cesium.PointGraphics({
         color: colorForTemperature(observedTempC, colorScale),
         pixelSize: POINT_PIXEL_SIZE,
         outlineColor: Cesium.Color.WHITE,
         outlineWidth: POINT_OUTLINE_WIDTH,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      });
+    });
+  }
+
+  function splitColor(splitValue) {
+    const normalized = String(splitValue || "").trim().toLowerCase();
+    return PATCH_SPLIT_COLORS[normalized] || Cesium.Color.WHITE;
+  }
+
+  function polygonRingToDegreesArray(hierarchy) {
+    if (!hierarchy || !Array.isArray(hierarchy.positions) || hierarchy.positions.length < 2) {
+      return null;
+    }
+    const degrees = [];
+    hierarchy.positions.forEach(function (position) {
+      const cartographic = Cesium.Cartographic.fromCartesian(position);
+      degrees.push(Cesium.Math.toDegrees(cartographic.longitude));
+      degrees.push(Cesium.Math.toDegrees(cartographic.latitude));
+    });
+    return degrees;
+  }
+
+  function stylePatchSplitEntities(dataSource) {
+    const now = Cesium.JulianDate.now();
+    dataSource.entities.values.forEach(function (entity) {
+      const splitValue =
+        entity.properties && entity.properties.split
+          ? entity.properties.split.getValue(now)
+          : null;
+      const outlineColor = splitColor(splitValue);
+      const hierarchy = entity.polygon && entity.polygon.hierarchy
+        ? entity.polygon.hierarchy.getValue(now)
+        : null;
+      const positionsDegrees = polygonRingToDegreesArray(hierarchy);
+
+      entity.billboard = null;
+      entity.label = null;
+      entity.polygon = null;
+      if (!positionsDegrees) {
+        return;
+      }
+
+      // Replace the GeoJSON polygon fill with a clamped dashed outline so the
+      // grid reads as a boundary layer instead of obscuring the temperature tiles.
+      entity.polyline = new Cesium.PolylineGraphics({
+        positions: Cesium.Cartesian3.fromDegreesArray(positionsDegrees),
+        clampToGround: true,
+        width: PATCH_SPLIT_OUTLINE_WIDTH,
+        material: new Cesium.PolylineDashMaterialProperty({
+          color: outlineColor,
+          dashLength: PATCH_SPLIT_DASH_LENGTH,
+          dashPattern: PATCH_SPLIT_DASH_PATTERN,
+        }),
       });
     });
   }
@@ -270,6 +333,14 @@
       }
     });
 
+    if (patchSplitsToggle) {
+      patchSplitsToggle.addEventListener("change", function () {
+        if (state.patchSplitsDataSource) {
+          state.patchSplitsDataSource.show = patchSplitsToggle.checked;
+        }
+      });
+    }
+
     opacitySlider.addEventListener("input", function () {
       const alpha = Number(opacitySlider.value);
       if (state.predictionLayer) {
@@ -346,6 +417,25 @@
     return dataSource;
   }
 
+  async function addPatchSplitsLayer(viewer, config, configUrl) {
+    const patchSplitsUrl = resolveAssetUrl(config.patch_splits_url, configUrl);
+    if (!patchSplitsUrl) {
+      if (patchSplitsToggle) {
+        patchSplitsToggle.checked = false;
+        patchSplitsToggle.disabled = true;
+      }
+      return null;
+    }
+    const dataSource = await Cesium.GeoJsonDataSource.load(patchSplitsUrl, {
+      clampToGround: true,
+      credit: config.credits && config.credits.patch_splits,
+    });
+    stylePatchSplitEntities(dataSource);
+    viewer.dataSources.add(dataSource);
+    dataSource.show = patchSplitsToggle ? patchSplitsToggle.checked : false;
+    return dataSource;
+  }
+
   (async function init() {
     try {
       const loaded = await loadConfig();
@@ -358,6 +448,7 @@
         predictionLayer: null,
         groundTruthLayer: null,
         pointsDataSource: null,
+        patchSplitsDataSource: null,
         spinEnabled: false,
         lastSpinTime: null,
       };
@@ -365,6 +456,7 @@
       state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
       state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
+      state.patchSplitsDataSource = await addPatchSplitsLayer(viewer, config, configUrl);
       attachSpinLoop(state);
       setSpinEnabled(state, false);
       wireUi(state);

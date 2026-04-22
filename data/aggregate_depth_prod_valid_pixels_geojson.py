@@ -115,7 +115,9 @@ def _plot_world_map(
         raise RuntimeError("GeoJSON is empty; cannot draw map.")
 
     world = _load_world_outline(world_shapefile=world_shapefile)
-    patch_gdf = gpd.GeoDataFrame.from_features(feature_collection["features"], crs="EPSG:4326")
+    patch_gdf = gpd.GeoDataFrame.from_features(
+        feature_collection["features"], crs="EPSG:4326"
+    )
 
     fig, ax = plt.subplots(figsize=(16, 8))
     world.boundary.plot(ax=ax, color="black", linewidth=0.5, alpha=0.8)
@@ -186,7 +188,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--plot-path",
         type=Path,
-        default=Path("/work/code/DepthDif/data/glorys_argo_alignment/figures/argo_valid_pixels_per_patch.png"),
+        default=Path(
+            "/work/code/DepthDif/data/glorys_argo_alignment/figures/argo_valid_pixels_per_patch.png"
+        ),
         help="Output PNG heatmap path.",
     )
     parser.add_argument(
@@ -222,7 +226,13 @@ def main() -> None:
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
 
     df = pd.read_csv(manifest_path)
-    required_columns = {"lat0", "lat1", "lon0", "lon1", "argo_valid_spatial_observation_count"}
+    required_columns = {
+        "lat0",
+        "lat1",
+        "lon0",
+        "lon1",
+        "argo_valid_spatial_observation_count",
+    }
     missing_columns = sorted(required_columns.difference(df.columns))
     if missing_columns:
         raise RuntimeError(
@@ -231,7 +241,9 @@ def main() -> None:
 
     if args.phase != "all":
         if "phase" not in df.columns:
-            raise RuntimeError("Manifest does not contain a 'phase' column for --phase filtering.")
+            raise RuntimeError(
+                "Manifest does not contain a 'phase' column for --phase filtering."
+            )
         df = df[df["phase"].astype(str) == str(args.phase)].copy()
 
     if not args.include_skipped and "export_skipped_reason" in df.columns:
@@ -244,7 +256,9 @@ def main() -> None:
     df["argo_valid_spatial_observation_count"] = metric.loc[df.index].astype(float)
 
     if df.empty:
-        raise RuntimeError("No manifest rows remain after filtering; nothing to aggregate.")
+        raise RuntimeError(
+            "No manifest rows remain after filtering; nothing to aggregate."
+        )
 
     patch_aggregates: dict[str, dict[str, Any]] = {}
     for _, row in df.iterrows():
@@ -263,7 +277,9 @@ def main() -> None:
             }
             patch_aggregates[patch_key] = stats
 
-        stats.setdefault("values", []).append(float(row["argo_valid_spatial_observation_count"]))
+        stats.setdefault("values", []).append(
+            float(row["argo_valid_spatial_observation_count"])
+        )
         stats["sample_count"] += 1
 
     features: list[dict[str, Any]] = []
@@ -271,7 +287,9 @@ def main() -> None:
         stats = patch_aggregates[patch_key]
         sample_count = int(stats["sample_count"])
         values = stats.get("values", [])
-        median_valid_pixels = float(pd.Series(values, dtype=float).median()) if values else 0.0
+        median_valid_pixels = (
+            float(pd.Series(values, dtype=float).median()) if values else 0.0
+        )
         features.append(
             _build_feature(
                 patch_key=patch_key,

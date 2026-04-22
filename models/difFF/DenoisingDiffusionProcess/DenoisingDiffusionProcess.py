@@ -54,7 +54,9 @@ def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> 
         sampler.parameterization = parameterization
 
 
-def _module_device_or_fallback(module: nn.Module, fallback: torch.device) -> torch.device:
+def _module_device_or_fallback(
+    module: nn.Module, fallback: torch.device
+) -> torch.device:
     """Return the module device, or a safe fallback when no parameters exist."""
     first_param = next(module.parameters(), None)
     if first_param is not None:
@@ -63,8 +65,8 @@ def _module_device_or_fallback(module: nn.Module, fallback: torch.device) -> tor
 
 
 class DenoisingDiffusionProcess(nn.Module):
-
     """Unconditional diffusion process module for training and sampling."""
+
     def __init__(
         self,
         generated_channels: int = 3,
@@ -215,8 +217,8 @@ class DenoisingDiffusionProcess(nn.Module):
 
 
 class DenoisingDiffusionConditionalProcess(nn.Module):
-
     """Conditional diffusion process module for guided reconstruction."""
+
     def __init__(
         self,
         generated_channels: int = 3,
@@ -465,7 +467,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                 if capture_step in capture_indices:
                     intermediates.append((capture_step, x_t.detach().clone()))
                     if return_x0_intermediates:
-                        x0_intermediates.append((capture_step, x0_pred.detach().clone()))
+                        x0_intermediates.append(
+                            (capture_step, x0_pred.detach().clone())
+                        )
 
         if return_intermediates:
             if return_x0_intermediates:
@@ -583,8 +587,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             return None
         if mode not in {"missing", "observed"}:
             raise ValueError(
-                "mode must be one of {'missing', 'observed'} "
-                f"(got '{mode}')."
+                "mode must be one of {'missing', 'observed'} " f"(got '{mode}')."
             )
         mask = (valid_mask > 0.5).float()
         mask = DenoisingDiffusionConditionalProcess._align_mask_to_reference(
@@ -675,9 +678,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if not mask_loss or loss_mask is None:
             return self.loss_fn(target, prediction)
 
-        generated_mask = self._build_valid_mask(
-            loss_mask, target, mode="observed"
-        )
+        generated_mask = self._build_valid_mask(loss_mask, target, mode="observed")
         if generated_mask is None:
             return self.loss_fn(target, prediction)
         ocean_mask = self._build_land_mask(land_mask, target)
@@ -776,7 +777,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         if date.ndim == 2 and date.size(1) == 1:
             date = date[:, 0]
         if date.ndim != 1:
-            raise ValueError("date must have shape (B,) or (B, 1) as YYYYMMDD integers.")
+            raise ValueError(
+                "date must have shape (B,) or (B, 1) as YYYYMMDD integers."
+            )
 
         date_int = torch.round(date).to(dtype=torch.long)
         month = (date_int // 100) % 100

@@ -168,14 +168,18 @@ def _save_case_plot(
     pred: dict[str, Any],
 ) -> None:
     """Save one reconstruction grid image inspired by validation reconstruction logging."""
-    x_denorm = temperature_normalize(mode="denorm", tensor=case_batch["x"].detach().float())
+    x_denorm = temperature_normalize(
+        mode="denorm", tensor=case_batch["x"].detach().float()
+    )
     y_target_denorm = temperature_normalize(
         mode="denorm", tensor=case_batch["y"].detach().float()
     )
     y_hat_denorm = pred["y_hat_denorm"].detach().float()
     eo_denorm = None
     if "eo" in case_batch:
-        eo_denorm = temperature_normalize(mode="denorm", tensor=case_batch["eo"].detach().float())
+        eo_denorm = temperature_normalize(
+            mode="denorm", tensor=case_batch["eo"].detach().float()
+        )
 
     valid_mask_i = _mask_for_sample(case_batch.get("x_valid_mask"))
     land_mask_i = _mask_for_sample(case_batch.get("land_mask"))
@@ -202,7 +206,9 @@ def _save_case_plot(
     if land_mask_i is not None:
         ncols += 1
 
-    fig, axes = plt.subplots(n_bands, ncols, figsize=(4 * ncols, 2.8 * n_bands), squeeze=False)
+    fig, axes = plt.subplots(
+        n_bands, ncols, figsize=(4 * ncols, 2.8 * n_bands), squeeze=False
+    )
     try:
         for band_idx in range(n_bands):
             valid_band = valid_mask_i
@@ -213,8 +219,12 @@ def _save_case_plot(
                 land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
             x_img = _plot_band_image(x_denorm, band_idx=band_idx, mask=land_band)
-            y_hat_img = _plot_band_image(y_hat_denorm, band_idx=band_idx, mask=land_band)
-            y_target_img = _plot_band_image(y_target_denorm, band_idx=band_idx, mask=land_band)
+            y_hat_img = _plot_band_image(
+                y_hat_denorm, band_idx=band_idx, mask=land_band
+            )
+            y_target_img = _plot_band_image(
+                y_target_denorm, band_idx=band_idx, mask=land_band
+            )
             if valid_band is not None:
                 # Keep sparse observations visually sparse in the input panel.
                 valid_np = valid_band.detach().cpu().numpy() > 0.5
@@ -268,7 +278,9 @@ def _save_case_plot(
                 axes[band_idx, col].set_axis_off()
                 if band_idx == 0:
                     axes[band_idx, col].set_title(
-                        "Ambient valid mask" if ambient_valid_mask_rgb is not None else "Valid mask"
+                        "Ambient valid mask"
+                        if ambient_valid_mask_rgb is not None
+                        else "Valid mask"
                     )
                 col += 1
 
@@ -307,7 +319,9 @@ def main() -> None:
     device = choose_device(DEVICE)
 
     dataset = build_dataset(DATA_CONFIG_PATH, data_cfg.get("dataset", {}))
-    datamodule = build_datamodule(dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg)
+    datamodule = build_datamodule(
+        dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
+    )
     datamodule.setup("fit")
 
     model = build_model(
@@ -318,10 +332,14 @@ def main() -> None:
         datamodule=datamodule,
     )
 
-    ckpt_path = resolve_checkpoint_path(CHECKPOINT_OVERRIDE_PATH or CHECKPOINT_PATH, model_cfg)
+    ckpt_path = resolve_checkpoint_path(
+        CHECKPOINT_OVERRIDE_PATH or CHECKPOINT_PATH, model_cfg
+    )
     if ckpt_path is not None:
         checkpoint = torch.load(ckpt_path, map_location="cpu")
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        state_dict = (
+            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        )
         model.load_state_dict(state_dict, strict=bool(STRICT_LOAD))
         print(f"Loaded checkpoint: {ckpt_path}")
     else:
@@ -330,7 +348,11 @@ def main() -> None:
     model = model.to(device)
     model.eval()
 
-    loader = datamodule.train_dataloader() if LOADER_SPLIT == "train" else datamodule.val_dataloader()
+    loader = (
+        datamodule.train_dataloader()
+        if LOADER_SPLIT == "train"
+        else datamodule.val_dataloader()
+    )
     batch = _first_item_batch(to_device(next(iter(loader)), device))
 
     cases: list[tuple[str, dict[str, Any]]] = [
@@ -368,25 +390,33 @@ def main() -> None:
         getattr(
             getattr(model, "model", None),
             "coord_conditioning_enabled",
-            hparams.get("coord_conditioning_enabled", False)
-            if hasattr(hparams, "get")
-            else False,
+            (
+                hparams.get("coord_conditioning_enabled", False)
+                if hasattr(hparams, "get")
+                else False
+            ),
         )
     )
     date_conditioning_enabled = bool(
         getattr(
             getattr(model, "model", None),
             "date_conditioning_enabled",
-            hparams.get("date_conditioning_enabled", False)
-            if hasattr(hparams, "get")
-            else False,
+            (
+                hparams.get("date_conditioning_enabled", False)
+                if hasattr(hparams, "get")
+                else False
+            ),
         )
     )
 
     if coord_conditioning_enabled and "coords" not in batch:
-        raise RuntimeError("Model has coord conditioning enabled, but batch has no 'coords'.")
+        raise RuntimeError(
+            "Model has coord conditioning enabled, but batch has no 'coords'."
+        )
     if date_conditioning_enabled and "date" not in batch:
-        raise RuntimeError("Model has date conditioning enabled, but batch has no 'date'.")
+        raise RuntimeError(
+            "Model has date conditioning enabled, but batch has no 'date'."
+        )
 
     for case_name, case_batch in cases:
         with torch.no_grad():

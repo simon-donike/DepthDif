@@ -20,7 +20,6 @@ class ForwardModel(nn.Module):
     """Base interface for forward diffusion process implementations."""
 
     def __init__(self, num_timesteps: int = 1000, schedule: str = "linear") -> None:
-
         """Initialize ForwardModel with configured parameters.
 
         Args:
@@ -71,7 +70,6 @@ class GaussianForwardProcess(ForwardModel):
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
     ) -> None:
-
         """Initialize GaussianForwardProcess with configured parameters.
 
         Args:

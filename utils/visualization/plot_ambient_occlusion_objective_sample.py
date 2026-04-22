@@ -25,7 +25,9 @@ def _load_yaml(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         payload = yaml.safe_load(handle)
     if not isinstance(payload, dict):
-        raise RuntimeError(f"Expected a mapping at {path}, got {type(payload).__name__}.")
+        raise RuntimeError(
+            f"Expected a mapping at {path}, got {type(payload).__name__}."
+        )
     return payload
 
 
@@ -62,7 +64,9 @@ def _project_max(values: torch.Tensor, mask: torch.Tensor) -> np.ndarray:
         )
     masked = torch.where(mask, values, torch.full_like(values, float("-inf")))
     projected = masked.amax(dim=0)
-    projected = torch.where(torch.isfinite(projected), projected, torch.zeros_like(projected))
+    projected = torch.where(
+        torch.isfinite(projected), projected, torch.zeros_like(projected)
+    )
     return projected.detach().cpu().numpy().astype(np.float32, copy=False)
 
 
@@ -75,7 +79,9 @@ def _build_ambient_further_valid_mask(
     generator: torch.Generator,
 ) -> torch.Tensor:
     if valid_mask.ndim != 3:
-        raise RuntimeError(f"Expected valid_mask with shape (C,H,W), got {tuple(valid_mask.shape)}.")
+        raise RuntimeError(
+            f"Expected valid_mask with shape (C,H,W), got {tuple(valid_mask.shape)}."
+        )
 
     base_mask = (valid_mask > 0).to(dtype=torch.float32)
     if further_drop_prob <= 0.0:
@@ -85,23 +91,30 @@ def _build_ambient_further_valid_mask(
     channels, height, width = base_mask.shape
     if shared_spatial_mask:
         spatial_observed = base_mask.amax(dim=0) > 0.5
-        observed_idx = torch.nonzero(spatial_observed.reshape(-1), as_tuple=False).squeeze(1)
+        observed_idx = torch.nonzero(
+            spatial_observed.reshape(-1), as_tuple=False
+        ).squeeze(1)
         spatial_keep = torch.zeros((height * width,), dtype=torch.float32)
         if observed_idx.numel() > 0:
             keep_count = int(round(float(observed_idx.numel()) * keep_prob))
             keep_count = max(0, min(int(observed_idx.numel()), keep_count))
             if keep_count > 0:
                 chosen = observed_idx[
-                    torch.randperm(int(observed_idx.numel()), generator=generator)[:keep_count]
+                    torch.randperm(int(observed_idx.numel()), generator=generator)[
+                        :keep_count
+                    ]
                 ]
                 spatial_keep[chosen] = 1.0
         keep_draw = spatial_keep.view(1, height, width).expand(channels, -1, -1)
     else:
-        keep_draw = torch.rand(
-            (channels, height, width),
-            generator=generator,
-            dtype=torch.float32,
-        ) < keep_prob
+        keep_draw = (
+            torch.rand(
+                (channels, height, width),
+                generator=generator,
+                dtype=torch.float32,
+            )
+            < keep_prob
+        )
 
     further_mask = base_mask * keep_draw.to(dtype=base_mask.dtype)
     if int(min_kept_observed_pixels) <= 0:
@@ -159,7 +172,9 @@ def _interpolate_zero_regions_for_display(image: np.ndarray) -> np.ndarray:
         neighbor_count = np.zeros_like(out, dtype=np.int32)
         for row_shift, col_shift in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             shifted = np.roll(out, shift=(row_shift, col_shift), axis=(0, 1))
-            shifted_valid = np.roll(~np.isclose(out, 0.0), shift=(row_shift, col_shift), axis=(0, 1))
+            shifted_valid = np.roll(
+                ~np.isclose(out, 0.0), shift=(row_shift, col_shift), axis=(0, 1)
+            )
 
             if row_shift == -1:
                 shifted[-1, :] = 0.0
@@ -216,27 +231,42 @@ def _plot_sample_figure(
 
     finite_value_panels = [
         arr[np.isfinite(arr)]
-        for arr in (argo_projection, seen_projection, withheld_projection, glorys_projection)
+        for arr in (
+            argo_projection,
+            seen_projection,
+            withheld_projection,
+            glorys_projection,
+        )
     ]
     finite_value_panels = [arr for arr in finite_value_panels if arr.size > 0]
     if finite_value_panels:
         stacked = np.concatenate(finite_value_panels)
         value_vmin = float(np.percentile(stacked, 2.0))
         value_vmax = float(np.percentile(stacked, 98.0))
-        if not np.isfinite(value_vmin) or not np.isfinite(value_vmax) or value_vmin >= value_vmax:
+        if (
+            not np.isfinite(value_vmin)
+            or not np.isfinite(value_vmax)
+            or value_vmin >= value_vmax
+        ):
             value_vmin = float(np.nanmin(stacked))
             value_vmax = float(np.nanmax(stacked))
     else:
         value_vmin, value_vmax = 0.0, 1.0
 
     surface_finite_panels = [
-        arr[np.isfinite(arr)] for arr in (ostia_img, glorys_projection) if np.isfinite(arr).any()
+        arr[np.isfinite(arr)]
+        for arr in (ostia_img, glorys_projection)
+        if np.isfinite(arr).any()
     ]
     if surface_finite_panels:
         surface_values = np.concatenate(surface_finite_panels)
         surface_vmin = float(np.percentile(surface_values, 2.0))
         surface_vmax = float(np.percentile(surface_values, 98.0))
-        if not np.isfinite(surface_vmin) or not np.isfinite(surface_vmax) or surface_vmin >= surface_vmax:
+        if (
+            not np.isfinite(surface_vmin)
+            or not np.isfinite(surface_vmax)
+            or surface_vmin >= surface_vmax
+        ):
             surface_vmin = float(np.nanmin(surface_values))
             surface_vmax = float(np.nanmax(surface_values))
     else:
@@ -392,9 +422,11 @@ def main() -> None:
     parser.set_defaults(shared_spatial_mask=None)
     args = parser.parse_args()
 
-    csv_path_default, return_info, return_coords = _resolve_dataset_defaults(args.data_config)
-    ambient_drop_default, shared_mask_default, min_keep_default = _resolve_ambient_defaults(
-        args.model_config
+    csv_path_default, return_info, return_coords = _resolve_dataset_defaults(
+        args.data_config
+    )
+    ambient_drop_default, shared_mask_default, min_keep_default = (
+        _resolve_ambient_defaults(args.model_config)
     )
 
     dataset = OstiaArgoTiffDataset(
@@ -412,10 +444,14 @@ def main() -> None:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(args.seed))
     further_drop_prob = float(
-        ambient_drop_default if args.further_drop_prob is None else args.further_drop_prob
+        ambient_drop_default
+        if args.further_drop_prob is None
+        else args.further_drop_prob
     )
     shared_spatial_mask = (
-        shared_mask_default if args.shared_spatial_mask is None else bool(args.shared_spatial_mask)
+        shared_mask_default
+        if args.shared_spatial_mask is None
+        else bool(args.shared_spatial_mask)
     )
     min_kept_observed_pixels = (
         min_keep_default

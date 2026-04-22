@@ -40,7 +40,9 @@ class DepthTileDataModule(pl.LightningDataModule):
 
         # When callers pass explicit train/val datasets, keep the training dataset
         # attached immediately so train_dataloader() does not depend on setup().
-        self.train_dataset: Subset | Dataset | None = dataset if val_dataset is not None else None
+        self.train_dataset: Subset | Dataset | None = (
+            dataset if val_dataset is not None else None
+        )
         self._train_val_split_done = val_dataset is not None
 
     def setup(self, stage: str | None = None) -> None:
@@ -63,7 +65,9 @@ class DepthTileDataModule(pl.LightningDataModule):
 
         val_len = int(round(total_len * self.val_fraction))
         if total_len > 1:
-            val_len = min(max(val_len, 1 if self.val_fraction > 0.0 else 0), total_len - 1)
+            val_len = min(
+                max(val_len, 1 if self.val_fraction > 0.0 else 0), total_len - 1
+            )
         else:
             val_len = 0
         train_len = total_len - val_len
@@ -92,12 +96,15 @@ class DepthTileDataModule(pl.LightningDataModule):
         batch_size = int(cfg.get("val_batch_size" if is_val else "batch_size", 16))
         num_workers_key = "val_num_workers" if is_val else "num_workers"
         num_workers = int(cfg.get(num_workers_key, 0 if is_val else 4))
-        persistent_workers = bool(
-            cfg.get(
-                "val_persistent_workers" if is_val else "persistent_workers",
-                False,
+        persistent_workers = (
+            bool(
+                cfg.get(
+                    "val_persistent_workers" if is_val else "persistent_workers",
+                    False,
+                )
             )
-        ) and num_workers > 0
+            and num_workers > 0
+        )
         pin_memory = bool(cfg.get("pin_memory", True))
         # Default to shuffling both train and validation unless explicitly disabled.
         shuffle = bool(cfg.get("val_shuffle" if is_val else "shuffle", True))

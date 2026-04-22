@@ -11,11 +11,15 @@
         </label>
         <label class="globe-toggle">
           <input id="globe-toggle-ground-truth" type="checkbox" />
-          <span>Ground truth</span>
+          <span>GLORYS</span>
         </label>
         <label class="globe-toggle">
           <input id="globe-toggle-points" type="checkbox" />
           <span>Argo points</span>
+        </label>
+        <label class="globe-toggle">
+          <input id="globe-toggle-patch-splits" type="checkbox" />
+          <span>Train/val split</span>
         </label>
       </div>
       <div class="globe-toolbar__group">

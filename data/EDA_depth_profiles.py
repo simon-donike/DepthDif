@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_GLOB_PATTERN = "EN.4.2.2.f.profiles.g10.*.nc"
 DEFAULT_OUTPUT_PATH = Path("data/depth_profiles_info.txt")
@@ -138,7 +137,9 @@ def summarize_collection(nc_files: list[Path]) -> dict[str, Any]:
     month_keys_sorted = sorted(month_keys)
     missing_months: list[str] = []
     if month_keys_sorted:
-        expected = set(build_expected_months(month_keys_sorted[0], month_keys_sorted[-1]))
+        expected = set(
+            build_expected_months(month_keys_sorted[0], month_keys_sorted[-1])
+        )
         missing_months = sorted(expected.difference(set(month_keys_sorted)))
 
     return {
@@ -151,7 +152,9 @@ def summarize_collection(nc_files: list[Path]) -> dict[str, Any]:
         "missing_months": missing_months,
         "n_prof_min": min(n_prof_values) if n_prof_values else None,
         "n_prof_max": max(n_prof_values) if n_prof_values else None,
-        "n_prof_avg": (sum(n_prof_values) / len(n_prof_values)) if n_prof_values else None,
+        "n_prof_avg": (
+            (sum(n_prof_values) / len(n_prof_values)) if n_prof_values else None
+        ),
         "n_levels_unique": sorted(set(n_levels_values)),
         "variable_count_unique": sorted(set(variable_counts)),
         "attribute_count_unique": sorted(set(attribute_counts)),
@@ -209,7 +212,9 @@ def describe_sample_file(nc_path: Path) -> list[str]:
 
         lines.append("\n=== DATA VARIABLES ===")
         for name, var in ds.data_vars.items():
-            lines.append(f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}")
+            lines.append(
+                f"- {name}: dims={var.dims}, shape={var.shape}, dtype={var.dtype}"
+            )
             if var.attrs:
                 lines.append("  attrs:")
                 for key, value in var.attrs.items():
@@ -271,7 +276,9 @@ def summarize_target_variables(ds: xr.Dataset) -> list[str]:
         lines.append(
             f"- {name}: dims={var.dims}, shape={arr.shape}, dtype={var.dtype}, valid={valid_count}/{total_count}"
         )
-        lines.append(f"  units={var.attrs.get('units', 'n/a')}, fill_value={fill_value}")
+        lines.append(
+            f"  units={var.attrs.get('units', 'n/a')}, fill_value={fill_value}"
+        )
         if valid_count == 0:
             lines.append("  stats: no valid numeric values")
             continue
@@ -308,7 +315,9 @@ def summarize_depth_levels(ds: xr.Dataset) -> list[str]:
     lines.append(f"- Level indices: {', '.join(str(i) for i in range(n_levels))}")
 
     if "DEPH_CORRECTED" not in ds.data_vars:
-        lines.append("- DEPH_CORRECTED not present; no physical-depth values to summarize.")
+        lines.append(
+            "- DEPH_CORRECTED not present; no physical-depth values to summarize."
+        )
         return lines
 
     depth = ds["DEPH_CORRECTED"]
@@ -392,9 +401,11 @@ def main() -> None:
         [
             "\n=== COLLECTION STRUCTURE SUMMARY ===",
             f"- N_PROF min/max: {summary['n_prof_min']} / {summary['n_prof_max']}",
-            f"- N_PROF average: {summary['n_prof_avg']:.2f}"
-            if summary["n_prof_avg"] is not None
-            else "- N_PROF average: n/a",
+            (
+                f"- N_PROF average: {summary['n_prof_avg']:.2f}"
+                if summary["n_prof_avg"] is not None
+                else "- N_PROF average: n/a"
+            ),
             f"- Unique N_LEVELS values: {summary['n_levels_unique']}",
             f"- Unique data-variable counts: {summary['variable_count_unique']}",
             f"- Unique global-attribute counts: {summary['attribute_count_unique']}",

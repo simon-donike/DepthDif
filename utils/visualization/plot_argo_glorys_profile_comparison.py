@@ -20,7 +20,6 @@ if str(REPO_ROOT) not in sys.path:
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from utils.normalizations import temperature_normalize
 
-
 DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk.yaml"
 DEFAULT_OUTPUT_PATH = Path("temp/argo_glorys_profile_comparison.png")
 
@@ -30,9 +29,13 @@ def _resolve_index_path(csv_dir: Path, path_value: str) -> Path:
     return path if path.is_absolute() else csv_dir / path
 
 
-def _load_depth_axis_from_glorys_export(dataset: OstiaArgoTiffDataset, sample_idx: int) -> np.ndarray:
+def _load_depth_axis_from_glorys_export(
+    dataset: OstiaArgoTiffDataset, sample_idx: int
+) -> np.ndarray:
     row = dataset._rows[int(sample_idx)]
-    glorys_path = _resolve_index_path(dataset.csv_dir, str(row[dataset._glorys_path_col]))
+    glorys_path = _resolve_index_path(
+        dataset.csv_dir, str(row[dataset._glorys_path_col])
+    )
     with rasterio.open(glorys_path) as ds:
         tags = ds.tags()
     depth_text = str(tags.get("glorys_depth_m", "")).strip()
@@ -62,7 +65,9 @@ def _select_sample_index(dataset_len: int, sample_idx: int | None, seed: int) ->
         raise RuntimeError("Dataset is empty.")
     if sample_idx is not None:
         if sample_idx < 0 or sample_idx >= dataset_len:
-            raise ValueError(f"sample_idx={sample_idx} is out of range for dataset length {dataset_len}.")
+            raise ValueError(
+                f"sample_idx={sample_idx} is out of range for dataset length {dataset_len}."
+            )
         return int(sample_idx)
     rng = np.random.default_rng(int(seed))
     return int(rng.integers(0, dataset_len))
@@ -100,7 +105,9 @@ def _plot_profiles(
 
     num_profiles = max(1, min(int(num_profiles), 9, int(observed_coords.size(0))))
     rng = np.random.default_rng(int(seed) + int(sample_idx))
-    chosen_idx = rng.choice(int(observed_coords.size(0)), size=num_profiles, replace=False)
+    chosen_idx = rng.choice(
+        int(observed_coords.size(0)), size=num_profiles, replace=False
+    )
     chosen = observed_coords[torch.as_tensor(chosen_idx, dtype=torch.long)]
 
     depth_axis = _load_depth_axis_from_glorys_export(dataset, sample_idx)
@@ -230,7 +237,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    dataset = _build_standard_dataset(config_path=str(args.data_config), split=str(args.split))
+    dataset = _build_standard_dataset(
+        config_path=str(args.data_config), split=str(args.split)
+    )
     sample_idx = _select_sample_index(
         dataset_len=len(dataset),
         sample_idx=args.sample_idx,

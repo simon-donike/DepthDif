@@ -44,7 +44,7 @@ TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 CHECKPOINT_PATH: str | None = None
 
 # "dataloader" or "random"
-MODE = "dataloader" # or random
+MODE = "dataloader"  # or random
 
 # Used when MODE == "dataloader": "train" or "val"
 LOADER_SPLIT = "val"
@@ -81,7 +81,9 @@ def main() -> None:
         )
 
     dataset = build_dataset(DATA_CONFIG_PATH, data_cfg.get("dataset", {}))
-    datamodule = build_datamodule(dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg)
+    datamodule = build_datamodule(
+        dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
+    )
     datamodule.setup("fit")
 
     model = build_model(
@@ -95,7 +97,9 @@ def main() -> None:
     ckpt_path = resolve_checkpoint_path(CHECKPOINT_PATH, model_cfg)
     if ckpt_path is not None:
         checkpoint = torch.load(ckpt_path, map_location="cpu")
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        state_dict = (
+            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        )
         model.load_state_dict(state_dict, strict=bool(STRICT_LOAD))
         print(f"Loaded checkpoint: {ckpt_path}")
     else:
@@ -105,7 +109,11 @@ def main() -> None:
     model.eval()
 
     if MODE == "dataloader":
-        loader = datamodule.train_dataloader() if LOADER_SPLIT == "train" else datamodule.val_dataloader()
+        loader = (
+            datamodule.train_dataloader()
+            if LOADER_SPLIT == "train"
+            else datamodule.val_dataloader()
+        )
         batch = next(iter(loader))
         batch = to_device(batch, device)
     else:
@@ -132,7 +140,9 @@ def main() -> None:
     for k, v in batch.items():
         print(f"  - {k}: {pretty_shape(v)}")
 
-    pred = run_predict_once(model, batch, include_intermediates=bool(INCLUDE_INTERMEDIATES))
+    pred = run_predict_once(
+        model, batch, include_intermediates=bool(INCLUDE_INTERMEDIATES)
+    )
 
     print("Output keys/shapes:")
     for k, v in pred.items():

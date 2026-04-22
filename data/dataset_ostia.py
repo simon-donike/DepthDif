@@ -57,7 +57,9 @@ class SurfaceTempPatchOstiaLightDataset(SurfaceTempPatchBaseLightDataset):
 
 
 if __name__ == "__main__":
-    dataset = SurfaceTempPatchOstiaLightDataset.from_config("configs/px_space/data_ostia.yaml")
+    dataset = SurfaceTempPatchOstiaLightDataset.from_config(
+        "configs/px_space/data_ostia.yaml"
+    )
     dataset._plot_example_image()
 
     print(f"Dataset length: {len(dataset)}")

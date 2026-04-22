@@ -5,13 +5,15 @@ provide an ISO week/year, the exporter picks the earliest available date in
 that week so the output stays one spatially complete raster rather than seven.
 
 Typical CLI:
-    /work/envs/depth/bin/python inference/export_global.py \
-      --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
-      --year 2015 \
-      --iso-week 12 \
-      --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
-      --device cuda \
-      --export-ground-truth
+/work/envs/depth/bin/python inference/export_global.py \
+  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --year 2015 \
+  --iso-week 25 \
+  --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
+  --device cuda \
+  --export-ground-truth
+
+
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import json
 from pathlib import Path
+import shutil
 import sys
 from typing import Any, Sequence
 
@@ -40,14 +43,19 @@ if __package__ in {None, ""}:
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
-from inference.core import build_model, choose_device, load_yaml, resolve_checkpoint_path
+from inference.core import (
+    build_model,
+    choose_device,
+    load_yaml,
+    resolve_checkpoint_path,
+)
 from utils.normalizations import temperature_normalize
-
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
 DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
+DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 
 
 @dataclass(frozen=True)
@@ -127,7 +135,9 @@ class GeoJSONPointWriter:
 
     def write_feature(self, feature: dict[str, Any]) -> None:
         if self._fh is None:
-            raise RuntimeError("GeoJSONPointWriter must be opened before writing features.")
+            raise RuntimeError(
+                "GeoJSONPointWriter must be opened before writing features."
+            )
         if self._feature_count > 0:
             self._fh.write(",\n")
         self._fh.write(json.dumps(feature, separators=(",", ":")))
@@ -141,9 +151,64 @@ class GeoJSONPointWriter:
         self._fh = None
 
 
+def _split_label_for_row(row: dict[str, Any]) -> str | None:
+    for key in ("split", "phase"):
+        value = row.get(key)
+        if value is None:
+            continue
+        label = str(value).strip().lower()
+        if label in {"train", "val"}:
+            return label
+    return None
+
+
 def _load_yaml(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _default_run_stem(selected_date: int) -> str:
+    return f"global_top_band_{int(selected_date)}"
+
+
+def _prepare_run_directory(
+    output_root: Path,
+    *,
+    run_stem: str,
+    output_name: str | None,
+) -> tuple[Path, Path | None]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    # Default to a date-stamped run directory so repeated exports stay on disk.
+    run_dir = output_root / (output_name if output_name is not None else run_stem)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir, None
+
+
+def _promote_production_run(staging_dir: Path, production_dir: Path) -> None:
+    if not staging_dir.exists():
+        raise FileNotFoundError(f"Staging run directory not found: {staging_dir}")
+
+    backup_dir = production_dir.parent / f".{production_dir.name}.previous"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+
+    if production_dir.exists():
+        # Keep the previous production export available until the staged replacement is ready.
+        production_dir.replace(backup_dir)
+
+    try:
+        staging_dir.replace(production_dir)
+    except Exception:
+        if backup_dir.exists() and not production_dir.exists():
+            backup_dir.replace(production_dir)
+        raise
+
+    shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+def _summary_artifact_path(path: Path) -> str:
+    # Store run-local artifact references so staged production exports remain valid after promotion.
+    return str(path.name)
 
 
 def _parse_yyyymmdd(value: Any) -> date:
@@ -175,9 +240,13 @@ def select_export_indices(
 
     if exact_date is not None:
         selected = _parse_yyyymmdd(exact_date)
-        matching_indices = [idx for sample_date, idx in parsed_dates if sample_date == selected]
+        matching_indices = [
+            idx for sample_date, idx in parsed_dates if sample_date == selected
+        ]
         if not matching_indices:
-            raise RuntimeError(f"No manifest rows matched exact date {int(exact_date)}.")
+            raise RuntimeError(
+                f"No manifest rows matched exact date {int(exact_date)}."
+            )
     elif iso_year is not None and iso_week is not None:
         matching_dates = [
             sample_date
@@ -191,10 +260,14 @@ def select_export_indices(
         # One ISO week can contain several daily snapshots in this manifest. Keep the
         # export single-raster by choosing the earliest date that week.
         selected = min(matching_dates)
-        matching_indices = [idx for sample_date, idx in parsed_dates if sample_date == selected]
+        matching_indices = [
+            idx for sample_date, idx in parsed_dates if sample_date == selected
+        ]
     else:
         selected = min(sample_date for sample_date, _ in parsed_dates)
-        matching_indices = [idx for sample_date, idx in parsed_dates if sample_date == selected]
+        matching_indices = [
+            idx for sample_date, idx in parsed_dates if sample_date == selected
+        ]
 
     sorted_indices = sorted(matching_indices, key=lambda idx: _date_sort_key(rows[idx]))
     iso_info = selected.isocalendar()
@@ -261,7 +334,9 @@ def _argo_point_features_for_patch(
     pixel_width = (right - left) / float(patch_width)
     pixel_height = (top - bottom) / float(patch_height)
     if pixel_width <= 0.0 or pixel_height <= 0.0:
-        raise RuntimeError("Encountered non-positive pixel resolution while building Argo points.")
+        raise RuntimeError(
+            "Encountered non-positive pixel resolution while building Argo points."
+        )
 
     features: list[dict[str, Any]] = []
     # Keep one marker per horizontal pixel and use the shallowest valid Argo value so
@@ -290,13 +365,41 @@ def _argo_point_features_for_patch(
                     "pixel_col": int(point_col),
                     "observed_temp_c": observed_temp_c,
                     "ground_truth_top_band_temp_c": (
-                        None if not np.isfinite(ground_truth_temp_c) else ground_truth_temp_c
+                        None
+                        if not np.isfinite(ground_truth_temp_c)
+                        else ground_truth_temp_c
                     ),
                     "observed_depth_index": observed_depth_index,
                 },
             }
         )
     return features
+
+
+def _patch_split_feature_for_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    split_label = _split_label_for_row(row)
+    if split_label is None:
+        return None
+
+    left, bottom, right, top = _row_bounds(row)
+    # GeoJSON polygon rings are lon/lat pairs and must repeat the first vertex at the end.
+    ring = [
+        [left, top],
+        [right, top],
+        [right, bottom],
+        [left, bottom],
+        [left, top],
+    ]
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Polygon", "coordinates": [ring]},
+        "properties": {
+            "date": int(row["date"]),
+            "patch_id": str(row.get("patch_id", "")),
+            "export_index": int(row.get("export_index", -1)),
+            "split": split_label,
+        },
+    }
 
 
 def build_mosaic_layout(
@@ -315,7 +418,9 @@ def build_mosaic_layout(
     pixel_width = (right0 - left0) / float(patch_width)
     pixel_height = (top0 - bottom0) / float(patch_height)
     if pixel_width <= 0.0 or pixel_height <= 0.0:
-        raise RuntimeError("Encountered non-positive pixel resolution while building the mosaic.")
+        raise RuntimeError(
+            "Encountered non-positive pixel resolution while building the mosaic."
+        )
 
     bounds = np.asarray([_row_bounds(row) for row in rows], dtype=np.float64)
     mosaic_left = float(bounds[:, 0].min())
@@ -515,7 +620,9 @@ def write_global_top_band_geotiff(
             unit="chunk",
         ):
             row_stop = min(row_off + block_height, layout.height)
-            sum_block = np.asarray(accumulator.sum_array[row_off:row_stop, :], dtype=np.float64)
+            sum_block = np.asarray(
+                accumulator.sum_array[row_off:row_stop, :], dtype=np.float64
+            )
             count_block = np.asarray(
                 accumulator.count_array[row_off:row_stop, :],
                 dtype=np.uint16,
@@ -621,7 +728,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-name",
         type=str,
         default=None,
-        help="Optional output filename stem. Defaults to the selected date.",
+        help=(
+            "Optional run directory and filename stem. "
+            "When omitted, the export uses the selected date as "
+            "'global_top_band_<YYYYMMDD>'."
+        ),
     )
     parser.add_argument(
         "--nodata",
@@ -661,10 +772,13 @@ def main() -> None:
     run_stem = (
         args.output_name
         if args.output_name is not None
-        else f"global_top_band_{selection.selected_date}"
+        else _default_run_stem(selection.selected_date)
     )
-    run_dir = args.output_root / run_stem
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir, production_dir = _prepare_run_directory(
+        args.output_root,
+        run_stem=run_stem,
+        output_name=args.output_name,
+    )
 
     selected_rows = [dataset._rows[idx] for idx in selection.indices]
     selected_manifest = pd.DataFrame.from_records(selected_rows)
@@ -702,13 +816,16 @@ def main() -> None:
         if bool(args.export_ground_truth)
         else None
     )
+    patch_splits_geojson_path = run_dir / f"{run_stem}_patch_splits.geojson"
     argo_points_writer = (
         GeoJSONPointWriter(argo_points_geojson_path)
         if argo_points_geojson_path is not None
         else None
     )
+    patch_splits_writer = GeoJSONPointWriter(patch_splits_geojson_path)
     if argo_points_writer is not None:
         argo_points_writer.open()
+    patch_splits_writer.open()
 
     print(
         "Preparing global export: "
@@ -722,7 +839,9 @@ def main() -> None:
 
     device = choose_device(args.device)
     visible_gpu_count = torch.cuda.device_count() if device.type == "cuda" else 0
-    use_multi_gpu = bool(args.multi_gpu and device.type == "cuda" and visible_gpu_count > 1)
+    use_multi_gpu = bool(
+        args.multi_gpu and device.type == "cuda" and visible_gpu_count > 1
+    )
     print(
         "Using device setup: "
         f"device={device}, "
@@ -787,11 +906,22 @@ def main() -> None:
             else None
         )
         argo_batch_celsius = (
-            temperature_normalize(mode="denorm", tensor=batch["x"]).detach().float().cpu().numpy()
+            temperature_normalize(mode="denorm", tensor=batch["x"])
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
         )
-        argo_valid_mask_batch = batch["x_valid_mask"].detach().cpu().numpy().astype(bool, copy=False)
+        argo_valid_mask_batch = (
+            batch["x_valid_mask"].detach().cpu().numpy().astype(bool, copy=False)
+        )
 
-        for local_idx, row in enumerate(selected_rows[start : start + len(batch_indices)]):
+        for local_idx, row in enumerate(
+            selected_rows[start : start + len(batch_indices)]
+        ):
+            patch_split_feature = _patch_split_feature_for_row(row)
+            if patch_split_feature is not None:
+                patch_splits_writer.write_feature(patch_split_feature)
             _accumulate_patch_into_arrays(
                 pred_accumulator.sum_array,
                 pred_accumulator.count_array,
@@ -821,6 +951,7 @@ def main() -> None:
         _flush_accumulator(gt_accumulator)
     if argo_points_writer is not None:
         argo_points_writer.close()
+    patch_splits_writer.close()
     print(f"Finished inference for {len(selection.indices)} patches.")
 
     prediction_tif_path = run_dir / f"{run_stem}_prediction.tif"
@@ -858,6 +989,7 @@ def main() -> None:
         )
         print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path}")
         print(f"Wrote Argo points GeoJSON: {argo_points_geojson_path}")
+    print(f"Wrote patch split GeoJSON: {patch_splits_geojson_path}")
 
     run_summary = {
         "selected_date": int(selection.selected_date),
@@ -873,10 +1005,25 @@ def main() -> None:
         "multi_gpu_enabled": bool(use_multi_gpu),
         "batch_size": int(batch_size),
         "split": str(args.split),
-        "prediction_tif_path": str(prediction_tif_path),
-        "ground_truth_tif_path": None if ground_truth_tif_path is None else str(ground_truth_tif_path),
-        "argo_points_geojson_path": None if argo_points_geojson_path is None else str(argo_points_geojson_path),
-        "argo_point_count": 0 if argo_points_writer is None else int(argo_points_writer.feature_count),
+        "run_dir": (
+            str(production_dir) if production_dir is not None else str(run_dir)
+        ),
+        "prediction_tif_path": _summary_artifact_path(prediction_tif_path),
+        "ground_truth_tif_path": (
+            None
+            if ground_truth_tif_path is None
+            else _summary_artifact_path(ground_truth_tif_path)
+        ),
+        "argo_points_geojson_path": (
+            None
+            if argo_points_geojson_path is None
+            else _summary_artifact_path(argo_points_geojson_path)
+        ),
+        "argo_point_count": (
+            0 if argo_points_writer is None else int(argo_points_writer.feature_count)
+        ),
+        "patch_splits_geojson_path": _summary_artifact_path(patch_splits_geojson_path),
+        "patch_split_count": int(patch_splits_writer.feature_count),
     }
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
@@ -886,6 +1033,16 @@ def main() -> None:
         _cleanup_accumulator(gt_accumulator)
     scratch_dir.rmdir()
 
+    if production_dir is not None:
+        _promote_production_run(run_dir, production_dir)
+        run_dir = production_dir
+        prediction_tif_path = run_dir / prediction_tif_path.name
+        if ground_truth_tif_path is not None:
+            ground_truth_tif_path = run_dir / ground_truth_tif_path.name
+        if argo_points_geojson_path is not None:
+            argo_points_geojson_path = run_dir / argo_points_geojson_path.name
+        patch_splits_geojson_path = run_dir / patch_splits_geojson_path.name
+
     print(
         "Export complete: "
         f"date={selection.selected_date}, "
@@ -893,7 +1050,8 @@ def main() -> None:
         f"patches={len(selection.indices)}, "
         f"prediction={prediction_tif_path}, "
         f"ground_truth={ground_truth_tif_path}, "
-        f"argo_points={argo_points_geojson_path}"
+        f"argo_points={argo_points_geojson_path}, "
+        f"patch_splits={patch_splits_geojson_path}"
     )
 
 

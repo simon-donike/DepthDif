@@ -61,7 +61,9 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         else:
             state_dict = checkpoint
         if not isinstance(state_dict, dict):
-            raise RuntimeError("Autoencoder checkpoint must contain a state_dict mapping.")
+            raise RuntimeError(
+                "Autoencoder checkpoint must contain a state_dict mapping."
+            )
 
         # Lightning checkpoints often namespace weights under "model.".
         # Keep best-effort prefix stripping for common wrappers.
@@ -122,7 +124,9 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         if ae_checkpoint not in (False, None):
             ae_checkpoint_path = Path(str(ae_checkpoint)).expanduser()
             if not ae_checkpoint_path.is_file():
-                raise FileNotFoundError(f"AE checkpoint not found: {ae_checkpoint_path}")
+                raise FileNotFoundError(
+                    f"AE checkpoint not found: {ae_checkpoint_path}"
+                )
             checkpoint = torch.load(ae_checkpoint_path, map_location="cpu")
             state_dict = cls._extract_autoencoder_state_dict(checkpoint)
             missing, unexpected = autoencoder.load_state_dict(state_dict, strict=False)
@@ -133,13 +137,17 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                     stacklevel=2,
                 )
 
-        latent_channels = int(latent_cfg.get("latent_channels", autoencoder.latent_channels))
+        latent_channels = int(
+            latent_cfg.get("latent_channels", autoencoder.latent_channels)
+        )
         if latent_channels != int(autoencoder.latent_channels):
             raise ValueError(
                 "latent.latent_channels must match AE config latent_channels. "
                 f"Got {latent_channels} vs {int(autoencoder.latent_channels)}."
             )
-        spatial_downsample = int(latent_cfg.get("spatial_downsample", autoencoder.spatial_downsample))
+        spatial_downsample = int(
+            latent_cfg.get("spatial_downsample", autoencoder.spatial_downsample)
+        )
         if spatial_downsample != int(autoencoder.spatial_downsample):
             raise ValueError(
                 "latent.spatial_downsample must match AE config spatial_downsample. "
@@ -169,12 +177,22 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             condition_include_eo=bool(m.get("condition_include_eo", True)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", False)),
-            mask_loss_with_valid_pixels=bool(m.get("mask_loss_with_valid_pixels", True)),
+            mask_loss_with_valid_pixels=bool(
+                m.get("mask_loss_with_valid_pixels", True)
+            ),
             parameterization=str(m.get("parameterization", "x0")),
-            num_timesteps=int(noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))),
-            noise_schedule=str(noise_cfg.get("schedule", m.get("noise_schedule", "cosine"))),
-            noise_beta_start=float(noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))),
-            noise_beta_end=float(noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))),
+            num_timesteps=int(
+                noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
+            ),
+            noise_schedule=str(
+                noise_cfg.get("schedule", m.get("noise_schedule", "cosine"))
+            ),
+            noise_beta_start=float(
+                noise_cfg.get("beta_start", m.get("noise_beta_start", 1e-4))
+            ),
+            noise_beta_end=float(
+                noise_cfg.get("beta_end", m.get("noise_beta_end", 2e-2))
+            ),
             **unet_kwargs,
             coord_conditioning_enabled=bool(coord_cfg.get("enabled", False)),
             coord_encoding=str(coord_cfg.get("encoding", "unit_sphere")),
@@ -200,13 +218,21 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             val_ddim_num_timesteps=int(val_sampling_cfg.get("ddim_num_timesteps", 200)),
             val_ddim_eta=float(val_sampling_cfg.get("ddim_eta", 0.0)),
             log_intermediates=bool(
-                val_sampling_cfg.get("log_intermediates", m.get("log_intermediates", True))
+                val_sampling_cfg.get(
+                    "log_intermediates", m.get("log_intermediates", True)
+                )
             ),
             ambient_occlusion_enabled=bool(ambient_cfg.get("enabled", False)),
             ambient_further_drop_prob=float(ambient_cfg.get("further_drop_prob", 0.1)),
-            ambient_apply_to_noisy_branch=bool(ambient_cfg.get("apply_to_noisy_branch", True)),
-            ambient_shared_spatial_mask=bool(ambient_cfg.get("shared_spatial_mask", True)),
-            ambient_min_kept_observed_pixels=int(ambient_cfg.get("min_kept_observed_pixels", 1)),
+            ambient_apply_to_noisy_branch=bool(
+                ambient_cfg.get("apply_to_noisy_branch", True)
+            ),
+            ambient_shared_spatial_mask=bool(
+                ambient_cfg.get("shared_spatial_mask", True)
+            ),
+            ambient_min_kept_observed_pixels=int(
+                ambient_cfg.get("min_kept_observed_pixels", 1)
+            ),
             ambient_require_x0_parameterization=bool(
                 ambient_cfg.get("require_x0_parameterization", True)
             ),
@@ -216,9 +242,13 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             max_full_reconstruction_samples=int(
                 val_sampling_cfg.get("max_full_reconstruction_samples", 4)
             ),
-            postprocess_gaussian_blur_enabled=bool(gaussian_blur_cfg.get("enabled", False)),
+            postprocess_gaussian_blur_enabled=bool(
+                gaussian_blur_cfg.get("enabled", False)
+            ),
             postprocess_gaussian_blur_sigma=float(gaussian_blur_cfg.get("sigma", 0.5)),
-            postprocess_gaussian_blur_kernel_size=int(gaussian_blur_cfg.get("kernel_size", 3)),
+            postprocess_gaussian_blur_kernel_size=int(
+                gaussian_blur_cfg.get("kernel_size", 3)
+            ),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 100)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 10)),
@@ -233,7 +263,9 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         return value
 
     def _maybe_decode_with_autoencoder(self, value: torch.Tensor) -> torch.Tensor:
-        if value.ndim == 4 and int(value.size(1)) == int(self.autoencoder.latent_channels):
+        if value.ndim == 4 and int(value.size(1)) == int(
+            self.autoencoder.latent_channels
+        ):
             if self.autoencoder_frozen:
                 with torch.no_grad():
                     return self.autoencoder.decode(value)

@@ -168,9 +168,9 @@ def log_wandb_denoise_timestep_grid(
         if int(step_idx) != 0 and int(step_idx) != final_step
     ]
     if len(intermediate_candidates) >= 14:
-        pick_positions = np.linspace(
-            0, len(intermediate_candidates) - 1, num=14
-        ).round().astype(int)
+        pick_positions = (
+            np.linspace(0, len(intermediate_candidates) - 1, num=14).round().astype(int)
+        )
         picked_intermediates = [intermediate_candidates[int(i)] for i in pick_positions]
     else:
         picked_intermediates = intermediate_candidates
@@ -215,12 +215,16 @@ def log_wandb_denoise_timestep_grid(
         image_plot = torch.from_numpy(
             _temperature_band_to_plot_image(image_t, mask=mask_i)
         ).to(device=image_t.device, dtype=image_t.dtype)
-        image_plot = F.interpolate(
-            image_plot.unsqueeze(0).unsqueeze(0),
-            size=(tile_size_px, tile_size_px),
-            mode="bilinear",
-            align_corners=False,
-        ).squeeze(0).squeeze(0)
+        image_plot = (
+            F.interpolate(
+                image_plot.unsqueeze(0).unsqueeze(0),
+                size=(tile_size_px, tile_size_px),
+                mode="bilinear",
+                align_corners=False,
+            )
+            .squeeze(0)
+            .squeeze(0)
+        )
         image_np = image_plot.cpu().numpy()
         rgb = (cmap_fn(image_np)[..., :3] * 255.0).astype(np.uint8)
 
@@ -398,9 +402,7 @@ def log_wandb_diffusion_schedule_profile(
         alpha_bar_t = alpha_cumprod[t_idx]
         beta_t = betas[t_idx]
         sqrt_alpha_bar_t = torch.sqrt(torch.clamp(alpha_bar_t, min=0.0))
-        sqrt_one_minus_alpha_bar_t = torch.sqrt(
-            torch.clamp(1.0 - alpha_bar_t, min=0.0)
-        )
+        sqrt_one_minus_alpha_bar_t = torch.sqrt(torch.clamp(1.0 - alpha_bar_t, min=0.0))
         snr_t = alpha_bar_t / torch.clamp(1.0 - alpha_bar_t, min=float(eps))
         log_snr_t = torch.log10(torch.clamp(snr_t, min=float(eps)))
 
@@ -411,8 +413,10 @@ def log_wandb_diffusion_schedule_profile(
             alpha_bar_prev,
             torch.ones_like(alpha_bar_prev),
         )
-        beta_tilde_t = beta_t * (1.0 - alpha_bar_prev) / torch.clamp(
-            1.0 - alpha_bar_t, min=float(eps)
+        beta_tilde_t = (
+            beta_t
+            * (1.0 - alpha_bar_prev)
+            / torch.clamp(1.0 - alpha_bar_t, min=float(eps))
         )
         beta_tilde_t = torch.clamp(beta_tilde_t, min=0.0)
         return sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t, beta_tilde_t, log_snr_t
@@ -749,7 +753,9 @@ def log_wandb_conditional_reconstruction_grid(
                 col += 1
 
                 if show_target_panel:
-                    axes[row_idx, col].imshow(y_target_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].imshow(
+                        y_target_img, cmap=cmap, vmin=0.0, vmax=1.0
+                    )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
                         axes[row_idx, col].set_title("Target")
@@ -855,7 +861,9 @@ def log_wandb_conditional_reconstruction_grid(
             if not bool(valid_bands[band_idx].item()):
                 continue
             band_val = float(l1_per_band[band_idx].item())
-            l1_logs[f"{metric_prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = band_val
+            l1_logs[f"{metric_prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = (
+                band_val
+            )
             band_x.append(int(band_idx))
             band_y.append(band_val)
 
@@ -1093,8 +1101,12 @@ def log_wandb_glorys_profile_comparison(
             row_i = int(chosen[plot_idx, 0].item())
             col_i = int(chosen[plot_idx, 1].item())
             x_profile = x[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
-            y_hat_profile = y_hat[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
-            y_target_profile = y_target[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            y_hat_profile = (
+                y_hat[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            )
+            y_target_profile = (
+                y_target[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
+            )
             observed_profile = (
                 conditioning_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
             )

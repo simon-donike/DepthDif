@@ -66,9 +66,13 @@ def build_dataset(
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
-        return SurfaceTempPatch4BandsLightDataset.from_config(data_config_path, split="all")
+        return SurfaceTempPatch4BandsLightDataset.from_config(
+            data_config_path, split="all"
+        )
     if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
-        return SurfaceTempPatchOstiaLightDataset.from_config(data_config_path, split="all")
+        return SurfaceTempPatchOstiaLightDataset.from_config(
+            data_config_path, split="all"
+        )
     if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
         return OstiaArgoTiffDataset(
             csv_path=str(
@@ -84,13 +88,19 @@ def build_dataset(
                 ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
             ),
             return_coords=bool(
-                ds_cfg_value(ds_cfg, "output.return_coords", "return_coords", default=True)
+                ds_cfg_value(
+                    ds_cfg, "output.return_coords", "return_coords", default=True
+                )
             ),
             synthetic_mode=bool(
-                ds_cfg_value(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+                ds_cfg_value(
+                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
+                )
             ),
             synthetic_pixel_count=int(
-                ds_cfg_value(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+                ds_cfg_value(
+                    ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20
+                )
             ),
             random_seed=int(
                 ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
@@ -104,7 +114,9 @@ def build_dataset(
 
 def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     """Resolve and validate model type."""
-    model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
+    model_type = str(
+        model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+    ).strip()
     if model_type in {"cond_px_dif", "latent_cond_dif"}:
         return model_type
     raise ValueError(
@@ -164,7 +176,9 @@ def build_model(
     )
 
 
-def resolve_checkpoint_path(ckpt_override: str | None, model_cfg: dict[str, Any]) -> str | None:
+def resolve_checkpoint_path(
+    ckpt_override: str | None, model_cfg: dict[str, Any]
+) -> str | None:
     """Resolve and validate checkpoint path."""
     if ckpt_override:
         ckpt_path = Path(ckpt_override).expanduser()
@@ -233,9 +247,9 @@ def build_random_batch(
 
     x = torch.randn(batch_size, x_channels, height, width, device=device)
     mask_channels = max(1, generated_channels)
-    x_valid_mask = torch.rand(
-        batch_size, mask_channels, height, width, device=device
-    ) > 0.25
+    x_valid_mask = (
+        torch.rand(batch_size, mask_channels, height, width, device=device) > 0.25
+    )
     y_valid_mask = torch.ones(
         batch_size, generated_channels, height, width, device=device, dtype=torch.bool
     )
@@ -269,7 +283,9 @@ def build_random_batch(
         if date_enabled:
             # Match dataset convention for monthly tiles so direct random runs still
             # exercise the date-conditioning path with realistic integer encodings.
-            months = torch.randint(1, 13, (batch_size,), device=device, dtype=torch.long)
+            months = torch.randint(
+                1, 13, (batch_size,), device=device, dtype=torch.long
+            )
             batch["date"] = torch.full_like(months, 2024) * 10000 + months * 100 + 15
 
     return batch

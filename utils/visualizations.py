@@ -66,7 +66,16 @@ def _prepare_argo_profile_scatter(
     )
     height = int(voxel_values.shape[1])
     width = int(voxel_values.shape[2])
-    return filled_coords, valid_values, norm, voxel_values, height, width, depth_values_m, depth_label
+    return (
+        filled_coords,
+        valid_values,
+        norm,
+        voxel_values,
+        height,
+        width,
+        depth_values_m,
+        depth_label,
+    )
 
 
 def save_argo_profile_3d_plot(
@@ -95,12 +104,19 @@ def save_argo_profile_3d_plot(
     Returns:
         Path: Resolved output path for the saved figure.
     """
-    filled_coords, valid_values, norm, voxel_values, height, width, depth_values_m, depth_label = (
-        _prepare_argo_profile_scatter(
-            profile_tensor,
-            depth_axis_m=depth_axis_m,
-            max_depth_levels=max_depth_levels,
-        )
+    (
+        filled_coords,
+        valid_values,
+        norm,
+        voxel_values,
+        height,
+        width,
+        depth_values_m,
+        depth_label,
+    ) = _prepare_argo_profile_scatter(
+        profile_tensor,
+        depth_axis_m=depth_axis_m,
+        max_depth_levels=max_depth_levels,
     )
     cmap = cm.get_cmap("viridis")
     point_colors = cmap(norm(valid_values))
@@ -137,10 +153,14 @@ def save_argo_profile_3d_plot(
     else:
         ax.set_zlim(float(depth_levels), 0.0)
         ax.set_zticks((np.arange(depth_levels, dtype=np.float64) + 0.5).tolist())
-        ax.set_zticklabels([f"{depth_value:.3f}" for depth_value in depth_values_m.tolist()])
+        ax.set_zticklabels(
+            [f"{depth_value:.3f}" for depth_value in depth_values_m.tolist()]
+        )
         ax.tick_params(axis="z", labelsize=6, pad=1)
     ax.view_init(elev=float(elev), azim=float(azim))
-    depth_display_span = int(depth_levels if depth_axis_m is not None else max_depth_levels)
+    depth_display_span = int(
+        depth_levels if depth_axis_m is not None else max_depth_levels
+    )
     ax.set_box_aspect(
         (
             max(height, 1),
@@ -193,12 +213,19 @@ def save_argo_profile_3d_flyaround_gif(
     Returns:
         Path: Resolved output path for the saved GIF.
     """
-    filled_coords, valid_values, norm, voxel_values, height, width, depth_values_m, depth_label = (
-        _prepare_argo_profile_scatter(
-            profile_tensor,
-            depth_axis_m=depth_axis_m,
-            max_depth_levels=max_depth_levels,
-        )
+    (
+        filled_coords,
+        valid_values,
+        norm,
+        voxel_values,
+        height,
+        width,
+        depth_values_m,
+        depth_label,
+    ) = _prepare_argo_profile_scatter(
+        profile_tensor,
+        depth_axis_m=depth_axis_m,
+        max_depth_levels=max_depth_levels,
     )
     cmap = cm.get_cmap("viridis")
     point_colors = cmap(norm(valid_values))
@@ -236,9 +263,13 @@ def save_argo_profile_3d_flyaround_gif(
     else:
         ax.set_zlim(float(depth_levels), 0.0)
         ax.set_zticks((np.arange(depth_levels, dtype=np.float64) + 0.5).tolist())
-        ax.set_zticklabels([f"{depth_value:.3f}" for depth_value in depth_values_m.tolist()])
+        ax.set_zticklabels(
+            [f"{depth_value:.3f}" for depth_value in depth_values_m.tolist()]
+        )
         ax.tick_params(axis="z", labelsize=6, pad=1)
-    depth_display_span = int(depth_levels if depth_axis_m is not None else max_depth_levels)
+    depth_display_span = int(
+        depth_levels if depth_axis_m is not None else max_depth_levels
+    )
     ax.set_box_aspect(
         (
             max(height, 1),
@@ -251,7 +282,9 @@ def save_argo_profile_3d_flyaround_gif(
     mappable.set_array(valid_values)
     fig.colorbar(mappable, ax=ax, shrink=0.78, pad=0.02, label="Value")
 
-    azimuths = np.linspace(float(azim_start), float(azim_end), num=num_frames, endpoint=False)
+    azimuths = np.linspace(
+        float(azim_start), float(azim_end), num=num_frames, endpoint=False
+    )
     phase = np.linspace(0.0, 2.0 * np.pi, num=num_frames, endpoint=False)
     # Add a smooth asymmetric up/down motion so the flyaround reveals depth structure
     # better than a flat orbit and spends more time dipping below the base elevation

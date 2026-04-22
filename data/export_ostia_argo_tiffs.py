@@ -52,16 +52,22 @@ class _ParallelTiffExportDataset(Dataset):
 
 def _single_record_collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     if len(batch) != 1:
-        raise RuntimeError(f"Expected batch_size=1 for export, got batch of size {len(batch)}")
+        raise RuntimeError(
+            f"Expected batch_size=1 for export, got batch of size {len(batch)}"
+        )
     return batch[0]
 
 
-def _resolve_export_indices(total_len: int, *, start_index: int, limit: int | None) -> list[int]:
+def _resolve_export_indices(
+    total_len: int, *, start_index: int, limit: int | None
+) -> list[int]:
     if start_index < 0:
         raise ValueError("start_index must be >= 0.")
     if start_index >= total_len:
         return []
-    stop_index = total_len if limit is None else min(total_len, start_index + max(int(limit), 0))
+    stop_index = (
+        total_len if limit is None else min(total_len, start_index + max(int(limit), 0))
+    )
     return list(range(int(start_index), int(stop_index)))
 
 
@@ -98,8 +104,7 @@ def _write_manifest(records: list[dict[str, Any]], manifest_path: Path) -> None:
         merged_records[int(record["export_index"])] = record
 
     ordered_records = [
-        merged_records[export_index]
-        for export_index in sorted(merged_records)
+        merged_records[export_index] for export_index in sorted(merged_records)
     ]
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     # Replace the manifest atomically so concurrent dataset readers never see a
@@ -289,7 +294,9 @@ def main() -> None:
     records: list[dict[str, Any]] = []
     written_count = 0
     flush_every = max(int(args.flush_every), 1)
-    with tqdm(total=len(export_dataset), desc="Exporting OSTIA/ARGO/GLORYS TIFF triplets") as pbar:
+    with tqdm(
+        total=len(export_dataset), desc="Exporting OSTIA/ARGO/GLORYS TIFF triplets"
+    ) as pbar:
         for record in loader:
             records.append(record)
             written_count += int(record.get("files_written", 0))

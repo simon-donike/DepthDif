@@ -77,7 +77,9 @@ class SaveToDiskTests(unittest.TestCase):
         self.assertTrue(np.isfinite(aligned[0]))
         self.assertAlmostEqual(float(aligned[0]), 12.7551022, places=5)
 
-    def test_align_argo_profile_to_glorys_depths_sorts_and_collapses_duplicates(self) -> None:
+    def test_align_argo_profile_to_glorys_depths_sorts_and_collapses_duplicates(
+        self,
+    ) -> None:
         aligned = OstiaArgoTileDataset._align_argo_profile_to_glorys_depths(
             temperature=np.asarray([3.0, 1.0, 2.0, 4.0], dtype=np.float32),
             depth=np.asarray([30.0, 10.0, 20.0, 20.0], dtype=np.float32),
@@ -122,8 +124,12 @@ class SaveToDiskTests(unittest.TestCase):
                 (50, 4, 4),
             )
             dataset._load_argo_profiles_for_date = lambda **_: {
-                "temperature": torch.tensor([[1.0, 2.0, 3.0], [4.0, 6.0, 8.0]], dtype=torch.float32),
-                "depth": torch.tensor([[10.0, 20.0, 30.0], [15.0, 25.0, 35.0]], dtype=torch.float32),
+                "temperature": torch.tensor(
+                    [[1.0, 2.0, 3.0], [4.0, 6.0, 8.0]], dtype=torch.float32
+                ),
+                "depth": torch.tensor(
+                    [[10.0, 20.0, 30.0], [15.0, 25.0, 35.0]], dtype=torch.float32
+                ),
                 "latitude": torch.tensor([10.25, 10.75], dtype=torch.float32),
                 "longitude": torch.tensor([20.25, 20.75], dtype=torch.float32),
                 "profile_idx": torch.tensor([0, 1], dtype=torch.long),
@@ -169,13 +175,20 @@ class SaveToDiskTests(unittest.TestCase):
                 "_count_valid_spatial_observations_from_argo_tif",
                 return_value=16,
             ):
-                record = dataset.save_to_disk(0, output_root=output_root, write_manifest=False)
+                record = dataset.save_to_disk(
+                    0, output_root=output_root, write_manifest=False
+                )
 
             self.assertEqual(record["files_written"], 0)
-            self.assertEqual(record["argo_tif_path"], argo_path.relative_to(output_root).as_posix())
-            self.assertEqual(record["ostia_tif_path"], ostia_path.relative_to(output_root).as_posix())
             self.assertEqual(
-                record["glorys_tif_path"], glorys_path.relative_to(output_root).as_posix()
+                record["argo_tif_path"], argo_path.relative_to(output_root).as_posix()
+            )
+            self.assertEqual(
+                record["ostia_tif_path"], ostia_path.relative_to(output_root).as_posix()
+            )
+            self.assertEqual(
+                record["glorys_tif_path"],
+                glorys_path.relative_to(output_root).as_posix(),
             )
 
     def test_writes_missing_pair_after_loading_sample(self) -> None:
@@ -184,15 +197,21 @@ class SaveToDiskTests(unittest.TestCase):
             dataset = _make_dataset(temp_dir)
             output_root = temp_dir / "export"
 
-            with mock.patch.object(dataset, "__getitem__", return_value=_make_sample()) as getitem_mock:
+            with mock.patch.object(
+                dataset, "__getitem__", return_value=_make_sample()
+            ) as getitem_mock:
                 with mock.patch.object(dataset, "_write_sample_tiffs") as write_mock:
-                    record = dataset.save_to_disk(0, output_root=output_root, write_manifest=False)
+                    record = dataset.save_to_disk(
+                        0, output_root=output_root, write_manifest=False
+                    )
 
             self.assertEqual(getitem_mock.call_count, 1)
             self.assertEqual(write_mock.call_count, 1)
             self.assertEqual(record["files_written"], 1)
 
-    def test_write_sample_tiffs_preserves_georeferencing_and_depth_metadata(self) -> None:
+    def test_write_sample_tiffs_preserves_georeferencing_and_depth_metadata(
+        self,
+    ) -> None:
         try:
             import rasterio
         except ImportError:
@@ -230,8 +249,13 @@ class SaveToDiskTests(unittest.TestCase):
                 self.assertEqual(ds.descriptions[0], "argo_glorys_level_0_1.000m")
                 self.assertEqual(ds.descriptions[1], "argo_glorys_level_1_2.000m")
                 self.assertEqual(ds.descriptions[2], "argo_glorys_level_2_3.000m")
-                self.assertEqual(ds.tags()["argo_depth_semantics"], "glorys_depth_index")
-                self.assertEqual(ds.tags()["argo_glorys_depth_m"], "1.000|2.000|3.000|4.000|5.000|6.000|7.000|8.000|9.000|10.000|11.000|12.000|13.000|14.000|15.000|16.000|17.000|18.000|19.000|20.000|21.000|22.000|23.000|24.000|25.000|26.000|27.000|28.000|29.000|30.000|31.000|32.000|33.000|34.000|35.000|36.000|37.000|38.000|39.000|40.000|41.000|42.000|43.000|44.000|45.000|46.000|47.000|48.000|49.000|50.000")
+                self.assertEqual(
+                    ds.tags()["argo_depth_semantics"], "glorys_depth_index"
+                )
+                self.assertEqual(
+                    ds.tags()["argo_glorys_depth_m"],
+                    "1.000|2.000|3.000|4.000|5.000|6.000|7.000|8.000|9.000|10.000|11.000|12.000|13.000|14.000|15.000|16.000|17.000|18.000|19.000|20.000|21.000|22.000|23.000|24.000|25.000|26.000|27.000|28.000|29.000|30.000|31.000|32.000|33.000|34.000|35.000|36.000|37.000|38.000|39.000|40.000|41.000|42.000|43.000|44.000|45.000|46.000|47.000|48.000|49.000|50.000",
+                )
 
             with rasterio.open(ostia_path) as ds:
                 self.assertEqual(ds.crs.to_string(), "EPSG:4326")
@@ -240,7 +264,9 @@ class SaveToDiskTests(unittest.TestCase):
 
             with rasterio.open(glorys_path) as ds:
                 self.assertEqual(ds.crs.to_string(), "EPSG:4326")
-                self.assertEqual(ds.tags()["value_encoding"], "packed_int16_celsius_x100")
+                self.assertEqual(
+                    ds.tags()["value_encoding"], "packed_int16_celsius_x100"
+                )
 
     def test_raises_on_partial_existing_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -258,7 +284,9 @@ class SaveToDiskTests(unittest.TestCase):
                 side_effect=AssertionError("should not load sample"),
             ):
                 with self.assertRaises(FileExistsError):
-                    dataset.save_to_disk(0, output_root=output_root, write_manifest=False)
+                    dataset.save_to_disk(
+                        0, output_root=output_root, write_manifest=False
+                    )
 
     def test_overwrite_existing_pair_loads_and_rewrites(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -276,7 +304,9 @@ class SaveToDiskTests(unittest.TestCase):
             ostia_path.write_bytes(b"ostia")
             glorys_path.write_bytes(b"glorys")
 
-            with mock.patch.object(dataset, "__getitem__", return_value=_make_sample()) as getitem_mock:
+            with mock.patch.object(
+                dataset, "__getitem__", return_value=_make_sample()
+            ) as getitem_mock:
                 with mock.patch.object(dataset, "_write_sample_tiffs") as write_mock:
                     record = dataset.save_to_disk(
                         0,

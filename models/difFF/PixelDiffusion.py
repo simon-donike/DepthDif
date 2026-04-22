@@ -881,7 +881,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         if mask.ndim != 4:
             raise RuntimeError(f"{mask_name} must be shaped as (B,C,H,W) or (B,H,W).")
         if int(mask.size(0)) != int(reference.size(0)):
-            raise RuntimeError(f"{mask_name} batch size does not match reference batch size.")
+            raise RuntimeError(
+                f"{mask_name} batch size does not match reference batch size."
+            )
         if int(mask.size(-2)) != int(reference.size(-2)) or int(mask.size(-1)) != int(
             reference.size(-1)
         ):
@@ -909,7 +911,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         if valid_mask is None:
             return None
 
-        base_mask = (valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+        base_mask = (valid_mask > 0.5).to(
+            dtype=reference.dtype, device=reference.device
+        )
         base_mask = self._align_valid_mask_to_reference(
             base_mask, reference, mask_name="valid_mask"
         )
@@ -927,7 +931,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             if channels > 1:
                 keep_draw = keep_draw.expand(-1, channels, -1, -1)
         else:
-            keep_draw = (torch.rand_like(base_mask) < keep_prob).to(dtype=base_mask.dtype)
+            keep_draw = (torch.rand_like(base_mask) < keep_prob).to(
+                dtype=base_mask.dtype
+            )
 
         # Further corruption only removes existing observations; it cannot add new ones.
         further_mask = base_mask * keep_draw
@@ -937,18 +943,22 @@ class PixelDiffusionConditional(pl.LightningModule):
         flat_base = base_mask.reshape(bsz, -1)
         flat_further = further_mask.reshape(bsz, -1)
         for batch_idx in range(bsz):
-            observed_idx = torch.nonzero(flat_base[batch_idx] > 0.5, as_tuple=False).squeeze(1)
+            observed_idx = torch.nonzero(
+                flat_base[batch_idx] > 0.5, as_tuple=False
+            ).squeeze(1)
             if observed_idx.numel() == 0:
                 continue
-            min_keep = min(self.ambient_min_kept_observed_pixels, int(observed_idx.numel()))
+            min_keep = min(
+                self.ambient_min_kept_observed_pixels, int(observed_idx.numel())
+            )
             kept = int((flat_further[batch_idx] > 0.5).sum().item())
             if kept >= min_keep:
                 continue
             # Keep random originally-observed positions so ambient supervision is never degenerate.
             needed = min_keep - kept
-            choose = torch.randperm(int(observed_idx.numel()), device=observed_idx.device)[
-                :needed
-            ]
+            choose = torch.randperm(
+                int(observed_idx.numel()), device=observed_idx.device
+            )[:needed]
             flat_further[batch_idx, observed_idx[choose]] = 1.0
         return flat_further.view_as(further_mask)
 
@@ -961,7 +971,9 @@ class PixelDiffusionConditional(pl.LightningModule):
     ) -> torch.Tensor | None:
         gate_mask: torch.Tensor | None = None
         if y_valid_mask is not None:
-            gate_mask = (y_valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+            gate_mask = (y_valid_mask > 0.5).to(
+                dtype=reference.dtype, device=reference.device
+            )
             gate_mask = self._align_valid_mask_to_reference(
                 gate_mask, reference, mask_name="y_valid_mask"
             )
@@ -986,7 +998,9 @@ class PixelDiffusionConditional(pl.LightningModule):
     ) -> torch.Tensor | None:
         if y_valid_mask is None:
             return None
-        loss_mask = (y_valid_mask > 0.5).to(dtype=reference.dtype, device=reference.device)
+        loss_mask = (y_valid_mask > 0.5).to(
+            dtype=reference.dtype, device=reference.device
+        )
         return self._align_valid_mask_to_reference(
             loss_mask, reference, mask_name="y_valid_mask"
         )
@@ -1032,9 +1046,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_parts: list[torch.Tensor] = []
         if self.condition_include_eo:
             if eo is None:
-                raise RuntimeError(
-                    "condition_include_eo=true requires batch['eo']."
-                )
+                raise RuntimeError("condition_include_eo=true requires batch['eo'].")
             condition_parts.append(self.input_T(eo))
 
         data_t = self.input_T(x)
@@ -1189,7 +1201,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         if return_x0_intermediates:
             final_sample, intermediates, x0_intermediates = model_output
             out_intermediates = [
-                (step_idx, self.output_T(sample_t)) for step_idx, sample_t in intermediates
+                (step_idx, self.output_T(sample_t))
+                for step_idx, sample_t in intermediates
             ]
             out_x0_intermediates = [
                 (step_idx, self.output_T(sample_t))
@@ -1271,7 +1284,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         keep_mask = self._align_valid_mask_to_reference(
             keep_mask, tensor, mask_name="y_valid_mask"
         )
-        return torch.where(keep_mask > 0.5, tensor, torch.full_like(tensor, float("nan")))
+        return torch.where(
+            keep_mask > 0.5, tensor, torch.full_like(tensor, float("nan"))
+        )
 
     def _apply_postprocess_merge_observed_pixels(
         self,
@@ -1302,7 +1317,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             raise RuntimeError(
                 "valid_mask must be shaped as (B,C,H,W) or (B,H,W) in predict_step."
             )
-        if keep_mask.shape[0] != generated.shape[0] or keep_mask.shape[2:] != generated.shape[2:]:
+        if (
+            keep_mask.shape[0] != generated.shape[0]
+            or keep_mask.shape[2:] != generated.shape[2:]
+        ):
             raise RuntimeError(
                 f"valid_mask shape {tuple(keep_mask.shape)} does not match generated "
                 f"shape {tuple(generated.shape)}."
@@ -1564,7 +1582,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             sync_dist=True,
             batch_size=1,
         )
-        self._log_validation_triplet_stats(x=placeholder, y=placeholder, y_hat=placeholder)
+        self._log_validation_triplet_stats(
+            x=placeholder, y=placeholder, y_hat=placeholder
+        )
         self._log_common_batch_stats(
             placeholder,
             prefix="val_pred",
@@ -1599,7 +1619,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             sampler_for_profile = (
                 self.val_sampler if self.val_sampler is not None else self.model.sampler
             )
-            if sampler_for_profile is not None and int(sampler_for_profile.num_timesteps) > 0:
+            if (
+                sampler_for_profile is not None
+                and int(sampler_for_profile.num_timesteps) > 0
+            ):
                 log_wandb_diffusion_schedule_profile(
                     logger=self.logger,
                     sampler=sampler_for_profile,
@@ -1644,7 +1667,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             }
             if self.log_intermediates:
                 sampler_for_val = (
-                    self.val_sampler if self.val_sampler is not None else self.model.sampler
+                    self.val_sampler
+                    if self.val_sampler is not None
+                    else self.model.sampler
                 )
                 total_steps = int(sampler_for_val.num_timesteps)
                 denoise_capture_steps = build_evenly_spaced_capture_steps(
@@ -1668,7 +1693,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_denorm = temperature_normalize(mode="denorm", tensor=y)
             target_denorm = temperature_normalize(mode="denorm", tensor=target)
             eo_denorm = (
-                temperature_normalize(mode="denorm", tensor=eo) if eo is not None else None
+                temperature_normalize(mode="denorm", tensor=eo)
+                if eo is not None
+                else None
             )
             eval_mask = self._build_task_supervision_mask(
                 reference=target_denorm,
@@ -1690,14 +1717,18 @@ class PixelDiffusionConditional(pl.LightningModule):
                     # Standard and synthetic runs should plot valid y pixels that were
                     # never available to the model through the sparse x conditioning.
                     generated_profile_mask = y_mask_bool & ~x_mask_bool
-            y_denorm_masked = self._apply_postprocess_invalid_to_nan(y_denorm, y_valid_mask)
+            y_denorm_masked = self._apply_postprocess_invalid_to_nan(
+                y_denorm, y_valid_mask
+            )
             target_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 target_denorm, eval_mask
             )
 
             recon_batch_size = int(target_denorm.size(0))
             if eval_mask is None:
-                eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(target_denorm)
+                eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(
+                    target_denorm
+                )
             else:
                 eval_support = (
                     (eval_mask > 0.5)
@@ -1720,7 +1751,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             # computed when an entire band is valid because masked irregular subsets do
             # not define a stable structural-similarity window.
             try:
-                from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+                from skimage.metrics import (
+                    peak_signal_noise_ratio,
+                    structural_similarity,
+                )
 
                 y_np = target_denorm.detach().float().cpu().numpy()
                 y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
@@ -1759,7 +1793,9 @@ class PixelDiffusionConditional(pl.LightningModule):
                         psnr_vals.append(
                             float(
                                 peak_signal_noise_ratio(
-                                    y_band_valid, y_hat_band_valid, data_range=data_range
+                                    y_band_valid,
+                                    y_hat_band_valid,
+                                    data_range=data_range,
                                 )
                             )
                         )
@@ -1984,9 +2020,12 @@ class PixelDiffusionConditional(pl.LightningModule):
             observed_fraction_original = self._observed_fraction(original_valid_mask)
             observed_fraction_further = self._observed_fraction(further_valid_mask)
             drop_denom = torch.clamp(observed_fraction_original, min=1e-8)
-            further_drop_fraction = torch.clamp(
-                observed_fraction_original - observed_fraction_further, min=0.0
-            ) / drop_denom
+            further_drop_fraction = (
+                torch.clamp(
+                    observed_fraction_original - observed_fraction_further, min=0.0
+                )
+                / drop_denom
+            )
             self.log(
                 "train/ambient_further_drop_fraction",
                 further_drop_fraction,
@@ -2126,9 +2165,12 @@ class PixelDiffusionConditional(pl.LightningModule):
             observed_fraction_original = self._observed_fraction(original_valid_mask)
             observed_fraction_further = self._observed_fraction(further_valid_mask)
             drop_denom = torch.clamp(observed_fraction_original, min=1e-8)
-            further_drop_fraction = torch.clamp(
-                observed_fraction_original - observed_fraction_further, min=0.0
-            ) / drop_denom
+            further_drop_fraction = (
+                torch.clamp(
+                    observed_fraction_original - observed_fraction_further, min=0.0
+                )
+                / drop_denom
+            )
             self.log(
                 "val/ambient_further_drop_fraction",
                 further_drop_fraction,
@@ -2260,9 +2302,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             and self.global_step < self.lr_warmup_steps
         ):
             warmup_progress = float(self.global_step + 1) / float(self.lr_warmup_steps)
-            warmup_factor = self.lr_warmup_start_ratio + (
-                1.0 - self.lr_warmup_start_ratio
-            ) * warmup_progress
+            warmup_factor = (
+                self.lr_warmup_start_ratio
+                + (1.0 - self.lr_warmup_start_ratio) * warmup_progress
+            )
             for param_group in optimizer.param_groups:
                 param_group["lr"] = float(self.lr) * warmup_factor
 

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
 from inference.export_global import (
     _argo_point_features_for_patch,
+    _patch_split_feature_for_row,
+    _default_run_stem,
+    _prepare_run_directory,
     build_global_mosaic,
     select_export_indices,
 )
@@ -76,7 +81,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             ],
             dtype=bool,
         )
-        ground_truth_top_band = np.asarray([[12.5, 13.5], [14.5, 15.5]], dtype=np.float32)
+        ground_truth_top_band = np.asarray(
+            [[12.5, 13.5], [14.5, 15.5]], dtype=np.float32
+        )
 
         features = _argo_point_features_for_patch(
             row=row,
@@ -93,7 +100,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(features[0]["properties"]["export_index"], 11)
         self.assertEqual(features[0]["properties"]["observed_depth_index"], 0)
         self.assertEqual(features[0]["properties"]["observed_temp_c"], 11.0)
-        self.assertEqual(features[0]["properties"]["ground_truth_top_band_temp_c"], 12.5)
+        self.assertEqual(
+            features[0]["properties"]["ground_truth_top_band_temp_c"], 12.5
+        )
         self.assertEqual(features[1]["properties"]["observed_depth_index"], 0)
         self.assertEqual(features[1]["properties"]["observed_temp_c"], 35.0)
 
@@ -135,6 +144,61 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(len(features), 1)
         self.assertEqual(features[0]["properties"]["observed_depth_index"], 1)
         self.assertEqual(features[0]["properties"]["observed_temp_c"], 17.0)
+
+    def test_patch_split_feature_builds_closed_polygon_and_keeps_split(self) -> None:
+        row = {
+            "date": 20260105,
+            "patch_id": "patch-9",
+            "export_index": 13,
+            "lat0": -2.0,
+            "lat1": 1.0,
+            "lon0": 10.0,
+            "lon1": 14.0,
+            "split": "train",
+        }
+
+        feature = _patch_split_feature_for_row(row)
+
+        self.assertIsNotNone(feature)
+        assert feature is not None
+        self.assertEqual(feature["geometry"]["type"], "Polygon")
+        self.assertEqual(
+            feature["geometry"]["coordinates"][0],
+            [[10.0, 1.0], [14.0, 1.0], [14.0, -2.0], [10.0, -2.0], [10.0, 1.0]],
+        )
+        self.assertEqual(feature["properties"]["split"], "train")
+        self.assertEqual(feature["properties"]["patch_id"], "patch-9")
+
+    def test_patch_split_feature_skips_rows_without_train_val_label(self) -> None:
+        row = {
+            "date": 20260105,
+            "patch_id": "patch-10",
+            "export_index": 14,
+            "lat0": -2.0,
+            "lat1": 1.0,
+            "lon0": 10.0,
+            "lon1": 14.0,
+            "split": "invalid",
+        }
+
+        self.assertIsNone(_patch_split_feature_for_row(row))
+
+    def test_default_run_stem_keeps_selected_date_in_artifact_names(self) -> None:
+        self.assertEqual(_default_run_stem(20260105), "global_top_band_20260105")
+
+    def test_prepare_run_directory_defaults_to_date_stamped_run_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir) / "outputs"
+
+            run_dir, production_dir = _prepare_run_directory(
+                output_root,
+                run_stem="global_top_band_20260105",
+                output_name=None,
+            )
+
+            self.assertTrue(run_dir.exists())
+            self.assertEqual(run_dir, output_root / "global_top_band_20260105")
+            self.assertIsNone(production_dir)
 
 
 if __name__ == "__main__":

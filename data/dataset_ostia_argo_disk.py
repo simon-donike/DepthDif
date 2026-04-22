@@ -61,7 +61,9 @@ class OstiaArgoTiffDataset(Dataset):
         if df.empty:
             raise RuntimeError(f"CSV has no rows: {self.csv_path}")
 
-        missing_cols = [col for col in self.REQUIRED_PATH_COLUMNS if col not in df.columns]
+        missing_cols = [
+            col for col in self.REQUIRED_PATH_COLUMNS if col not in df.columns
+        ]
         if missing_cols:
             raise RuntimeError(f"Index is missing required columns: {missing_cols}")
         self._glorys_path_col = None
@@ -87,13 +89,17 @@ class OstiaArgoTiffDataset(Dataset):
                     "split='train'/'val' requested but CSV has no split column. "
                     f"Expected one of {list(self.SPLIT_CANDIDATE_COLUMNS)}."
                 )
-            df = df[df[split_col].astype(str).str.lower() == self.split].reset_index(drop=True)
+            df = df[df[split_col].astype(str).str.lower() == self.split].reset_index(
+                drop=True
+            )
         elif self.split != "all":
             raise ValueError("split must be one of: 'all', 'train', 'val'")
 
         df = self._filter_available_exports(df)
         if len(df) == 0:
-            raise RuntimeError("Dataset is empty after split/export-availability filtering.")
+            raise RuntimeError(
+                "Dataset is empty after split/export-availability filtering."
+            )
 
         self._rows = df.to_dict(orient="records")
 
@@ -123,13 +129,19 @@ class OstiaArgoTiffDataset(Dataset):
                 cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=True)
             ),
             return_coords=bool(
-                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=True)
+                cls._cfg_get(
+                    ds_cfg, "output.return_coords", "return_coords", default=True
+                )
             ),
             synthetic_mode=bool(
-                cls._cfg_get(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+                cls._cfg_get(
+                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
+                )
             ),
             synthetic_pixel_count=int(
-                cls._cfg_get(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+                cls._cfg_get(
+                    ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20
+                )
             ),
             random_seed=int(
                 cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
@@ -164,7 +176,11 @@ class OstiaArgoTiffDataset(Dataset):
             return df.reset_index(drop=True)
 
         skipped_reason = (
-            df[cls.EXPORT_SKIPPED_REASON_COLUMN].fillna("").astype(str).str.strip().str.lower()
+            df[cls.EXPORT_SKIPPED_REASON_COLUMN]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
         )
         # Export manifests can include rows that were intentionally skipped and therefore
         # never produced TIFFs. Keep only rows without a concrete skip reason.
@@ -231,7 +247,9 @@ class OstiaArgoTiffDataset(Dataset):
                 f"got {tuple(patch.shape)}"
             )
         if patch.shape[0] == 0:
-            raise RuntimeError("Cannot build GLORYS land mask from an empty depth stack.")
+            raise RuntimeError(
+                "Cannot build GLORYS land mask from an empty depth stack."
+            )
 
         # Keep land/ocean support horizontal; per-depth target support is returned separately via
         # y_valid_mask so downstream code can distinguish bathymetry from land masking.
@@ -245,10 +263,9 @@ class OstiaArgoTiffDataset(Dataset):
         other_path: Path,
         other_meta: dict[str, Any],
     ) -> None:
-        if (
-            int(reference_meta["height"]) != int(other_meta["height"])
-            or int(reference_meta["width"]) != int(other_meta["width"])
-        ):
+        if int(reference_meta["height"]) != int(other_meta["height"]) or int(
+            reference_meta["width"]
+        ) != int(other_meta["width"]):
             raise RuntimeError(
                 "GeoTIFF shape mismatch between exported rasters: "
                 f"{reference_path} ({reference_meta['height']}x{reference_meta['width']}) vs "
@@ -296,6 +313,83 @@ class OstiaArgoTiffDataset(Dataset):
         cos_sum = np.cos(lon0_rad) + np.cos(lon1_rad)
         return float(np.rad2deg(np.arctan2(sin_sum, cos_sum)))
 
+    @staticmethod
+    def _repair_full_border_artifacts_2d(
+        image: np.ndarray,
+        *,
+        zero_border_is_artifact: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        patch = np.asarray(image, dtype=np.float32)
+        if patch.ndim != 2:
+            raise RuntimeError(
+                "Expected 2D image patch for border repair, "
+                f"got shape {tuple(patch.shape)}"
+            )
+        if patch.shape[0] < 2 or patch.shape[1] < 2:
+            return patch.copy(), np.zeros(patch.shape, dtype=bool)
+
+        repaired = patch.copy()
+        repaired_mask = np.zeros(patch.shape, dtype=bool)
+
+        def _edge_is_artifact(edge: np.ndarray) -> bool:
+            finite = np.isfinite(edge)
+            if not np.any(finite):
+                return True
+            if not zero_border_is_artifact:
+                return False
+            # Treat only fully-zero outer edges as artifacts for OSTIA so partial
+            # low-temperature structure is preserved.
+            return bool(np.all(np.isclose(edge[finite], 0.0, atol=0.0, rtol=0.0)))
+
+        def _edge_is_usable(edge: np.ndarray) -> bool:
+            if not np.all(np.isfinite(edge)):
+                return False
+            if zero_border_is_artifact and np.all(
+                np.isclose(edge, 0.0, atol=0.0, rtol=0.0)
+            ):
+                return False
+            return True
+
+        # Copy from the immediately adjacent interior edge so the fix behaves like
+        # a 1-pixel reflect without touching interior pixels or partial artifacts.
+        if _edge_is_artifact(repaired[0, :]) and _edge_is_usable(repaired[1, :]):
+            repaired[0, :] = repaired[1, :]
+            repaired_mask[0, :] = True
+        if _edge_is_artifact(repaired[-1, :]) and _edge_is_usable(repaired[-2, :]):
+            repaired[-1, :] = repaired[-2, :]
+            repaired_mask[-1, :] = True
+        if _edge_is_artifact(repaired[:, 0]) and _edge_is_usable(repaired[:, 1]):
+            repaired[:, 0] = repaired[:, 1]
+            repaired_mask[:, 0] = True
+        if _edge_is_artifact(repaired[:, -1]) and _edge_is_usable(repaired[:, -2]):
+            repaired[:, -1] = repaired[:, -2]
+            repaired_mask[:, -1] = True
+        return repaired, repaired_mask
+
+    @classmethod
+    def _repair_full_border_artifacts_stack(
+        cls,
+        image_stack: np.ndarray,
+        *,
+        zero_border_is_artifact: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        stack = np.asarray(image_stack, dtype=np.float32)
+        if stack.ndim != 3:
+            raise RuntimeError(
+                "Expected stacked raster with shape (C,H,W) for border repair, "
+                f"got shape {tuple(stack.shape)}"
+            )
+        repaired = stack.copy()
+        repaired_mask = np.zeros(stack.shape, dtype=bool)
+        for band_idx in range(repaired.shape[0]):
+            repaired_band, repaired_band_mask = cls._repair_full_border_artifacts_2d(
+                repaired[band_idx],
+                zero_border_is_artifact=zero_border_is_artifact,
+            )
+            repaired[band_idx] = repaired_band
+            repaired_mask[band_idx] = repaired_band_mask
+        return repaired, repaired_mask
+
     def _build_synthetic_x_from_glorys(
         self,
         *,
@@ -308,11 +402,15 @@ class OstiaArgoTiffDataset(Dataset):
         horizontal_valid = np.asarray(y_valid_mask_np, dtype=bool).any(axis=0)
         candidate_flat = np.flatnonzero(horizontal_valid.reshape(-1))
         if candidate_flat.size == 0:
-            raise RuntimeError("Synthetic mode found no finite GLORYS pixels to sample from.")
+            raise RuntimeError(
+                "Synthetic mode found no finite GLORYS pixels to sample from."
+            )
 
         rng = np.random.default_rng(self.random_seed + int(idx))
         pixel_count_std = max(1.0, 0.1 * float(self.synthetic_pixel_count))
-        sampled_pixel_count = int(np.rint(rng.normal(self.synthetic_pixel_count, pixel_count_std)))
+        sampled_pixel_count = int(
+            np.rint(rng.normal(self.synthetic_pixel_count, pixel_count_std))
+        )
         sampled_pixel_count = int(
             np.clip(
                 sampled_pixel_count,
@@ -322,7 +420,9 @@ class OstiaArgoTiffDataset(Dataset):
         )
         sampled_pixel_count = min(sampled_pixel_count, int(candidate_flat.size))
 
-        selected_flat = rng.choice(candidate_flat, size=sampled_pixel_count, replace=False)
+        selected_flat = rng.choice(
+            candidate_flat, size=sampled_pixel_count, replace=False
+        )
         selected_mask_2d = np.zeros(horizontal_valid.shape, dtype=bool)
         selected_mask_2d.reshape(-1)[selected_flat] = True
 
@@ -345,7 +445,9 @@ class OstiaArgoTiffDataset(Dataset):
             )
         glorys_path = self._resolve_index_path(glorys_raw)
         missing_paths = [
-            str(path) for path in (ostia_path, argo_path, glorys_path) if not path.exists()
+            str(path)
+            for path in (ostia_path, argo_path, glorys_path)
+            if not path.exists()
         ]
         if missing_paths:
             raise FileNotFoundError(
@@ -391,17 +493,33 @@ class OstiaArgoTiffDataset(Dataset):
         y_valid_mask_np = np.isfinite(y_np)
         synthetic_pixel_count: int | None = None
         if self.synthetic_mode:
-            x_np, x_valid_mask_np, synthetic_pixel_count = self._build_synthetic_x_from_glorys(
-                y_np=y_np,
-                y_valid_mask_np=y_valid_mask_np,
-                idx=int(idx),
+            x_np, x_valid_mask_np, synthetic_pixel_count = (
+                self._build_synthetic_x_from_glorys(
+                    y_np=y_np,
+                    y_valid_mask_np=y_valid_mask_np,
+                    idx=int(idx),
+                )
             )
         else:
             x_valid_mask_np = np.isfinite(x_np)
-        land_mask_np = self._glorys_horizontal_ocean_mask(y_np)
-        eo = torch.from_numpy(eo_np)
+        # Repair only the returned image tensors. Argo arrays remain unchanged;
+        # corrected GLORYS support is promoted only for edges that were
+        # positively identified as full corrupted borders.
+        eo_repaired_np, _eo_repaired_mask_np = self._repair_full_border_artifacts_stack(
+            eo_np,
+            zero_border_is_artifact=True,
+        )
+        y_repaired_np, y_repaired_mask_np = self._repair_full_border_artifacts_stack(
+            y_np,
+            zero_border_is_artifact=False,
+        )
+        y_valid_mask_np = y_valid_mask_np | y_repaired_mask_np
+        land_mask_np = self._glorys_horizontal_ocean_mask(
+            np.where(y_valid_mask_np, y_repaired_np, np.nan)
+        )
+        eo = torch.from_numpy(eo_repaired_np)
         x = torch.from_numpy(x_np)
-        y = torch.from_numpy(y_np)
+        y = torch.from_numpy(y_repaired_np)
         # Match the normalized temperature contract used by the training/inference stack.
         eo = temperature_normalize(mode="norm", tensor=eo)
         x = temperature_normalize(mode="norm", tensor=x)
@@ -431,7 +549,9 @@ class OstiaArgoTiffDataset(Dataset):
             lon1 = float(row["lon1"])
             lat_center = 0.5 * (lat0 + lat1)
             lon_center = self._center_lon_deg(lon0, lon1)
-            sample["coords"] = torch.tensor([lat_center, lon_center], dtype=torch.float32)
+            sample["coords"] = torch.tensor(
+                [lat_center, lon_center], dtype=torch.float32
+            )
         if self.return_info:
             info = dict(row)
             if self.synthetic_mode:
@@ -493,7 +613,9 @@ class OstiaArgoTiffDataset(Dataset):
             )
         land_mask_level = 0 if int(land_mask.shape[0]) == 1 else depth_level
 
-        panels.append((np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32), "eo[0]"))
+        panels.append(
+            (np.asarray(eo[0].detach().cpu().numpy(), dtype=np.float32), "eo[0]")
+        )
         panels.append(
             (
                 np.asarray(x[depth_level].detach().cpu().numpy(), dtype=np.float32),
@@ -515,8 +637,14 @@ class OstiaArgoTiffDataset(Dataset):
         )
         panels.append(
             (
-                np.asarray(land_mask[land_mask_level].detach().cpu().numpy(), dtype=np.float32),
-                "land_mask[0]" if land_mask_level == 0 and int(land_mask.shape[0]) == 1 else f"land_mask[{depth_level}]",
+                np.asarray(
+                    land_mask[land_mask_level].detach().cpu().numpy(), dtype=np.float32
+                ),
+                (
+                    "land_mask[0]"
+                    if land_mask_level == 0 and int(land_mask.shape[0]) == 1
+                    else f"land_mask[{depth_level}]"
+                ),
             )
         )
 
@@ -547,7 +675,11 @@ class OstiaArgoTiffDataset(Dataset):
         info_ax.set_axis_off()
         info_text = textwrap.fill(str(info), width=80)
         coords = sample.get("coords", None)
-        coords_text = "N/A" if coords is None else np.array2string(coords.detach().cpu().numpy(), precision=4)
+        coords_text = (
+            "N/A"
+            if coords is None
+            else np.array2string(coords.detach().cpu().numpy(), precision=4)
+        )
         info_ax.text(
             0.0,
             1.0,
@@ -562,14 +694,18 @@ class OstiaArgoTiffDataset(Dataset):
         for ax in axes_flat[n_panels:]:
             ax.set_axis_off()
 
-        fig.suptitle(f"OstiaArgoTiffDataset sample {int(idx)} depth {depth_level}", fontsize=12)
+        fig.suptitle(
+            f"OstiaArgoTiffDataset sample {int(idx)} depth {depth_level}", fontsize=12
+        )
         fig.savefig(out_path, dpi=160)
         plt.close(fig)
         return out_path
 
 
 if __name__ == "__main__":
-    dataset = OstiaArgoTiffDataset(csv_path="/work/data/depth_prod/ostia_argo_tiff_index.csv", split="all")
+    dataset = OstiaArgoTiffDataset(
+        csv_path="/work/data/depth_prod/ostia_argo_tiff_index.csv", split="all"
+    )
     print(f"Dataset length: {len(dataset)}")
     sample = dataset[0]
     dataset.save_sample_figure_to_temp(1)

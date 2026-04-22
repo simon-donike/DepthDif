@@ -7,8 +7,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-DEFAULT_MAPPING_JSON = Path("data/glorys_argo_alignment/argo_to_glorys_channel_mapping.json")
+DEFAULT_MAPPING_JSON = Path(
+    "data/glorys_argo_alignment/argo_to_glorys_channel_mapping.json"
+)
 DEFAULT_OUTPUT_DIR = Path("data/glorys_argo_alignment/figures")
 
 
@@ -17,7 +18,9 @@ def _load_mapping_rows(mapping_json_path: Path) -> list[dict[str, float | int]]:
     payload = json.loads(mapping_json_path.read_text(encoding="utf-8"))
     rows = payload.get("mapping", [])
     if not isinstance(rows, list) or len(rows) == 0:
-        raise RuntimeError(f"Mapping JSON does not contain a non-empty 'mapping' list: {mapping_json_path}")
+        raise RuntimeError(
+            f"Mapping JSON does not contain a non-empty 'mapping' list: {mapping_json_path}"
+        )
     return rows
 
 
@@ -25,10 +28,18 @@ def _mapping_arrays(rows: list[dict[str, float | int]]) -> dict[str, np.ndarray]
     """Convert JSON mapping rows into sorted numpy arrays for plotting."""
     rows_sorted = sorted(rows, key=lambda row: int(row["argo_level_index"]))
     return {
-        "argo_idx": np.asarray([int(row["argo_level_index"]) for row in rows_sorted], dtype=np.int64),
-        "argo_depth_m": np.asarray([float(row["argo_depth_m"]) for row in rows_sorted], dtype=np.float64),
-        "glorys_idx": np.asarray([int(row["glorys_level_index"]) for row in rows_sorted], dtype=np.int64),
-        "glorys_depth_m": np.asarray([float(row["glorys_depth_m"]) for row in rows_sorted], dtype=np.float64),
+        "argo_idx": np.asarray(
+            [int(row["argo_level_index"]) for row in rows_sorted], dtype=np.int64
+        ),
+        "argo_depth_m": np.asarray(
+            [float(row["argo_depth_m"]) for row in rows_sorted], dtype=np.float64
+        ),
+        "glorys_idx": np.asarray(
+            [int(row["glorys_level_index"]) for row in rows_sorted], dtype=np.int64
+        ),
+        "glorys_depth_m": np.asarray(
+            [float(row["glorys_depth_m"]) for row in rows_sorted], dtype=np.float64
+        ),
         "abs_diff_m": np.asarray(
             [float(row["absolute_depth_difference_m"]) for row in rows_sorted],
             dtype=np.float64,
@@ -70,7 +81,9 @@ def _save_depth_vs_index_plot(arrays: dict[str, np.ndarray], output_path: Path) 
     return output_path.resolve()
 
 
-def _save_absolute_difference_plot(arrays: dict[str, np.ndarray], output_path: Path) -> Path:
+def _save_absolute_difference_plot(
+    arrays: dict[str, np.ndarray], output_path: Path
+) -> Path:
     """Save the absolute depth mismatch per ARGO channel."""
     fig, ax = plt.subplots(figsize=(14, 5), dpi=180)
     ax.plot(
@@ -108,8 +121,12 @@ def _save_depth_scatter_plot(arrays: dict[str, np.ndarray], output_path: Path) -
         alpha=0.9,
         edgecolors="none",
     )
-    max_depth = float(max(np.nanmax(arrays["argo_depth_m"]), np.nanmax(arrays["glorys_depth_m"])))
-    ax.plot([0.0, max_depth], [0.0, max_depth], color="black", linestyle="--", linewidth=1.2)
+    max_depth = float(
+        max(np.nanmax(arrays["argo_depth_m"]), np.nanmax(arrays["glorys_depth_m"]))
+    )
+    ax.plot(
+        [0.0, max_depth], [0.0, max_depth], color="black", linestyle="--", linewidth=1.2
+    )
     ax.set_xlabel("ARGO Representative Depth (m)")
     ax.set_ylabel("Matched GLORYS Depth (m)")
     ax.set_title("Representative ARGO Depth vs Matched GLORYS Depth")
@@ -167,12 +184,16 @@ def main() -> None:
     arrays = _mapping_arrays(rows)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    depth_vs_index_path = _save_depth_vs_index_plot(arrays, args.output_dir / "argo_glorys_depth_vs_index.png")
+    depth_vs_index_path = _save_depth_vs_index_plot(
+        arrays, args.output_dir / "argo_glorys_depth_vs_index.png"
+    )
     abs_diff_path = _save_absolute_difference_plot(
         arrays,
         args.output_dir / "argo_glorys_absolute_difference.png",
     )
-    scatter_path = _save_depth_scatter_plot(arrays, args.output_dir / "argo_glorys_depth_scatter.png")
+    scatter_path = _save_depth_scatter_plot(
+        arrays, args.output_dir / "argo_glorys_depth_scatter.png"
+    )
     profile_count_path = _save_profile_count_plot(
         arrays,
         args.output_dir / "argo_level_valid_profile_count.png",

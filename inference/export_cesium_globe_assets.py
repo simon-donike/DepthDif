@@ -3,8 +3,10 @@
 Typical CLI:
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_20150615 \
-  --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/global_top_band_20150615/globe \
-  --rclone-remote r2:depth-data/global_top_band_20150615/globe
+  --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production \
+  --rclone-sync-scope run
+
 
 """
 
@@ -31,10 +33,11 @@ DEFAULT_COLOR_RAMP_PATH = Path("inference/transforms/temperature_blue_red_ramp.t
 DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
+DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_TILE_SIZE = 256
 DEFAULT_CAMERA_LON = -38.56452881619089
 DEFAULT_CAMERA_LAT = 34.53988238358822
-DEFAULT_CAMERA_HEIGHT = 18_000_000.0
+DEFAULT_CAMERA_HEIGHT = 9_500_000.0
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -60,7 +63,9 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
     return None
 
 
-def _resolve_run_artifacts(run_dir: Path) -> tuple[Path, Path | None, Path | None, dict[str, Any]]:
+def _resolve_run_artifacts(
+    run_dir: Path,
+) -> tuple[Path, Path | None, Path | None, Path | None, dict[str, Any]]:
     run_summary_path = run_dir / "run_summary.yaml"
     run_summary = _load_yaml(run_summary_path) if run_summary_path.exists() else {}
 
@@ -93,7 +98,21 @@ def _resolve_run_artifacts(run_dir: Path) -> tuple[Path, Path | None, Path | Non
         matches = sorted(run_dir.glob("*_argo_points.geojson"))
         points_path = matches[0] if matches else None
 
-    return prediction_path, ground_truth_path, points_path, run_summary
+    patch_splits_path = _coerce_existing_path(
+        run_summary.get("patch_splits_geojson_path"),
+        run_dir=run_dir,
+    )
+    if patch_splits_path is None:
+        matches = sorted(run_dir.glob("*_patch_splits.geojson"))
+        patch_splits_path = matches[0] if matches else None
+
+    return (
+        prediction_path,
+        ground_truth_path,
+        points_path,
+        patch_splits_path,
+        run_summary,
+    )
 
 
 def _read_raster_metadata(path: Path) -> dict[str, Any]:
@@ -154,7 +173,9 @@ def _estimate_native_zoom_level(input_path: Path) -> int:
         # tile count close to the native pyramid size.
         degrees_per_pixel = min(span_x / float(ds.width), span_y / float(ds.height))
         world_pixels = 360.0 / degrees_per_pixel
-        return max(0, int(math.ceil(math.log2(world_pixels / float(DEFAULT_TILE_SIZE)))))
+        return max(
+            0, int(math.ceil(math.log2(world_pixels / float(DEFAULT_TILE_SIZE))))
+        )
 
 
 def _build_gdal2tiles_command(
@@ -183,7 +204,9 @@ def _build_gdal2tiles_command(
     ]
 
 
-def _run_gdal2tiles(input_path: Path, output_dir: Path, *, extra_zoom_levels: int) -> None:
+def _run_gdal2tiles(
+    input_path: Path, output_dir: Path, *, extra_zoom_levels: int
+) -> None:
     _ensure_clean_directory(output_dir)
     command = _build_gdal2tiles_command(
         input_path,
@@ -213,6 +236,17 @@ def _sync_with_rclone(local_dir: Path, remote: str) -> tuple[bool, str]:
     return True, "rclone sync completed successfully."
 
 
+def _resolve_rclone_sync_source(
+    *,
+    run_dir: Path,
+    globe_dir: Path,
+    sync_scope: str,
+) -> tuple[Path, str]:
+    if sync_scope == "run":
+        return run_dir, "run directory"
+    return globe_dir, "globe assets"
+
+
 def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
     if public_base_url is None:
         return f"./{name}"
@@ -225,10 +259,12 @@ def build_globe_config(
     prediction_tiles_url: str,
     ground_truth_tiles_url: str | None,
     argo_points_url: str | None,
+    patch_splits_url: str | None,
     bounds: dict[str, Any],
     prediction_credit: str,
     ground_truth_credit: str | None,
     points_credit: str | None,
+    patch_splits_credit: str | None,
     color_scale_min_c: float,
     color_scale_max_c: float,
     color_palette: str,
@@ -241,6 +277,7 @@ def build_globe_config(
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "argo_points_url": argo_points_url,
+            "patch_splits_url": patch_splits_url,
             "west": float(bounds["west"]),
             "south": float(bounds["south"]),
             "east": float(bounds["east"]),
@@ -257,6 +294,8 @@ def build_globe_config(
         credits["ground_truth"] = ground_truth_credit
     if points_credit is not None:
         credits["points"] = points_credit
+    if patch_splits_credit is not None:
+        credits["patch_splits"] = patch_splits_credit
     config["credits"] = credits
     return config
 
@@ -306,8 +345,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Optional rclone destination such as 'r2:depth-data/global_top_band_20150615/globe'. "
-            "When provided, the generated globe directory is synced after export."
+            "Optional rclone destination such as 'r2:depth-data/inference_production'. "
+            "When provided, the selected sync scope is mirrored after export."
+        ),
+    )
+    parser.add_argument(
+        "--rclone-sync-scope",
+        type=str,
+        choices=("globe", "run"),
+        default=DEFAULT_RCLONE_SYNC_SCOPE,
+        help=(
+            "Choose whether rclone sync uploads only the generated globe directory "
+            "or the full run directory."
         ),
     )
     parser.add_argument(
@@ -330,7 +379,9 @@ def main() -> None:
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
-    prediction_path, ground_truth_path, points_path, run_summary = _resolve_run_artifacts(run_dir)
+    prediction_path, ground_truth_path, points_path, patch_splits_path, run_summary = (
+        _resolve_run_artifacts(run_dir)
+    )
 
     globe_dir = run_dir / str(args.globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
@@ -355,7 +406,9 @@ def main() -> None:
 
     ground_truth_tiles_dir: Path | None = None
     if ground_truth_path is not None:
-        ground_truth_colorized_path = temp_dir / f"{ground_truth_path.stem}_colorized.tif"
+        ground_truth_colorized_path = (
+            temp_dir / f"{ground_truth_path.stem}_colorized.tif"
+        )
         _colorize_raster(
             ground_truth_path,
             ground_truth_colorized_path,
@@ -373,9 +426,16 @@ def main() -> None:
         copied_points_path = globe_dir / "argo_points.geojson"
         shutil.copy2(points_path, copied_points_path)
 
+    copied_patch_splits_path: Path | None = None
+    if patch_splits_path is not None:
+        copied_patch_splits_path = globe_dir / "patch_splits.geojson"
+        shutil.copy2(patch_splits_path, copied_patch_splits_path)
+
     prediction_meta = _read_raster_metadata(prediction_path)
     ground_truth_meta = (
-        _read_raster_metadata(ground_truth_path) if ground_truth_path is not None else None
+        _read_raster_metadata(ground_truth_path)
+        if ground_truth_path is not None
+        else None
     )
     template = _load_template(Path(args.template_path))
     config = build_globe_config(
@@ -400,10 +460,23 @@ def main() -> None:
                 public_base_url=args.public_base_url,
             )
         ),
+        patch_splits_url=(
+            None
+            if copied_patch_splits_path is None
+            else _resolve_layer_url(
+                copied_patch_splits_path.name,
+                public_base_url=args.public_base_url,
+            )
+        ),
         bounds=prediction_meta,
         prediction_credit=prediction_meta["credit"],
-        ground_truth_credit=None if ground_truth_meta is None else ground_truth_meta["credit"],
+        ground_truth_credit=(
+            None if ground_truth_meta is None else ground_truth_meta["credit"]
+        ),
         points_credit=None if copied_points_path is None else "Observed Argo points",
+        patch_splits_credit=(
+            None if copied_patch_splits_path is None else "Train/val patch split grid"
+        ),
         color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
         color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
         color_palette="temperature_blue_red",
@@ -422,6 +495,8 @@ def main() -> None:
         print(f"- ground-truth tiles: {ground_truth_tiles_dir}")
     if copied_points_path is not None:
         print(f"- points GeoJSON: {copied_points_path}")
+    if copied_patch_splits_path is not None:
+        print(f"- patch splits GeoJSON: {copied_patch_splits_path}")
     print(f"- config: {config_path}")
     print(
         "- fixed Celsius color scale: "
@@ -431,16 +506,22 @@ def main() -> None:
     print(f"- extra zoom levels: {max(0, int(args.extra_zoom_levels))}")
     print("- tile resampling: nearest-neighbor")
     if args.rclone_remote is not None:
-        ok, message = _sync_with_rclone(globe_dir, args.rclone_remote)
+        sync_source, sync_scope_label = _resolve_rclone_sync_source(
+            run_dir=run_dir,
+            globe_dir=globe_dir,
+            sync_scope=str(args.rclone_sync_scope),
+        )
+        ok, message = _sync_with_rclone(sync_source, args.rclone_remote)
         if ok:
-            print(f"- rclone upload: {args.rclone_remote}")
+            print(f"- rclone upload ({sync_scope_label}): {args.rclone_remote}")
+            print(f"  source: {sync_source}")
             print(f"  {message}")
         else:
             print(f"WARNING: {message}")
             print(
                 "WARNING: Globe assets were still created locally and can be uploaded later with:"
             )
-            print(f"  rclone sync {globe_dir} {args.rclone_remote}")
+            print(f"  rclone sync {sync_source} {args.rclone_remote}")
 
 
 if __name__ == "__main__":

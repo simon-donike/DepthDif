@@ -20,7 +20,6 @@ from models.difFF.DenoisingDiffusionProcess.beta_schedules import (
 )
 from models.difFF.PixelDiffusion import PixelDiffusionConditional
 
-
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
 
@@ -62,7 +61,9 @@ class _CapturingPredictor(nn.Module):
         return self.prediction.to(device=model_input.device, dtype=model_input.dtype)
 
 
-def _make_conditional_process(*, parameterization: str = "x0") -> DenoisingDiffusionConditionalProcess:
+def _make_conditional_process(
+    *, parameterization: str = "x0"
+) -> DenoisingDiffusionConditionalProcess:
     return DenoisingDiffusionConditionalProcess(
         generated_channels=2,
         condition_channels=2,
@@ -107,15 +108,23 @@ class TestDiffusionMath(unittest.TestCase):
         beta_start = 1.0e-4
         beta_end = 2.0e-2
 
-        linear = get_beta_schedule("linear", timesteps, beta_start=beta_start, beta_end=beta_end)
+        linear = get_beta_schedule(
+            "linear", timesteps, beta_start=beta_start, beta_end=beta_end
+        )
         quadratic = get_beta_schedule(
             "quadratic", timesteps, beta_start=beta_start, beta_end=beta_end
         )
-        sigmoid = get_beta_schedule("sigmoid", timesteps, beta_start=beta_start, beta_end=beta_end)
-        cosine = get_beta_schedule("cosine", timesteps, beta_start=beta_start, beta_end=beta_end)
+        sigmoid = get_beta_schedule(
+            "sigmoid", timesteps, beta_start=beta_start, beta_end=beta_end
+        )
+        cosine = get_beta_schedule(
+            "cosine", timesteps, beta_start=beta_start, beta_end=beta_end
+        )
 
         self.assertTrue(
-            torch.allclose(linear, linear_beta_schedule(timesteps, beta_start, beta_end))
+            torch.allclose(
+                linear, linear_beta_schedule(timesteps, beta_start, beta_end)
+            )
         )
         self.assertTrue(
             torch.allclose(
@@ -124,7 +133,9 @@ class TestDiffusionMath(unittest.TestCase):
             )
         )
         self.assertTrue(
-            torch.allclose(sigmoid, sigmoid_beta_schedule(timesteps, beta_start, beta_end))
+            torch.allclose(
+                sigmoid, sigmoid_beta_schedule(timesteps, beta_start, beta_end)
+            )
         )
         # Cosine uses its own clipping defaults and intentionally ignores the passed linear range.
         self.assertTrue(
@@ -171,7 +182,9 @@ class TestDiffusionMath(unittest.TestCase):
         self.assertTrue(torch.equal(observed, expected))
         self.assertTrue(torch.equal(missing, 1.0 - expected))
 
-    def test_build_ambient_further_valid_mask_keeps_subset_and_respects_minimum_pixels(self) -> None:
+    def test_build_ambient_further_valid_mask_keeps_subset_and_respects_minimum_pixels(
+        self,
+    ) -> None:
         model = _make_pixel_model(
             ambient_occlusion_enabled=True,
             ambient_further_drop_prob=1.0,
@@ -181,7 +194,9 @@ class TestDiffusionMath(unittest.TestCase):
         valid_mask = torch.ones((1, 2, 3, 3), dtype=torch.float32)
         reference = torch.zeros((1, 2, 3, 3), dtype=torch.float32)
 
-        further = model._build_ambient_further_valid_mask(valid_mask, reference=reference)
+        further = model._build_ambient_further_valid_mask(
+            valid_mask, reference=reference
+        )
 
         self.assertIsNotNone(further)
         assert further is not None
@@ -190,7 +205,9 @@ class TestDiffusionMath(unittest.TestCase):
         # The min-kept safeguard is enforced over the full flattened observed support.
         self.assertGreaterEqual(int(further.sum().item()), 2)
 
-    def test_build_task_supervision_mask_switches_between_standard_and_ambient_targets(self) -> None:
+    def test_build_task_supervision_mask_switches_between_standard_and_ambient_targets(
+        self,
+    ) -> None:
         reference = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
         x_valid_mask = torch.tensor(
             [[[[1.0, 0.0], [1.0, 1.0]], [[1.0, 0.0], [0.0, 1.0]]]]
@@ -215,20 +232,22 @@ class TestDiffusionMath(unittest.TestCase):
 
         self.assertTrue(torch.equal(standard_mask, (y_valid_mask > 0.5).float()))
         self.assertTrue(
-            torch.equal(ambient_mask, ((x_valid_mask > 0.5) & (y_valid_mask > 0.5)).float())
+            torch.equal(
+                ambient_mask, ((x_valid_mask > 0.5) & (y_valid_mask > 0.5)).float()
+            )
         )
 
     def test_p_loss_averages_only_over_supervised_ocean_pixels(self) -> None:
         process = _make_conditional_process(parameterization="x0")
-        output = torch.tensor(
-            [[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]
-        )
+        output = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]])
         condition = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
         prediction = output - 1.0
         loss_mask = torch.tensor([[[1.0, 0.0], [1.0, 1.0]]])
         land_mask = torch.tensor([[[1.0, 1.0], [0.0, 1.0]]])
 
-        process.forward_process = _FakeForward(noisy_offset=0.25, noise=torch.zeros_like(output))
+        process.forward_process = _FakeForward(
+            noisy_offset=0.25, noise=torch.zeros_like(output)
+        )
         process.model = _CapturingPredictor(prediction)
 
         loss = process.p_loss(
@@ -239,10 +258,12 @@ class TestDiffusionMath(unittest.TestCase):
             mask_loss=True,
         )
 
-        expected_mask = (
-            loss_mask.unsqueeze(1).expand_as(output) * land_mask.unsqueeze(1).expand_as(output)
-        )
-        expected = (((output - prediction) ** 2) * expected_mask).sum() / expected_mask.sum()
+        expected_mask = loss_mask.unsqueeze(1).expand_as(output) * land_mask.unsqueeze(
+            1
+        ).expand_as(output)
+        expected = (
+            ((output - prediction) ** 2) * expected_mask
+        ).sum() / expected_mask.sum()
         self.assertTrue(torch.isclose(loss, expected))
 
     def test_p_loss_returns_zero_when_mask_selects_nothing(self) -> None:
@@ -250,7 +271,9 @@ class TestDiffusionMath(unittest.TestCase):
         output = torch.ones((1, 2, 2, 2), dtype=torch.float32)
         condition = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
 
-        process.forward_process = _FakeForward(noisy_offset=0.0, noise=torch.zeros_like(output))
+        process.forward_process = _FakeForward(
+            noisy_offset=0.0, noise=torch.zeros_like(output)
+        )
         process.model = _CapturingPredictor(torch.zeros_like(output))
 
         loss = process.p_loss(

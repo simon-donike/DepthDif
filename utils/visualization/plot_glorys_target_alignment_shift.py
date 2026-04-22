@@ -9,7 +9,6 @@ import pandas as pd
 import xarray as xr
 from tqdm import tqdm
 
-
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_ARGO_GLOB = "EN.4.2.2.f.profiles.g10.*.nc"
 DEFAULT_GLORYS_DIR = Path("/data1/datasets/depth_v2/glorys_weekly")
@@ -118,7 +117,9 @@ def summarize_nearest_profile_alignment(
     max_valid_distance_m: float | None,
 ) -> pd.DataFrame:
     """Aggregate nearest-profile-depth offsets for each retained GLORYS target over all EN4 profiles."""
-    glorys_depths = glorys_targets_df["glorys_depth_m"].to_numpy(dtype=np.float64, copy=False)
+    glorys_depths = glorys_targets_df["glorys_depth_m"].to_numpy(
+        dtype=np.float64, copy=False
+    )
     n_targets = glorys_depths.size
 
     nearest_depth_sum = np.zeros((n_targets,), dtype=np.float64)
@@ -169,15 +170,23 @@ def summarize_nearest_profile_alignment(
                 evaluated_profile_count += 1
                 valid_match_count += valid_match_mask.astype(np.int64)
                 nearest_depth_sum += np.where(valid_match_mask, nearest_depth, 0.0)
-                nearest_depth_sq_sum += np.where(valid_match_mask, np.square(nearest_depth), 0.0)
+                nearest_depth_sq_sum += np.where(
+                    valid_match_mask, np.square(nearest_depth), 0.0
+                )
                 signed_shift_sum += np.where(valid_match_mask, signed_shift, 0.0)
-                signed_shift_sq_sum += np.where(valid_match_mask, np.square(signed_shift), 0.0)
+                signed_shift_sq_sum += np.where(
+                    valid_match_mask, np.square(signed_shift), 0.0
+                )
                 abs_shift_sum += np.where(valid_match_mask, abs_shift, 0.0)
-                abs_shift_sq_sum += np.where(valid_match_mask, np.square(abs_shift), 0.0)
+                abs_shift_sq_sum += np.where(
+                    valid_match_mask, np.square(abs_shift), 0.0
+                )
                 exact_match_count += (abs_shift <= 1.0e-6).astype(np.int64)
 
     if total_profiles == 0:
-        raise RuntimeError("No valid ARGO profiles were found for nearest-depth alignment analysis.")
+        raise RuntimeError(
+            "No valid ARGO profiles were found for nearest-depth alignment analysis."
+        )
 
     valid_denom = np.maximum(valid_match_count.astype(np.float64), 1.0)
     evaluated_denom = np.maximum(evaluated_profile_count.astype(np.float64), 1.0)
@@ -187,8 +196,12 @@ def summarize_nearest_profile_alignment(
 
     # Use E[x^2] - E[x]^2 so the summary can be streamed across all profiles without
     # storing per-profile arrays in memory.
-    var_nearest = np.maximum((nearest_depth_sq_sum / valid_denom) - np.square(mean_nearest), 0.0)
-    var_signed = np.maximum((signed_shift_sq_sum / valid_denom) - np.square(mean_signed), 0.0)
+    var_nearest = np.maximum(
+        (nearest_depth_sq_sum / valid_denom) - np.square(mean_nearest), 0.0
+    )
+    var_signed = np.maximum(
+        (signed_shift_sq_sum / valid_denom) - np.square(mean_signed), 0.0
+    )
     var_abs = np.maximum((abs_shift_sq_sum / valid_denom) - np.square(mean_abs), 0.0)
 
     no_valid_match_mask = valid_match_count == 0
@@ -210,7 +223,9 @@ def summarize_nearest_profile_alignment(
     out["std_absolute_shift_m"] = np.sqrt(var_abs)
     out["exact_match_fraction"] = exact_match_count / evaluated_denom
     out["within_cutoff_fraction"] = (
-        valid_match_count / evaluated_denom if max_valid_distance_m is not None else np.nan
+        valid_match_count / evaluated_denom
+        if max_valid_distance_m is not None
+        else np.nan
     )
     return out
 
@@ -224,7 +239,8 @@ def _save_depth_summary_plot(
     """Plot depth alignment and average nearest-distance mismatch on one shared GLORYS-level axis."""
     fig, axes = plt.subplots(2, 1, figsize=(12, 9), dpi=180, sharex=True)
     nearest_depth_lower = np.maximum(
-        summary_df["mean_nearest_argo_depth_m"] - summary_df["std_nearest_argo_depth_m"],
+        summary_df["mean_nearest_argo_depth_m"]
+        - summary_df["std_nearest_argo_depth_m"],
         1.0e-3,
     )
 
@@ -245,7 +261,8 @@ def _save_depth_summary_plot(
     axes[0].fill_between(
         summary_df["glorys_level_index"],
         nearest_depth_lower,
-        summary_df["mean_nearest_argo_depth_m"] + summary_df["std_nearest_argo_depth_m"],
+        summary_df["mean_nearest_argo_depth_m"]
+        + summary_df["std_nearest_argo_depth_m"],
         color="#0b4f6c",
         alpha=0.18,
         label="Nearest ARGO depth mean ± 1 std",
@@ -271,7 +288,10 @@ def _save_depth_summary_plot(
     )
     axes[1].fill_between(
         summary_df["glorys_level_index"],
-        np.maximum(summary_df["mean_absolute_shift_m"] - summary_df["std_absolute_shift_m"], 0.0),
+        np.maximum(
+            summary_df["mean_absolute_shift_m"] - summary_df["std_absolute_shift_m"],
+            0.0,
+        ),
         summary_df["mean_absolute_shift_m"] + summary_df["std_absolute_shift_m"],
         color="#ef4444",
         alpha=0.18,
@@ -421,7 +441,9 @@ def main() -> None:
         argo_depth_var_name=args.argo_depth_var,
         glorys_targets_df=glorys_targets_df,
         max_valid_distance_m=(
-            None if args.max_valid_distance_m is None else float(args.max_valid_distance_m)
+            None
+            if args.max_valid_distance_m is None
+            else float(args.max_valid_distance_m)
         ),
     )
 
@@ -433,7 +455,9 @@ def main() -> None:
         summary_df,
         args.output_dir / "glorys_target_alignment_depth_summary.png",
         max_valid_distance_m=(
-            None if args.max_valid_distance_m is None else float(args.max_valid_distance_m)
+            None
+            if args.max_valid_distance_m is None
+            else float(args.max_valid_distance_m)
         ),
     )
 

@@ -377,15 +377,23 @@ def build_dataset(
                 ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
             ),
             return_coords=bool(
-                ds_cfg_value(ds_cfg, "output.return_coords", "return_coords", default=True)
+                ds_cfg_value(
+                    ds_cfg, "output.return_coords", "return_coords", default=True
+                )
             ),
             synthetic_mode=bool(
-                ds_cfg_value(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+                ds_cfg_value(
+                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
+                )
             ),
             synthetic_pixel_count=int(
-                ds_cfg_value(ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20)
+                ds_cfg_value(
+                    ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20
+                )
             ),
-            random_seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
+            random_seed=int(
+                ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
+            ),
         )
     raise ValueError(
         "Unsupported dataset variant in data config. "
@@ -403,7 +411,9 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     Returns:
         str: Computed scalar output.
     """
-    model_type = str(model_cfg.get("model", {}).get("model_type", "cond_px_dif")).strip()
+    model_type = str(
+        model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+    ).strip()
     if model_type in {"cond_px_dif", "latent_cond_dif"}:
         return model_type
     raise ValueError(
@@ -464,8 +474,13 @@ def main(
         },
     )
     latent_ae_config_path: str | None = None
-    if str(model_cfg.get("model", {}).get("model_type", "")).strip() == "latent_cond_dif":
-        ae_cfg_value = model_cfg.get("model", {}).get("latent", {}).get("ae_config_path", None)
+    if (
+        str(model_cfg.get("model", {}).get("model_type", "")).strip()
+        == "latent_cond_dif"
+    ):
+        ae_cfg_value = (
+            model_cfg.get("model", {}).get("latent", {}).get("ae_config_path", None)
+        )
         if ae_cfg_value is None or str(ae_cfg_value).strip() == "":
             raise ValueError(
                 "model.latent.ae_config_path is required for model.model_type='latent_cond_dif'."
@@ -488,7 +503,9 @@ def main(
             / f"{run_stamp}_{os.getpid()}_{global_rank}"
         )
         runtime_cfg_dir.mkdir(parents=True, exist_ok=True)
-        effective_model_config_path = str(runtime_cfg_dir / Path(model_config_path).name)
+        effective_model_config_path = str(
+            runtime_cfg_dir / Path(model_config_path).name
+        )
         effective_data_config_path = str(runtime_cfg_dir / Path(data_config_path).name)
         effective_training_config_path = str(
             runtime_cfg_dir / Path(training_config_path).name
@@ -501,8 +518,12 @@ def main(
     if latent_ae_config_path is not None:
         uploaded_config_paths.append(latent_ae_config_path)
     if is_global_zero and override_list:
-        model_effective_snapshot = run_dir / f"{Path(model_config_path).stem}_effective.yaml"
-        data_effective_snapshot = run_dir / f"{Path(data_config_path).stem}_effective.yaml"
+        model_effective_snapshot = (
+            run_dir / f"{Path(model_config_path).stem}_effective.yaml"
+        )
+        data_effective_snapshot = (
+            run_dir / f"{Path(data_config_path).stem}_effective.yaml"
+        )
         training_effective_snapshot = (
             run_dir / f"{Path(training_config_path).stem}_effective.yaml"
         )
@@ -549,9 +570,15 @@ def main(
     data_dataloader_cfg = data_cfg.get("dataloader", {})
     if "val_shuffle" in data_dataloader_cfg:
         dataloader_cfg["val_shuffle"] = bool(data_dataloader_cfg["val_shuffle"])
-    dataloader_type = str(
-        ds_cfg_value(ds_cfg, "core.dataloader_type", "dataloader_type", default="light")
-    ).strip().lower()
+    dataloader_type = (
+        str(
+            ds_cfg_value(
+                ds_cfg, "core.dataloader_type", "dataloader_type", default="light"
+            )
+        )
+        .strip()
+        .lower()
+    )
     if dataloader_type != "light":
         raise ValueError(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
@@ -613,7 +640,9 @@ def main(
     if load_ckpt_path is not None:
         checkpoint = torch.load(load_ckpt_path, map_location="cpu")
         # load_checkpoint is a warm-start: copy model weights only (no optimizer/trainer state).
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        state_dict = (
+            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        )
         model.load_state_dict(state_dict)
         print(f"Loaded model weights from checkpoint: {load_ckpt_path}")
 

@@ -37,7 +37,9 @@ def find_default_nc(config_path: str) -> Path:
     source_cfg = ds_cfg.get("source", {})
     root_dir_value = source_cfg.get("root_dir", None)
     if root_dir_value is None:
-        raise KeyError("Missing dataset source root dir in config (dataset.source.root_dir).")
+        raise KeyError(
+            "Missing dataset source root dir in config (dataset.source.root_dir)."
+        )
     root_dir = Path(root_dir_value)
     nc_files = sorted(root_dir.glob("*.nc"))
     if not nc_files:

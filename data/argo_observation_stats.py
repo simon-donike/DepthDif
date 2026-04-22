@@ -110,7 +110,9 @@ def _write_geojson(
 
         n_days_all = int(patch_sample_count.get(patch_key, 0))
         avg_obs_fraction_per_day = (
-            float(patch_obs_fraction_sum.get(patch_key, 0.0) / n_days_all) if n_days_all > 0 else 0.0
+            float(patch_obs_fraction_sum.get(patch_key, 0.0) / n_days_all)
+            if n_days_all > 0
+            else 0.0
         )
 
         props: dict[str, Any] = {
@@ -184,7 +186,9 @@ def _plot_world_map(
         raise RuntimeError("GeoJSON is empty; cannot draw map.")
 
     world = _load_world_outline(world_shapefile=world_shapefile)
-    patch_gdf = gpd.GeoDataFrame.from_features(feature_collection["features"], crs="EPSG:4326")
+    patch_gdf = gpd.GeoDataFrame.from_features(
+        feature_collection["features"], crs="EPSG:4326"
+    )
 
     fig, ax = plt.subplots(figsize=(16, 8))
     world.boundary.plot(ax=ax, color="black", linewidth=0.5, alpha=0.8)
@@ -322,7 +326,9 @@ def main() -> None:
             f"No dataset rows found for years {args.year_start}-{args.year_end}."
         )
 
-    print(f"Selected samples for year window {args.year_start}-{args.year_end}: {len(selected_indices)}")
+    print(
+        f"Selected samples for year window {args.year_start}-{args.year_end}: {len(selected_indices)}"
+    )
 
     patch_day_obs_fractions: list[float] = []
     patch_obs_fraction_sum: dict[str, float] = defaultdict(float)
@@ -330,7 +336,9 @@ def main() -> None:
     patch_meta: dict[str, dict[str, Any]] = {}
     intermediate_every_n = max(int(args.intermediate_every_n_samples), 0)
     intermediate_hist_path = output_dir / "argo_observations_histogram_intermediate.png"
-    intermediate_geojson_path = output_dir / "argo_observations_per_patch_intermediate.geojson"
+    intermediate_geojson_path = (
+        output_dir / "argo_observations_per_patch_intermediate.geojson"
+    )
     intermediate_map_path = output_dir / "argo_observations_map_intermediate.png"
 
     for sample_i, idx in enumerate(
@@ -390,12 +398,18 @@ def main() -> None:
                 world_shapefile=args.world_shapefile,
             )
 
-    hist_path = output_dir / f"argo_observations_histogram_{args.year_start}_{args.year_end}.png"
+    hist_path = (
+        output_dir
+        / f"argo_observations_histogram_{args.year_start}_{args.year_end}.png"
+    )
     geojson_path = (
-        output_dir / f"argo_observations_per_patch_{args.year_start}_{args.year_end}.geojson"
+        output_dir
+        / f"argo_observations_per_patch_{args.year_start}_{args.year_end}.geojson"
     )
     geojson_stable_path = output_dir / "argo_observations_per_patch.geojson"
-    map_path = output_dir / f"argo_observations_map_{args.year_start}_{args.year_end}.png"
+    map_path = (
+        output_dir / f"argo_observations_map_{args.year_start}_{args.year_end}.png"
+    )
 
     _plot_histogram(
         out_path=hist_path,
@@ -431,7 +445,9 @@ def main() -> None:
             if v > 0
         }
         global_patch_avg = float(
-            np.mean(np.asarray(list(patch_avg_fraction_per_day.values()), dtype=np.float64))
+            np.mean(
+                np.asarray(list(patch_avg_fraction_per_day.values()), dtype=np.float64)
+            )
         )
         print(f"- Mean patch avg observation fraction per day: {global_patch_avg:.6f}")
 

@@ -8,12 +8,13 @@ import numpy as np
 import xarray as xr
 from tqdm import tqdm
 
-
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_ARGO_GLOB = "EN.4.2.2.f.profiles.g10.*.nc"
 DEFAULT_GLORYS_DIR = Path("/data1/datasets/depth_v2/glorys_weekly")
 DEFAULT_GLORYS_GLOB = "*.nc"
-DEFAULT_OUTPUT_PATH = Path("data/glorys_argo_alignment/argo_corrected_depth_histogram.png")
+DEFAULT_OUTPUT_PATH = Path(
+    "data/glorys_argo_alignment/argo_corrected_depth_histogram.png"
+)
 
 
 def open_dataset_with_fallback(nc_path: Path) -> xr.Dataset:
@@ -67,7 +68,9 @@ def load_glorys_depth_levels(
         depth_values = np.asarray(ds[depth_var_name].values, dtype=np.float64)
 
     depth_values = depth_values[np.isfinite(depth_values)]
-    depth_values = depth_values[(depth_values >= 0.0) & (depth_values <= float(max_depth_m))]
+    depth_values = depth_values[
+        (depth_values >= 0.0) & (depth_values <= float(max_depth_m))
+    ]
     if depth_values.size == 0:
         raise RuntimeError(
             f"No GLORYS depths are within [0, {max_depth_m}] in {glorys_file}"
@@ -84,7 +87,9 @@ def aggregate_corrected_depth_histogram(
 ) -> dict[str, np.ndarray | int]:
     """Aggregate one histogram across all valid corrected-depth samples in the archive."""
     n_depth_bins = int(np.ceil(float(max_depth_m) / float(depth_bin_size_m)))
-    depth_edges = np.linspace(0.0, n_depth_bins * float(depth_bin_size_m), n_depth_bins + 1)
+    depth_edges = np.linspace(
+        0.0, n_depth_bins * float(depth_bin_size_m), n_depth_bins + 1
+    )
     depth_hist = np.zeros((n_depth_bins,), dtype=np.int64)
     total_profiles = 0
     total_valid_depths = 0
@@ -108,10 +113,14 @@ def aggregate_corrected_depth_histogram(
                 continue
 
             total_valid_depths += int(valid_depths.size)
-            depth_hist += np.histogram(valid_depths, bins=depth_edges)[0].astype(np.int64, copy=False)
+            depth_hist += np.histogram(valid_depths, bins=depth_edges)[0].astype(
+                np.int64, copy=False
+            )
 
     if total_valid_depths == 0:
-        raise RuntimeError("No valid ARGO corrected depths were found in the selected files.")
+        raise RuntimeError(
+            "No valid ARGO corrected depths were found in the selected files."
+        )
 
     return {
         "depth_edges": depth_edges,

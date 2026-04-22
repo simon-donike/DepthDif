@@ -93,9 +93,13 @@ def build_dataset(
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
-        return SurfaceTempPatch4BandsLightDataset.from_config(data_config_path, split="all")
+        return SurfaceTempPatch4BandsLightDataset.from_config(
+            data_config_path, split="all"
+        )
     if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
-        return SurfaceTempPatchOstiaLightDataset.from_config(data_config_path, split="all")
+        return SurfaceTempPatchOstiaLightDataset.from_config(
+            data_config_path, split="all"
+        )
     raise ValueError(
         f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band', 'ostia']."
     )
@@ -215,7 +219,9 @@ def main(
     trainer_cfg = training_cfg.get("trainer", {})
 
     dataset = build_dataset(data_config_path, data_cfg.get("dataset", {}))
-    datamodule = build_datamodule(dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg)
+    datamodule = build_datamodule(
+        dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
+    )
 
     model = DepthBandAutoencoderLightning.from_configs(
         ae_config_path=ae_config_path,
@@ -225,7 +231,9 @@ def main(
 
     if load_checkpoint:
         checkpoint = torch.load(load_checkpoint, map_location="cpu")
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        state_dict = (
+            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        )
         model.load_state_dict(state_dict, strict=False)
         print(f"Loaded model weights from checkpoint: {load_checkpoint}")
 

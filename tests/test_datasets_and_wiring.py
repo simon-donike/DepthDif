@@ -23,7 +23,6 @@ from train import apply_config_overrides, build_dataset, parse_config_override
 from utils.normalizations import temperature_normalize, temperature_to_plot_unit
 from utils.validation_denoise import _temperature_band_to_plot_image
 
-
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
 
@@ -134,7 +133,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
             self.assertTrue(torch.equal(sample["x_valid_mask"], expected_mask))
             self.assertTrue(torch.equal(sample["y_valid_mask"], expected_mask))
             self.assertTrue(
-                torch.equal(sample["x_valid_mask_1d"], expected_mask.any(dim=0, keepdim=True))
+                torch.equal(
+                    sample["x_valid_mask_1d"], expected_mask.any(dim=0, keepdim=True)
+                )
             )
             self.assertTrue(
                 torch.equal(
@@ -144,7 +145,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
             )
             denorm_y = temperature_normalize(mode="denorm", tensor=sample["y"])
             self.assertTrue(
-                torch.allclose(denorm_y[expected_mask], expected_y[expected_mask], atol=1e-5)
+                torch.allclose(
+                    denorm_y[expected_mask], expected_y[expected_mask], atol=1e-5
+                )
             )
             self.assertEqual(sample["date"], 20240105)
             self.assertTrue(
@@ -177,7 +180,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
             self.assertTrue(bool(sample["y_valid_mask"].any().item()))
             self.assertTrue(torch.equal(sample["x"], torch.zeros_like(sample["x"])))
 
-    def test_surface_temp_ostia_dataset_resamples_eo_and_zeroes_land_pixels(self) -> None:
+    def test_surface_temp_ostia_dataset_resamples_eo_and_zeroes_land_pixels(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             y_all = np.array(
@@ -223,7 +228,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
             self.assertEqual(sample["eo"].shape, (1, 4, 4))
             self.assertEqual(sample["y"].shape, (2, 4, 4))
             self.assertTrue(
-                torch.equal(sample["eo"][0, :, -1], torch.zeros(4, dtype=sample["eo"].dtype))
+                torch.equal(
+                    sample["eo"][0, :, -1], torch.zeros(4, dtype=sample["eo"].dtype)
+                )
             )
             self.assertTrue(bool((sample["eo"][0, :, 0] != 0).all().item()))
 
@@ -300,14 +307,18 @@ class TestDatasetsAndWiring(unittest.TestCase):
 
             x_mask = sample["x_valid_mask"]
             y_mask = sample["y_valid_mask"]
-            self.assertTrue(torch.equal(sample["x_valid_mask_1d"], x_mask.any(dim=0, keepdim=True)))
+            self.assertTrue(
+                torch.equal(sample["x_valid_mask_1d"], x_mask.any(dim=0, keepdim=True))
+            )
             self.assertTrue(torch.all(x_mask <= y_mask))
             self.assertGreaterEqual(int(sample["info"]["synthetic_pixel_count"]), 1)
             self.assertLessEqual(int(sample["info"]["synthetic_pixel_count"]), 2)
             self.assertTrue(bool(sample["info"]["synthetic_mode"]))
             denorm_x = temperature_normalize(mode="denorm", tensor=sample["x"])
             denorm_y = temperature_normalize(mode="denorm", tensor=sample["y"])
-            self.assertTrue(torch.allclose(denorm_x[x_mask], denorm_y[x_mask], atol=1e-5))
+            self.assertTrue(
+                torch.allclose(denorm_x[x_mask], denorm_y[x_mask], atol=1e-5)
+            )
             self.assertTrue(
                 torch.equal(
                     sample["land_mask"],
@@ -317,6 +328,262 @@ class TestDatasetsAndWiring(unittest.TestCase):
             self.assertEqual(sample["date"], 20240228)
             self.assertTrue(
                 torch.allclose(sample["coords"], torch.tensor([-1.0, 15.0]), atol=1e-5)
+            )
+
+    def test_ostia_argo_tiff_dataset_border_helper_repairs_only_full_edges(
+        self,
+    ) -> None:
+        ostia_patch = np.array(
+            [
+                [4.0, 5.0, 6.0, 7.0],
+                [8.0, 9.0, 10.0, 11.0],
+                [12.0, 13.0, 14.0, 15.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_ostia, repaired_ostia_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                ostia_patch,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(repaired_ostia[-1, :], ostia_patch[-2, :], atol=0.0)
+        np.testing.assert_allclose(
+            repaired_ostia[:-1, :], ostia_patch[:-1, :], atol=0.0
+        )
+        np.testing.assert_array_equal(
+            repaired_ostia_mask[-1, :], np.ones(4, dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_ostia_mask[:-1, :], np.zeros((3, 4), dtype=bool)
+        )
+
+        partial_edge = np.array(
+            [
+                [0.0, 5.0, 6.0, 7.0],
+                [8.0, 9.0, 10.0, 11.0],
+                [12.0, 13.0, 14.0, 15.0],
+                [16.0, 17.0, 18.0, 19.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_partial, repaired_partial_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                partial_edge,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(repaired_partial, partial_edge, atol=0.0)
+        np.testing.assert_array_equal(
+            repaired_partial_mask, np.zeros_like(partial_edge, dtype=bool)
+        )
+
+        unusable_adjacent = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [12.0, 13.0, 14.0, 15.0],
+                [16.0, 17.0, 18.0, 19.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_unusable, repaired_unusable_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                unusable_adjacent,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(repaired_unusable, unusable_adjacent, atol=0.0)
+        np.testing.assert_array_equal(
+            repaired_unusable_mask, np.zeros_like(unusable_adjacent, dtype=bool)
+        )
+
+    def test_ostia_argo_tiff_dataset_border_helper_repairs_only_affected_glorys_bands(
+        self,
+    ) -> None:
+        glorys = np.array(
+            [
+                [
+                    [10.0, 11.0, 12.0, 13.0],
+                    [14.0, 15.0, 16.0, 17.0],
+                    [18.0, 19.0, 20.0, 21.0],
+                    [np.nan, np.nan, np.nan, np.nan],
+                ],
+                [
+                    [np.nan, 31.0, 32.0, 33.0],
+                    [np.nan, 35.0, 36.0, 37.0],
+                    [np.nan, 39.0, 40.0, 41.0],
+                    [np.nan, 43.0, 44.0, 45.0],
+                ],
+            ],
+            dtype=np.float32,
+        )
+        repaired, repaired_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_stack(
+                glorys,
+                zero_border_is_artifact=False,
+            )
+        )
+        np.testing.assert_allclose(repaired[0, -1, :], glorys[0, -2, :], atol=0.0)
+        np.testing.assert_allclose(repaired[1, :, 0], glorys[1, :, 1], atol=0.0)
+        np.testing.assert_allclose(repaired[0, :-1, :], glorys[0, :-1, :], atol=0.0)
+        np.testing.assert_allclose(repaired[1, :, 1:], glorys[1, :, 1:], atol=0.0)
+        np.testing.assert_array_equal(repaired_mask[0, -1, :], np.ones(4, dtype=bool))
+        np.testing.assert_array_equal(repaired_mask[1, :, 0], np.ones(4, dtype=bool))
+
+    def test_ostia_argo_tiff_dataset_repairs_returned_images_without_touching_masks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ostia = np.array(
+                [
+                    [
+                        [5.0, 6.0, 7.0, 8.0],
+                        [9.0, 10.0, 11.0, 12.0],
+                        [13.0, 14.0, 15.0, 16.0],
+                        [0.0, 0.0, 0.0, 0.0],
+                    ]
+                ],
+                dtype=np.float32,
+            )
+            argo = np.array(
+                [
+                    [
+                        [1.0, 2.0, np.nan, 4.0],
+                        [5.0, np.nan, 7.0, 8.0],
+                        [9.0, 10.0, 11.0, 12.0],
+                        [13.0, 14.0, 15.0, 16.0],
+                    ],
+                    [
+                        [21.0, 22.0, 23.0, 24.0],
+                        [25.0, 26.0, 27.0, 28.0],
+                        [29.0, 30.0, 31.0, 32.0],
+                        [33.0, 34.0, 35.0, 36.0],
+                    ],
+                ],
+                dtype=np.float32,
+            )
+            glorys_celsius = np.array(
+                [
+                    [
+                        [10.0, 11.0, 12.0, 13.0],
+                        [14.0, 15.0, 16.0, 17.0],
+                        [18.0, 19.0, 20.0, 21.0],
+                        [np.nan, np.nan, np.nan, np.nan],
+                    ],
+                    [
+                        [np.nan, 31.0, 32.0, 33.0],
+                        [np.nan, 35.0, 36.0, 37.0],
+                        [np.nan, 39.0, 40.0, 41.0],
+                        [np.nan, 43.0, 44.0, 45.0],
+                    ],
+                ],
+                dtype=np.float32,
+            )
+            packed_glorys = np.where(
+                np.isfinite(glorys_celsius),
+                np.rint(glorys_celsius * 100.0),
+                OstiaArgoTiffDataset.GLORYS_PACK_NODATA,
+            ).astype(np.int16)
+            tags = {
+                "value_encoding": "packed_int16_celsius_x100",
+                "scale_factor": "0.01",
+                "add_offset": "0.0",
+                "packed_nodata": str(int(OstiaArgoTiffDataset.GLORYS_PACK_NODATA)),
+            }
+
+            ostia_path = tmp_path / "ostia.tif"
+            argo_path = tmp_path / "argo.tif"
+            glorys_path = tmp_path / "glorys.tif"
+            _write_tiff(ostia_path, ostia)
+            _write_tiff(argo_path, argo)
+            _write_tiff(
+                glorys_path,
+                packed_glorys,
+                nodata=int(OstiaArgoTiffDataset.GLORYS_PACK_NODATA),
+                tags=tags,
+            )
+
+            manifest_path = tmp_path / "manifest.csv"
+            pd.DataFrame(
+                [
+                    {
+                        "ostia_tif_path": ostia_path.name,
+                        "argo_tif_path": argo_path.name,
+                        "glorys_tif_path": glorys_path.name,
+                        "lat0": -4.0,
+                        "lat1": 2.0,
+                        "lon0": 10.0,
+                        "lon1": 20.0,
+                        "date": 20240215,
+                        "phase": "train",
+                        "export_skipped_reason": "",
+                    }
+                ]
+            ).to_csv(manifest_path, index=False)
+
+            dataset = OstiaArgoTiffDataset(
+                csv_path=manifest_path,
+                split="train",
+                return_info=False,
+                return_coords=False,
+                synthetic_mode=False,
+            )
+            sample = dataset[0]
+
+            denorm_eo = temperature_normalize(mode="denorm", tensor=sample["eo"])
+            denorm_y = temperature_normalize(mode="denorm", tensor=sample["y"])
+            denorm_x = temperature_normalize(mode="denorm", tensor=sample["x"])
+
+            expected_bottom = torch.tensor(
+                [13.0, 14.0, 15.0, 16.0], dtype=torch.float32
+            )
+            expected_left = torch.tensor([31.0, 35.0, 39.0, 43.0], dtype=torch.float32)
+            self.assertTrue(
+                torch.allclose(denorm_eo[0, -1, :], expected_bottom, atol=1e-5)
+            )
+            self.assertTrue(
+                torch.allclose(
+                    denorm_y[0, -1, :],
+                    torch.tensor([18.0, 19.0, 20.0, 21.0]),
+                    atol=1e-5,
+                )
+            )
+            self.assertTrue(torch.allclose(denorm_y[1, :, 0], expected_left, atol=1e-5))
+
+            self.assertTrue(
+                torch.equal(
+                    sample["y_valid_mask"][0, -1, :], torch.ones(4, dtype=torch.bool)
+                )
+            )
+            self.assertTrue(
+                torch.equal(
+                    sample["y_valid_mask"][1, :, 0], torch.ones(4, dtype=torch.bool)
+                )
+            )
+            self.assertTrue(
+                torch.equal(
+                    sample["land_mask"][0, -1, :], torch.ones(4, dtype=torch.float32)
+                )
+            )
+            self.assertTrue(
+                torch.equal(sample["x_valid_mask"], torch.from_numpy(np.isfinite(argo)))
+            )
+            self.assertTrue(
+                torch.equal(
+                    sample["x_valid_mask_1d"],
+                    sample["x_valid_mask"].any(dim=0, keepdim=True),
+                )
+            )
+            valid_x = sample["x_valid_mask"]
+            self.assertTrue(
+                torch.allclose(
+                    denorm_x[valid_x],
+                    torch.from_numpy(argo)[valid_x],
+                    atol=1e-5,
+                )
             )
 
     def test_temperature_plotting_uses_shared_celsius_scale(self) -> None:
@@ -334,7 +601,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
         self.assertAlmostEqual(float(cool_plot[0, 1]), expected_twenty, places=6)
         self.assertAlmostEqual(float(warm_plot[0, 0]), expected_twenty, places=6)
 
-    def test_datamodule_split_is_deterministic_and_loader_settings_are_applied(self) -> None:
+    def test_datamodule_split_is_deterministic_and_loader_settings_are_applied(
+        self,
+    ) -> None:
         dataloader_cfg = {
             "batch_size": 3,
             "val_batch_size": 2,
@@ -360,8 +629,12 @@ class TestDatasetsAndWiring(unittest.TestCase):
         first.setup("fit")
         second.setup("fit")
 
-        self.assertEqual(list(first.train_dataset.indices), list(second.train_dataset.indices))
-        self.assertEqual(list(first.val_dataset.indices), list(second.val_dataset.indices))
+        self.assertEqual(
+            list(first.train_dataset.indices), list(second.train_dataset.indices)
+        )
+        self.assertEqual(
+            list(first.val_dataset.indices), list(second.val_dataset.indices)
+        )
         self.assertEqual(len(first.train_dataset), 8)
         self.assertEqual(len(first.val_dataset), 2)
 
@@ -372,7 +645,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
         self.assertIsInstance(train_loader.sampler, SequentialSampler)
         self.assertIsInstance(val_loader.sampler, RandomSampler)
 
-    def test_config_override_helpers_and_dataset_builder_use_nested_settings(self) -> None:
+    def test_config_override_helpers_and_dataset_builder_use_nested_settings(
+        self,
+    ) -> None:
         root = {
             "data": {"dataset": {"core": {"dataset_variant": "ostia_argo_disk"}}},
             "training": {"training": {"noise": {"num_timesteps": 10}}},
@@ -443,7 +718,9 @@ class TestDatasetsAndWiring(unittest.TestCase):
             }
             _write_yaml(data_config_path, payload)
 
-            dataset = build_dataset(str(data_config_path), payload["dataset"], split="all")
+            dataset = build_dataset(
+                str(data_config_path), payload["dataset"], split="all"
+            )
 
             self.assertIsInstance(dataset, OstiaArgoTiffDataset)
             self.assertTrue(dataset.synthetic_mode)

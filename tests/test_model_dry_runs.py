@@ -22,7 +22,6 @@ from models.latent.Autoencoder import (
 )
 from models.latent.LatentDiffusion import LatentDiffusionConditional
 
-
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
 
@@ -69,7 +68,9 @@ class _StaticBatchDataset(Dataset):
             "date": 20240115,
         }
         if self.include_eo:
-            sample["eo"] = torch.full((1, self.size, self.size), 0.25 + offset, dtype=torch.float32)
+            sample["eo"] = torch.full(
+                (1, self.size, self.size), 0.25 + offset, dtype=torch.float32
+            )
         return sample
 
 
@@ -78,9 +79,15 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
         yaml.safe_dump(payload, f, sort_keys=False)
 
 
-def _make_datamodule(*, channels: int = 2, include_eo: bool = False) -> DepthTileDataModule:
-    train_dataset = _StaticBatchDataset(length=2, channels=channels, include_eo=include_eo)
-    val_dataset = _StaticBatchDataset(length=1, channels=channels, include_eo=include_eo)
+def _make_datamodule(
+    *, channels: int = 2, include_eo: bool = False
+) -> DepthTileDataModule:
+    train_dataset = _StaticBatchDataset(
+        length=2, channels=channels, include_eo=include_eo
+    )
+    val_dataset = _StaticBatchDataset(
+        length=1, channels=channels, include_eo=include_eo
+    )
     return DepthTileDataModule(
         dataset=train_dataset,
         val_dataset=val_dataset,
@@ -178,14 +185,20 @@ class TestModelDryRuns(unittest.TestCase):
                             "require_x0_parameterization": True,
                         },
                         "post_process": {
-                            "gaussian_blur": {"enabled": True, "sigma": 0.7, "kernel_size": 4}
+                            "gaussian_blur": {
+                                "enabled": True,
+                                "sigma": 0.7,
+                                "kernel_size": 4,
+                            }
                         },
                         "coord_conditioning": {"enabled": False},
                         "unet": {"dim": 8, "dim_mults": [1], "with_time_emb": True},
                     }
                 },
             )
-            _write_yaml(data_config_path, {"dataset": {}, "dataloader": {"batch_size": 9}})
+            _write_yaml(
+                data_config_path, {"dataset": {}, "dataloader": {"batch_size": 9}}
+            )
             _write_yaml(
                 training_config_path,
                 {
@@ -259,12 +272,16 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertIsInstance(optim_config, dict)
             self.assertEqual(optim_config["lr_scheduler"]["monitor"], "val/custom")
 
-    def test_pixel_training_step_uses_standard_target_and_passes_land_mask(self) -> None:
+    def test_pixel_training_step_uses_standard_target_and_passes_land_mask(
+        self,
+    ) -> None:
         model = _make_pixel_model()
         batch = _make_pixel_batch()
         captured: dict[str, Any] = {}
 
-        def fake_p_loss(output: torch.Tensor, condition: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+        def fake_p_loss(
+            output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
+        ) -> torch.Tensor:
             captured["output"] = output.detach().clone()
             captured["condition"] = condition.detach().clone()
             captured["kwargs"] = kwargs
@@ -285,11 +302,17 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(torch.equal(captured["output"], batch["y"]))
         self.assertTrue(torch.equal(captured["condition"], expected_condition))
-        self.assertTrue(torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask))
-        self.assertTrue(torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"]))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask)
+        )
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
+        )
         self.assertTrue(torch.isclose(loss, torch.tensor(1.25)))
 
-    def test_pixel_validation_step_uses_ambient_target_and_intersection_mask(self) -> None:
+    def test_pixel_validation_step_uses_ambient_target_and_intersection_mask(
+        self,
+    ) -> None:
         model = _make_pixel_model(
             ambient_occlusion_enabled=True,
             ambient_further_drop_prob=0.0,
@@ -300,7 +323,9 @@ class TestModelDryRuns(unittest.TestCase):
         further_mask[:, :, 0, 1] = False
         captured: dict[str, Any] = {}
 
-        def fake_p_loss(output: torch.Tensor, condition: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+        def fake_p_loss(
+            output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
+        ) -> torch.Tensor:
             captured["output"] = output.detach().clone()
             captured["condition"] = condition.detach().clone()
             captured["kwargs"] = kwargs
@@ -324,10 +349,16 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(torch.equal(captured["output"], batch["x"]))
         self.assertTrue(torch.equal(captured["condition"], expected_condition))
-        self.assertTrue(torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask))
-        self.assertTrue(torch.equal(captured["kwargs"]["further_valid_mask"], further_mask))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask)
+        )
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["further_valid_mask"], further_mask)
+        )
         self.assertTrue(captured["kwargs"]["apply_further_corruption_to_noisy_branch"])
-        self.assertTrue(torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"]))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
+        )
         self.assertTrue(torch.isclose(loss, torch.tensor(0.75)))
 
     def test_pixel_diffusion_completes_one_training_batch(self) -> None:

@@ -51,7 +51,9 @@ def _nearest_scalar_index(sorted_values: np.ndarray, query: float) -> int:
     return pos if abs(query - right) < abs(query - left) else pos - 1
 
 
-def _lat_bounds_indices(lat_grid: np.ndarray, lat0: float, lat1: float) -> tuple[int, int]:
+def _lat_bounds_indices(
+    lat_grid: np.ndarray, lat0: float, lat1: float
+) -> tuple[int, int]:
     """Compute inclusive nearest-neighbor lat index bounds."""
     lat_lo = min(float(lat0), float(lat1))
     lat_hi = max(float(lat0), float(lat1))
@@ -60,7 +62,9 @@ def _lat_bounds_indices(lat_grid: np.ndarray, lat0: float, lat1: float) -> tuple
     return (min(i0, i1), max(i0, i1))
 
 
-def _lon_bounds_segments(lon_grid: np.ndarray, lon0: float, lon1: float) -> list[tuple[int, int]]:
+def _lon_bounds_segments(
+    lon_grid: np.ndarray, lon0: float, lon1: float
+) -> list[tuple[int, int]]:
     """Compute inclusive lon index segment(s), handling dateline crossing."""
     a = _normalize_lon_scalar(float(lon0))
     b = _normalize_lon_scalar(float(lon1))
@@ -140,14 +144,18 @@ def build_overlap_csv_with_tiles(
     required_geo_cols = {"lat0", "lat1", "lon0", "lon1"}
     missing_geo_cols = required_geo_cols.difference(df.columns)
     if missing_geo_cols:
-        raise RuntimeError(f"Input CSV is missing required geo columns: {sorted(missing_geo_cols)}")
+        raise RuntimeError(
+            f"Input CSV is missing required geo columns: {sorted(missing_geo_cols)}"
+        )
 
     month_keys = df["source_file"].astype(str).map(_parse_month_key)
     overlap_mask = month_keys.notna() & month_keys.isin(month_to_file)
     overlap_df = df.loc[overlap_mask].copy()
 
     if overlap_df.empty:
-        raise RuntimeError("No overlapping months found between depth CSV and OSTIA files.")
+        raise RuntimeError(
+            "No overlapping months found between depth CSV and OSTIA files."
+        )
 
     overlap_df["ostia_month_key"] = month_keys.loc[overlap_mask].to_numpy()
     overlap_df["ostia_nc_path"] = ""
@@ -168,7 +176,9 @@ def build_overlap_csv_with_tiles(
         with xr.open_dataset(nc_path, engine="h5netcdf", cache=False) as ds:
             lat_grid = np.asarray(ds["lat"].to_numpy(), dtype=np.float64)
             lon_grid = np.asarray(ds["lon"].to_numpy(), dtype=np.float64)
-            sst_2d = np.asarray(ds["analysed_sst"].isel(time=0).to_numpy(), dtype=np.float32)
+            sst_2d = np.asarray(
+                ds["analysed_sst"].isel(time=0).to_numpy(), dtype=np.float32
+            )
 
         if save_units == "celsius":
             sst_2d = sst_2d - np.float32(273.15)
@@ -176,7 +186,8 @@ def build_overlap_csv_with_tiles(
         for row_idx, row in month_rows.iterrows():
             sample_idx = (
                 int(row["sample_idx"])
-                if "sample_idx" in overlap_df.columns and pd.notna(row.get("sample_idx"))
+                if "sample_idx" in overlap_df.columns
+                and pd.notna(row.get("sample_idx"))
                 else int(row_idx)
             )
 
@@ -195,7 +206,10 @@ def build_overlap_csv_with_tiles(
                 sample_idx=sample_idx,
                 csv_parent=output_csv.parent,
             )
-            np.save(ostia_tile_dir / f"{sample_idx:08d}.npy", tile.astype(np.float32, copy=False))
+            np.save(
+                ostia_tile_dir / f"{sample_idx:08d}.npy",
+                tile.astype(np.float32, copy=False),
+            )
 
             overlap_df.at[row_idx, "ostia_nc_path"] = str(nc_path)
             overlap_df.at[row_idx, "ostia_timestamp_utc"] = stamp

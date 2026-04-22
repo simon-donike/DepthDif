@@ -15,8 +15,8 @@ from ..beta_schedules import *
 
 
 class DDIM_Sampler(nn.Module):
-
     """DDIM sampler that performs accelerated reverse-diffusion updates."""
+
     def __init__(
         self,
         num_timesteps: int = 100,
@@ -29,7 +29,6 @@ class DDIM_Sampler(nn.Module):
         betas: torch.Tensor | list[float] | tuple[float, ...] | None = None,
         parameterization: str = "epsilon",
     ) -> None:
-
         """Initialize DDIM_Sampler with configured parameters.
 
         Args:
@@ -107,7 +106,9 @@ class DDIM_Sampler(nn.Module):
         return self.step(*args, **kwargs)
 
     @torch.no_grad()
-    def step(self, x_t: torch.Tensor, t: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
+    def step(
+        self, x_t: torch.Tensor, t: torch.Tensor, z_t: torch.Tensor
+    ) -> torch.Tensor:
         """Predict the previous diffusion sample for one timestep.
 
         Args:
@@ -235,9 +236,7 @@ class DDIM_Sampler(nn.Module):
         one_minus_alpha_cumprod_sqrt_t = self.alphas_one_minus_cumprod_sqrt[
             train_t
         ].view(b, 1, 1, 1)
-        return (
-            x_t - alpha_cumprod_t.sqrt() * x0_pred
-        ) / one_minus_alpha_cumprod_sqrt_t
+        return (x_t - alpha_cumprod_t.sqrt() * x0_pred) / one_minus_alpha_cumprod_sqrt_t
 
     def _prediction_to_x0_and_noise(
         self,

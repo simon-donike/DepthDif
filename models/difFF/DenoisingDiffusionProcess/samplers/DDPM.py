@@ -15,8 +15,8 @@ from ..beta_schedules import *
 
 
 class DDPM_Sampler(nn.Module):
-
     """DDPM sampler that performs one reverse-diffusion step at a time."""
+
     def __init__(
         self,
         num_timesteps: int = 1000,
@@ -25,7 +25,6 @@ class DDPM_Sampler(nn.Module):
         beta_end: float = 0.02,
         parameterization: str = "epsilon",
     ) -> None:
-
         """Initialize DDPM_Sampler with configured parameters.
 
         Args:
@@ -77,7 +76,9 @@ class DDPM_Sampler(nn.Module):
         return self.step(*args, **kwargs)
 
     @torch.no_grad()
-    def step(self, x_t: torch.Tensor, t: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
+    def step(
+        self, x_t: torch.Tensor, t: torch.Tensor, z_t: torch.Tensor
+    ) -> torch.Tensor:
         """Predict the previous diffusion sample for one timestep.
 
         Args:
@@ -102,7 +103,6 @@ class DDPM_Sampler(nn.Module):
     def posterior_params(
         self, x_t: torch.Tensor, t: torch.Tensor, noise_pred: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-
         """Compute posterior params and return the result.
 
         Args:

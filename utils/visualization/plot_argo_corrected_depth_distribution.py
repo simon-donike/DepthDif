@@ -9,10 +9,11 @@ import numpy as np
 import xarray as xr
 from tqdm import tqdm
 
-
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_ARGO_GLOB = "EN.4.2.2.f.profiles.g10.*.nc"
-DEFAULT_OUTPUT_PATH = Path("data/glorys_argo_alignment/argo_corrected_depth_distribution.png")
+DEFAULT_OUTPUT_PATH = Path(
+    "data/glorys_argo_alignment/argo_corrected_depth_distribution.png"
+)
 
 
 def open_dataset_with_fallback(nc_path: Path) -> xr.Dataset:
@@ -102,7 +103,9 @@ def aggregate_corrected_depth_distribution(
 
             if n_levels is None:
                 n_levels = int(depth.shape[1])
-                level_depth_hist = np.zeros((n_levels, int(n_depth_bins)), dtype=np.int64)
+                level_depth_hist = np.zeros(
+                    (n_levels, int(n_depth_bins)), dtype=np.int64
+                )
                 level_valid_count = np.zeros((n_levels,), dtype=np.int64)
             elif int(depth.shape[1]) != n_levels:
                 raise RuntimeError(
@@ -116,7 +119,9 @@ def aggregate_corrected_depth_distribution(
                 continue
 
             valid_depths = depth[valid_mask]
-            all_depth_hist += np.histogram(valid_depths, bins=depth_edges)[0].astype(np.int64, copy=False)
+            all_depth_hist += np.histogram(valid_depths, bins=depth_edges)[0].astype(
+                np.int64, copy=False
+            )
 
             assert level_depth_hist is not None
             assert level_valid_count is not None
@@ -126,7 +131,9 @@ def aggregate_corrected_depth_distribution(
                 if level_values.size == 0:
                     continue
                 level_valid_count[level_idx] += int(level_values.size)
-                level_depth_hist[level_idx] += np.histogram(level_values, bins=depth_edges)[0].astype(
+                level_depth_hist[level_idx] += np.histogram(
+                    level_values, bins=depth_edges
+                )[0].astype(
                     np.int64,
                     copy=False,
                 )
@@ -148,7 +155,9 @@ def aggregate_corrected_depth_distribution(
             )
 
     if n_levels is None or level_depth_hist is None or level_valid_count is None:
-        raise RuntimeError("No valid ARGO corrected depths were found in the selected files.")
+        raise RuntimeError(
+            "No valid ARGO corrected depths were found in the selected files."
+        )
 
     return {
         "depth_edges": depth_edges,
@@ -200,7 +209,9 @@ def plot_corrected_depth_distribution(
     ax_main = fig.add_subplot(gs[1, 0], sharex=ax_count)
     ax_hist = fig.add_subplot(gs[1, 1], sharey=ax_main)
 
-    ax_count.plot(np.arange(n_levels), level_valid_count, color="#166534", linewidth=1.7)
+    ax_count.plot(
+        np.arange(n_levels), level_valid_count, color="#166534", linewidth=1.7
+    )
     ax_count.set_ylabel("Valid\nProfiles")
     ax_count.set_title(
         "EN4 Corrected Depth Distribution Across Archive\n"
@@ -217,16 +228,29 @@ def plot_corrected_depth_distribution(
         shading="auto",
         cmap="viridis",
     )
-    ax_main.plot(np.arange(n_levels), q50, color="white", linewidth=2.0, label="Median depth")
-    ax_main.plot(np.arange(n_levels), q10, color="#fca5a5", linewidth=1.2, linestyle="--", label="P10 / P90")
-    ax_main.plot(np.arange(n_levels), q90, color="#fca5a5", linewidth=1.2, linestyle="--")
+    ax_main.plot(
+        np.arange(n_levels), q50, color="white", linewidth=2.0, label="Median depth"
+    )
+    ax_main.plot(
+        np.arange(n_levels),
+        q10,
+        color="#fca5a5",
+        linewidth=1.2,
+        linestyle="--",
+        label="P10 / P90",
+    )
+    ax_main.plot(
+        np.arange(n_levels), q90, color="#fca5a5", linewidth=1.2, linestyle="--"
+    )
     ax_main.set_yscale("log")
     ax_main.set_xlabel("EN4 Level Index")
     ax_main.set_ylabel("Corrected Depth (m, log scale)")
     ax_main.grid(True, which="both", alpha=0.18, linestyle="--")
     ax_main.legend(loc="upper left")
 
-    ax_hist.fill_betweenx(depth_centers, 0.0, all_depth_hist, color="#0b4f6c", alpha=0.85)
+    ax_hist.fill_betweenx(
+        depth_centers, 0.0, all_depth_hist, color="#0b4f6c", alpha=0.85
+    )
     ax_hist.set_xscale("log")
     ax_hist.set_xlabel("Count")
     ax_hist.grid(True, which="both", alpha=0.18, linestyle="--")
@@ -306,7 +330,9 @@ def main() -> None:
         n_depth_bins=int(args.n_depth_bins),
         live_output_path=(args.output_path if bool(args.live_update) else None),
     )
-    output_path = plot_corrected_depth_distribution(aggregates, output_path=args.output_path)
+    output_path = plot_corrected_depth_distribution(
+        aggregates, output_path=args.output_path
+    )
     print(f"Wrote plot: {output_path}")
 
 

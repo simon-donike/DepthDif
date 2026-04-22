@@ -89,13 +89,16 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         self.split_seed = int(split_seed)
         self.val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
         self.target_band_start = int(target_band_start)
-        self.target_band_end = (
-            None if target_band_end is None else int(target_band_end)
-        )
+        self.target_band_end = None if target_band_end is None else int(target_band_end)
         if self.target_band_start < 0:
             raise ValueError("target_band_start must be >= 0.")
-        if self.target_band_end is not None and self.target_band_end <= self.target_band_start:
-            raise ValueError("target_band_end must be > target_band_start when provided.")
+        if (
+            self.target_band_end is not None
+            and self.target_band_end <= self.target_band_start
+        ):
+            raise ValueError(
+                "target_band_end must be > target_band_start when provided."
+            )
         self.eo_dropout_prob = 0.0
         if self.enable_transform and self.return_coords:
             warnings.warn(
@@ -189,35 +192,56 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             csv_path=csv_path,
             split=split,
             mask_fraction=float(
-                cls._cfg_get(ds_cfg, "degradation.mask_fraction", "mask_fraction", default=0.0)
+                cls._cfg_get(
+                    ds_cfg, "degradation.mask_fraction", "mask_fraction", default=0.0
+                )
             ),
             mask_patch_min=int(
-                cls._cfg_get(ds_cfg, "degradation.mask_patch_min", "mask_patch_min", default=3)
+                cls._cfg_get(
+                    ds_cfg, "degradation.mask_patch_min", "mask_patch_min", default=3
+                )
             ),
             mask_patch_max=int(
-                cls._cfg_get(ds_cfg, "degradation.mask_patch_max", "mask_patch_max", default=9)
+                cls._cfg_get(
+                    ds_cfg, "degradation.mask_patch_max", "mask_patch_max", default=9
+                )
             ),
             mask_strategy=str(
-                cls._cfg_get(ds_cfg, "degradation.mask_strategy", "mask_strategy", default="tracks")
+                cls._cfg_get(
+                    ds_cfg,
+                    "degradation.mask_strategy",
+                    "mask_strategy",
+                    default="tracks",
+                )
             ),
             enable_transform=bool(
                 cls._cfg_get(
-                    ds_cfg, "augmentation.enable_transform", "enable_transform", default=False
+                    ds_cfg,
+                    "augmentation.enable_transform",
+                    "enable_transform",
+                    default=False,
                 )
             ),
             x_return_mode=str(
                 cls._cfg_get(
-                    ds_cfg, "output.x_return_mode", "x_return_mode", default="currupted_plus_mask"
+                    ds_cfg,
+                    "output.x_return_mode",
+                    "x_return_mode",
+                    default="currupted_plus_mask",
                 )
             ),
             return_info=bool(
                 cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=False)
             ),
             return_coords=bool(
-                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=False)
+                cls._cfg_get(
+                    ds_cfg, "output.return_coords", "return_coords", default=False
+                )
             ),
             nan_fill_value=float(
-                cls._cfg_get(ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0)
+                cls._cfg_get(
+                    ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0
+                )
             ),
             valid_from_fill_value=bool(
                 cls._cfg_get(
@@ -264,7 +288,9 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         )
 
     @classmethod
-    def _resolve_dataset_variant(cls, *, ds_cfg: dict[str, Any], config_path: str) -> str:
+    def _resolve_dataset_variant(
+        cls, *, ds_cfg: dict[str, Any], config_path: str
+    ) -> str:
         variant = cls._cfg_get(
             ds_cfg,
             "core.dataset_variant",
@@ -361,12 +387,16 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             )
 
         eo_np = self._load_eo_np(row=row, y_np_all=y_np_all)
-        end_exclusive = int(y_np_all.shape[0]) if self.target_band_end is None else int(
-            self.target_band_end
+        end_exclusive = (
+            int(y_np_all.shape[0])
+            if self.target_band_end is None
+            else int(self.target_band_end)
         )
         if end_exclusive < 0:
             end_exclusive = int(y_np_all.shape[0])
-        if self.target_band_start >= int(y_np_all.shape[0]) or end_exclusive > int(y_np_all.shape[0]):
+        if self.target_band_start >= int(y_np_all.shape[0]) or end_exclusive > int(
+            y_np_all.shape[0]
+        ):
             raise RuntimeError(
                 "Configured target band slice is out of range for loaded tensor. "
                 f"Slice=({self.target_band_start}:{end_exclusive}), "
@@ -377,13 +407,15 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
                 "Configured target band slice is empty. "
                 f"Slice=({self.target_band_start}:{end_exclusive}), path={y_abs_path}."
             )
-        y_np = y_np_all[self.target_band_start:end_exclusive]
+        y_np = y_np_all[self.target_band_start : end_exclusive]
 
         # Keep per-depth target support separate from the horizontal land/ocean support mask.
         y_valid_mask_np = (
             np.isfinite(y_np) & (~np.isclose(y_np, 0.0, atol=1e-8))
         ).astype(np.float32, copy=False)
-        land_mask_np = y_valid_mask_np.any(axis=0, keepdims=True).astype(np.float32, copy=False)
+        land_mask_np = y_valid_mask_np.any(axis=0, keepdims=True).astype(
+            np.float32, copy=False
+        )
 
         # to Torch
         eo = torch.from_numpy(eo_np)
@@ -415,9 +447,7 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
             ~torch.isclose(y, zero, atol=1e-6, rtol=0.0)
         )
         if self.valid_from_fill_value:
-            v_fill = ~torch.isclose(
-                y, self._normalized_fill_value, atol=1e-6, rtol=0.0
-            )
+            v_fill = ~torch.isclose(y, self._normalized_fill_value, atol=1e-6, rtol=0.0)
             v = valid_from_values & v_fill
         else:
             v = valid_from_values
@@ -465,7 +495,9 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
         # Apply conditioning dropout after all EO processing for a single clear ablation point.
         if self._eo_dropout_enabled():
-            if self.eo_dropout_prob > 0.0 and bool(torch.rand(()) < self.eo_dropout_prob):
+            if self.eo_dropout_prob > 0.0 and bool(
+                torch.rand(()) < self.eo_dropout_prob
+            ):
                 eo = torch.zeros_like(eo)
 
         date = self._parse_date_yyyymmdd(row.get("source_file"))
@@ -588,7 +620,9 @@ class SurfaceTempPatchBaseLightDataset(Dataset):
 
             y_next = y + math.sin(heading)
             x_next = x + math.cos(heading)
-            if not (0.0 <= y_next <= float(height - 1) and 0.0 <= x_next <= float(width - 1)):
+            if not (
+                0.0 <= y_next <= float(height - 1) and 0.0 <= x_next <= float(width - 1)
+            ):
                 break
 
             y0 = int(round(y))

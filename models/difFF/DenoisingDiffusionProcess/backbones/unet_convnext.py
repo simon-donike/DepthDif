@@ -42,6 +42,7 @@ def default(val: T | None, d: T | Callable[[], T]) -> T:
 
 class Residual(nn.Module):
     """Wrapper module that adds a residual skip connection."""
+
     def __init__(self, fn: nn.Module) -> None:
         """Initialize Residual with configured parameters.
 
@@ -127,6 +128,7 @@ def Downsample(dim: int) -> nn.Conv2d:
 
 class LayerNorm(nn.Module):
     """Channel-wise layer normalization for 2D feature maps."""
+
     def __init__(self, dim: int, eps: float = 1e-5) -> None:
         """Initialize LayerNorm with configured parameters.
 
@@ -158,6 +160,7 @@ class LayerNorm(nn.Module):
 
 class PreNorm(nn.Module):
     """Module that normalizes inputs before applying a submodule."""
+
     def __init__(self, dim: int, fn: nn.Module) -> None:
         """Initialize PreNorm with configured parameters.
 
@@ -272,6 +275,7 @@ class ConvNextBlock(nn.Module):
 
 class LinearAttention(nn.Module):
     """Linear attention block for efficient spatial mixing."""
+
     def __init__(self, dim: int, heads: int = 4, dim_head: int = 32) -> None:
         """Initialize LinearAttention with configured parameters.
 
@@ -319,6 +323,7 @@ class LinearAttention(nn.Module):
 
 class UnetConvNextBlock(nn.Module):
     """U-Net/ConvNeXt backbone used by the diffusion model."""
+
     def __init__(
         self,
         dim: int,
@@ -383,7 +388,10 @@ class UnetConvNextBlock(nn.Module):
                             norm=ind != 0,
                         ),
                         ConvNextBlock(
-                            dim_out, dim_out, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+                            dim_out,
+                            dim_out,
+                            time_emb_dim=time_dim,
+                            coord_emb_dim=coord_emb_dim,
                         ),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
                         Downsample(dim_out) if not is_last else nn.Identity(),
@@ -413,7 +421,10 @@ class UnetConvNextBlock(nn.Module):
                             coord_emb_dim=coord_emb_dim,
                         ),
                         ConvNextBlock(
-                            dim_in, dim_in, time_emb_dim=time_dim, coord_emb_dim=coord_emb_dim
+                            dim_in,
+                            dim_in,
+                            time_emb_dim=time_dim,
+                            coord_emb_dim=coord_emb_dim,
                         ),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                         Upsample(dim_in) if not is_last else nn.Identity(),

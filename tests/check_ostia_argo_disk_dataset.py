@@ -75,8 +75,9 @@ def main() -> int:
     total = len(dataset)
     print(
         f"Checking dataset: split={args.split}, synthetic={dataset.synthetic_mode}, "
-        f"length={total}, config={Path(args.data_config)}"
-    , flush=True)
+        f"length={total}, config={Path(args.data_config)}",
+        flush=True,
+    )
 
     for idx in range(total):
         row = dataset._rows[idx]
@@ -92,14 +93,17 @@ def main() -> int:
             error_count += 1
             print(
                 f"[ERROR] idx={idx} export_index={row.get('export_index', '')} "
-                f"date={row.get('date', '')} error={exc}"
-            , flush=True)
+                f"date={row.get('date', '')} error={exc}",
+                flush=True,
+            )
             if error_count >= args.max_errors:
                 print(f"Stopping after {error_count} errors.", flush=True)
                 return 1
 
         if (idx + 1) % 1000 == 0 or idx + 1 == total:
-            print(f"Checked {idx + 1}/{total} samples, errors={error_count}", flush=True)
+            print(
+                f"Checked {idx + 1}/{total} samples, errors={error_count}", flush=True
+            )
 
     print(f"Finished dataset check with errors={error_count}", flush=True)
     return 0 if error_count == 0 else 1

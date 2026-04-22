@@ -39,6 +39,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 - stitches `y_hat_denorm[:, 0, :, :]` into one large tiled GeoTIFF with internal overviews  
 - exports the matching GLORYS top-band raster by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
+- writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep  
 
 Typical run:  
 ```bash
@@ -54,35 +55,40 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_prediction.tif`: stitched global top-band prediction  
 - `<run_name>_glorys_top_band.tif`: stitched GLORYS top-band truth export by default  
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
+- `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only  
 - `selected_patches.csv`: the manifest rows used for the run  
 - `run_summary.yaml`: checkpoint/config/date metadata for traceability  
+When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
 
 ## Workflow 1c: Package One Run for the Cesium Globe
 Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
 - reads one completed `inference/outputs/<run_name>/` directory
 - tiles the stitched prediction and ground-truth GeoTIFFs with `gdal2tiles.py`
 - copies the Argo points GeoJSON into the hosted globe bundle
+- copies the train/val patch-split GeoJSON into the hosted globe bundle
 - writes `globe/globe-config.json` for the static Cesium page
 
 Typical run:
 ```bash
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
-  --run-dir inference/outputs/<run_name> \
-  --public-base-url https://<bucket-or-site>/<run_name>/globe/
+  --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
+  --public-base-url https://<bucket-or-site>/inference_production/global_top_band_<YYYYMMDD>/globe/
 ```
 
-To upload the generated `globe/` folder in the same step, provide an `rclone` destination:
+To upload one selected run into the hosted production area in the same step, provide an `rclone` destination:
 ```bash
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
-  --run-dir inference/outputs/<run_name> \
-  --public-base-url https://<bucket-or-site>/<run_name>/globe/ \
-  --rclone-remote r2:<bucket>/<run_name>/globe
+  --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
+  --public-base-url https://<bucket-or-site>/inference_production/global_top_band_<YYYYMMDD>/globe/ \
+  --rclone-remote r2:<bucket>/inference_production/global_top_band_<YYYYMMDD> \
+  --rclone-sync-scope run
 ```
 
-The hosted output lands under `inference/outputs/<run_name>/globe/` and includes:
+The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/global_top_band_<YYYYMMDD>/globe/` in the bucket when synced with the example above. It includes:
 - `prediction_tiles/`: TMS imagery tiles for the prediction raster
 - `ground_truth_tiles/`: TMS imagery tiles for the GLORYS raster when present
 - `argo_points.geojson`: hosted point overlay
+- `patch_splits.geojson`: hosted train/val patch grid overlay rendered as dashed outlines in the globe viewer
 - `globe-config.json`: the viewer manifest consumed by [Globe Viewer](globe.md)
 
 When serving from a bucket, enable CORS for the docs origin so the static MkDocs page can fetch the tiled layers and GeoJSON.

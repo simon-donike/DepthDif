@@ -14,6 +14,7 @@ from tqdm import tqdm
 @dataclass
 class _ExportParams:
     """Container for dataset export configuration parameters."""
+
     root_dir: Path
     output_dir: Path
     variable: str
@@ -30,6 +31,7 @@ class _ExportParams:
 
 class _NetCDFPatchExporter:
     """Exporter that writes NetCDF patch data and metadata to disk."""
+
     def __init__(self, params: _ExportParams) -> None:
         """Initialize _NetCDFPatchExporter with configured parameters.
 
@@ -72,7 +74,9 @@ class _NetCDFPatchExporter:
 
         selected_idx, selected_depths = self._resolve_export_depth_metadata(nc_files[0])
         selected_idx_str = "|".join(str(i) for i in selected_idx.tolist())
-        selected_depths_str = "|".join(f"{float(v):.6f}" for v in selected_depths.tolist())
+        selected_depths_str = "|".join(
+            f"{float(v):.6f}" for v in selected_depths.tolist()
+        )
 
         records: list[dict[str, Any]] = []
         kept_count = 0
@@ -157,7 +161,9 @@ class _NetCDFPatchExporter:
         """
         template_rows = self._build_template_rows(nc_files[0])
         template_df = pd.DataFrame.from_records(template_rows)
-        per_file_frames = [template_df.assign(source_file=nc_path.name) for nc_path in nc_files]
+        per_file_frames = [
+            template_df.assign(source_file=nc_path.name) for nc_path in nc_files
+        ]
         full_df = pd.concat(per_file_frames, ignore_index=True)
 
         cols = [
@@ -204,7 +210,9 @@ class _NetCDFPatchExporter:
             x_positions = list(range(0, w - edge + 1, edge))
             total_patches = len(y_positions) * len(x_positions)
 
-            with tqdm(total=total_patches, desc="Building nodata fraction index") as pbar:
+            with tqdm(
+                total=total_patches, desc="Building nodata fraction index"
+            ) as pbar:
                 for y0 in y_positions:
                     for x0 in x_positions:
                         rec: dict[str, Any] = {
@@ -382,7 +390,9 @@ class _NetCDFPatchExporter:
         n_samples = len(records)
         val_len = int(round(n_samples * self.params.val_fraction))
         if n_samples > 1:
-            val_len = min(max(val_len, 1 if self.params.val_fraction > 0.0 else 0), n_samples - 1)
+            val_len = min(
+                max(val_len, 1 if self.params.val_fraction > 0.0 else 0), n_samples - 1
+            )
         else:
             val_len = 0
 
@@ -391,12 +401,13 @@ class _NetCDFPatchExporter:
         for i, rec in enumerate(records):
             rec["split"] = "val" if i in val_indices else "train"
 
-    def _resolve_export_depth_metadata(self, template_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    def _resolve_export_depth_metadata(
+        self, template_path: Path
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Load the dataset schema once so manifest metadata stays stable across resumed exports."""
         with xr.open_dataset(template_path, engine="h5netcdf", cache=False) as ds:
             _, _, _, selected_idx, selected_depths = self._extract_depth_stack(ds)
         return selected_idx, selected_depths
-
 
 
 def to_disk(
@@ -457,8 +468,9 @@ def to_disk(
     return _NetCDFPatchExporter(params).run()
 
 
-
-def _load_config(config_path: str = "configs/px_space/data_config.yaml") -> dict[str, Any]:
+def _load_config(
+    config_path: str = "configs/px_space/data_config.yaml",
+) -> dict[str, Any]:
     """Load and return config data.
 
     Args:
@@ -498,11 +510,17 @@ if __name__ == "__main__":
     csv_path = to_disk(
         root_dir="/data1/datasets/depth/monthy/",
         output_dir="/work/data/depth/25_bands",
-        bands=[2,4,6,8,10,12,14,16,18,20,22,24,26,28,30],
-        variable=str(_ds_cfg_value(ds_cfg, "source.bands", "bands", default=["thetao"])[0]),
-        edge_size=int(_ds_cfg_value(ds_cfg, "source.edge_size", "edge_size", default=128)),
+        bands=[2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30],
+        variable=str(
+            _ds_cfg_value(ds_cfg, "source.bands", "bands", default=["thetao"])[0]
+        ),
+        edge_size=int(
+            _ds_cfg_value(ds_cfg, "source.edge_size", "edge_size", default=128)
+        ),
         enforce_validity=bool(
-            _ds_cfg_value(ds_cfg, "validity.enforce_validity", "enforce_validity", default=True)
+            _ds_cfg_value(
+                ds_cfg, "validity.enforce_validity", "enforce_validity", default=True
+            )
         ),
         max_nodata_fraction=float(
             _ds_cfg_value(
@@ -513,7 +531,9 @@ if __name__ == "__main__":
             )
         ),
         nan_fill_value=float(
-            _ds_cfg_value(ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0)
+            _ds_cfg_value(
+                ds_cfg, "validity.nan_fill_value", "nan_fill_value", default=0.0
+            )
         ),
     )
     print(f"Wrote CSV index: {csv_path}")

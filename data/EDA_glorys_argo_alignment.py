@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_ARGO_GLOB = "EN.4.2.2.f.profiles.g10.*.nc"
 DEFAULT_GLORYS_DIR = Path("/data1/datasets/depth_v2/glorys_weekly")
@@ -79,7 +78,9 @@ def sample_argo_depths(
     max_profiles_per_file: int | None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Sample ARGO profile depths across monthly EN4 files."""
-    selected_files = argo_files if max_files is None else argo_files[: max(int(max_files), 0)]
+    selected_files = (
+        argo_files if max_files is None else argo_files[: max(int(max_files), 0)]
+    )
     records: list[pd.DataFrame] = []
     file_summaries: list[dict[str, Any]] = []
 
@@ -128,16 +129,26 @@ def sample_argo_depths(
                     "profiles_sampled": int(n_prof_keep),
                     "n_levels": int(n_levels),
                     "valid_depth_count": int(valid_depths.size),
-                    "depth_min_m": float(np.nanmin(valid_depths)) if valid_depths.size else np.nan,
-                    "depth_max_m": float(np.nanmax(valid_depths)) if valid_depths.size else np.nan,
+                    "depth_min_m": (
+                        float(np.nanmin(valid_depths)) if valid_depths.size else np.nan
+                    ),
+                    "depth_max_m": (
+                        float(np.nanmax(valid_depths)) if valid_depths.size else np.nan
+                    ),
                 }
             )
 
     if not records:
-        raise RuntimeError("No valid ARGO depth observations were found in the selected files.")
+        raise RuntimeError(
+            "No valid ARGO depth observations were found in the selected files."
+        )
 
     total_levels_in_source_files = sorted(
-        {int(summary["n_levels"]) for summary in file_summaries if int(summary["n_levels"]) > 0}
+        {
+            int(summary["n_levels"])
+            for summary in file_summaries
+            if int(summary["n_levels"]) > 0
+        }
     )
 
     return pd.concat(records, ignore_index=True), {
@@ -165,13 +176,19 @@ def build_alignment_frame(
     lower_depth = np.full(argo_depths.shape, np.nan, dtype=np.float64)
     upper_depth = np.full(argo_depths.shape, np.nan, dtype=np.float64)
     lower_depth[lower_idx >= 0] = glorys_depths[lower_idx[lower_idx >= 0]]
-    upper_depth[upper_idx < glorys_depths.size] = glorys_depths[upper_idx[upper_idx < glorys_depths.size]]
+    upper_depth[upper_idx < glorys_depths.size] = glorys_depths[
+        upper_idx[upper_idx < glorys_depths.size]
+    ]
 
     lower_diff = np.abs(argo_depths - lower_depth)
     upper_diff = np.abs(argo_depths - upper_depth)
-    lower_exact = (lower_idx >= 0) & np.isfinite(lower_diff) & (lower_diff <= exact_tolerance_m)
-    upper_exact = (upper_idx < glorys_depths.size) & np.isfinite(upper_diff) & (
-        upper_diff <= exact_tolerance_m
+    lower_exact = (
+        (lower_idx >= 0) & np.isfinite(lower_diff) & (lower_diff <= exact_tolerance_m)
+    )
+    upper_exact = (
+        (upper_idx < glorys_depths.size)
+        & np.isfinite(upper_diff)
+        & (upper_diff <= exact_tolerance_m)
     )
 
     exact_idx[lower_exact] = lower_idx[lower_exact]
@@ -183,8 +200,8 @@ def build_alignment_frame(
     span = upper_depth - lower_depth
     interp_mask = in_range & (~exact_match) & np.isfinite(span) & (span > 0.0)
     interp_weight_upper[interp_mask] = (
-        (argo_depths[interp_mask] - lower_depth[interp_mask]) / span[interp_mask]
-    )
+        argo_depths[interp_mask] - lower_depth[interp_mask]
+    ) / span[interp_mask]
     interp_weight_lower[interp_mask] = 1.0 - interp_weight_upper[interp_mask]
 
     status = np.full(argo_depths.shape, "between_levels", dtype=object)
@@ -193,8 +210,12 @@ def build_alignment_frame(
     status[argo_depths > glorys_depths[-1]] = "deeper_than_glorys_max"
 
     out = argo_depth_df.copy()
-    out["glorys_lower_idx"] = np.where(lower_idx >= 0, lower_idx, -1).astype(np.int64, copy=False)
-    out["glorys_upper_idx"] = np.where(upper_idx < glorys_depths.size, upper_idx, -1).astype(
+    out["glorys_lower_idx"] = np.where(lower_idx >= 0, lower_idx, -1).astype(
+        np.int64, copy=False
+    )
+    out["glorys_upper_idx"] = np.where(
+        upper_idx < glorys_depths.size, upper_idx, -1
+    ).astype(
         np.int64,
         copy=False,
     )
@@ -235,8 +256,12 @@ def summarize_per_argo_level(alignment_df: pd.DataFrame) -> pd.DataFrame:
                 "depth_p50_m": float(np.nanpercentile(depths, 50)),
                 "depth_p90_m": float(np.nanpercentile(depths, 90)),
                 "depth_max_m": float(np.nanmax(depths)),
-                "exact_match_fraction": float(group["alignment_status"].eq("exact_glorys_level").mean()),
-                "between_fraction": float(group["alignment_status"].eq("between_levels").mean()),
+                "exact_match_fraction": float(
+                    group["alignment_status"].eq("exact_glorys_level").mean()
+                ),
+                "between_fraction": float(
+                    group["alignment_status"].eq("between_levels").mean()
+                ),
                 "shallower_fraction": float(
                     group["alignment_status"].eq("shallower_than_glorys_min").mean()
                 ),
@@ -250,7 +275,9 @@ def summarize_per_argo_level(alignment_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
-def summarize_glorys_coverage(alignment_df: pd.DataFrame, glorys_depths: np.ndarray) -> pd.DataFrame:
+def summarize_glorys_coverage(
+    alignment_df: pd.DataFrame, glorys_depths: np.ndarray
+) -> pd.DataFrame:
     """Count how strongly each GLORYS layer participates in ARGO interpolation."""
     records: list[dict[str, Any]] = []
     for glorys_idx, glorys_depth in enumerate(glorys_depths.tolist()):
@@ -265,7 +292,9 @@ def summarize_glorys_coverage(alignment_df: pd.DataFrame, glorys_depths: np.ndar
                 "used_as_lower_count": lower_count,
                 "used_as_upper_count": upper_count,
                 # This gives a quick sense of which GLORYS levels are most relevant for ARGO alignment.
-                "total_alignment_touch_count": int(exact_count + lower_count + upper_count),
+                "total_alignment_touch_count": int(
+                    exact_count + lower_count + upper_count
+                ),
             }
         )
     return pd.DataFrame.from_records(records)
@@ -324,7 +353,9 @@ def build_one_to_one_channel_mapping(
     mapping_records: list[dict[str, Any]] = []
     for row in representative_argo_level_df.itertuples(index=False):
         representative_depth = float(row.argo_depth_m)
-        nearest_glorys_idx = int(np.argmin(np.abs(glorys_depths - representative_depth)))
+        nearest_glorys_idx = int(
+            np.argmin(np.abs(glorys_depths - representative_depth))
+        )
         nearest_glorys_depth = float(glorys_depths[nearest_glorys_idx])
         mapping_records.append(
             {
@@ -333,15 +364,21 @@ def build_one_to_one_channel_mapping(
                 "argo_valid_profile_count": int(row.valid_profile_count),
                 "glorys_level_index": nearest_glorys_idx,
                 "glorys_depth_m": nearest_glorys_depth,
-                "absolute_depth_difference_m": float(abs(representative_depth - nearest_glorys_depth)),
+                "absolute_depth_difference_m": float(
+                    abs(representative_depth - nearest_glorys_depth)
+                ),
             }
         )
     return {
-        "argo_reference_file": str(argo_reference_file) if argo_reference_file is not None else None,
+        "argo_reference_file": (
+            str(argo_reference_file) if argo_reference_file is not None else None
+        ),
         "argo_n_levels_total_in_source_file": (
             int(argo_n_levels_total) if argo_n_levels_total is not None else None
         ),
-        "argo_n_levels_with_any_valid_depth_in_reference_file": int(len(mapping_records)),
+        "argo_n_levels_with_any_valid_depth_in_reference_file": int(
+            len(mapping_records)
+        ),
         "glorys_n_levels": int(glorys_depths.size),
         "mapping_method": "nearest_glorys_depth_per_argo_level_median_depth_across_all_profiles_in_reference_file",
         "mapping": mapping_records,
@@ -361,7 +398,9 @@ def interpolate_glorys_profile_to_argo_depths(
     if glorys_temperature.ndim != 1 or glorys_depths.ndim != 1:
         raise ValueError("glorys_temperature and glorys_depths must both be 1D arrays.")
     if glorys_temperature.shape[0] != glorys_depths.shape[0]:
-        raise ValueError("glorys_temperature and glorys_depths must have the same length.")
+        raise ValueError(
+            "glorys_temperature and glorys_depths must have the same length."
+        )
 
     valid = np.isfinite(glorys_temperature) & np.isfinite(glorys_depths)
     if valid.sum() < 2:
@@ -531,7 +570,9 @@ def main() -> None:
     )
     max_argo_files = None if int(args.max_argo_files) <= 0 else int(args.max_argo_files)
     max_profiles_per_file = (
-        None if int(args.max_profiles_per_file) <= 0 else int(args.max_profiles_per_file)
+        None
+        if int(args.max_profiles_per_file) <= 0
+        else int(args.max_profiles_per_file)
     )
 
     glorys_depths = extract_glorys_depths(glorys_file, args.glorys_depth_var)
@@ -557,7 +598,9 @@ def main() -> None:
     channel_mapping = build_one_to_one_channel_mapping(
         representative_argo_level_df,
         glorys_depths,
-        argo_n_levels_total=(int(argo_n_levels_values[0]) if len(argo_n_levels_values) == 1 else None),
+        argo_n_levels_total=(
+            int(argo_n_levels_values[0]) if len(argo_n_levels_values) == 1 else None
+        ),
         argo_reference_file=representative_argo_file,
     )
 
@@ -571,7 +614,9 @@ def main() -> None:
     alignment_df.to_csv(alignment_csv_path, index=False)
     per_level_df.to_csv(per_level_csv_path, index=False)
     glorys_coverage_df.to_csv(glorys_coverage_csv_path, index=False)
-    channel_mapping_json_path.write_text(json.dumps(channel_mapping, indent=2) + "\n", encoding="utf-8")
+    channel_mapping_json_path.write_text(
+        json.dumps(channel_mapping, indent=2) + "\n", encoding="utf-8"
+    )
     report_path.write_text(
         "\n".join(
             build_report_lines(

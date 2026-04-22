@@ -29,7 +29,9 @@ def get_beta_schedule(
         )
 
     if variant == "cosine":
-        return cosine_beta_schedule(timesteps, beta_start=None, beta_end=None) # pass None to use default values for cosine schedule
+        return cosine_beta_schedule(
+            timesteps, beta_start=None, beta_end=None
+        )  # pass None to use default values for cosine schedule
     elif variant == "linear":
         return linear_beta_schedule(timesteps, beta_start=beta_start, beta_end=beta_end)
     elif variant == "quadratic":
@@ -68,13 +70,15 @@ def cosine_beta_schedule(
         beta_end = 0.999
     if beta_start is None:
         beta_start = 1e-8
-        
+
     steps = timesteps + 1
     x = torch.linspace(0, timesteps, steps)
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, beta_start, beta_end) #ToDo: investigate clipping effects, might not be ideal here because it prevents very strong noise at the end
+    return torch.clip(
+        betas, beta_start, beta_end
+    )  # ToDo: investigate clipping effects, might not be ideal here because it prevents very strong noise at the end
 
 
 def linear_beta_schedule(
