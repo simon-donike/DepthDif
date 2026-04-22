@@ -9,10 +9,16 @@
   const predictionToggle = document.getElementById("globe-toggle-prediction");
   const groundTruthToggle = document.getElementById("globe-toggle-ground-truth");
   const pointsToggle = document.getElementById("globe-toggle-points");
+  const fullSampleToggle = document.getElementById("globe-toggle-full-samples");
   const patchSplitsToggle = document.getElementById("globe-toggle-patch-splits");
   const opacitySlider = document.getElementById("globe-overlay-opacity");
   const spinToggle = document.getElementById("globe-toggle-spin");
   const resetButton = document.getElementById("globe-reset-camera");
+  const profilePopup = document.getElementById("globe-profile-popup");
+  const profilePopupTitle = document.getElementById("globe-profile-popup-title");
+  const profilePopupSubtitle = document.getElementById("globe-profile-popup-subtitle");
+  const profilePopupImage = document.getElementById("globe-profile-popup-image");
+  const profilePopupClose = document.getElementById("globe-profile-popup-close");
   const DEFAULT_CAMERA_DESTINATION = {
     lon: -38.56452881619089,
     lat: 34.53988238358822,
@@ -136,6 +142,53 @@
     });
   }
 
+  function closeProfilePopup() {
+    if (!profilePopup) {
+      return;
+    }
+    profilePopup.hidden = true;
+    if (profilePopupImage) {
+      profilePopupImage.removeAttribute("src");
+      profilePopupImage.alt = "";
+    }
+  }
+
+  function showProfilePopup(entity, configUrl) {
+    if (!profilePopup || !profilePopupImage) {
+      return;
+    }
+    const now = Cesium.JulianDate.now();
+    const properties = entity.properties;
+    if (!properties || !properties.graph_png_path) {
+      return;
+    }
+    const graphPath = properties.graph_png_path.getValue(now);
+    if (!graphPath) {
+      return;
+    }
+    const locationId = properties.location_id ? properties.location_id.getValue(now) : "Full sample";
+    const patchId = properties.patch_id ? properties.patch_id.getValue(now) : "";
+    const pixelRow = properties.pixel_row ? properties.pixel_row.getValue(now) : null;
+    const pixelCol = properties.pixel_col ? properties.pixel_col.getValue(now) : null;
+
+    if (profilePopupTitle) {
+      profilePopupTitle.textContent = String(locationId);
+    }
+    if (profilePopupSubtitle) {
+      profilePopupSubtitle.textContent =
+        "Patch " +
+        String(patchId || "") +
+        ", pixel (" +
+        String(pixelRow) +
+        ", " +
+        String(pixelCol) +
+        ")";
+    }
+    profilePopupImage.src = new URL(String(graphPath), configUrl).toString();
+    profilePopupImage.alt = String(locationId) + " profile comparison";
+    profilePopup.hidden = false;
+  }
+
   function enforceOverlayOrder(state) {
     const imageryLayers = state.viewer.imageryLayers;
     if (state.groundTruthLayer) {
@@ -149,6 +202,9 @@
     }
     if (state.pointsDataSource) {
       dataSources.raiseToTop(state.pointsDataSource);
+    }
+    if (state.fullSampleDataSource) {
+      dataSources.raiseToTop(state.fullSampleDataSource);
     }
   }
 
@@ -300,6 +356,17 @@
       }
     });
 
+    if (fullSampleToggle) {
+      fullSampleToggle.addEventListener("change", function () {
+        if (state.fullSampleDataSource) {
+          state.fullSampleDataSource.show = fullSampleToggle.checked;
+        }
+        if (!fullSampleToggle.checked) {
+          closeProfilePopup();
+        }
+      });
+    }
+
     if (patchSplitsToggle) {
       patchSplitsToggle.addEventListener("change", function () {
         if (state.patchSplitsDataSource) {
@@ -329,6 +396,17 @@
         flyToConfig(state.viewer, state.config);
       }
     });
+
+    if (profilePopupClose) {
+      profilePopupClose.addEventListener("click", closeProfilePopup);
+    }
+    if (profilePopup) {
+      profilePopup.addEventListener("click", function (event) {
+        if (event.target === profilePopup) {
+          closeProfilePopup();
+        }
+      });
+    }
   }
 
   async function addPredictionLayer(viewer, config, configUrl) {
@@ -387,6 +465,28 @@
     return dataSource;
   }
 
+  async function addFullSampleLayer(viewer, config, configUrl) {
+    const fullSampleUrl = resolveAssetUrl(config.full_sample_points_url, configUrl);
+    if (!fullSampleUrl) {
+      if (fullSampleToggle) {
+        fullSampleToggle.checked = false;
+        fullSampleToggle.disabled = true;
+      }
+      return null;
+    }
+    const dataSource = await Cesium.GeoJsonDataSource.load(fullSampleUrl, {
+      clampToGround: true,
+      markerColor: Cesium.Color.fromCssColorString("#ffd166"),
+      markerSize: 14,
+      stroke: Cesium.Color.BLACK,
+      strokeWidth: 1,
+      credit: config.credits && config.credits.full_sample_points,
+    });
+    viewer.dataSources.add(dataSource);
+    dataSource.show = fullSampleToggle ? fullSampleToggle.checked : true;
+    return dataSource;
+  }
+
   async function addPatchSplitsLayer(viewer, config, configUrl) {
     const patchSplitsUrl = resolveAssetUrl(config.patch_splits_url, configUrl);
     if (!patchSplitsUrl) {
@@ -414,12 +514,14 @@
       const viewer = buildViewer();
       const state = {
         config: config,
+        configUrl: configUrl,
         viewer: viewer,
         predictionLayer: null,
         groundTruthLayer: null,
         pointsDataSource: null,
+        fullSampleDataSource: null,
         patchSplitsDataSource: null,
-        spinEnabled: false,
+        spinEnabled: true,
         lastSpinTime: null,
       };
 
@@ -427,10 +529,23 @@
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
       state.patchSplitsDataSource = await addPatchSplitsLayer(viewer, config, configUrl);
       state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
+      state.fullSampleDataSource = await addFullSampleLayer(viewer, config, configUrl);
       enforceOverlayOrder(state);
       attachSpinLoop(state);
-      setSpinEnabled(state, false);
+      setSpinEnabled(state, true);
       wireUi(state);
+      viewer.screenSpaceEventHandler.setInputAction(function (movement) {
+        const picked = viewer.scene.pick(movement.position);
+        if (
+          !picked ||
+          !picked.id ||
+          !state.fullSampleDataSource ||
+          !state.fullSampleDataSource.entities.contains(picked.id)
+        ) {
+          return;
+        }
+        showProfilePopup(picked.id, state.configUrl);
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       flyToConfig(viewer, config);
       forceViewerResize(viewer);
       const stopWatchingResize = watchContainerResize(viewer, container);

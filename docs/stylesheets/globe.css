@@ -162,6 +162,52 @@
   display: block;
 }
 
+.globe-profile-popup {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(2, 10, 18, 0.62);
+}
+
+.globe-profile-popup__card {
+  width: min(52rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+  padding: 0.95rem;
+  border: 1px solid rgba(124, 200, 255, 0.16);
+  border-radius: 20px;
+  backdrop-filter: blur(18px);
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
+    rgba(5, 20, 32, 0.94);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.34);
+}
+
+.globe-profile-popup__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.globe-profile-popup__subtitle {
+  margin-top: 0.2rem;
+  color: rgba(234, 248, 255, 0.82);
+  font-size: 0.86rem;
+}
+
+.globe-profile-popup__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 @media screen and (max-width: 900px) {
   .globe-toolbar {
     position: static;
@@ -185,5 +231,13 @@
     inset: auto;
     height: auto;
     min-height: 68vh;
+  }
+
+  .globe-profile-popup {
+    position: fixed;
+  }
+
+  .globe-profile-popup__header {
+    flex-direction: column;
   }
 }

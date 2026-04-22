@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import matplotlib.cm as cm
@@ -1016,6 +1017,127 @@ def log_wandb_depth_level_reconstruction_grid(
             plt.close(fig)
 
 
+def _resolve_profile_depth_axis(
+    *,
+    profile_size: int,
+    depth_axis: np.ndarray | None = None,
+) -> tuple[np.ndarray, str]:
+    """Return the plotting depth axis for one vertical profile."""
+    if depth_axis is None:
+        return np.arange(int(profile_size), dtype=np.int32), "GLORYS depth band"
+
+    depth_axis_np = np.asarray(depth_axis, dtype=np.float64).reshape(-1)
+    if int(depth_axis_np.size) != int(profile_size):
+        raise ValueError(
+            "depth_axis must match the profile depth dimension: "
+            f"{int(depth_axis_np.size)} != {int(profile_size)}"
+        )
+    return depth_axis_np, "Depth (m)"
+
+
+def plot_glorys_profile_comparison_axis(
+    ax: Any,
+    *,
+    x_profile: np.ndarray,
+    y_hat_profile: np.ndarray,
+    y_target_profile: np.ndarray,
+    observed_profile: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    title: str | None = None,
+    show_legend: bool = False,
+) -> None:
+    """Draw one validation-style profile comparison axis."""
+    x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
+    y_hat_profile_np = np.asarray(y_hat_profile, dtype=np.float64).reshape(-1)
+    y_target_profile_np = np.asarray(y_target_profile, dtype=np.float64).reshape(-1)
+    observed_profile_np = np.asarray(observed_profile, dtype=bool).reshape(-1)
+    if (
+        x_profile_np.size != y_hat_profile_np.size
+        or x_profile_np.size != y_target_profile_np.size
+        or x_profile_np.size != observed_profile_np.size
+    ):
+        raise ValueError("All profile inputs must share the same depth dimension.")
+
+    depth_values, depth_label = _resolve_profile_depth_axis(
+        profile_size=int(y_target_profile_np.size),
+        depth_axis=depth_axis,
+    )
+    ax.plot(
+        y_target_profile_np,
+        depth_values,
+        label="GLORYS target",
+        color="black",
+        linewidth=2.0,
+    )
+    ax.plot(
+        y_hat_profile_np,
+        depth_values,
+        label="Reconstruction",
+        color="tab:orange",
+        linewidth=1.8,
+    )
+    if bool(np.any(observed_profile_np)):
+        # Keep the sparse conditioning profile visually identical to validation logging.
+        ax.plot(
+            x_profile_np[observed_profile_np],
+            depth_values[observed_profile_np],
+            label="Argo conditioning",
+            color="tab:blue",
+            marker="o",
+            linewidth=1.4,
+            markersize=3.5,
+        )
+    ax.invert_yaxis()
+    ax.set_xlabel("Temperature (deg C)")
+    ax.set_ylabel(depth_label)
+    if title is not None:
+        ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    if show_legend:
+        ax.legend(loc="best")
+
+
+def save_glorys_profile_comparison_plot(
+    *,
+    output_path: str | Path,
+    x_profile: np.ndarray,
+    y_hat_profile: np.ndarray,
+    y_target_profile: np.ndarray,
+    observed_profile: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    title: str | None = None,
+    figure_title: str | None = None,
+    dpi: int = 180,
+) -> Path:
+    """Save one validation-style profile comparison plot to disk."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig = None
+    try:
+        fig, ax = plt.subplots(1, 1, figsize=(7.5, 6.0), squeeze=False)
+        plot_glorys_profile_comparison_axis(
+            ax[0, 0],
+            x_profile=x_profile,
+            y_hat_profile=y_hat_profile,
+            y_target_profile=y_target_profile,
+            observed_profile=observed_profile,
+            depth_axis=depth_axis,
+            title=title,
+            show_legend=True,
+        )
+        if figure_title is not None:
+            fig.suptitle(figure_title, fontsize=13)
+            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+        else:
+            fig.tight_layout()
+        fig.savefig(output_path, dpi=int(dpi))
+    finally:
+        if fig is not None:
+            plt.close(fig)
+    return output_path
+
+
 def log_wandb_glorys_profile_comparison(
     *,
     logger: Any,
@@ -1110,39 +1232,16 @@ def log_wandb_glorys_profile_comparison(
             observed_profile = (
                 conditioning_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
             )
-
-            # Plot depth bands in ascending index order so every subplot reads top-to-bottom consistently.
-            ax.plot(
-                y_target_profile,
-                depth_idx,
-                label="GLORYS target",
-                color="black",
-                linewidth=2.0,
+            plot_glorys_profile_comparison_axis(
+                ax,
+                x_profile=x_profile,
+                y_hat_profile=y_hat_profile,
+                y_target_profile=y_target_profile,
+                observed_profile=observed_profile,
+                depth_axis=depth_idx,
+                title=f"Pixel ({row_i}, {col_i})",
+                show_legend=(plot_idx == 0),
             )
-            ax.plot(
-                y_hat_profile,
-                depth_idx,
-                label="Reconstruction",
-                color="tab:orange",
-                linewidth=1.8,
-            )
-            if bool(np.any(observed_profile)):
-                ax.plot(
-                    x_profile[observed_profile],
-                    depth_idx[observed_profile],
-                    label="Argo conditioning",
-                    color="tab:blue",
-                    marker="o",
-                    linewidth=1.4,
-                    markersize=3.5,
-                )
-            ax.invert_yaxis()
-            ax.set_xlabel("Temperature (deg C)")
-            ax.set_ylabel("GLORYS depth band")
-            ax.set_title(f"Pixel ({row_i}, {col_i})")
-            ax.grid(True, alpha=0.25)
-            if plot_idx == 0:
-                ax.legend(loc="best")
 
         fig.suptitle(
             f"Sample {sample_i} generated-only profile comparisons",

@@ -83,7 +83,7 @@ Use `inference/run_single.py`:
 /work/envs/depth/bin/python inference/run_single.py  
 ```  
 
-For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, writes the stitched top-band prediction under `inference/outputs/global_top_band_<YYYYMMDD>/`, and by default also writes the matching GLORYS top-band raster plus GeoJSON exports for observed Argo point locations and train/val patch squares.
+For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, writes the stitched top-band prediction under `inference/outputs/global_top_band_<YYYYMMDD>/`, and then conservatively fills 1-2 pixel nodata seams in the exported TIFFs before finalizing them. By default it also writes the matching GLORYS top-band raster plus GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares.
 
 To package one exported run for the Cesium globe viewer in the docs, use:
 

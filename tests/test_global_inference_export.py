@@ -5,16 +5,25 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import rasterio
 import yaml
+from rasterio.transform import from_origin
 
 from inference.export_global import (
+    FullProfileSample,
+    MosaicLayout,
+    _cleanup_accumulator,
     _argo_point_features_for_patch,
     _patch_split_feature_for_row,
+    _full_profile_feature_for_sample,
     _default_run_stem,
     _prepare_run_directory,
     _promote_production_run,
+    _repair_small_nodata_gaps_2d,
+    create_raster_accumulator,
     build_global_mosaic,
     select_export_indices,
+    write_global_top_band_geotiff,
 )
 
 
@@ -58,6 +67,71 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertAlmostEqual(transform.e, -1.0, places=6)
         self.assertAlmostEqual(transform.c, 0.0, places=6)
         self.assertAlmostEqual(transform.f, 2.0, places=6)
+
+    def test_repair_small_nodata_gaps_fills_only_tiny_internal_seams(self) -> None:
+        raster = np.asarray(
+            [
+                [7.0, 7.0, -9999.0, 7.0, 7.0],
+                [7.0, 7.0, -9999.0, 7.0, 7.0],
+            ],
+            dtype=np.float32,
+        )
+
+        repaired, repaired_mask = _repair_small_nodata_gaps_2d(
+            raster,
+            nodata=-9999.0,
+        )
+
+        self.assertTrue(repaired_mask[:, 2].all())
+        np.testing.assert_allclose(repaired, np.full((2, 5), 7.0, dtype=np.float32))
+
+    def test_write_global_top_band_geotiff_repairs_small_internal_seam(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            scratch_dir = tmp_path / "scratch"
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=32.0,
+                top=32.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=32,
+                height=32,
+                patch_width=32,
+                patch_height=32,
+                transform=from_origin(0.0, 32.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem="prediction_top_band",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 0.0
+                accumulator.count_array[:] = 0
+                accumulator.sum_array[:, :16] = 7.0
+                accumulator.count_array[:, :16] = 1
+                accumulator.sum_array[:, 17:] = 7.0
+                accumulator.count_array[:, 17:] = 1
+
+                tif_path = tmp_path / "prediction.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_top_band_celsius",
+                    tags={"kind": "prediction"},
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+                    self.assertEqual(ds.nodata, -9999.0)
+
+                np.testing.assert_allclose(band, np.full((32, 32), 7.0, dtype=np.float32))
+            finally:
+                _cleanup_accumulator(accumulator)
 
     def test_argo_point_features_use_pixel_centers(self) -> None:
         row = {
@@ -122,6 +196,50 @@ class TestGlobalInferenceExport(unittest.TestCase):
         }
 
         self.assertIsNone(_patch_split_feature_for_row(row))
+
+    def test_full_profile_feature_keeps_depth_stacks_and_graph_path(self) -> None:
+        sample = FullProfileSample(
+            dataset_index=4,
+            row={
+                "date": 20260105,
+                "patch_id": "patch-12",
+                "export_index": 18,
+                "lat0": 0.0,
+                "lat1": 2.0,
+                "lon0": 10.0,
+                "lon1": 12.0,
+            },
+            point_row=1,
+            point_col=0,
+            patch_height=2,
+            patch_width=2,
+            lon=10.5,
+            lat=0.5,
+            x_profile_c=np.asarray([12.0, 13.0, 14.0], dtype=np.float32),
+            y_hat_profile_c=np.asarray([11.5, 12.5, 13.5], dtype=np.float32),
+            y_target_profile_c=np.asarray([10.5, 11.5, 12.5], dtype=np.float32),
+            observed_profile=np.asarray([True, False, True], dtype=bool),
+            target_valid_profile=np.asarray([True, True, False], dtype=bool),
+        )
+
+        feature = _full_profile_feature_for_sample(
+            sample=sample,
+            location_id="full_sample_001",
+            graph_png_path="graphs/full_sample_001.png",
+            depth_axis_m=np.asarray([0.5, 5.0, 25.0], dtype=np.float64),
+        )
+
+        self.assertEqual(feature["geometry"]["coordinates"], [10.5, 0.5])
+        self.assertEqual(feature["properties"]["location_id"], "full_sample_001")
+        self.assertEqual(
+            feature["properties"]["graph_png_path"], "graphs/full_sample_001.png"
+        )
+        self.assertEqual(feature["properties"]["depth_m"], [0.5, 5.0, 25.0])
+        self.assertEqual(feature["properties"]["argo_profile_c"], [12.0, None, 14.0])
+        self.assertEqual(
+            feature["properties"]["prediction_profile_c"], [11.5, 12.5, None]
+        )
+        self.assertEqual(feature["properties"]["glorys_profile_c"], [10.5, 11.5, None])
 
     def test_default_run_stem_keeps_selected_date_in_artifact_names(self) -> None:
         self.assertEqual(_default_run_stem(20260105), "global_top_band_20260105")

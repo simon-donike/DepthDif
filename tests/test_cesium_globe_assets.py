@@ -70,6 +70,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "ground_truth_tiles_url": None,
             "argo_points_url": None,
             "patch_splits_url": None,
+            "full_sample_points_url": None,
             "west": -180.0,
             "south": -90.0,
             "east": 180.0,
@@ -91,11 +92,13 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             ground_truth_tiles_url="./ground_truth_tiles",
             argo_points_url="./argo_points.geojson",
             patch_splits_url="./patch_splits.geojson",
+            full_sample_points_url="./full_sample_locations.geojson",
             bounds=bounds,
             prediction_credit="Prediction source",
             ground_truth_credit="Ground truth source",
             points_credit="Observed Argo points",
             patch_splits_credit="Train/val patch split grid",
+            full_sample_points_credit="Random full-depth profile locations",
             color_scale_min_c=0.0,
             color_scale_max_c=30.0,
             color_palette="temperature_blue_red",
@@ -107,6 +110,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["ground_truth_tiles_url"], "./ground_truth_tiles")
         self.assertEqual(config["argo_points_url"], "./argo_points.geojson")
         self.assertEqual(config["patch_splits_url"], "./patch_splits.geojson")
+        self.assertEqual(
+            config["full_sample_points_url"], "./full_sample_locations.geojson"
+        )
         self.assertEqual(config["west"], 1.0)
         self.assertEqual(config["south"], 2.0)
         self.assertEqual(config["east"], 3.0)
@@ -120,6 +126,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             config["credits"]["patch_splits"], "Train/val patch split grid"
         )
+        self.assertEqual(
+            config["credits"]["full_sample_points"],
+            "Random full-depth profile locations",
+        )
 
     def test_template_is_valid_json(self) -> None:
         template_path = Path("inference/transforms/globe-config.template.json")
@@ -128,6 +138,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertIn("prediction_tiles_url", template)
         self.assertIn("patch_splits_url", template)
+        self.assertIn("full_sample_points_url", template)
         self.assertIn("default_camera_destination", template)
         self.assertIn("color_scale_min_c", template)
 

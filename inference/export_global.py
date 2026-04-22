@@ -48,6 +48,7 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.transform import Affine, from_origin
 from rasterio.windows import Window
+from scipy import ndimage as ndi
 import torch
 from torch import nn
 from tqdm import tqdm
@@ -65,6 +66,7 @@ from inference.core import (
     resolve_checkpoint_path,
 )
 from utils.normalizations import temperature_normalize
+from utils.validation_denoise import save_glorys_profile_comparison_plot
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
 DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
@@ -72,6 +74,7 @@ DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
+DEFAULT_FULL_SAMPLE_COUNT = 100
 
 
 @dataclass(frozen=True)
@@ -105,19 +108,45 @@ class RasterAccumulator:
     count_array: np.memmap
 
 
+@dataclass
+class FullProfileSample:
+    dataset_index: int
+    row: dict[str, Any]
+    point_row: int
+    point_col: int
+    patch_height: int
+    patch_width: int
+    lon: float
+    lat: float
+    x_profile_c: np.ndarray
+    y_hat_profile_c: np.ndarray
+    y_target_profile_c: np.ndarray
+    observed_profile: np.ndarray
+    target_valid_profile: np.ndarray
+
+
 class ExportInferenceWrapper(nn.Module):
     """Thin wrapper so DataParallel can fan out batch-level inference."""
 
-    def __init__(self, model: nn.Module, *, export_ground_truth: bool) -> None:
+    def __init__(
+        self,
+        model: nn.Module,
+        *,
+        export_ground_truth: bool,
+        export_full_prediction_stack: bool,
+    ) -> None:
         super().__init__()
         self.model = model
         self.export_ground_truth = bool(export_ground_truth)
+        self.export_full_prediction_stack = bool(export_full_prediction_stack)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         pred = self.model.predict_step(batch, batch_idx=0)
         out: dict[str, torch.Tensor] = {
             "prediction_top_band": pred["y_hat_denorm"][:, 0].contiguous(),
         }
+        if self.export_full_prediction_stack:
+            out["prediction_full_stack"] = pred["y_hat_denorm"].contiguous()
         if self.export_ground_truth:
             target_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
             y_valid_mask = batch["y_valid_mask"]
@@ -214,6 +243,7 @@ def _rewrite_summary_for_production(
         "prediction_tif_path",
         "ground_truth_tif_path",
         "argo_points_geojson_path",
+        "full_sample_locations_geojson_path",
         "patch_splits_geojson_path",
     ):
         value = summary.get(key)
@@ -383,6 +413,58 @@ def _row_bounds(row: dict[str, Any]) -> tuple[float, float, float, float]:
     return left, bottom, right, top
 
 
+def _point_lon_lat_for_pixel(
+    *,
+    row: dict[str, Any],
+    patch_shape: tuple[int, int],
+    point_row: int,
+    point_col: int,
+) -> tuple[float, float]:
+    left, bottom, right, top = _row_bounds(row)
+    patch_height, patch_width = patch_shape
+    pixel_width = (right - left) / float(patch_width)
+    pixel_height = (top - bottom) / float(patch_height)
+    if pixel_width <= 0.0 or pixel_height <= 0.0:
+        raise RuntimeError(
+            "Encountered non-positive pixel resolution while building Argo points."
+        )
+    lon = left + (float(point_col) + 0.5) * pixel_width
+    lat = top - (float(point_row) + 0.5) * pixel_height
+    return lon, lat
+
+
+def _point_feature_for_pixel(
+    *,
+    row: dict[str, Any],
+    patch_shape: tuple[int, int],
+    point_row: int,
+    point_col: int,
+    extra_properties: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    lon, lat = _point_lon_lat_for_pixel(
+        row=row,
+        patch_shape=patch_shape,
+        point_row=point_row,
+        point_col=point_col,
+    )
+    properties = {
+        # Keep enough metadata to trace each observed Argo point back to
+        # the timestep and source patch without bloating the GeoJSON.
+        "date": int(row["date"]),
+        "patch_id": str(row.get("patch_id", "")),
+        "export_index": int(row.get("export_index", -1)),
+        "pixel_row": int(point_row),
+        "pixel_col": int(point_col),
+    }
+    if extra_properties is not None:
+        properties.update(extra_properties)
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        "properties": properties,
+    }
+
+
 def _argo_point_features_for_patch(
     *,
     row: dict[str, Any],
@@ -392,34 +474,16 @@ def _argo_point_features_for_patch(
     if mask.ndim != 2:
         raise RuntimeError(f"Expected a 2D observed-mask patch, got {tuple(mask.shape)}.")
 
-    left, bottom, right, top = _row_bounds(row)
-    patch_height, patch_width = mask.shape
-    pixel_width = (right - left) / float(patch_width)
-    pixel_height = (top - bottom) / float(patch_height)
-    if pixel_width <= 0.0 or pixel_height <= 0.0:
-        raise RuntimeError(
-            "Encountered non-positive pixel resolution while building Argo points."
-        )
-
     features: list[dict[str, Any]] = []
     point_rows, point_cols = np.nonzero(mask)
     for point_row, point_col in zip(point_rows.tolist(), point_cols.tolist()):
-        lon = left + (float(point_col) + 0.5) * pixel_width
-        lat = top - (float(point_row) + 0.5) * pixel_height
         features.append(
-            {
-                "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                "properties": {
-                    # Keep enough metadata to trace each observed Argo point back to
-                    # the timestep and source patch without bloating the GeoJSON.
-                    "date": int(row["date"]),
-                    "patch_id": str(row.get("patch_id", "")),
-                    "export_index": int(row.get("export_index", -1)),
-                    "pixel_row": int(point_row),
-                    "pixel_col": int(point_col),
-                },
-            }
+            _point_feature_for_pixel(
+                row=row,
+                patch_shape=mask.shape,
+                point_row=int(point_row),
+                point_col=int(point_col),
+            )
         )
     return features
 
@@ -448,6 +512,106 @@ def _patch_split_feature_for_row(row: dict[str, Any]) -> dict[str, Any] | None:
             "split": split_label,
         },
     }
+
+
+def _parse_depth_values_text(
+    depth_text: str,
+    *,
+    expected_size: int,
+) -> np.ndarray:
+    depth_values: list[float] = []
+    for token in str(depth_text).split("|"):
+        token_stripped = token.strip()
+        if token_stripped == "":
+            continue
+        depth_values.append(float(token_stripped))
+    if int(len(depth_values)) != int(expected_size):
+        return np.arange(int(expected_size), dtype=np.float64)
+    return np.asarray(depth_values, dtype=np.float64)
+
+
+def _load_glorys_depth_axis_m(
+    dataset: OstiaArgoTiffDataset,
+    row: dict[str, Any],
+    *,
+    expected_size: int,
+) -> np.ndarray:
+    glorys_path = dataset._resolve_index_path(str(row[dataset._glorys_path_col]))
+    with rasterio.open(glorys_path) as ds:
+        tags = ds.tags()
+    depth_text = str(tags.get("glorys_depth_m", "")).strip()
+    if depth_text == "":
+        depth_text = str(tags.get("argo_glorys_depth_m", "")).strip()
+    return _parse_depth_values_text(
+        depth_text,
+        expected_size=int(expected_size),
+    )
+
+
+def _profile_to_json_list(
+    profile_values: np.ndarray,
+    *,
+    valid_mask: np.ndarray | None = None,
+) -> list[float | None]:
+    values = np.asarray(profile_values, dtype=np.float64).reshape(-1)
+    keep_mask = np.isfinite(values)
+    if valid_mask is not None:
+        keep_mask &= np.asarray(valid_mask, dtype=bool).reshape(-1)
+    return [
+        None if not bool(is_valid) else float(value)
+        for value, is_valid in zip(values.tolist(), keep_mask.tolist(), strict=False)
+    ]
+
+
+def _full_profile_feature_for_sample(
+    *,
+    sample: FullProfileSample,
+    location_id: str,
+    graph_png_path: str,
+    depth_axis_m: np.ndarray,
+) -> dict[str, Any]:
+    return _point_feature_for_pixel(
+        row=sample.row,
+        patch_shape=(int(sample.patch_height), int(sample.patch_width)),
+        point_row=sample.point_row,
+        point_col=sample.point_col,
+        extra_properties={
+            "location_id": str(location_id),
+            "graph_png_path": str(graph_png_path),
+            "depth_m": _profile_to_json_list(depth_axis_m),
+            "argo_profile_c": _profile_to_json_list(
+                sample.x_profile_c,
+                valid_mask=sample.observed_profile,
+            ),
+            "prediction_profile_c": _profile_to_json_list(
+                sample.y_hat_profile_c,
+                valid_mask=sample.target_valid_profile,
+            ),
+            "glorys_profile_c": _profile_to_json_list(
+                sample.y_target_profile_c,
+                valid_mask=sample.target_valid_profile,
+            ),
+        },
+    )
+
+
+def _maybe_store_full_profile_sample(
+    *,
+    samples: list[FullProfileSample],
+    seen_count: int,
+    limit: int,
+    rng: np.random.Generator,
+    candidate: FullProfileSample,
+) -> None:
+    if limit <= 0:
+        return
+    if len(samples) < limit:
+        samples.append(candidate)
+        return
+
+    chosen_idx = int(rng.integers(0, int(seen_count)))
+    if chosen_idx < limit:
+        samples[chosen_idx] = candidate
 
 
 def build_mosaic_layout(
@@ -578,6 +742,63 @@ def build_global_mosaic(
     return mosaic, layout.transform
 
 
+def _repair_small_nodata_gaps_2d(
+    image: np.ndarray,
+    *,
+    nodata: float,
+    max_gap_width: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fill tiny nodata seams in a single-band raster without touching valid pixels."""
+    if max_gap_width < 1:
+        raise ValueError("max_gap_width must be >= 1.")
+
+    patch = np.asarray(image, dtype=np.float32)
+    if patch.ndim != 2:
+        raise RuntimeError(
+            "Expected a 2D raster for nodata-gap repair, "
+            f"got shape {tuple(patch.shape)}."
+        )
+
+    valid_mask = np.isfinite(patch)
+    if np.isfinite(nodata):
+        valid_mask &= ~np.isclose(patch, float(nodata), atol=0.0, rtol=0.0)
+
+    if not np.any(valid_mask):
+        return patch.copy(), np.zeros(patch.shape, dtype=bool)
+
+    # Close the support mask separately along rows and columns so we can catch
+    # narrow seams that run fully across the raster without touching the valid
+    # pixels on either side.
+    row_structure = np.ones((1, 2 * max_gap_width + 1), dtype=bool)
+    col_structure = np.ones((2 * max_gap_width + 1, 1), dtype=bool)
+    closed_mask = (
+        ndi.binary_closing(valid_mask, structure=row_structure)
+        | ndi.binary_closing(valid_mask, structure=col_structure)
+    )
+    repair_mask = closed_mask & ~valid_mask
+    if not np.any(repair_mask):
+        return patch.copy(), np.zeros(patch.shape, dtype=bool)
+
+    _, nearest_indices = ndi.distance_transform_edt(~valid_mask, return_indices=True)
+    repaired = patch.copy()
+    repaired[repair_mask] = patch[
+        nearest_indices[0][repair_mask],
+        nearest_indices[1][repair_mask],
+    ]
+    return repaired, repair_mask
+
+
+def _geotiff_block_size(dimension: int) -> int:
+    """Pick a tile size that satisfies GDAL's 16-pixel block constraint."""
+    if dimension < 1:
+        raise ValueError("dimension must be >= 1.")
+
+    block_size = 16
+    while block_size * 2 <= min(512, int(dimension)):
+        block_size *= 2
+    return block_size
+
+
 def _overview_factors(width: int, height: int) -> list[int]:
     factors: list[int] = []
     factor = 2
@@ -652,8 +873,8 @@ def write_global_top_band_geotiff(
         "compress": "deflate",
         "predictor": 3,
         "tiled": True,
-        "blockxsize": min(512, int(layout.width)),
-        "blockysize": min(512, int(layout.height)),
+        "blockxsize": _geotiff_block_size(int(layout.width)),
+        "blockysize": _geotiff_block_size(int(layout.height)),
         "BIGTIFF": "IF_SAFER",
     }
 
@@ -690,6 +911,14 @@ def write_global_top_band_geotiff(
                     height=row_stop - row_off,
                 ),
             )
+
+    with rasterio.open(output_path, "r+") as ds:
+        repaired_band, repaired_mask = _repair_small_nodata_gaps_2d(
+            ds.read(1),
+            nodata=nodata,
+        )
+        if np.any(repaired_mask):
+            ds.write(repaired_band, 1)
 
     overview_factors = _overview_factors(layout.width, layout.height)
     if overview_factors:
@@ -793,6 +1022,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Load checkpoint weights with strict=True instead of the repo default strict=False.",
     )
+    parser.add_argument(
+        "--full-sample-count",
+        type=int,
+        default=DEFAULT_FULL_SAMPLE_COUNT,
+        help=(
+            "Number of random observed Argo locations whose full depth profiles are "
+            "saved with graph PNGs for the globe viewer."
+        ),
+    )
     return parser
 
 
@@ -838,6 +1076,7 @@ def main() -> None:
         if args.batch_size is not None
         else training_cfg.get("dataloader", {}).get("val_batch_size", 4)
     )
+    full_sample_count = int(max(0, int(args.full_sample_count)))
     if batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
 
@@ -864,6 +1103,11 @@ def main() -> None:
         if bool(args.export_ground_truth)
         else None
     )
+    full_sample_locations_geojson_path = (
+        run_dir / f"{run_stem}_full_sample_locations.geojson"
+        if full_sample_count > 0
+        else None
+    )
     patch_splits_geojson_path = run_dir / f"{run_stem}_patch_splits.geojson"
     argo_points_writer = (
         GeoJSONPointWriter(argo_points_geojson_path)
@@ -871,6 +1115,9 @@ def main() -> None:
         else None
     )
     patch_splits_writer = GeoJSONPointWriter(patch_splits_geojson_path)
+    sampled_full_profiles: list[FullProfileSample] = []
+    full_sample_rng = np.random.default_rng(int(args.seed))
+    observed_point_total = 0
     if argo_points_writer is not None:
         argo_points_writer.open()
     patch_splits_writer.open()
@@ -882,7 +1129,8 @@ def main() -> None:
         f"iso_week={selection.iso_year}-W{selection.iso_week:02d}, "
         f"selected_patches={len(selection.indices)}, "
         f"batch_size={batch_size}, "
-        f"export_ground_truth={bool(args.export_ground_truth)}"
+        f"export_ground_truth={bool(args.export_ground_truth)}, "
+        f"full_sample_count={full_sample_count}"
     )
 
     device = choose_device(args.device)
@@ -926,6 +1174,7 @@ def main() -> None:
     inference_module = ExportInferenceWrapper(
         model,
         export_ground_truth=bool(args.export_ground_truth),
+        export_full_prediction_stack=(full_sample_count > 0),
     )
     if use_multi_gpu:
         inference_runner: nn.Module = nn.DataParallel(inference_module)
@@ -948,13 +1197,37 @@ def main() -> None:
             outputs = inference_runner(model_batch)
 
         prediction_batch = outputs["prediction_top_band"].detach().float().cpu().numpy()
+        prediction_full_stack_batch = (
+            outputs["prediction_full_stack"].detach().float().cpu().numpy()
+            if full_sample_count > 0
+            else None
+        )
         ground_truth_batch = (
             outputs["ground_truth_top_band"].detach().float().cpu().numpy()
             if bool(args.export_ground_truth)
             else None
         )
-        for local_idx, row in enumerate(
-            selected_rows[start : start + len(batch_indices)]
+        x_denorm_batch = (
+            temperature_normalize(mode="denorm", tensor=batch["x"])
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
+            if full_sample_count > 0
+            else None
+        )
+        y_denorm_batch = (
+            temperature_normalize(mode="denorm", tensor=batch["y"])
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
+            if full_sample_count > 0
+            else None
+        )
+        selected_row_batch = selected_rows[start : start + len(batch_indices)]
+        for local_idx, (dataset_idx, row) in enumerate(
+            zip(batch_indices, selected_row_batch, strict=False)
         ):
             patch_split_feature = _patch_split_feature_for_row(row)
             if patch_split_feature is not None:
@@ -989,6 +1262,71 @@ def main() -> None:
                     observed_mask_2d=observed_mask_2d,
                 ):
                     argo_points_writer.write_feature(feature)
+            else:
+                observed_mask_2d = (
+                    batch["x_valid_mask_1d"][local_idx, 0]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(bool, copy=False)
+                )
+
+            if (
+                full_sample_count > 0
+                and prediction_full_stack_batch is not None
+                and x_denorm_batch is not None
+                and y_denorm_batch is not None
+            ):
+                point_rows, point_cols = np.nonzero(observed_mask_2d)
+                patch_shape = tuple(int(v) for v in observed_mask_2d.shape)
+                for point_row, point_col in zip(
+                    point_rows.tolist(), point_cols.tolist(), strict=False
+                ):
+                    observed_point_total += 1
+                    lon, lat = _point_lon_lat_for_pixel(
+                        row=row,
+                        patch_shape=patch_shape,
+                        point_row=int(point_row),
+                        point_col=int(point_col),
+                    )
+                    candidate = FullProfileSample(
+                        dataset_index=int(dataset_idx),
+                        row=row,
+                        point_row=int(point_row),
+                        point_col=int(point_col),
+                        patch_height=int(patch_shape[0]),
+                        patch_width=int(patch_shape[1]),
+                        lon=float(lon),
+                        lat=float(lat),
+                        x_profile_c=x_denorm_batch[local_idx, :, point_row, point_col].copy(),
+                        y_hat_profile_c=prediction_full_stack_batch[
+                            local_idx, :, point_row, point_col
+                        ].copy(),
+                        y_target_profile_c=y_denorm_batch[
+                            local_idx, :, point_row, point_col
+                        ].copy(),
+                        observed_profile=batch["x_valid_mask"][
+                            local_idx, :, point_row, point_col
+                        ]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(bool, copy=False),
+                        target_valid_profile=batch["y_valid_mask"][
+                            local_idx, :, point_row, point_col
+                        ]
+                        .detach()
+                        .cpu()
+                        .numpy()
+                        .astype(bool, copy=False),
+                    )
+                    _maybe_store_full_profile_sample(
+                        samples=sampled_full_profiles,
+                        seen_count=int(observed_point_total),
+                        limit=full_sample_count,
+                        rng=full_sample_rng,
+                        candidate=candidate,
+                    )
 
     _flush_accumulator(pred_accumulator)
     if gt_accumulator is not None:
@@ -997,6 +1335,64 @@ def main() -> None:
         argo_points_writer.close()
     patch_splits_writer.close()
     print(f"Finished inference for {len(selection.indices)} patches.")
+
+    graphs_dir_path: Path | None = None
+    full_sample_locations_writer: GeoJSONPointWriter | None = None
+    if (
+        full_sample_locations_geojson_path is not None
+        and len(sampled_full_profiles) > 0
+    ):
+        graphs_dir_path = run_dir / "graphs"
+        full_sample_locations_writer = GeoJSONPointWriter(
+            full_sample_locations_geojson_path
+        )
+        full_sample_locations_writer.open()
+        sampled_full_profiles_sorted = sorted(
+            sampled_full_profiles,
+            key=lambda sample: (
+                int(sample.dataset_index),
+                int(sample.point_row),
+                int(sample.point_col),
+            ),
+        )
+        for sample_idx, sample in enumerate(sampled_full_profiles_sorted, start=1):
+            location_id = f"full_sample_{sample_idx:03d}"
+            graph_rel_path = Path("graphs") / f"{location_id}.png"
+            depth_axis_m = _load_glorys_depth_axis_m(
+                dataset,
+                sample.row,
+                expected_size=int(sample.y_target_profile_c.shape[0]),
+            )
+            x_profile_plot = np.asarray(sample.x_profile_c, dtype=np.float64).copy()
+            y_hat_profile_plot = np.asarray(sample.y_hat_profile_c, dtype=np.float64).copy()
+            y_target_profile_plot = np.asarray(sample.y_target_profile_c, dtype=np.float64).copy()
+            x_profile_plot[~sample.observed_profile] = np.nan
+            y_hat_profile_plot[~sample.target_valid_profile] = np.nan
+            y_target_profile_plot[~sample.target_valid_profile] = np.nan
+            save_glorys_profile_comparison_plot(
+                output_path=run_dir / graph_rel_path,
+                x_profile=x_profile_plot,
+                y_hat_profile=y_hat_profile_plot,
+                y_target_profile=y_target_profile_plot,
+                observed_profile=sample.observed_profile,
+                depth_axis=depth_axis_m,
+                title=f"Pixel ({sample.point_row}, {sample.point_col})",
+                figure_title=(
+                    f"{location_id}, patch={sample.row.get('patch_id', '')}, "
+                    f"date={int(sample.row['date'])}"
+                ),
+            )
+            full_sample_locations_writer.write_feature(
+                _full_profile_feature_for_sample(
+                    sample=sample,
+                    location_id=location_id,
+                    graph_png_path=str(graph_rel_path).replace("\\", "/"),
+                    depth_axis_m=depth_axis_m,
+                )
+            )
+        full_sample_locations_writer.close()
+    else:
+        full_sample_locations_geojson_path = None
 
     prediction_tif_path = run_dir / f"{run_stem}_prediction.tif"
     write_global_top_band_geotiff(
@@ -1033,6 +1429,9 @@ def main() -> None:
         )
         print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path}")
         print(f"Wrote Argo points GeoJSON: {argo_points_geojson_path}")
+    if full_sample_locations_geojson_path is not None and graphs_dir_path is not None:
+        print(f"Wrote full-sample locations GeoJSON: {full_sample_locations_geojson_path}")
+        print(f"Wrote full-sample graphs directory: {graphs_dir_path}")
     print(f"Wrote patch split GeoJSON: {patch_splits_geojson_path}")
 
     run_summary = {
@@ -1066,6 +1465,20 @@ def main() -> None:
         "argo_point_count": (
             0 if argo_points_writer is None else int(argo_points_writer.feature_count)
         ),
+        "full_sample_count_requested": int(full_sample_count),
+        "full_sample_locations_geojson_path": (
+            None
+            if full_sample_locations_geojson_path is None
+            else _summary_artifact_path(full_sample_locations_geojson_path)
+        ),
+        "full_sample_location_count": (
+            0
+            if full_sample_locations_writer is None
+            else int(full_sample_locations_writer.feature_count)
+        ),
+        "graphs_dir_path": (
+            None if graphs_dir_path is None else str(graphs_dir_path.name)
+        ),
         "patch_splits_geojson_path": _summary_artifact_path(patch_splits_geojson_path),
         "patch_split_count": int(patch_splits_writer.feature_count),
     }
@@ -1085,6 +1498,12 @@ def main() -> None:
             ground_truth_tif_path = run_dir / ground_truth_tif_path.name
         if argo_points_geojson_path is not None:
             argo_points_geojson_path = run_dir / argo_points_geojson_path.name
+        if full_sample_locations_geojson_path is not None:
+            full_sample_locations_geojson_path = (
+                run_dir / full_sample_locations_geojson_path.name
+            )
+        if graphs_dir_path is not None:
+            graphs_dir_path = run_dir / graphs_dir_path.name
         patch_splits_geojson_path = run_dir / patch_splits_geojson_path.name
 
     print(
@@ -1095,6 +1514,8 @@ def main() -> None:
         f"prediction={prediction_tif_path}, "
         f"ground_truth={ground_truth_tif_path}, "
         f"argo_points={argo_points_geojson_path}, "
+        f"full_sample_locations={full_sample_locations_geojson_path}, "
+        f"graphs={graphs_dir_path}, "
         f"patch_splits={patch_splits_geojson_path}"
     )
 

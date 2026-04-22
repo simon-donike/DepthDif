@@ -69,7 +69,7 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
 
 def _resolve_run_artifacts(
     run_dir: Path,
-) -> tuple[Path, Path | None, Path | None, Path | None, dict[str, Any]]:
+) -> tuple[Path, Path | None, Path | None, Path | None, Path | None, Path | None, dict[str, Any]]:
     run_summary_path = run_dir / "run_summary.yaml"
     run_summary = _load_yaml(run_summary_path) if run_summary_path.exists() else {}
 
@@ -110,11 +110,29 @@ def _resolve_run_artifacts(
         matches = sorted(run_dir.glob("*_patch_splits.geojson"))
         patch_splits_path = matches[0] if matches else None
 
+    full_sample_points_path = _coerce_existing_path(
+        run_summary.get("full_sample_locations_geojson_path"),
+        run_dir=run_dir,
+    )
+    if full_sample_points_path is None:
+        matches = sorted(run_dir.glob("*_full_sample_locations.geojson"))
+        full_sample_points_path = matches[0] if matches else None
+
+    graphs_dir_path = _coerce_existing_path(
+        run_summary.get("graphs_dir_path"),
+        run_dir=run_dir,
+    )
+    if graphs_dir_path is None:
+        candidate = run_dir / "graphs"
+        graphs_dir_path = candidate if candidate.exists() else None
+
     return (
         prediction_path,
         ground_truth_path,
         points_path,
         patch_splits_path,
+        full_sample_points_path,
+        graphs_dir_path,
         run_summary,
     )
 
@@ -264,11 +282,13 @@ def build_globe_config(
     ground_truth_tiles_url: str | None,
     argo_points_url: str | None,
     patch_splits_url: str | None,
+    full_sample_points_url: str | None,
     bounds: dict[str, Any],
     prediction_credit: str,
     ground_truth_credit: str | None,
     points_credit: str | None,
     patch_splits_credit: str | None,
+    full_sample_points_credit: str | None,
     color_scale_min_c: float,
     color_scale_max_c: float,
     color_palette: str,
@@ -282,6 +302,7 @@ def build_globe_config(
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "argo_points_url": argo_points_url,
             "patch_splits_url": patch_splits_url,
+            "full_sample_points_url": full_sample_points_url,
             "west": float(bounds["west"]),
             "south": float(bounds["south"]),
             "east": float(bounds["east"]),
@@ -300,6 +321,8 @@ def build_globe_config(
         credits["points"] = points_credit
     if patch_splits_credit is not None:
         credits["patch_splits"] = patch_splits_credit
+    if full_sample_points_credit is not None:
+        credits["full_sample_points"] = full_sample_points_credit
     config["credits"] = credits
     return config
 
@@ -383,9 +406,15 @@ def main() -> None:
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
-    prediction_path, ground_truth_path, points_path, patch_splits_path, run_summary = (
-        _resolve_run_artifacts(run_dir)
-    )
+    (
+        prediction_path,
+        ground_truth_path,
+        points_path,
+        patch_splits_path,
+        full_sample_points_path,
+        graphs_dir_path,
+        run_summary,
+    ) = _resolve_run_artifacts(run_dir)
 
     globe_dir = run_dir / str(args.globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
@@ -435,6 +464,18 @@ def main() -> None:
         copied_patch_splits_path = globe_dir / "patch_splits.geojson"
         shutil.copy2(patch_splits_path, copied_patch_splits_path)
 
+    copied_full_sample_points_path: Path | None = None
+    if full_sample_points_path is not None:
+        copied_full_sample_points_path = globe_dir / "full_sample_locations.geojson"
+        shutil.copy2(full_sample_points_path, copied_full_sample_points_path)
+
+    copied_graphs_dir_path: Path | None = None
+    if graphs_dir_path is not None and graphs_dir_path.exists():
+        copied_graphs_dir_path = globe_dir / "graphs"
+        if copied_graphs_dir_path.exists():
+            shutil.rmtree(copied_graphs_dir_path)
+        shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
+
     prediction_meta = _read_raster_metadata(prediction_path)
     ground_truth_meta = (
         _read_raster_metadata(ground_truth_path)
@@ -472,6 +513,14 @@ def main() -> None:
                 public_base_url=args.public_base_url,
             )
         ),
+        full_sample_points_url=(
+            None
+            if copied_full_sample_points_path is None
+            else _resolve_layer_url(
+                copied_full_sample_points_path.name,
+                public_base_url=args.public_base_url,
+            )
+        ),
         bounds=prediction_meta,
         prediction_credit=prediction_meta["credit"],
         ground_truth_credit=(
@@ -480,6 +529,11 @@ def main() -> None:
         points_credit=None if copied_points_path is None else "Observed Argo points",
         patch_splits_credit=(
             None if copied_patch_splits_path is None else "Train/val patch split grid"
+        ),
+        full_sample_points_credit=(
+            None
+            if copied_full_sample_points_path is None
+            else "Random full-depth profile locations"
         ),
         color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
         color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
@@ -501,6 +555,10 @@ def main() -> None:
         print(f"- points GeoJSON: {copied_points_path}")
     if copied_patch_splits_path is not None:
         print(f"- patch splits GeoJSON: {copied_patch_splits_path}")
+    if copied_full_sample_points_path is not None:
+        print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
+    if copied_graphs_dir_path is not None:
+        print(f"- full-sample graphs: {copied_graphs_dir_path}")
     print(f"- config: {config_path}")
     print(
         "- fixed Celsius color scale: "
