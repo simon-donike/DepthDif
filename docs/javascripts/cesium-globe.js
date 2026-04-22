@@ -18,6 +18,19 @@
     height: 18000000.0,
   };
   const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(2.5);
+  const TEMPERATURE_COLOR_STOPS = [
+    { value: 0.0, rgb: [18, 38, 140] },
+    { value: 4.0, rgb: [30, 86, 196] },
+    { value: 8.0, rgb: [44, 140, 255] },
+    { value: 12.0, rgb: [58, 212, 255] },
+    { value: 16.0, rgb: [255, 238, 98] },
+    { value: 20.0, rgb: [255, 172, 54] },
+    { value: 24.0, rgb: [240, 84, 32] },
+    { value: 30.0, rgb: [180, 16, 26] },
+  ];
+  const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
+  const POINT_PIXEL_SIZE = 10;
+  const POINT_OUTLINE_WIDTH = 2;
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -43,6 +56,73 @@
       return null;
     }
     return new URL(assetUrl, configUrl).toString();
+  }
+
+  function clamp(value, minValue, maxValue) {
+    return Math.min(maxValue, Math.max(minValue, value));
+  }
+
+  function lerp(start, end, t) {
+    return start + (end - start) * t;
+  }
+
+  function resolveColorScale(config) {
+    const minValue = Number(config.color_scale_min_c);
+    const maxValue = Number(config.color_scale_max_c);
+    if (Number.isFinite(minValue) && Number.isFinite(maxValue) && maxValue > minValue) {
+      return { min: minValue, max: maxValue };
+    }
+    return DEFAULT_COLOR_SCALE;
+  }
+
+  function colorForTemperature(tempC, colorScale) {
+    if (!Number.isFinite(tempC)) {
+      return Cesium.Color.WHITE;
+    }
+
+    const clampedTemp = clamp(tempC, colorScale.min, colorScale.max);
+    let lowerStop = TEMPERATURE_COLOR_STOPS[0];
+    let upperStop = TEMPERATURE_COLOR_STOPS[TEMPERATURE_COLOR_STOPS.length - 1];
+    for (let index = 1; index < TEMPERATURE_COLOR_STOPS.length; index += 1) {
+      const candidate = TEMPERATURE_COLOR_STOPS[index];
+      if (clampedTemp <= candidate.value) {
+        upperStop = candidate;
+        lowerStop = TEMPERATURE_COLOR_STOPS[index - 1];
+        break;
+      }
+    }
+
+    if (upperStop.value <= lowerStop.value) {
+      return Cesium.Color.fromBytes(lowerStop.rgb[0], lowerStop.rgb[1], lowerStop.rgb[2], 255);
+    }
+
+    const t = (clampedTemp - lowerStop.value) / (upperStop.value - lowerStop.value);
+    return Cesium.Color.fromBytes(
+      Math.round(lerp(lowerStop.rgb[0], upperStop.rgb[0], t)),
+      Math.round(lerp(lowerStop.rgb[1], upperStop.rgb[1], t)),
+      Math.round(lerp(lowerStop.rgb[2], upperStop.rgb[2], t)),
+      255
+    );
+  }
+
+  function stylePointEntities(dataSource, config) {
+    const colorScale = resolveColorScale(config);
+    const now = Cesium.JulianDate.now();
+    dataSource.entities.values.forEach(function (entity) {
+      if (!entity.position || !entity.properties || !entity.properties.observed_temp_c) {
+        return;
+      }
+
+      const observedTempC = Number(entity.properties.observed_temp_c.getValue(now));
+      entity.billboard = undefined;
+      entity.point = new Cesium.PointGraphics({
+        color: colorForTemperature(observedTempC, colorScale),
+        pixelSize: POINT_PIXEL_SIZE,
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: POINT_OUTLINE_WIDTH,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      });
+    });
   }
 
   function buildViewer() {
@@ -258,12 +338,9 @@
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(pointsUrl, {
       clampToGround: true,
-      markerColor: Cesium.Color.fromCssColorString("#7cf5ff"),
-      markerSize: 10,
-      stroke: Cesium.Color.BLACK,
-      strokeWidth: 1,
       credit: config.credits && config.credits.points,
     });
+    stylePointEntities(dataSource, config);
     viewer.dataSources.add(dataSource);
     dataSource.show = pointsToggle.checked;
     return dataSource;
