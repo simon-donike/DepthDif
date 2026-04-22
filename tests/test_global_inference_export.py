@@ -5,12 +5,14 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from inference.export_global import (
     _argo_point_features_for_patch,
     _patch_split_feature_for_row,
     _default_run_stem,
     _prepare_run_directory,
+    _promote_production_run,
     build_global_mosaic,
     select_export_indices,
 )
@@ -199,6 +201,60 @@ class TestGlobalInferenceExport(unittest.TestCase):
             self.assertTrue(run_dir.exists())
             self.assertEqual(run_dir, output_root / "global_top_band_20260105")
             self.assertIsNone(production_dir)
+
+    def test_promote_production_run_strips_date_from_artifact_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            staging_dir = Path(tmp_dir) / "staging"
+            production_dir = Path(tmp_dir) / "production"
+            staging_dir.mkdir(parents=True, exist_ok=True)
+
+            (staging_dir / "global_top_band_20260105_prediction.tif").write_text(
+                "prediction", encoding="utf-8"
+            )
+            (staging_dir / "global_top_band_20260105_argo_points.geojson").write_text(
+                "points", encoding="utf-8"
+            )
+            (staging_dir / "global_top_band_20260105_patch_splits.geojson").write_text(
+                "splits", encoding="utf-8"
+            )
+            with (staging_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    {
+                        "selected_date": 20260105,
+                        "run_dir": str(staging_dir),
+                        "prediction_tif_path": "global_top_band_20260105_prediction.tif",
+                        "ground_truth_tif_path": None,
+                        "argo_points_geojson_path": "global_top_band_20260105_argo_points.geojson",
+                        "patch_splits_geojson_path": "global_top_band_20260105_patch_splits.geojson",
+                    },
+                    f,
+                    sort_keys=False,
+                )
+
+            _promote_production_run(staging_dir, production_dir)
+
+            self.assertFalse(staging_dir.exists())
+            self.assertTrue((production_dir / "global_top_band_prediction.tif").exists())
+            self.assertTrue(
+                (production_dir / "global_top_band_argo_points.geojson").exists()
+            )
+            self.assertTrue(
+                (production_dir / "global_top_band_patch_splits.geojson").exists()
+            )
+
+            with (production_dir / "run_summary.yaml").open("r", encoding="utf-8") as f:
+                summary = yaml.safe_load(f)
+
+            self.assertEqual(summary["run_dir"], str(production_dir))
+            self.assertEqual(summary["prediction_tif_path"], "global_top_band_prediction.tif")
+            self.assertEqual(
+                summary["argo_points_geojson_path"],
+                "global_top_band_argo_points.geojson",
+            )
+            self.assertEqual(
+                summary["patch_splits_geojson_path"],
+                "global_top_band_patch_splits.geojson",
+            )
 
 
 if __name__ == "__main__":

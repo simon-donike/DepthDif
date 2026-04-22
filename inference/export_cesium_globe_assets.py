@@ -4,8 +4,12 @@ Typical CLI:
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_20150615 \
   --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \
-  --rclone-remote r2:depth-data/inference_production \
-  --rclone-sync-scope run
+  --rclone-remote r2:depth-data/inference_production/globe \
+  --rclone-sync-scope globe
+
+The exported globe bundle uses fixed filenames and a fixed `globe/` prefix so
+production uploads can be overwritten in place without changing week- or
+year-specific run names.
 
 
 """
@@ -345,7 +349,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Optional rclone destination such as 'r2:depth-data/inference_production'. "
+            "Optional rclone destination such as 'r2:depth-data/inference_production/globe'. "
             "When provided, the selected sync scope is mirrored after export."
         ),
     )

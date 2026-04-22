@@ -56,6 +56,7 @@ DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
+DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,44 @@ def _default_run_stem(selected_date: int) -> str:
     return f"global_top_band_{int(selected_date)}"
 
 
+def _production_run_stem() -> str:
+    return DEFAULT_PRODUCTION_RUN_STEM
+
+
+def _production_artifact_name(name: str, *, run_stem: str) -> str:
+    prefix = f"{run_stem}_"
+    if name.startswith(prefix):
+        # Strip the date-stamped run stem so production files share one stable name.
+        return f"{_production_run_stem()}_{name[len(prefix):]}"
+    return name
+
+
+def _rewrite_summary_for_production(
+    summary_path: Path, *, production_dir: Path, run_stem: str
+) -> None:
+    if not summary_path.exists():
+        return
+
+    with summary_path.open("r", encoding="utf-8") as f:
+        summary = yaml.safe_load(f) or {}
+    if not isinstance(summary, dict):
+        return
+
+    for key in (
+        "prediction_tif_path",
+        "ground_truth_tif_path",
+        "argo_points_geojson_path",
+        "patch_splits_geojson_path",
+    ):
+        value = summary.get(key)
+        if isinstance(value, str):
+            summary[key] = _production_artifact_name(value, run_stem=run_stem)
+
+    summary["run_dir"] = str(production_dir)
+    with summary_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(summary, f, sort_keys=False)
+
+
 def _prepare_run_directory(
     output_root: Path,
     *,
@@ -202,6 +241,29 @@ def _promote_production_run(staging_dir: Path, production_dir: Path) -> None:
         if backup_dir.exists() and not production_dir.exists():
             backup_dir.replace(production_dir)
         raise
+
+    summary_path = production_dir / "run_summary.yaml"
+    selected_date = None
+    if summary_path.exists():
+        with summary_path.open("r", encoding="utf-8") as f:
+            summary = yaml.safe_load(f) or {}
+        if isinstance(summary, dict) and summary.get("selected_date") is not None:
+            selected_date = int(summary["selected_date"])
+
+    if selected_date is not None:
+        run_stem = _default_run_stem(selected_date)
+        for child in sorted(production_dir.iterdir()):
+            if not child.is_file():
+                continue
+            renamed_name = _production_artifact_name(child.name, run_stem=run_stem)
+            if renamed_name == child.name:
+                continue
+            child.replace(production_dir / renamed_name)
+        _rewrite_summary_for_production(
+            summary_path,
+            production_dir=production_dir,
+            run_stem=run_stem,
+        )
 
     shutil.rmtree(backup_dir, ignore_errors=True)
 

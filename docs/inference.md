@@ -72,19 +72,19 @@ Typical run:
 ```bash
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
-  --public-base-url https://<bucket-or-site>/inference_production/global_top_band_<YYYYMMDD>/globe/
+  --public-base-url https://<bucket-or-site>/inference_production/globe/
 ```
 
 To upload one selected run into the hosted production area in the same step, provide an `rclone` destination:
 ```bash
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
-  --public-base-url https://<bucket-or-site>/inference_production/global_top_band_<YYYYMMDD>/globe/ \
-  --rclone-remote r2:<bucket>/inference_production/global_top_band_<YYYYMMDD> \
-  --rclone-sync-scope run
+  --public-base-url https://<bucket-or-site>/inference_production/globe/ \
+  --rclone-remote r2:<bucket>/inference_production/globe \
+  --rclone-sync-scope globe
 ```
 
-The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/global_top_band_<YYYYMMDD>/globe/` in the bucket when synced with the example above. It includes:
+The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced with the example above. It includes:
 - `prediction_tiles/`: TMS imagery tiles for the prediction raster
 - `ground_truth_tiles/`: TMS imagery tiles for the GLORYS raster when present
 - `argo_points.geojson`: hosted point overlay

@@ -58,8 +58,8 @@ To export one stitched world raster and prepare the hosted Cesium assets afterwa
 /work/envs/depth/bin/python inference/export_global.py --year 2010 --iso-week 1
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
-  --public-base-url https://<bucket-or-site>/inference_production/global_top_band_<YYYYMMDD>/globe/ \
-  --rclone-remote r2:<bucket>/inference_production/global_top_band_<YYYYMMDD> \
-  --rclone-sync-scope run
+  --public-base-url https://<bucket-or-site>/inference_production/globe/ \
+  --rclone-remote r2:<bucket>/inference_production/globe \
+  --rclone-sync-scope globe
 ```
   
