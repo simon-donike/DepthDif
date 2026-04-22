@@ -363,9 +363,41 @@ class TestDatasetsAndWiring(unittest.TestCase):
             repaired_ostia_mask[:2, :], np.zeros((2, 4), dtype=bool)
         )
 
+        four_border_rows = np.array(
+            [
+                [4.0, 5.0, 6.0, 7.0],
+                [8.0, 9.0, 10.0, 11.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        repaired_four_border_rows, repaired_four_border_rows_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_2d(
+                four_border_rows,
+                zero_border_is_artifact=True,
+            )
+        )
+        np.testing.assert_allclose(
+            repaired_four_border_rows[2:, :],
+            np.repeat(four_border_rows[1:2, :], 4, axis=0),
+            atol=0.0,
+        )
+        np.testing.assert_array_equal(
+            repaired_four_border_rows_mask[2:, :], np.ones((4, 4), dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_four_border_rows_mask[:2, :], np.zeros((2, 4), dtype=bool)
+        )
+
         too_many_border_rows = np.array(
             [
                 [4.0, 5.0, 6.0, 7.0],
+                [8.0, 9.0, 10.0, 11.0],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 0.0],
@@ -379,10 +411,26 @@ class TestDatasetsAndWiring(unittest.TestCase):
             )
         )
         np.testing.assert_allclose(
-            repaired_too_many, too_many_border_rows, atol=0.0
+            repaired_too_many[:6, :],
+            np.vstack(
+                [
+                    too_many_border_rows[:2, :],
+                    np.repeat(too_many_border_rows[1:2, :], 4, axis=0),
+                ]
+            ),
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            repaired_too_many[6:, :], too_many_border_rows[6:, :], atol=0.0
         )
         np.testing.assert_array_equal(
-            repaired_too_many_mask, np.zeros_like(too_many_border_rows, dtype=bool)
+            repaired_too_many_mask[:2, :], np.zeros((2, 4), dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_mask[2:6, :], np.ones((4, 4), dtype=bool)
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_mask[6:, :], np.zeros((1, 4), dtype=bool)
         )
 
         partial_edge = np.array(
@@ -507,13 +555,44 @@ class TestDatasetsAndWiring(unittest.TestCase):
             repaired_mask[2], np.zeros_like(glorys[2], dtype=bool)
         )
 
+        four_nan_cols = np.array(
+            [
+                [
+                    [10.0, 11.0, np.nan, np.nan, np.nan, np.nan],
+                    [14.0, 15.0, np.nan, np.nan, np.nan, np.nan],
+                    [18.0, 19.0, np.nan, np.nan, np.nan, np.nan],
+                    [22.0, 23.0, np.nan, np.nan, np.nan, np.nan],
+                ]
+            ],
+            dtype=np.float32,
+        )
+        repaired_four_nan_cols, repaired_four_nan_cols_mask = (
+            OstiaArgoTiffDataset._repair_full_border_artifacts_stack(
+                four_nan_cols,
+                zero_border_is_artifact=False,
+            )
+        )
+        np.testing.assert_allclose(
+            repaired_four_nan_cols[0, :, 2:],
+            np.repeat(four_nan_cols[0, :, 1:2], 4, axis=1),
+            atol=0.0,
+        )
+        np.testing.assert_array_equal(
+            repaired_four_nan_cols_mask[0, :, 2:],
+            np.ones((4, 4), dtype=bool),
+        )
+        np.testing.assert_array_equal(
+            repaired_four_nan_cols_mask[0, :, :2],
+            np.zeros((4, 2), dtype=bool),
+        )
+
         too_many_nan_cols = np.array(
             [
                 [
-                    [10.0, np.nan, np.nan, np.nan],
-                    [14.0, np.nan, np.nan, np.nan],
-                    [18.0, np.nan, np.nan, np.nan],
-                    [22.0, np.nan, np.nan, np.nan],
+                    [10.0, 11.0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                    [14.0, 15.0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                    [18.0, 19.0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
+                    [22.0, 23.0, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan],
                 ]
             ],
             dtype=np.float32,
@@ -525,11 +604,32 @@ class TestDatasetsAndWiring(unittest.TestCase):
             )
         )
         np.testing.assert_allclose(
-            repaired_too_many_nan_cols, too_many_nan_cols, atol=0.0
+            repaired_too_many_nan_cols[0, :, :6],
+            np.concatenate(
+                [
+                    too_many_nan_cols[0, :, :2],
+                    np.repeat(too_many_nan_cols[0, :, 1:2], 4, axis=1),
+                ],
+                axis=1,
+            ),
+            atol=0.0,
+        )
+        np.testing.assert_allclose(
+            repaired_too_many_nan_cols[0, :, 6:],
+            too_many_nan_cols[0, :, 6:],
+            atol=0.0,
         )
         np.testing.assert_array_equal(
-            repaired_too_many_nan_cols_mask,
-            np.zeros_like(too_many_nan_cols, dtype=bool),
+            repaired_too_many_nan_cols_mask[0, :, :2],
+            np.zeros((4, 2), dtype=bool),
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_nan_cols_mask[0, :, 2:6],
+            np.ones((4, 4), dtype=bool),
+        )
+        np.testing.assert_array_equal(
+            repaired_too_many_nan_cols_mask[0, :, 6:],
+            np.zeros((4, 2), dtype=bool),
         )
 
     def test_ostia_argo_tiff_dataset_repairs_returned_images_without_touching_masks(

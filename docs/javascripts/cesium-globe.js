@@ -18,7 +18,7 @@
     lat: 34.53988238358822,
     height: 9500000.0,
   };
-  const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(2.5);
+  const SPIN_RATE_RADIANS_PER_SECOND = Cesium.Math.toRadians(5.0);
   const TEMPERATURE_COLOR_STOPS = [
     { value: 0.0, rgb: [18, 38, 140] },
     { value: 4.0, rgb: [30, 86, 196] },

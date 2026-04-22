@@ -319,7 +319,7 @@ class OstiaArgoTiffDataset(Dataset):
         *,
         zero_border_is_artifact: bool,
     ) -> tuple[np.ndarray, np.ndarray]:
-        max_border_repairs = 2
+        max_border_repairs = 4
         patch = np.asarray(image, dtype=np.float32)
         if patch.ndim != 2:
             raise RuntimeError(
@@ -331,6 +331,12 @@ class OstiaArgoTiffDataset(Dataset):
 
         repaired = patch.copy()
         repaired_mask = np.zeros(patch.shape, dtype=bool)
+        remaining_repairs = {
+            "top": max_border_repairs,
+            "bottom": max_border_repairs,
+            "left": max_border_repairs,
+            "right": max_border_repairs,
+        }
 
         def _edge_is_artifact(edge: np.ndarray) -> bool:
             finite = np.isfinite(edge)
@@ -387,67 +393,69 @@ class OstiaArgoTiffDataset(Dataset):
             changed = False
 
             top_artifact_rows = _count_leading_artifact_rows()
+            top_rows_to_repair = min(top_artifact_rows, remaining_repairs["top"])
             if (
-                0 < top_artifact_rows <= max_border_repairs < repaired.shape[0]
-                and _edge_is_usable(repaired[top_artifact_rows, :])
-            ) or (
-                0 < top_artifact_rows < repaired.shape[0] <= max_border_repairs
+                0 < top_artifact_rows < repaired.shape[0]
+                and top_rows_to_repair > 0
                 and _edge_is_usable(repaired[top_artifact_rows, :])
             ):
                 # Cap repairs to a small outer border width so large true land
-                # regions are not hallucinated into the tile.
-                for row_idx in range(top_artifact_rows - 1, -1, -1):
+                # regions are not hallucinated into the tile. When the artifact
+                # run is wider than the cap, repair only the rows closest to the
+                # first usable interior donor and leave the outer remainder as-is.
+                start_row_idx = top_artifact_rows - top_rows_to_repair
+                for row_idx in range(top_artifact_rows - 1, start_row_idx - 1, -1):
                     repaired[row_idx, :] = repaired[row_idx + 1, :]
                     repaired_mask[row_idx, :] = True
+                remaining_repairs["top"] -= top_rows_to_repair
                 changed = True
 
             bottom_artifact_rows = _count_trailing_artifact_rows()
+            bottom_rows_to_repair = min(
+                bottom_artifact_rows, remaining_repairs["bottom"]
+            )
             if (
-                0 < bottom_artifact_rows <= max_border_repairs < repaired.shape[0]
-                and _edge_is_usable(
-                    repaired[repaired.shape[0] - 1 - bottom_artifact_rows, :]
-                )
-            ) or (
-                0 < bottom_artifact_rows < repaired.shape[0] <= max_border_repairs
-                and _edge_is_usable(
-                    repaired[repaired.shape[0] - 1 - bottom_artifact_rows, :]
-                )
+                0 < bottom_artifact_rows < repaired.shape[0]
+                and bottom_rows_to_repair > 0
+                and _edge_is_usable(repaired[repaired.shape[0] - 1 - bottom_artifact_rows, :])
             ):
                 donor_row_idx = repaired.shape[0] - 1 - bottom_artifact_rows
-                for row_idx in range(donor_row_idx + 1, repaired.shape[0]):
+                repair_end_idx = donor_row_idx + bottom_rows_to_repair
+                for row_idx in range(donor_row_idx + 1, repair_end_idx + 1):
                     repaired[row_idx, :] = repaired[row_idx - 1, :]
                     repaired_mask[row_idx, :] = True
+                remaining_repairs["bottom"] -= bottom_rows_to_repair
                 changed = True
 
             left_artifact_cols = _count_leading_artifact_cols()
+            left_cols_to_repair = min(left_artifact_cols, remaining_repairs["left"])
             if (
-                0 < left_artifact_cols <= max_border_repairs < repaired.shape[1]
-                and _edge_is_usable(repaired[:, left_artifact_cols])
-            ) or (
-                0 < left_artifact_cols < repaired.shape[1] <= max_border_repairs
+                0 < left_artifact_cols < repaired.shape[1]
+                and left_cols_to_repair > 0
                 and _edge_is_usable(repaired[:, left_artifact_cols])
             ):
-                for col_idx in range(left_artifact_cols - 1, -1, -1):
+                start_col_idx = left_artifact_cols - left_cols_to_repair
+                for col_idx in range(left_artifact_cols - 1, start_col_idx - 1, -1):
                     repaired[:, col_idx] = repaired[:, col_idx + 1]
                     repaired_mask[:, col_idx] = True
+                remaining_repairs["left"] -= left_cols_to_repair
                 changed = True
 
             right_artifact_cols = _count_trailing_artifact_cols()
+            right_cols_to_repair = min(
+                right_artifact_cols, remaining_repairs["right"]
+            )
             if (
-                0 < right_artifact_cols <= max_border_repairs < repaired.shape[1]
-                and _edge_is_usable(
-                    repaired[:, repaired.shape[1] - 1 - right_artifact_cols]
-                )
-            ) or (
-                0 < right_artifact_cols < repaired.shape[1] <= max_border_repairs
-                and _edge_is_usable(
-                    repaired[:, repaired.shape[1] - 1 - right_artifact_cols]
-                )
+                0 < right_artifact_cols < repaired.shape[1]
+                and right_cols_to_repair > 0
+                and _edge_is_usable(repaired[:, repaired.shape[1] - 1 - right_artifact_cols])
             ):
                 donor_col_idx = repaired.shape[1] - 1 - right_artifact_cols
-                for col_idx in range(donor_col_idx + 1, repaired.shape[1]):
+                repair_end_idx = donor_col_idx + right_cols_to_repair
+                for col_idx in range(donor_col_idx + 1, repair_end_idx + 1):
                     repaired[:, col_idx] = repaired[:, col_idx - 1]
                     repaired_mask[:, col_idx] = True
+                remaining_repairs["right"] -= right_cols_to_repair
                 changed = True
 
             if not changed:
