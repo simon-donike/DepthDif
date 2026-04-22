@@ -37,10 +37,12 @@
   ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const PATCH_SPLIT_ALPHA = 0.5;
+  const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
   const PATCH_SPLIT_COLORS = {
     train: Cesium.Color.fromCssColorString("#1f9d55"),
     val: Cesium.Color.fromCssColorString("#d64545"),
   };
+  let profilePopupCloseTimer = null;
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -142,15 +144,39 @@
     });
   }
 
+  function clearProfilePopupCloseTimer() {
+    if (profilePopupCloseTimer !== null) {
+      window.clearTimeout(profilePopupCloseTimer);
+      profilePopupCloseTimer = null;
+    }
+  }
+
+  function finalizeProfilePopupClose() {
+    if (!profilePopup) {
+      return;
+    }
+    clearProfilePopupCloseTimer();
+    profilePopup.classList.remove("is-open", "is-closing");
+    profilePopup.hidden = true;
+    if (profilePopupImage) {
+      // Clear the image only after the fade-out so the close animation stays visible.
+      profilePopupImage.removeAttribute("src");
+      profilePopupImage.alt = "";
+    }
+  }
+
   function closeProfilePopup() {
     if (!profilePopup) {
       return;
     }
-    profilePopup.hidden = true;
-    if (profilePopupImage) {
-      profilePopupImage.removeAttribute("src");
-      profilePopupImage.alt = "";
+    if (profilePopup.hidden && !profilePopup.classList.contains("is-open")) {
+      finalizeProfilePopupClose();
+      return;
     }
+    clearProfilePopupCloseTimer();
+    profilePopup.classList.remove("is-open");
+    profilePopup.classList.add("is-closing");
+    profilePopupCloseTimer = window.setTimeout(finalizeProfilePopupClose, PROFILE_POPUP_CLOSE_DELAY_MS);
   }
 
   function showProfilePopup(entity, configUrl) {
@@ -186,7 +212,12 @@
     }
     profilePopupImage.src = new URL(String(graphPath), configUrl).toString();
     profilePopupImage.alt = String(locationId) + " profile comparison";
+    clearProfilePopupCloseTimer();
     profilePopup.hidden = false;
+    profilePopup.classList.remove("is-closing");
+    window.requestAnimationFrame(function () {
+      profilePopup.classList.add("is-open");
+    });
   }
 
   function enforceOverlayOrder(state) {

@@ -170,6 +170,23 @@
   place-items: center;
   padding: 1.25rem;
   background: rgba(2, 10, 18, 0.62);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.globe-profile-popup[hidden] {
+  display: none !important;
+}
+
+.globe-profile-popup.is-open,
+.globe-profile-popup.is-closing {
+  display: grid;
+}
+
+.globe-profile-popup.is-open {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .globe-profile-popup__card {
@@ -184,6 +201,16 @@
     radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
     rgba(5, 20, 32, 0.94);
   box-shadow: 0 28px 60px rgba(0, 0, 0, 0.34);
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.globe-profile-popup.is-open .globe-profile-popup__card {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .globe-profile-popup__header {
