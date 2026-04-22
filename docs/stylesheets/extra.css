@@ -29,6 +29,41 @@
   border-bottom: 1px solid rgba(124, 200, 255, 0.22);
 }
 
+/* Keep the standalone globe route visually featured in the top tabs. */
+.md-tabs__item:has(> .md-tabs__link[href$="/globe/"]) {
+  display: flex;
+  align-items: center;
+}
+
+.md-tabs__link[href$="/globe/"] {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  margin: 0.15rem 0;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(124, 200, 255, 0.3);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(126, 216, 255, 0.18), rgba(66, 174, 240, 0.18));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+  color: #eaf8ff;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.md-tabs__link[href$="/globe/"]:hover,
+.md-tabs__link[href$="/globe/"]:focus {
+  background: linear-gradient(135deg, rgba(154, 225, 255, 0.28), rgba(94, 194, 255, 0.28));
+  border-color: rgba(168, 220, 255, 0.5);
+  color: #ffffff;
+}
+
+.md-tabs__item--active .md-tabs__link[href$="/globe/"] {
+  background: linear-gradient(135deg, #7ed8ff, #42aef0);
+  border-color: rgba(190, 239, 255, 0.7);
+  box-shadow: 0 14px 28px rgba(66, 174, 240, 0.28);
+  color: #041625;
+}
+
 .globe-cta {
   display: flex;
   gap: 1.25rem;

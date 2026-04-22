@@ -24,6 +24,22 @@
     train: "#1f9d55",
     val: "#d64545",
   };
+  const ARGO_POINT_MARKER_IMAGE = buildMarkerImage(
+    [
+      '<circle cx="32" cy="32" r="15" fill="rgba(6, 23, 38, 0.82)" stroke="#7cf5ff" stroke-width="3"/>',
+      '<circle cx="32" cy="32" r="6" fill="#dffcff"/>',
+      '<path d="M32 9 L39 16 L32 23 L25 16 Z" fill="#7cf5ff" fill-opacity="0.9"/>',
+    ].join(""),
+    64
+  );
+  const FULL_SAMPLE_MARKER_IMAGE = buildMarkerImage(
+    [
+      '<path d="M32 10 L48 22 L42 46 L32 54 L22 46 L16 22 Z" fill="rgba(9, 34, 56, 0.9)" stroke="#ffd166" stroke-width="3" />',
+      '<circle cx="32" cy="30" r="8" fill="#fff4cf" stroke="#ffd166" stroke-width="2" />',
+      '<path d="M32 54 L27 43 L37 43 Z" fill="#ffd166" fill-opacity="0.95" />',
+    ].join(""),
+    64
+  );
 
   function getGlobeElements() {
     const container = document.getElementById("depthdif-cesium-globe");
@@ -44,6 +60,8 @@
       opacitySlider: document.getElementById("globe-overlay-opacity"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
+      pageTitle: document.getElementById("globe-page-title"),
+      pageDescription: document.getElementById("globe-page-description"),
       profilePopup: document.getElementById("globe-profile-popup"),
       profilePopupTitle: document.getElementById("globe-profile-popup-title"),
       profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
@@ -76,6 +94,61 @@
       return new URL(configParam, window.location.href).toString();
     }
     return DEFAULT_GLOBE_CONFIG_URL;
+  }
+
+  function resolveSelectedDateParts(selectedDate) {
+    const raw = String(selectedDate || "").trim();
+    if (!/^\d{8}$/.test(raw)) {
+      return null;
+    }
+
+    const year = Number(raw.slice(0, 4));
+    const monthIndex = Number(raw.slice(4, 6)) - 1;
+    const day = Number(raw.slice(6, 8));
+    const date = new Date(Date.UTC(year, monthIndex, day));
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.getUTCFullYear() !== year ||
+      date.getUTCMonth() !== monthIndex ||
+      date.getUTCDate() !== day
+    ) {
+      return null;
+    }
+
+    const isoDate = new Date(date.getTime());
+    const dayOfWeek = isoDate.getUTCDay() || 7;
+    isoDate.setUTCDate(isoDate.getUTCDate() + 4 - dayOfWeek);
+    const isoYear = isoDate.getUTCFullYear();
+    const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+    const isoWeek = Math.ceil((((isoDate - yearStart) / 86400000) + 1) / 7);
+    return { isoYear, isoWeek };
+  }
+
+  function updatePageHeader(elements, config) {
+    if (!elements.pageTitle && !elements.pageDescription) {
+      return;
+    }
+
+    const selectedDateParts = resolveSelectedDateParts(config.selected_date);
+    if (elements.pageTitle) {
+      if (selectedDateParts) {
+        const paddedWeek = String(selectedDateParts.isoWeek).padStart(2, "0");
+        elements.pageTitle.textContent =
+          "3D Global Visualization for Weekly Prediction " +
+          "in " +
+          String(selectedDateParts.isoYear) +
+          ", Week " +
+          paddedWeek;
+      } else {
+        elements.pageTitle.textContent = "3D Global Visualization for Weekly Prediction";
+      }
+    }
+
+    if (elements.pageDescription) {
+      elements.pageDescription.textContent =
+        "Compare the weekly prediction, the GLORYS top-band ground truth, and the observed Argo locations. " +
+        "Selected full-profile locations carry a depth graph that opens on click.";
+    }
   }
 
   async function loadConfig() {
@@ -161,6 +234,40 @@
   function splitColor(splitValue) {
     const normalized = String(splitValue || "").trim().toLowerCase();
     return Cesium.Color.fromCssColorString(PATCH_SPLIT_COLORS[normalized] || "#ffffff");
+  }
+
+  function buildMarkerImage(shapeMarkup, sizePx) {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="',
+      String(sizePx),
+      '" height="',
+      String(sizePx),
+      '" viewBox="0 0 64 64">',
+      shapeMarkup,
+      "</svg>",
+    ].join("");
+    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  }
+
+  function stylePointEntities(dataSource, options) {
+    dataSource.entities.values.forEach(function (entity) {
+      if (!entity.billboard) {
+        return;
+      }
+
+      // Replace Cesium's default GeoJSON pins with custom SVG billboards so each
+      // observation type has a distinct, cleaner visual signature.
+      entity.billboard.image = options.image;
+      entity.billboard.width = options.width;
+      entity.billboard.height = options.height;
+      entity.billboard.scale = 1;
+      entity.billboard.verticalOrigin = Cesium.VerticalOrigin.BOTTOM;
+      entity.billboard.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+      entity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+      entity.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+      entity.billboard.pixelOffset = new Cesium.Cartesian2(0, options.pixelOffsetY);
+      entity.billboard.eyeOffset = new Cesium.Cartesian3(0, 0, options.eyeOffsetZ);
+    });
   }
 
   function stylePatchSplitEntities(dataSource) {
@@ -307,7 +414,10 @@
     })
       .then(function (provider) {
         if (!viewer.isDestroyed()) {
-          viewer.imageryLayers.addImageryProvider(provider);
+          const baseLayer = viewer.imageryLayers.addImageryProvider(provider);
+          // The basemap may resolve after overlay layers, so pin it to the bottom
+          // of the stack to keep prediction and GLORYS imagery visible above it.
+          viewer.imageryLayers.lowerToBottom(baseLayer);
           viewer.scene.requestRender();
         }
       })
@@ -316,12 +426,13 @@
         if (viewer.isDestroyed()) {
           return;
         }
-        viewer.imageryLayers.addImageryProvider(
+        const fallbackLayer = viewer.imageryLayers.addImageryProvider(
           new Cesium.OpenStreetMapImageryProvider({
             url: "https://tile.openstreetmap.org/",
             credit: "OpenStreetMap contributors",
           })
         );
+        viewer.imageryLayers.lowerToBottom(fallbackLayer);
         viewer.scene.requestRender();
       });
   }
@@ -524,6 +635,13 @@
       strokeWidth: 1,
       credit: state.config.credits && state.config.credits.points,
     });
+    stylePointEntities(dataSource, {
+      image: ARGO_POINT_MARKER_IMAGE,
+      width: 24,
+      height: 24,
+      pixelOffsetY: 0,
+      eyeOffsetZ: -10,
+    });
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.pointsToggle.checked;
     return dataSource;
@@ -542,6 +660,13 @@
       stroke: Cesium.Color.BLACK,
       strokeWidth: 1,
       credit: state.config.credits && state.config.credits.full_sample_points,
+    });
+    stylePointEntities(dataSource, {
+      image: FULL_SAMPLE_MARKER_IMAGE,
+      width: 34,
+      height: 34,
+      pixelOffsetY: -2,
+      eyeOffsetZ: -12,
     });
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.fullSampleToggle.checked;
@@ -828,6 +953,7 @@
         spinTickListener: null,
       };
       window.__depthdifCesiumGlobeState = state;
+      updatePageHeader(elements, loaded.config);
 
       state.predictionLayer = await addPredictionLayer(state);
       if (initToken !== getCurrentInitToken()) {
