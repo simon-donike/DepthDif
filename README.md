@@ -95,7 +95,7 @@ To package one exported run for the Cesium globe viewer in the docs, use:
   --rclone-sync-scope globe
 ```
 
-The docs viewer page lives at `docs/globe.md` and can load a hosted `globe-config.json`.
+The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
 
 ## Experiment Script
 

@@ -95,9 +95,9 @@ The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/glob
 - `full_sample_locations.geojson`: hosted sampled-profile point overlay used by the clickable "Full sample locations" globe layer
 - `graphs/`: hosted PNGs opened by the sampled-profile popup
 - `patch_splits.geojson`: hosted train/val patch grid overlay rendered as solid red/green fills at fixed 50% opacity in the globe viewer
-- `globe-config.json`: the viewer manifest consumed by [Globe Viewer](globe.md)
+- `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route
 
-When serving from a bucket, enable CORS for the docs origin so the static MkDocs page can fetch the tiled layers and GeoJSON.
+When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON.
   
 ## Workflow 2: Direct `predict_step`  
 The model inference entry point is:  
