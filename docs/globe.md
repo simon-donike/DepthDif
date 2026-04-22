@@ -10,11 +10,11 @@
           <span>Prediction</span>
         </label>
         <label class="globe-toggle">
-          <input id="globe-toggle-ground-truth" type="checkbox" checked />
+          <input id="globe-toggle-ground-truth" type="checkbox" />
           <span>Ground truth</span>
         </label>
         <label class="globe-toggle">
-          <input id="globe-toggle-points" type="checkbox" checked />
+          <input id="globe-toggle-points" type="checkbox" />
           <span>Argo points</span>
         </label>
       </div>
@@ -26,13 +26,14 @@
         <button id="globe-reset-camera" class="globe-reset-button" type="button">Reset View</button>
       </div>
     </div>
-    <div class="globe-meta">
-      <span id="globe-selected-date" class="globe-chip">Date: --</span>
-      <span id="globe-status" class="globe-chip globe-status" data-kind="info">Loading</span>
+    <div class="globe-legend" aria-label="Temperature color scale">
+      <span class="globe-legend__title">Temperature</span>
+      <div class="globe-legend__bar"></div>
+      <div class="globe-legend__labels">
+        <span>-5°C</span>
+        <span>35°C</span>
+      </div>
     </div>
     <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
   </div>
-  <p class="globe-footnote">
-    Default view: hosted 2015-06-15 export. Override via <code>?config=&lt;public-globe-config-url&gt;</code>.
-  </p>
 </div>

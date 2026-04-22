@@ -6,18 +6,11 @@
     return;
   }
 
-  const statusEl = document.getElementById("globe-status");
-  const selectedDateEl = document.getElementById("globe-selected-date");
   const predictionToggle = document.getElementById("globe-toggle-prediction");
   const groundTruthToggle = document.getElementById("globe-toggle-ground-truth");
   const pointsToggle = document.getElementById("globe-toggle-points");
   const opacitySlider = document.getElementById("globe-overlay-opacity");
   const resetButton = document.getElementById("globe-reset-camera");
-
-  function setStatus(message, kind) {
-    statusEl.textContent = message;
-    statusEl.dataset.kind = kind || "info";
-  }
 
   function resolveConfigUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -53,10 +46,10 @@
       fullscreenButton: false,
       geocoder: false,
       homeButton: false,
-      infoBox: true,
+      infoBox: false,
       navigationHelpButton: false,
-      sceneModePicker: true,
-      selectionIndicator: true,
+      sceneModePicker: false,
+      selectionIndicator: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       timeline: false,
     });
@@ -69,6 +62,13 @@
     );
     viewer.scene.globe.enableLighting = false;
     return viewer;
+  }
+
+  function forceViewerResize(viewer) {
+    viewer.resize();
+    window.requestAnimationFrame(function () {
+      viewer.resize();
+    });
   }
 
   function flyToConfig(viewer, config) {
@@ -195,7 +195,6 @@
 
   (async function init() {
     try {
-      setStatus("Loading globe configuration.", "info");
       const loaded = await loadConfig();
       const config = loaded.config;
       const configUrl = loaded.configUrl;
@@ -208,24 +207,17 @@
         pointsDataSource: null,
       };
 
-      selectedDateEl.textContent = config.selected_date
-        ? "Date: " + String(config.selected_date)
-        : "Date: --";
       state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
       state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
       wireUi(state);
       flyToConfig(viewer, config);
-
-      const hasHostedLayers = Boolean(config.prediction_tiles_url || config.ground_truth_tiles_url);
-      if (hasHostedLayers) {
-        setStatus("Live", "success");
-      } else {
-        setStatus("No overlays", "warning");
-      }
+      forceViewerResize(viewer);
+      window.addEventListener("resize", function () {
+        forceViewerResize(viewer);
+      });
     } catch (error) {
       console.error(error);
-      setStatus("Load failed", "error");
     }
   })();
 })();

@@ -74,6 +74,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             prediction_credit="Prediction source",
             ground_truth_credit="Ground truth source",
             points_credit="Observed Argo points",
+            color_scale_min_c=-5.0,
+            color_scale_max_c=35.0,
+            color_palette="temperature_blue_red",
             template=template,
         )
 
@@ -85,6 +88,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["south"], 2.0)
         self.assertEqual(config["east"], 3.0)
         self.assertEqual(config["north"], 4.0)
+        self.assertEqual(config["color_scale_min_c"], -5.0)
+        self.assertEqual(config["color_scale_max_c"], 35.0)
+        self.assertEqual(config["color_palette"], "temperature_blue_red")
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
         self.assertEqual(config["credits"]["points"], "Observed Argo points")
@@ -96,6 +102,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertIn("prediction_tiles_url", template)
         self.assertIn("default_camera_destination", template)
+        self.assertIn("color_scale_min_c", template)
 
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch("inference.export_cesium_globe_assets.shutil.which", return_value=None):

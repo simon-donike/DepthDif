@@ -30,11 +30,17 @@
 }
 
 /* Make the 3D Globe top tab read like a featured destination in the header. */
+.md-tabs__item:has(> .md-tabs__link[href$="globe/"]) {
+  display: flex;
+  align-items: center;
+}
+
 .md-tabs__link[href$="globe/"] {
   display: inline-flex;
   align-items: center;
-  min-height: 2.1rem;
-  padding: 0.45rem 0.9rem;
+  min-height: 1.9rem;
+  margin: 0.15rem 0;
+  padding: 0.35rem 0.9rem;
   border: 1px solid rgba(124, 200, 255, 0.3);
   border-radius: 999px;
   background: linear-gradient(135deg, rgba(126, 216, 255, 0.18), rgba(66, 174, 240, 0.18));

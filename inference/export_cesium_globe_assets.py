@@ -1,9 +1,11 @@
 """Convert one global inference export run into Cesium-hostable assets.
 
 Typical CLI:
-    /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
-      --run-dir inference/outputs/global_top_band_20100104 \
-      --public-base-url https://example-bucket/path/global_top_band_20100104/globe/
+/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+  --run-dir inference/outputs/global_top_band_20150615 \
+  --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/global_top_band_20150615/globe \
+  --rclone-remote r2:depth-data/global_top_band_20150615/globe
+
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ import subprocess
 import sys
 from typing import Any
 
-import numpy as np
 import rasterio
 import yaml
 
@@ -25,6 +26,9 @@ if __package__ in {None, ""}:
 
 
 DEFAULT_TEMPLATE_PATH = Path("inference/transforms/globe-config.template.json")
+DEFAULT_COLOR_RAMP_PATH = Path("inference/transforms/temperature_blue_red_ramp.txt")
+DEFAULT_COLOR_SCALE_MIN_C = -5.0
+DEFAULT_COLOR_SCALE_MAX_C = 35.0
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -117,66 +121,23 @@ def _ensure_clean_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _iter_valid_values(path: Path):
-    with rasterio.open(path) as ds:
-        nodata = ds.nodata
-        for _, window in ds.block_windows(1):
-            block = ds.read(1, window=window, masked=False)
-            valid_mask = np.isfinite(block)
-            if nodata is not None:
-                valid_mask &= block != nodata
-            if not np.any(valid_mask):
-                continue
-            yield block[valid_mask]
-
-
-def _compute_scale_range(paths: list[Path]) -> tuple[float, float]:
-    data_min: float | None = None
-    data_max: float | None = None
-    for path in paths:
-        for values in _iter_valid_values(path):
-            block_min = float(values.min())
-            block_max = float(values.max())
-            data_min = block_min if data_min is None else min(data_min, block_min)
-            data_max = block_max if data_max is None else max(data_max, block_max)
-
-    if data_min is None or data_max is None:
-        raise RuntimeError("Could not determine a valid data range for raster tiling.")
-
-    if data_min == data_max:
-        # Keep a non-zero scale range so gdal_translate can still build a byte raster.
-        epsilon = 1.0 if data_min == 0.0 else max(0.1, abs(data_min) * 0.01)
-        data_min -= epsilon
-        data_max += epsilon
-    return data_min, data_max
-
-
-def _convert_raster_to_byte(
+def _colorize_raster(
     input_path: Path,
     output_path: Path,
     *,
-    src_min: float,
-    src_max: float,
+    color_ramp_path: Path,
 ) -> None:
-    gdal_translate_exe = shutil.which("gdal_translate")
-    if gdal_translate_exe is None:
-        raise RuntimeError("gdal_translate was not found on PATH.")
+    gdaldem_exe = shutil.which("gdaldem")
+    if gdaldem_exe is None:
+        raise RuntimeError("gdaldem was not found on PATH.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
-        gdal_translate_exe,
-        "-of",
-        "GTiff",
-        "-ot",
-        "Byte",
-        "-scale",
-        f"{src_min}",
-        f"{src_max}",
-        "1",
-        "255",
-        "-a_nodata",
-        "0",
+        gdaldem_exe,
+        "color-relief",
+        "-alpha",
         str(input_path),
+        str(color_ramp_path),
         str(output_path),
     ]
     subprocess.run(command, check=True)
@@ -248,6 +209,9 @@ def build_globe_config(
     prediction_credit: str,
     ground_truth_credit: str | None,
     points_credit: str | None,
+    color_scale_min_c: float,
+    color_scale_max_c: float,
+    color_palette: str,
     template: dict[str, Any],
 ) -> dict[str, Any]:
     config = dict(template)
@@ -262,6 +226,9 @@ def build_globe_config(
             "east": float(bounds["east"]),
             "north": float(bounds["north"]),
             "default_camera_destination": dict(bounds["default_camera_destination"]),
+            "color_scale_min_c": float(color_scale_min_c),
+            "color_scale_max_c": float(color_scale_max_c),
+            "color_palette": str(color_palette),
         }
     )
     credits = dict(config.get("credits", {}))
@@ -309,6 +276,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the JSON template used as the starting point for globe-config.json.",
     )
     parser.add_argument(
+        "--color-ramp-path",
+        type=Path,
+        default=DEFAULT_COLOR_RAMP_PATH,
+        help="GDAL color-relief ramp applied to the Celsius rasters before tiling.",
+    )
+    parser.add_argument(
         "--rclone-remote",
         type=str,
         default=None,
@@ -332,35 +305,31 @@ def main() -> None:
 
     globe_dir = run_dir / str(args.globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir = globe_dir / ".tmp_byte_rasters"
+    temp_dir = globe_dir / ".tmp_colorized_rasters"
     _ensure_clean_directory(temp_dir)
+    color_ramp_path = Path(args.color_ramp_path)
+    if not color_ramp_path.exists():
+        raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
 
-    scale_paths = [prediction_path]
-    if ground_truth_path is not None:
-        scale_paths.append(ground_truth_path)
-    scale_min, scale_max = _compute_scale_range(scale_paths)
-
-    prediction_byte_path = temp_dir / f"{prediction_path.stem}_byte.tif"
-    _convert_raster_to_byte(
+    prediction_colorized_path = temp_dir / f"{prediction_path.stem}_colorized.tif"
+    _colorize_raster(
         prediction_path,
-        prediction_byte_path,
-        src_min=scale_min,
-        src_max=scale_max,
+        prediction_colorized_path,
+        color_ramp_path=color_ramp_path,
     )
     prediction_tiles_dir = globe_dir / "prediction_tiles"
-    _run_gdal2tiles(prediction_byte_path, prediction_tiles_dir)
+    _run_gdal2tiles(prediction_colorized_path, prediction_tiles_dir)
 
     ground_truth_tiles_dir: Path | None = None
     if ground_truth_path is not None:
-        ground_truth_byte_path = temp_dir / f"{ground_truth_path.stem}_byte.tif"
-        _convert_raster_to_byte(
+        ground_truth_colorized_path = temp_dir / f"{ground_truth_path.stem}_colorized.tif"
+        _colorize_raster(
             ground_truth_path,
-            ground_truth_byte_path,
-            src_min=scale_min,
-            src_max=scale_max,
+            ground_truth_colorized_path,
+            color_ramp_path=color_ramp_path,
         )
         ground_truth_tiles_dir = globe_dir / "ground_truth_tiles"
-        _run_gdal2tiles(ground_truth_byte_path, ground_truth_tiles_dir)
+        _run_gdal2tiles(ground_truth_colorized_path, ground_truth_tiles_dir)
 
     copied_points_path: Path | None = None
     if points_path is not None:
@@ -398,6 +367,9 @@ def main() -> None:
         prediction_credit=prediction_meta["credit"],
         ground_truth_credit=None if ground_truth_meta is None else ground_truth_meta["credit"],
         points_credit=None if copied_points_path is None else "Observed Argo points",
+        color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
+        color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
+        color_palette="temperature_blue_red",
         template=template,
     )
     config_path = globe_dir / "globe-config.json"
@@ -414,7 +386,11 @@ def main() -> None:
     if copied_points_path is not None:
         print(f"- points GeoJSON: {copied_points_path}")
     print(f"- config: {config_path}")
-    print(f"- shared byte scale range: [{scale_min:.4f}, {scale_max:.4f}]")
+    print(
+        "- fixed Celsius color scale: "
+        f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
+    )
+    print(f"- color ramp: {color_ramp_path}")
     if args.rclone_remote is not None:
         ok, message = _sync_with_rclone(globe_dir, args.rclone_remote)
         if ok:
