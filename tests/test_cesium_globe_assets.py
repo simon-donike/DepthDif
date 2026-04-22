@@ -11,6 +11,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from inference.export_cesium_globe_assets import (
+    _build_parser,
     _build_gdal2tiles_command,
     _read_raster_metadata,
     _sync_with_rclone,
@@ -75,8 +76,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             prediction_credit="Prediction source",
             ground_truth_credit="Ground truth source",
             points_credit="Observed Argo points",
-            color_scale_min_c=-5.0,
-            color_scale_max_c=35.0,
+            color_scale_min_c=0.0,
+            color_scale_max_c=30.0,
             color_palette="temperature_blue_red",
             template=template,
         )
@@ -89,8 +90,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["south"], 2.0)
         self.assertEqual(config["east"], 3.0)
         self.assertEqual(config["north"], 4.0)
-        self.assertEqual(config["color_scale_min_c"], -5.0)
-        self.assertEqual(config["color_scale_max_c"], 35.0)
+        self.assertEqual(config["color_scale_min_c"], 0.0)
+        self.assertEqual(config["color_scale_max_c"], 30.0)
         self.assertEqual(config["color_palette"], "temperature_blue_red")
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
@@ -133,7 +134,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             text=True,
         )
 
-    def test_build_gdal2tiles_command_uses_nearest_neighbor_and_one_extra_zoom_level(self) -> None:
+    def test_build_gdal2tiles_command_uses_nearest_neighbor_and_respects_extra_zoom_levels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tif_path = Path(tmp_dir) / "prediction.tif"
             output_dir = Path(tmp_dir) / "tiles"
@@ -165,6 +166,12 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("near", command)
         self.assertIn("-z", command)
         self.assertIn("0-1", command)
+
+    def test_build_parser_defaults_to_zero_extra_zoom_levels(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args(["--run-dir", "inference/outputs/example"])
+
+        self.assertEqual(args.extra_zoom_levels, 0)
 
 
 if __name__ == "__main__":

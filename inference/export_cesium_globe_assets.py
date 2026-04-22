@@ -28,9 +28,9 @@ if __package__ in {None, ""}:
 
 DEFAULT_TEMPLATE_PATH = Path("inference/transforms/globe-config.template.json")
 DEFAULT_COLOR_RAMP_PATH = Path("inference/transforms/temperature_blue_red_ramp.txt")
-DEFAULT_COLOR_SCALE_MIN_C = -5.0
-DEFAULT_COLOR_SCALE_MAX_C = 35.0
-DEFAULT_EXTRA_ZOOM_LEVELS = 1
+DEFAULT_COLOR_SCALE_MIN_C = 0.0
+DEFAULT_COLOR_SCALE_MAX_C = 30.0
+DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_TILE_SIZE = 256
 
 

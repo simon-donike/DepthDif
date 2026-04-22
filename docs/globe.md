@@ -30,8 +30,8 @@
       <span class="globe-legend__title">Temperature</span>
       <div class="globe-legend__bar"></div>
       <div class="globe-legend__labels">
-        <span>-5°C</span>
-        <span>35°C</span>
+        <span>0°C</span>
+        <span>30°C</span>
       </div>
     </div>
     <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
