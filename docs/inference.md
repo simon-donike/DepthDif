@@ -88,7 +88,7 @@ The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/glob
 - `prediction_tiles/`: TMS imagery tiles for the prediction raster
 - `ground_truth_tiles/`: TMS imagery tiles for the GLORYS raster when present
 - `argo_points.geojson`: hosted point overlay
-- `patch_splits.geojson`: hosted train/val patch grid overlay rendered as dashed outlines in the globe viewer
+- `patch_splits.geojson`: hosted train/val patch grid overlay rendered with hatched fills and colored outlines in the globe viewer
 - `globe-config.json`: the viewer manifest consumed by [Globe Viewer](globe.md)
 
 When serving from a bucket, enable CORS for the docs origin so the static MkDocs page can fetch the tiled layers and GeoJSON.

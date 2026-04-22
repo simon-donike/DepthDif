@@ -32,9 +32,14 @@
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const POINT_PIXEL_SIZE = 6;
   const POINT_OUTLINE_WIDTH = 1.5;
+  const ARGO_PIN_COLOR = Cesium.Color.fromCssColorString("#2563eb");
+  const ARGO_PIN_IMAGE = new Cesium.PinBuilder().fromColor(ARGO_PIN_COLOR, 48);
   const PATCH_SPLIT_DASH_LENGTH = 18;
   const PATCH_SPLIT_DASH_PATTERN = 255;
   const PATCH_SPLIT_OUTLINE_WIDTH = 2.0;
+  const PATCH_SPLIT_HATCH_REPEAT = 12.0;
+  const PATCH_SPLIT_HATCH_TILE_SIZE = 32;
+  const PATCH_SPLIT_HATCH_LINE_WIDTH = 4;
   const PATCH_SPLIT_COLORS = {
     train: Cesium.Color.fromCssColorString("#1f9d55"),
     val: Cesium.Color.fromCssColorString("#d64545"),
@@ -113,22 +118,21 @@
     );
   }
 
-  function stylePointEntities(dataSource, config) {
-    const colorScale = resolveColorScale(config);
-    const now = Cesium.JulianDate.now();
+  function stylePointEntities(dataSource) {
     dataSource.entities.values.forEach(function (entity) {
-      if (!entity.position || !entity.properties || !entity.properties.observed_temp_c) {
+      if (!entity.position) {
         return;
       }
 
-      const observedTempC = Number(entity.properties.observed_temp_c.getValue(now));
       entity.billboard = null;
       entity.label = null;
-      entity.point = new Cesium.PointGraphics({
-        color: colorForTemperature(observedTempC, colorScale),
-        pixelSize: POINT_PIXEL_SIZE,
-        outlineColor: Cesium.Color.WHITE,
-        outlineWidth: POINT_OUTLINE_WIDTH,
+      // Use one shared pin image so every Argo observation is treated as a simple location marker.
+      entity.point = null;
+      entity.billboard = new Cesium.BillboardGraphics({
+        image: ARGO_PIN_IMAGE,
+        width: 24,
+        height: 24,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       });
@@ -138,6 +142,44 @@
   function splitColor(splitValue) {
     const normalized = String(splitValue || "").trim().toLowerCase();
     return PATCH_SPLIT_COLORS[normalized] || Cesium.Color.WHITE;
+  }
+
+  function createPatchSplitHatchCanvas() {
+    const canvas = document.createElement("canvas");
+    canvas.width = PATCH_SPLIT_HATCH_TILE_SIZE;
+    canvas.height = PATCH_SPLIT_HATCH_TILE_SIZE;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return canvas;
+    }
+
+    // Draw a transparent tile with diagonal strokes so the polygon reads as hatched instead of solid.
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    context.lineWidth = PATCH_SPLIT_HATCH_LINE_WIDTH;
+    context.lineCap = "square";
+    const offsets = [-PATCH_SPLIT_HATCH_TILE_SIZE, 0, PATCH_SPLIT_HATCH_TILE_SIZE];
+    offsets.forEach(function (offset) {
+      context.beginPath();
+      context.moveTo(offset, canvas.height);
+      context.lineTo(offset + canvas.width, 0);
+      context.stroke();
+    });
+
+    return canvas;
+  }
+
+  const PATCH_SPLIT_HATCH_IMAGE = createPatchSplitHatchCanvas();
+
+  function createPatchSplitMaterial(splitValue) {
+    const hatchColor = splitColor(splitValue);
+    return new Cesium.ImageMaterialProperty({
+      image: PATCH_SPLIT_HATCH_IMAGE,
+      repeat: new Cesium.Cartesian2(PATCH_SPLIT_HATCH_REPEAT, PATCH_SPLIT_HATCH_REPEAT),
+      color: hatchColor.withAlpha(0.85),
+      transparent: true,
+    });
   }
 
   function polygonRingToDegreesArray(hierarchy) {
@@ -168,13 +210,14 @@
 
       entity.billboard = null;
       entity.label = null;
-      entity.polygon = null;
       if (!positionsDegrees) {
         return;
       }
 
-      // Replace the GeoJSON polygon fill with a clamped dashed outline so the
-      // grid reads as a boundary layer instead of obscuring the temperature tiles.
+      // Keep the boundary as a dashed line but switch the polygon fill to a hatched pattern.
+      entity.polygon.material = createPatchSplitMaterial(splitValue);
+      entity.polygon.outline = false;
+
       entity.polyline = new Cesium.PolylineGraphics({
         positions: Cesium.Cartesian3.fromDegreesArray(positionsDegrees),
         clampToGround: true,
@@ -411,7 +454,7 @@
       clampToGround: true,
       credit: config.credits && config.credits.points,
     });
-    stylePointEntities(dataSource, config);
+    stylePointEntities(dataSource);
     viewer.dataSources.add(dataSource);
     dataSource.show = pointsToggle.checked;
     return dataSource;
