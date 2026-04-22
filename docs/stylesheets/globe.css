@@ -146,6 +146,17 @@
   height: 100%;
 }
 
+.globe-canvas .cesium-viewer,
+.globe-canvas .cesium-viewer-cesiumWidgetContainer,
+.globe-canvas .cesium-widget {
+  position: absolute;
+  inset: 0;
+}
+
+.globe-canvas canvas {
+  display: block;
+}
+
 @media screen and (max-width: 900px) {
   .globe-toolbar {
     position: static;

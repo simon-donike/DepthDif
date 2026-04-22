@@ -74,6 +74,24 @@
     });
   }
 
+  function watchContainerResize(viewer, element) {
+    if (typeof window.ResizeObserver === "undefined") {
+      return function () {};
+    }
+
+    // The square stage height is derived from layout, so watch the actual container
+    // rather than only the window. Otherwise Cesium can keep an older, shorter size.
+    const observer = new window.ResizeObserver(function () {
+      window.requestAnimationFrame(function () {
+        forceViewerResize(viewer);
+      });
+    });
+    observer.observe(element);
+    return function () {
+      observer.disconnect();
+    };
+  }
+
   function flyToConfig(viewer, config) {
     if (
       Number.isFinite(config.west) &&
@@ -220,9 +238,11 @@
       wireUi(state);
       flyToConfig(viewer, config);
       forceViewerResize(viewer);
+      const stopWatchingResize = watchContainerResize(viewer, container);
       window.addEventListener("resize", function () {
         forceViewerResize(viewer);
       });
+      window.addEventListener("beforeunload", stopWatchingResize, { once: true });
     } catch (error) {
       console.error(error);
     }
