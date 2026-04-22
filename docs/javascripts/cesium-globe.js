@@ -30,16 +30,7 @@
     { value: 30.0, rgb: [180, 16, 26] },
   ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
-  const POINT_PIXEL_SIZE = 6;
-  const POINT_OUTLINE_WIDTH = 1.5;
-  const ARGO_PIN_COLOR = Cesium.Color.fromCssColorString("#2563eb");
-  const ARGO_PIN_IMAGE = new Cesium.PinBuilder().fromColor(ARGO_PIN_COLOR, 48);
-  const PATCH_SPLIT_DASH_LENGTH = 18;
-  const PATCH_SPLIT_DASH_PATTERN = 255;
-  const PATCH_SPLIT_OUTLINE_WIDTH = 2.0;
-  const PATCH_SPLIT_HATCH_REPEAT = 12.0;
-  const PATCH_SPLIT_HATCH_TILE_SIZE = 32;
-  const PATCH_SPLIT_HATCH_LINE_WIDTH = 4;
+  const PATCH_SPLIT_ALPHA = 0.5;
   const PATCH_SPLIT_COLORS = {
     train: Cesium.Color.fromCssColorString("#1f9d55"),
     val: Cesium.Color.fromCssColorString("#d64545"),
@@ -118,81 +109,9 @@
     );
   }
 
-  function stylePointEntities(dataSource) {
-    dataSource.entities.values.forEach(function (entity) {
-      if (!entity.position) {
-        return;
-      }
-
-      entity.billboard = null;
-      entity.label = null;
-      // Use one shared pin image so every Argo observation is treated as a simple location marker.
-      entity.point = null;
-      entity.billboard = new Cesium.BillboardGraphics({
-        image: ARGO_PIN_IMAGE,
-        width: 24,
-        height: 24,
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      });
-    });
-  }
-
   function splitColor(splitValue) {
     const normalized = String(splitValue || "").trim().toLowerCase();
     return PATCH_SPLIT_COLORS[normalized] || Cesium.Color.WHITE;
-  }
-
-  function createPatchSplitHatchCanvas() {
-    const canvas = document.createElement("canvas");
-    canvas.width = PATCH_SPLIT_HATCH_TILE_SIZE;
-    canvas.height = PATCH_SPLIT_HATCH_TILE_SIZE;
-
-    const context = canvas.getContext("2d");
-    if (!context) {
-      return canvas;
-    }
-
-    // Draw a transparent tile with diagonal strokes so the polygon reads as hatched instead of solid.
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.strokeStyle = "rgba(255, 255, 255, 0.95)";
-    context.lineWidth = PATCH_SPLIT_HATCH_LINE_WIDTH;
-    context.lineCap = "square";
-    const offsets = [-PATCH_SPLIT_HATCH_TILE_SIZE, 0, PATCH_SPLIT_HATCH_TILE_SIZE];
-    offsets.forEach(function (offset) {
-      context.beginPath();
-      context.moveTo(offset, canvas.height);
-      context.lineTo(offset + canvas.width, 0);
-      context.stroke();
-    });
-
-    return canvas;
-  }
-
-  const PATCH_SPLIT_HATCH_IMAGE = createPatchSplitHatchCanvas();
-
-  function createPatchSplitMaterial(splitValue) {
-    const hatchColor = splitColor(splitValue);
-    return new Cesium.ImageMaterialProperty({
-      image: PATCH_SPLIT_HATCH_IMAGE,
-      repeat: new Cesium.Cartesian2(PATCH_SPLIT_HATCH_REPEAT, PATCH_SPLIT_HATCH_REPEAT),
-      color: hatchColor.withAlpha(0.85),
-      transparent: true,
-    });
-  }
-
-  function polygonRingToDegreesArray(hierarchy) {
-    if (!hierarchy || !Array.isArray(hierarchy.positions) || hierarchy.positions.length < 2) {
-      return null;
-    }
-    const degrees = [];
-    hierarchy.positions.forEach(function (position) {
-      const cartographic = Cesium.Cartographic.fromCartesian(position);
-      degrees.push(Cesium.Math.toDegrees(cartographic.longitude));
-      degrees.push(Cesium.Math.toDegrees(cartographic.latitude));
-    });
-    return degrees;
   }
 
   function stylePatchSplitEntities(dataSource) {
@@ -202,33 +121,35 @@
         entity.properties && entity.properties.split
           ? entity.properties.split.getValue(now)
           : null;
-      const outlineColor = splitColor(splitValue);
-      const hierarchy = entity.polygon && entity.polygon.hierarchy
-        ? entity.polygon.hierarchy.getValue(now)
-        : null;
-      const positionsDegrees = polygonRingToDegreesArray(hierarchy);
+      const fillColor = splitColor(splitValue).withAlpha(PATCH_SPLIT_ALPHA);
 
       entity.billboard = null;
       entity.label = null;
-      if (!positionsDegrees) {
+      if (!entity.polygon) {
         return;
       }
 
-      // Keep the boundary as a dashed line but switch the polygon fill to a hatched pattern.
-      entity.polygon.material = createPatchSplitMaterial(splitValue);
+      // Keep the split overlay simple and stable: solid train/val squares with fixed alpha.
+      entity.polygon.material = fillColor;
       entity.polygon.outline = false;
-
-      entity.polyline = new Cesium.PolylineGraphics({
-        positions: Cesium.Cartesian3.fromDegreesArray(positionsDegrees),
-        clampToGround: true,
-        width: PATCH_SPLIT_OUTLINE_WIDTH,
-        material: new Cesium.PolylineDashMaterialProperty({
-          color: outlineColor,
-          dashLength: PATCH_SPLIT_DASH_LENGTH,
-          dashPattern: PATCH_SPLIT_DASH_PATTERN,
-        }),
-      });
+      entity.polyline = null;
     });
+  }
+
+  function enforceOverlayOrder(state) {
+    const imageryLayers = state.viewer.imageryLayers;
+    if (state.groundTruthLayer) {
+      // Keep GLORYS above prediction without moving prediction below the basemap.
+      imageryLayers.raise(state.groundTruthLayer);
+    }
+
+    const dataSources = state.viewer.dataSources;
+    if (state.patchSplitsDataSource) {
+      dataSources.lowerToBottom(state.patchSplitsDataSource);
+    }
+    if (state.pointsDataSource) {
+      dataSources.raiseToTop(state.pointsDataSource);
+    }
   }
 
   function buildViewer() {
@@ -452,9 +373,12 @@
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(pointsUrl, {
       clampToGround: true,
+      markerColor: Cesium.Color.fromCssColorString("#7cf5ff"),
+      markerSize: 10,
+      stroke: Cesium.Color.BLACK,
+      strokeWidth: 1,
       credit: config.credits && config.credits.points,
     });
-    stylePointEntities(dataSource);
     viewer.dataSources.add(dataSource);
     dataSource.show = pointsToggle.checked;
     return dataSource;
@@ -498,8 +422,9 @@
 
       state.predictionLayer = await addPredictionLayer(viewer, config, configUrl);
       state.groundTruthLayer = await addGroundTruthLayer(viewer, config, configUrl);
-      state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
       state.patchSplitsDataSource = await addPatchSplitsLayer(viewer, config, configUrl);
+      state.pointsDataSource = await addPointsLayer(viewer, config, configUrl);
+      enforceOverlayOrder(state);
       attachSpinLoop(state);
       setSpinEnabled(state, false);
       wireUi(state);

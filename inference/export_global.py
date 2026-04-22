@@ -371,28 +371,14 @@ def _row_bounds(row: dict[str, Any]) -> tuple[float, float, float, float]:
 def _argo_point_features_for_patch(
     *,
     row: dict[str, Any],
-    x_patch_3d: np.ndarray,
-    x_valid_mask_3d: np.ndarray,
-    ground_truth_top_band_2d: np.ndarray,
+    observed_mask_2d: np.ndarray,
 ) -> list[dict[str, Any]]:
-    x_patch = np.asarray(x_patch_3d, dtype=np.float32)
-    valid_mask = np.asarray(x_valid_mask_3d, dtype=bool)
-    ground_truth_patch = np.asarray(ground_truth_top_band_2d, dtype=np.float32)
-    if x_patch.ndim != 3:
-        raise RuntimeError(f"Expected a 3D Argo patch, got {tuple(x_patch.shape)}.")
-    if valid_mask.shape != x_patch.shape:
-        raise RuntimeError(
-            "Expected x_valid_mask_3d to match x_patch_3d shape, "
-            f"got {tuple(valid_mask.shape)} vs {tuple(x_patch.shape)}."
-        )
-    if ground_truth_patch.shape != x_patch.shape[-2:]:
-        raise RuntimeError(
-            "Expected a 2D top-band ground-truth patch matching the Argo patch shape, "
-            f"got {tuple(ground_truth_patch.shape)} vs {tuple(x_patch.shape[-2:])}."
-        )
+    mask = np.asarray(observed_mask_2d, dtype=bool)
+    if mask.ndim != 2:
+        raise RuntimeError(f"Expected a 2D observed-mask patch, got {tuple(mask.shape)}.")
 
     left, bottom, right, top = _row_bounds(row)
-    patch_height, patch_width = x_patch.shape[-2:]
+    patch_height, patch_width = mask.shape
     pixel_width = (right - left) / float(patch_width)
     pixel_height = (top - bottom) / float(patch_height)
     if pixel_width <= 0.0 or pixel_height <= 0.0:
@@ -401,16 +387,8 @@ def _argo_point_features_for_patch(
         )
 
     features: list[dict[str, Any]] = []
-    # Keep one marker per horizontal pixel and use the shallowest valid Argo value so
-    # the point colors line up with the top-band ground-truth view on the globe.
-    point_rows, point_cols = np.nonzero(valid_mask.any(axis=0))
+    point_rows, point_cols = np.nonzero(mask)
     for point_row, point_col in zip(point_rows.tolist(), point_cols.tolist()):
-        depth_indices = np.flatnonzero(valid_mask[:, point_row, point_col])
-        if depth_indices.size == 0:
-            continue
-        observed_depth_index = int(depth_indices[0])
-        observed_temp_c = float(x_patch[observed_depth_index, point_row, point_col])
-        ground_truth_temp_c = float(ground_truth_patch[point_row, point_col])
         lon = left + (float(point_col) + 0.5) * pixel_width
         lat = top - (float(point_row) + 0.5) * pixel_height
         features.append(
@@ -425,13 +403,6 @@ def _argo_point_features_for_patch(
                     "export_index": int(row.get("export_index", -1)),
                     "pixel_row": int(point_row),
                     "pixel_col": int(point_col),
-                    "observed_temp_c": observed_temp_c,
-                    "ground_truth_top_band_temp_c": (
-                        None
-                        if not np.isfinite(ground_truth_temp_c)
-                        else ground_truth_temp_c
-                    ),
-                    "observed_depth_index": observed_depth_index,
                 },
             }
         )
@@ -967,17 +938,6 @@ def main() -> None:
             if bool(args.export_ground_truth)
             else None
         )
-        argo_batch_celsius = (
-            temperature_normalize(mode="denorm", tensor=batch["x"])
-            .detach()
-            .float()
-            .cpu()
-            .numpy()
-        )
-        argo_valid_mask_batch = (
-            batch["x_valid_mask"].detach().cpu().numpy().astype(bool, copy=False)
-        )
-
         for local_idx, row in enumerate(
             selected_rows[start : start + len(batch_indices)]
         ):
@@ -1000,11 +960,18 @@ def main() -> None:
                     layout=layout,
                 )
             if argo_points_writer is not None:
+                # Use the dataset's horizontal support mask so the globe shows one
+                # marker per observed location instead of one marker per depth level.
+                observed_mask_2d = (
+                    batch["x_valid_mask_1d"][local_idx, 0]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(bool, copy=False)
+                )
                 for feature in _argo_point_features_for_patch(
                     row=row,
-                    x_patch_3d=argo_batch_celsius[local_idx],
-                    x_valid_mask_3d=argo_valid_mask_batch[local_idx],
-                    ground_truth_top_band_2d=ground_truth_batch[local_idx],
+                    observed_mask_2d=observed_mask_2d,
                 ):
                     argo_points_writer.write_feature(feature)
 
