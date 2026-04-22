@@ -20,7 +20,6 @@
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const PATCH_SPLIT_ALPHA = 0.5;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
-  const TOOLBAR_AUTO_COLLAPSE_DELAY_MS = 3000;
   const PATCH_SPLIT_COLORS = {
     train: "#1f9d55",
     val: "#d64545",
@@ -193,13 +192,6 @@
     }
   }
 
-  function clearToolbarCollapseTimer(state) {
-    if (state.toolbarCollapseTimer !== null) {
-      window.clearTimeout(state.toolbarCollapseTimer);
-      state.toolbarCollapseTimer = null;
-    }
-  }
-
   function setToolbarCollapsed(elements, collapsed) {
     if (!elements.toolbar || !elements.toolbarToggle || !elements.toolbarContent) {
       return;
@@ -208,14 +200,6 @@
     elements.toolbar.classList.toggle("is-collapsed", collapsed);
     elements.toolbarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
     elements.toolbarToggle.textContent = collapsed ? "Show settings" : "Hide settings";
-  }
-
-  function scheduleToolbarAutoCollapse(state) {
-    clearToolbarCollapseTimer(state);
-    state.toolbarCollapseTimer = window.setTimeout(function () {
-      state.toolbarCollapseTimer = null;
-      setToolbarCollapsed(state.elements, true);
-    }, TOOLBAR_AUTO_COLLAPSE_DELAY_MS);
   }
 
   function finalizeProfilePopupClose(state) {
@@ -315,6 +299,33 @@
     }
   }
 
+  function addBaseMap(viewer) {
+    const naturalEarthUrl = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII");
+    // Prefer Cesium's bundled Natural Earth relief tiles for a lighter free basemap.
+    Cesium.TileMapServiceImageryProvider.fromUrl(naturalEarthUrl, {
+      credit: "Natural Earth II",
+    })
+      .then(function (provider) {
+        if (!viewer.isDestroyed()) {
+          viewer.imageryLayers.addImageryProvider(provider);
+          viewer.scene.requestRender();
+        }
+      })
+      .catch(function (error) {
+        console.error(error);
+        if (viewer.isDestroyed()) {
+          return;
+        }
+        viewer.imageryLayers.addImageryProvider(
+          new Cesium.OpenStreetMapImageryProvider({
+            url: "https://tile.openstreetmap.org/",
+            credit: "OpenStreetMap contributors",
+          })
+        );
+        viewer.scene.requestRender();
+      });
+  }
+
   function buildViewer(container) {
     const viewer = new Cesium.Viewer(container, {
       animation: false,
@@ -334,13 +345,7 @@
     });
     viewer.useBrowserRecommendedResolution = false;
     viewer.resolutionScale = window.devicePixelRatio || 1;
-
-    viewer.imageryLayers.addImageryProvider(
-      new Cesium.OpenStreetMapImageryProvider({
-        url: "https://tile.openstreetmap.org/",
-        credit: "OpenStreetMap contributors",
-      })
-    );
+    addBaseMap(viewer);
     viewer.scene.globe.enableLighting = false;
     viewer.clock.shouldAnimate = false;
     return viewer;
@@ -653,7 +658,6 @@
     const elements = state.elements;
     if (elements.toolbarToggle) {
       elements.toolbarToggle.addEventListener("click", function () {
-        clearToolbarCollapseTimer(state);
         const collapsed = elements.toolbar
           ? elements.toolbar.classList.contains("is-collapsed")
           : false;
@@ -819,7 +823,6 @@
         spinEnabled: false,
         lastSpinTime: null,
         profilePopupCloseTimer: null,
-        toolbarCollapseTimer: null,
         stopWatchingResize: null,
         handleWindowResize: null,
         spinTickListener: null,
@@ -837,7 +840,6 @@
       setSpinEnabled(state, false);
       wireUi(state);
       setToolbarCollapsed(elements, false);
-      scheduleToolbarAutoCollapse(state);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
         const picked = viewer.scene.pick(movement.position);
         if (

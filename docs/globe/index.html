@@ -8,6 +8,11 @@
       name="description"
       content="Standalone Cesium globe viewer for DepthDif prediction, GLORYS, and Argo overlays."
     />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
+    />
     <link rel="icon" href="../assets/branding/website_icon.png" />
     <link rel="stylesheet" href="../stylesheets/globe.css" />
     <script defer src="../javascripts/cesium-globe.js"></script>
@@ -15,20 +20,19 @@
   </head>
   <body class="standalone-globe-page">
     <main class="standalone-globe-shell">
-      <header class="standalone-globe-header">
-        <div class="standalone-globe-header__content">
-          <span class="standalone-globe-header__eyebrow">DepthDif Viewer</span>
-          <h1 class="standalone-globe-header__title">3D Globe</h1>
-          <p class="standalone-globe-header__text">
-            Compare the stitched top-level prediction, the GLORYS top-band ground truth, and the
-            observed Argo points on one standalone Cesium globe.
-          </p>
-        </div>
-        <a class="standalone-globe-back-link" href="../">Back to Docs</a>
-      </header>
-
       <div class="globe-page">
         <div class="globe-stage">
+          <header class="standalone-globe-header">
+            <div class="standalone-globe-header__content">
+              <span class="standalone-globe-header__eyebrow">DepthDif Viewer</span>
+              <h1 class="standalone-globe-header__title">3D Globe</h1>
+              <p class="standalone-globe-header__text">
+                Compare the stitched top-level prediction, the GLORYS top-band ground truth, and the
+                observed Argo points on one standalone Cesium globe.
+              </p>
+            </div>
+            <a class="standalone-globe-back-link" href="../">Back to Docs</a>
+          </header>
           <div class="globe-toolbar">
             <div class="globe-toolbar__header">
               <span class="globe-toolbar__label">Settings</span>
