@@ -150,7 +150,7 @@
 
     const selectedDateParts = resolveSelectedDateParts(config.selected_date);
     if (elements.pageTitle) {
-      elements.pageTitle.textContent = "Densification of Sparce Ocean Variables";
+      elements.pageTitle.textContent = "DepthDif";
     }
 
     if (elements.pageDescription) {
