@@ -58,7 +58,8 @@
       toolbar: document.querySelector(".globe-toolbar"),
       toolbarContent: document.getElementById("globe-toolbar-content"),
       toolbarToggle: document.getElementById("globe-toggle-toolbar"),
-      opacitySlider: document.getElementById("globe-overlay-opacity"),
+      depthSlider: document.getElementById("globe-depth-level"),
+      depthLabel: document.getElementById("globe-depth-level-label"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
       pageTitle: document.getElementById("globe-page-title"),
@@ -214,6 +215,45 @@
       return { min: minValue, max: maxValue };
     }
     return DEFAULT_COLOR_SCALE;
+  }
+
+  function getDepthLevels(config) {
+    if (config && Array.isArray(config.depth_levels) && config.depth_levels.length > 0) {
+      return config.depth_levels;
+    }
+    return [
+      {
+        label: "Surface",
+        requested_depth_m: 0.0,
+        actual_depth_m: 0.0,
+        channel_index: 0,
+        prediction_tiles_url: config ? config.prediction_tiles_url : null,
+        ground_truth_tiles_url: config ? config.ground_truth_tiles_url : null,
+      },
+    ];
+  }
+
+  function selectedDepthLevel(state) {
+    const depthLevels = getDepthLevels(state.config);
+    const index = clamp(Number(state.selectedDepthIndex || 0), 0, depthLevels.length - 1);
+    return depthLevels[index] || depthLevels[0];
+  }
+
+  function updateDepthControl(state) {
+    const depthLevels = getDepthLevels(state.config);
+    if (state.elements.depthSlider) {
+      state.elements.depthSlider.min = "0";
+      state.elements.depthSlider.max = String(Math.max(0, depthLevels.length - 1));
+      state.elements.depthSlider.step = "1";
+      state.elements.depthSlider.value = String(
+        clamp(Number(state.selectedDepthIndex || 0), 0, depthLevels.length - 1)
+      );
+      state.elements.depthSlider.disabled = depthLevels.length <= 1;
+    }
+    if (state.elements.depthLabel) {
+      const depthLevel = selectedDepthLevel(state);
+      state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
+    }
   }
 
   function colorForTemperature(tempC, colorScale) {
@@ -603,7 +643,8 @@
   }
 
   async function addPredictionLayer(state) {
-    const predictionUrl = resolveAssetUrl(state.config.prediction_tiles_url, state.configUrl);
+    const depthLevel = selectedDepthLevel(state);
+    const predictionUrl = resolveAssetUrl(depthLevel.prediction_tiles_url, state.configUrl);
     if (!predictionUrl) {
       markToggleUnavailable(state.elements.predictionToggle);
       return null;
@@ -614,14 +655,15 @@
     const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
     layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
-    layer.alpha = Number(state.elements.opacitySlider.value);
+    layer.alpha = 1.0;
     layer.show = state.elements.predictionToggle.checked;
     requestRender(state);
     return layer;
   }
 
   async function addGroundTruthLayer(state) {
-    const groundTruthUrl = resolveAssetUrl(state.config.ground_truth_tiles_url, state.configUrl);
+    const depthLevel = selectedDepthLevel(state);
+    const groundTruthUrl = resolveAssetUrl(depthLevel.ground_truth_tiles_url, state.configUrl);
     if (!groundTruthUrl) {
       markToggleUnavailable(state.elements.groundTruthToggle);
       return null;
@@ -632,7 +674,7 @@
     const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
     layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
-    layer.alpha = Number(state.elements.opacitySlider.value);
+    layer.alpha = 1.0;
     layer.show = state.elements.groundTruthToggle.checked;
     return layer;
   }
@@ -823,6 +865,40 @@
     }
   }
 
+  async function reloadRasterDepthLayers(state) {
+    const imageryLayers = state.viewer.imageryLayers;
+    const showPrediction = state.elements.predictionToggle.checked;
+    const showGroundTruth = state.elements.groundTruthToggle.checked;
+
+    if (state.predictionLayer) {
+      imageryLayers.remove(state.predictionLayer, true);
+      state.predictionLayer = null;
+    }
+    if (state.groundTruthLayer) {
+      imageryLayers.remove(state.groundTruthLayer, true);
+      state.groundTruthLayer = null;
+    }
+    state.predictionLayerLoadPromise = null;
+    state.groundTruthLayerLoadPromise = null;
+
+    try {
+      state.predictionLayer = await addPredictionLayer(state);
+      if (state.predictionLayer) {
+        state.predictionLayer.show = showPrediction;
+      }
+      if (showGroundTruth) {
+        state.groundTruthLayer = await addGroundTruthLayer(state);
+        if (state.groundTruthLayer) {
+          state.groundTruthLayer.show = true;
+        }
+      }
+      enforceOverlayOrder(state);
+      requestRender(state);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
   function wireUi(state) {
     const elements = state.elements;
     if (elements.toolbarToggle) {
@@ -885,16 +961,13 @@
       });
     }
 
-    elements.opacitySlider.addEventListener("input", function () {
-      const alpha = Number(elements.opacitySlider.value);
-      if (state.predictionLayer) {
-        state.predictionLayer.alpha = alpha;
-      }
-      if (state.groundTruthLayer) {
-        state.groundTruthLayer.alpha = alpha;
-      }
-      requestRender(state);
-    });
+    if (elements.depthSlider) {
+      elements.depthSlider.addEventListener("input", function () {
+        state.selectedDepthIndex = Number(elements.depthSlider.value);
+        updateDepthControl(state);
+        reloadRasterDepthLayers(state);
+      });
+    }
 
     if (elements.spinToggle) {
       elements.spinToggle.addEventListener("click", function () {
@@ -991,6 +1064,7 @@
         pointsDataSourceLoadPromise: null,
         fullSampleDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
+        selectedDepthIndex: 0,
         spinEnabled: false,
         lastSpinTime: null,
         profilePopupCloseTimer: null,
@@ -1001,6 +1075,7 @@
       };
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
+      updateDepthControl(state);
 
       state.predictionLayer = await addPredictionLayer(state);
       if (initToken !== getCurrentInitToken()) {

@@ -19,6 +19,7 @@ from inference.export_cesium_globe_assets import (
     _build_gdal2tiles_command,
     _estimate_native_zoom_level,
     _read_raster_metadata,
+    _resolve_depth_export_artifacts,
     _resolve_rclone_sync_source,
     _rewrite_geojson,
     _sync_with_rclone,
@@ -70,6 +71,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "selected_date": None,
             "prediction_tiles_url": None,
             "ground_truth_tiles_url": None,
+            "depth_levels": [],
             "argo_points_url": None,
             "patch_splits_url": None,
             "full_sample_points_url": None,
@@ -92,6 +94,16 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             selected_date=20260105,
             prediction_tiles_url="./prediction_tiles",
             ground_truth_tiles_url="./ground_truth_tiles",
+            depth_levels=[
+                {
+                    "label": "Surface",
+                    "requested_depth_m": 0.0,
+                    "actual_depth_m": 0.5,
+                    "channel_index": 0,
+                    "prediction_tiles_url": "./prediction_tiles_surface",
+                    "ground_truth_tiles_url": "./ground_truth_tiles_surface",
+                }
+            ],
             argo_points_url="./argo_points.geojson",
             patch_splits_url="./patch_splits.geojson",
             full_sample_points_url="./full_sample_locations.geojson",
@@ -110,6 +122,11 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["selected_date"], 20260105)
         self.assertEqual(config["prediction_tiles_url"], "./prediction_tiles")
         self.assertEqual(config["ground_truth_tiles_url"], "./ground_truth_tiles")
+        self.assertEqual(config["depth_levels"][0]["label"], "Surface")
+        self.assertEqual(
+            config["depth_levels"][0]["prediction_tiles_url"],
+            "./prediction_tiles_surface",
+        )
         self.assertEqual(config["argo_points_url"], "./argo_points.geojson")
         self.assertEqual(config["patch_splits_url"], "./patch_splits.geojson")
         self.assertEqual(
@@ -139,6 +156,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             template = json.load(f)
 
         self.assertIn("prediction_tiles_url", template)
+        self.assertIn("depth_levels", template)
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
         self.assertIn("default_camera_destination", template)
@@ -247,6 +265,49 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
+
+    def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir)
+            prediction_surface = run_dir / "global_top_band_20260105_prediction_surface.tif"
+            prediction_100m = run_dir / "global_top_band_20260105_prediction_100m.tif"
+            ground_truth_surface = run_dir / "global_top_band_20260105_glorys_surface.tif"
+            for path in (prediction_surface, prediction_100m, ground_truth_surface):
+                path.write_text("placeholder", encoding="utf-8")
+
+            depth_exports = _resolve_depth_export_artifacts(
+                run_dir=run_dir,
+                run_summary={
+                    "depth_exports": [
+                        {
+                            "suffix": "surface",
+                            "label": "Surface",
+                            "requested_depth_m": 0.0,
+                            "actual_depth_m": 0.5,
+                            "channel_index": 0,
+                            "prediction_tif_path": prediction_surface.name,
+                            "ground_truth_tif_path": ground_truth_surface.name,
+                        },
+                        {
+                            "suffix": "100m",
+                            "label": "100m",
+                            "requested_depth_m": 100.0,
+                            "actual_depth_m": 97.0,
+                            "channel_index": 1,
+                            "prediction_tif_path": prediction_100m.name,
+                            "ground_truth_tif_path": None,
+                        },
+                    ]
+                },
+                prediction_path=prediction_surface,
+                ground_truth_path=ground_truth_surface,
+            )
+
+        self.assertEqual([item["suffix"] for item in depth_exports], ["surface", "100m"])
+        self.assertEqual(depth_exports[0]["prediction_path"], prediction_surface)
+        self.assertEqual(depth_exports[0]["ground_truth_path"], ground_truth_surface)
+        self.assertIsNone(depth_exports[1]["ground_truth_path"])
+        self.assertEqual(depth_exports[1]["channel_index"], 1)
 
     def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

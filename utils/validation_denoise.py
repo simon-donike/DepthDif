@@ -1043,6 +1043,7 @@ def plot_glorys_profile_comparison_axis(
     y_target_profile: np.ndarray,
     observed_profile: np.ndarray,
     depth_axis: np.ndarray | None = None,
+    ostia_sst_c: float | None = None,
     title: str | None = None,
     show_legend: bool = False,
 ) -> None:
@@ -1065,14 +1066,14 @@ def plot_glorys_profile_comparison_axis(
     ax.plot(
         y_target_profile_np,
         depth_values,
-        label="GLORYS target",
+        label="GLORYS",
         color="black",
         linewidth=2.0,
     )
     ax.plot(
         y_hat_profile_np,
         depth_values,
-        label="Reconstruction",
+        label="Prediction",
         color="tab:orange",
         linewidth=1.8,
     )
@@ -1081,11 +1082,21 @@ def plot_glorys_profile_comparison_axis(
         ax.plot(
             x_profile_np[observed_profile_np],
             depth_values[observed_profile_np],
-            label="Argo conditioning",
+            label="ARGO Sample",
             color="tab:blue",
             marker="o",
             linewidth=1.4,
             markersize=3.5,
+        )
+    if ostia_sst_c is not None and np.isfinite(float(ostia_sst_c)):
+        ax.scatter(
+            [float(ostia_sst_c)],
+            [0.0],
+            label="OSTIA SST",
+            color="tab:green",
+            marker="D",
+            s=42,
+            zorder=5,
         )
     ax.invert_yaxis()
     ax.set_xlabel("Temperature (deg C)")
@@ -1105,6 +1116,7 @@ def save_glorys_profile_comparison_plot(
     y_target_profile: np.ndarray,
     observed_profile: np.ndarray,
     depth_axis: np.ndarray | None = None,
+    ostia_sst_c: float | None = None,
     title: str | None = None,
     figure_title: str | None = None,
     dpi: int = 180,
@@ -1123,6 +1135,7 @@ def save_glorys_profile_comparison_plot(
             y_target_profile=y_target_profile,
             observed_profile=observed_profile,
             depth_axis=depth_axis,
+            ostia_sst_c=ostia_sst_c,
             title=title,
             show_legend=True,
         )

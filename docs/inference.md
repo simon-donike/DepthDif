@@ -29,17 +29,18 @@ At the top of `inference/run_single.py`, set:
 The script constants should be set explicitly. In this repository, the actively used configs are:  
 - OSTIA + Argo disk setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
 
-## Workflow 1b: Export One Global Top-Band Raster  
+## Workflow 1b: Export Global Depth Rasters  
 Use `inference/export_global.py` when you want one spatially complete raster from the `ostia_argo_disk` manifest rather than a single sampled batch. The script:
 - loads the configured checkpoint and disk-manifest dataset  
 - selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`  
 - runs batched `predict_step(...)` over all spatial patches for that day  
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`  
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM  
-- stitches `y_hat_denorm[:, 0, :, :]` into one large tiled GeoTIFF with internal overviews, then conservatively fills 1-2 pixel nodata seams in the written TIFF before the file is finalized  
-- exports the matching GLORYS top-band raster by default via `--export-ground-truth` / `--no-export-ground-truth`  
+- stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, and 1000m, then conservatively fills 1-2 pixel nodata seams in each written TIFF before finalizing it  
+- maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
+- exports matching GLORYS rasters for the same five depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
-- samples `100` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one validation-style profile PNG per sampled location under `graphs/`  
+- samples `200` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one validation-style profile PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0  
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 
 Typical run:  
@@ -53,8 +54,8 @@ Typical run:
 ```  
 
 Outputs land under `inference/outputs/<run_name>/` and include:
-- `<run_name>_prediction.tif`: stitched global top-band prediction  
-- `<run_name>_glorys_top_band.tif`: stitched GLORYS top-band truth export by default  
+- `<run_name>_prediction_surface.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`: stitched prediction rasters  
+- `<run_name>_glorys_surface.tif`, `<run_name>_glorys_100m.tif`, `<run_name>_glorys_250m.tif`, `<run_name>_glorys_500m.tif`, `<run_name>_glorys_1000m.tif`: stitched GLORYS truth rasters by default  
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers  
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only  
@@ -66,11 +67,11 @@ When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYY
 ## Workflow 1c: Package One Run for the Cesium Globe
 Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
 - reads one completed `inference/outputs/<run_name>/` directory
-- tiles the stitched prediction and ground-truth GeoTIFFs with `gdal2tiles.py`
+- tiles every stitched prediction and ground-truth depth GeoTIFF with `gdal2tiles.py`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder
 - rewrites the train/val patch-split GeoJSON with rounded coordinates and only the `split` property
-- writes `globe/globe-config.json` for the static Cesium page
+- writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider
 
 Typical run:
 ```bash
@@ -89,13 +90,15 @@ To upload one selected run into the hosted production area in the same step, pro
 ```
 
 The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced with the example above. It includes:
-- `prediction_tiles/`: TMS imagery tiles for the prediction raster
-- `ground_truth_tiles/`: TMS imagery tiles for the GLORYS raster when present
+- `prediction_tiles_surface/`, `prediction_tiles_100m/`, etc.: TMS imagery tiles for each prediction depth raster
+- `ground_truth_tiles_surface/`, `ground_truth_tiles_100m/`, etc.: TMS imagery tiles for each GLORYS depth raster when present
 - `argo_points.geojson`: hosted point overlay
 - `full_sample_locations.geojson`: hosted sampled-profile point overlay used by the clickable "Full sample locations" globe layer
 - `graphs/`: hosted PNGs opened by the sampled-profile popup
 - `patch_splits.geojson`: hosted train/val patch grid overlay rendered as solid red/green fills at fixed 50% opacity in the globe viewer
 - `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route
+
+Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for bucket upload.
 
 When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON.
   

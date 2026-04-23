@@ -10,6 +10,7 @@ import yaml
 from rasterio.transform import from_origin
 
 from inference.export_global import (
+    DEFAULT_FULL_SAMPLE_COUNT,
     FullProfileSample,
     MosaicLayout,
     _cleanup_accumulator,
@@ -17,17 +18,22 @@ from inference.export_global import (
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _default_run_stem,
+    _profile_graph_figure_title,
     _prepare_run_directory,
     _promote_production_run,
     _repair_small_nodata_gaps_2d,
     create_raster_accumulator,
     build_global_mosaic,
+    resolve_depth_export_levels,
     select_export_indices,
     write_global_top_band_geotiff,
 )
 
 
 class TestGlobalInferenceExport(unittest.TestCase):
+    def test_default_full_sample_count_is_two_hundred(self) -> None:
+        self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, 200)
+
     def test_select_export_indices_picks_earliest_date_in_iso_week(self) -> None:
         rows = [
             {"date": 20260105, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
@@ -133,6 +139,67 @@ class TestGlobalInferenceExport(unittest.TestCase):
             finally:
                 _cleanup_accumulator(accumulator)
 
+    def test_resolve_depth_export_levels_uses_nearest_glorys_depths(self) -> None:
+        levels = resolve_depth_export_levels(
+            np.asarray([0.5, 97.0, 247.0, 505.0, 980.0], dtype=np.float64)
+        )
+
+        self.assertEqual([level.suffix for level in levels], ["surface", "100m", "250m", "500m", "1000m"])
+        self.assertEqual([level.channel_index for level in levels], [0, 1, 2, 3, 4])
+        self.assertAlmostEqual(levels[1].requested_depth_m, 100.0)
+        self.assertAlmostEqual(levels[1].actual_depth_m, 97.0)
+
+    def test_depth_geotiff_metadata_records_requested_and_actual_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=16.0,
+                top=16.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=16,
+                height=16,
+                patch_width=16,
+                patch_height=16,
+                transform=from_origin(0.0, 16.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_100m",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 12.5
+                accumulator.count_array[:] = 1
+                tif_path = tmp_path / "global_top_band_20260105_prediction_100m.tif"
+
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_100m_celsius",
+                    tags={
+                        "kind": "prediction",
+                        "depth_label": "100m",
+                        "requested_depth_m": "100.000",
+                        "actual_depth_m": "97.000",
+                        "channel_index": "1",
+                    },
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    tags = ds.tags()
+                    self.assertEqual(ds.descriptions[0], "predicted_100m_celsius")
+                    self.assertEqual(tags["depth_label"], "100m")
+                    self.assertEqual(tags["requested_depth_m"], "100.000")
+                    self.assertEqual(tags["actual_depth_m"], "97.000")
+                    self.assertEqual(tags["channel_index"], "1")
+            finally:
+                _cleanup_accumulator(accumulator)
+
     def test_argo_point_features_use_pixel_centers(self) -> None:
         row = {
             "date": 20260105,
@@ -218,6 +285,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
             x_profile_c=np.asarray([12.0, 13.0, 14.0], dtype=np.float32),
             y_hat_profile_c=np.asarray([11.5, 12.5, 13.5], dtype=np.float32),
             y_target_profile_c=np.asarray([10.5, 11.5, 12.5], dtype=np.float32),
+            ostia_sst_c=19.25,
             observed_profile=np.asarray([True, False, True], dtype=bool),
             target_valid_profile=np.asarray([True, True, False], dtype=bool),
         )
@@ -235,11 +303,25 @@ class TestGlobalInferenceExport(unittest.TestCase):
             feature["properties"]["graph_png_path"], "graphs/full_sample_001.png"
         )
         self.assertEqual(feature["properties"]["depth_m"], [0.5, 5.0, 25.0])
+        self.assertEqual(feature["properties"]["ostia_sst_c"], 19.25)
         self.assertEqual(feature["properties"]["argo_profile_c"], [12.0, None, 14.0])
         self.assertEqual(
             feature["properties"]["prediction_profile_c"], [11.5, 12.5, None]
         )
         self.assertEqual(feature["properties"]["glorys_profile_c"], [10.5, 11.5, None])
+
+    def test_profile_graph_title_uses_date_and_geographic_coordinates_only(self) -> None:
+        title = _profile_graph_figure_title(
+            sample_date=20260105,
+            lat=-12.345678,
+            lon=45.125,
+        )
+
+        self.assertEqual(
+            title,
+            "Date: 2026-01-05\nLocation: 12.3457 deg S, 45.1250 deg E",
+        )
+        self.assertNotIn("Pixel", title)
 
     def test_default_run_stem_keeps_selected_date_in_artifact_names(self) -> None:
         self.assertEqual(_default_run_stem(20260105), "global_top_band_20260105")
@@ -267,6 +349,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             (staging_dir / "global_top_band_20260105_prediction.tif").write_text(
                 "prediction", encoding="utf-8"
             )
+            (staging_dir / "global_top_band_20260105_prediction_100m.tif").write_text(
+                "prediction depth", encoding="utf-8"
+            )
             (staging_dir / "global_top_band_20260105_argo_points.geojson").write_text(
                 "points", encoding="utf-8"
             )
@@ -280,6 +365,13 @@ class TestGlobalInferenceExport(unittest.TestCase):
                         "run_dir": str(staging_dir),
                         "prediction_tif_path": "global_top_band_20260105_prediction.tif",
                         "ground_truth_tif_path": None,
+                        "depth_exports": [
+                            {
+                                "suffix": "100m",
+                                "prediction_tif_path": "global_top_band_20260105_prediction_100m.tif",
+                                "ground_truth_tif_path": None,
+                            }
+                        ],
                         "argo_points_geojson_path": "global_top_band_20260105_argo_points.geojson",
                         "patch_splits_geojson_path": "global_top_band_20260105_patch_splits.geojson",
                     },
@@ -292,6 +384,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             self.assertFalse(staging_dir.exists())
             self.assertTrue((production_dir / "global_top_band_prediction.tif").exists())
             self.assertTrue(
+                (production_dir / "global_top_band_prediction_100m.tif").exists()
+            )
+            self.assertTrue(
                 (production_dir / "global_top_band_argo_points.geojson").exists()
             )
             self.assertTrue(
@@ -303,6 +398,10 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
             self.assertEqual(summary["run_dir"], str(production_dir))
             self.assertEqual(summary["prediction_tif_path"], "global_top_band_prediction.tif")
+            self.assertEqual(
+                summary["depth_exports"][0]["prediction_tif_path"],
+                "global_top_band_prediction_100m.tif",
+            )
             self.assertEqual(
                 summary["argo_points_geojson_path"],
                 "global_top_band_argo_points.geojson",

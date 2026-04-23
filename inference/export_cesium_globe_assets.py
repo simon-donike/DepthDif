@@ -53,6 +53,22 @@ FULL_SAMPLE_PROPERTY_KEYS = (
 PATCH_SPLIT_PROPERTY_KEYS = ("split",)
 
 
+def _surface_depth_export(
+    *,
+    prediction_path: Path,
+    ground_truth_path: Path | None,
+) -> dict[str, Any]:
+    return {
+        "suffix": "surface",
+        "label": "Surface",
+        "requested_depth_m": 0.0,
+        "actual_depth_m": 0.0,
+        "channel_index": 0,
+        "prediction_path": prediction_path,
+        "ground_truth_path": ground_truth_path,
+    }
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -144,6 +160,61 @@ def _resolve_run_artifacts(
         graphs_dir_path,
         run_summary,
     )
+
+
+def _resolve_depth_export_artifacts(
+    *,
+    run_dir: Path,
+    run_summary: dict[str, Any],
+    prediction_path: Path,
+    ground_truth_path: Path | None,
+) -> list[dict[str, Any]]:
+    raw_exports = run_summary.get("depth_exports")
+    if not isinstance(raw_exports, list) or not raw_exports:
+        return [
+            _surface_depth_export(
+                prediction_path=prediction_path,
+                ground_truth_path=ground_truth_path,
+            )
+        ]
+
+    depth_exports: list[dict[str, Any]] = []
+    for raw_export in raw_exports:
+        if not isinstance(raw_export, dict):
+            continue
+        prediction_export_path = _coerce_existing_path(
+            raw_export.get("prediction_tif_path"),
+            run_dir=run_dir,
+        )
+        if prediction_export_path is None:
+            raise FileNotFoundError(
+                "Could not locate prediction GeoTIFF for depth export "
+                f"{raw_export.get('label', raw_export.get('suffix', 'unknown'))!r}."
+            )
+        ground_truth_export_path = _coerce_existing_path(
+            raw_export.get("ground_truth_tif_path"),
+            run_dir=run_dir,
+        )
+        depth_exports.append(
+            {
+                "suffix": str(raw_export.get("suffix", prediction_export_path.stem)),
+                "label": str(raw_export.get("label", raw_export.get("suffix", ""))),
+                "requested_depth_m": float(raw_export.get("requested_depth_m", 0.0)),
+                "actual_depth_m": float(raw_export.get("actual_depth_m", 0.0)),
+                "channel_index": int(raw_export.get("channel_index", 0)),
+                "prediction_path": prediction_export_path,
+                "ground_truth_path": ground_truth_export_path,
+            }
+        )
+
+    if not depth_exports:
+        return [
+            _surface_depth_export(
+                prediction_path=prediction_path,
+                ground_truth_path=ground_truth_path,
+            )
+        ]
+    return depth_exports
 
 
 def _read_raster_metadata(path: Path) -> dict[str, Any]:
@@ -339,6 +410,7 @@ def build_globe_config(
     selected_date: int | None,
     prediction_tiles_url: str,
     ground_truth_tiles_url: str | None,
+    depth_levels: list[dict[str, Any]],
     argo_points_url: str | None,
     patch_splits_url: str | None,
     full_sample_points_url: str | None,
@@ -359,6 +431,7 @@ def build_globe_config(
             "selected_date": selected_date,
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
+            "depth_levels": depth_levels,
             "argo_points_url": argo_points_url,
             "patch_splits_url": patch_splits_url,
             "full_sample_points_url": full_sample_points_url,
@@ -483,36 +556,80 @@ def main() -> None:
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
 
-    prediction_colorized_path = temp_dir / f"{prediction_path.stem}_colorized.tif"
-    _colorize_raster(
-        prediction_path,
-        prediction_colorized_path,
-        color_ramp_path=color_ramp_path,
+    depth_exports = _resolve_depth_export_artifacts(
+        run_dir=run_dir,
+        run_summary=run_summary,
+        prediction_path=prediction_path,
+        ground_truth_path=ground_truth_path,
     )
-    prediction_tiles_dir = globe_dir / "prediction_tiles"
-    _run_gdal2tiles(
-        prediction_colorized_path,
-        prediction_tiles_dir,
-        extra_zoom_levels=args.extra_zoom_levels,
-    )
-
+    config_depth_levels: list[dict[str, Any]] = []
+    prediction_tiles_dir: Path | None = None
     ground_truth_tiles_dir: Path | None = None
-    if ground_truth_path is not None:
-        ground_truth_colorized_path = (
-            temp_dir / f"{ground_truth_path.stem}_colorized.tif"
+    for depth_export in depth_exports:
+        suffix = str(depth_export["suffix"])
+        prediction_export_path = Path(depth_export["prediction_path"])
+        prediction_colorized_path = (
+            temp_dir / f"{prediction_export_path.stem}_colorized.tif"
         )
         _colorize_raster(
-            ground_truth_path,
-            ground_truth_colorized_path,
+            prediction_export_path,
+            prediction_colorized_path,
             color_ramp_path=color_ramp_path,
         )
-        ground_truth_tiles_dir = globe_dir / "ground_truth_tiles"
+        prediction_tiles_dir_for_depth = globe_dir / f"prediction_tiles_{suffix}"
         _run_gdal2tiles(
-            ground_truth_colorized_path,
-            ground_truth_tiles_dir,
+            prediction_colorized_path,
+            prediction_tiles_dir_for_depth,
             extra_zoom_levels=args.extra_zoom_levels,
         )
+        if prediction_tiles_dir is None:
+            prediction_tiles_dir = prediction_tiles_dir_for_depth
 
+        ground_truth_tiles_dir_for_depth: Path | None = None
+        ground_truth_export_path = depth_export.get("ground_truth_path")
+        if ground_truth_export_path is not None:
+            ground_truth_export_path = Path(ground_truth_export_path)
+            ground_truth_colorized_path = (
+                temp_dir / f"{ground_truth_export_path.stem}_colorized.tif"
+            )
+            _colorize_raster(
+                ground_truth_export_path,
+                ground_truth_colorized_path,
+                color_ramp_path=color_ramp_path,
+            )
+            ground_truth_tiles_dir_for_depth = globe_dir / f"ground_truth_tiles_{suffix}"
+            _run_gdal2tiles(
+                ground_truth_colorized_path,
+                ground_truth_tiles_dir_for_depth,
+                extra_zoom_levels=args.extra_zoom_levels,
+            )
+            if ground_truth_tiles_dir is None:
+                ground_truth_tiles_dir = ground_truth_tiles_dir_for_depth
+
+        config_depth_levels.append(
+            {
+                "suffix": suffix,
+                "label": str(depth_export["label"]),
+                "requested_depth_m": float(depth_export["requested_depth_m"]),
+                "actual_depth_m": float(depth_export["actual_depth_m"]),
+                "channel_index": int(depth_export["channel_index"]),
+                "prediction_tiles_url": _resolve_layer_url(
+                    prediction_tiles_dir_for_depth.name,
+                    public_base_url=args.public_base_url,
+                ),
+                "ground_truth_tiles_url": (
+                    None
+                    if ground_truth_tiles_dir_for_depth is None
+                    else _resolve_layer_url(
+                        ground_truth_tiles_dir_for_depth.name,
+                        public_base_url=args.public_base_url,
+                    )
+                ),
+            }
+        )
+
+    if prediction_tiles_dir is None:
+        raise RuntimeError("No prediction depth tiles were generated.")
     copied_points_path: Path | None = None
     if points_path is not None:
         copied_points_path = globe_dir / "argo_points.geojson"
@@ -556,18 +673,13 @@ def main() -> None:
     template = _load_template(Path(args.template_path))
     config = build_globe_config(
         selected_date=run_summary.get("selected_date"),
-        prediction_tiles_url=_resolve_layer_url(
-            "prediction_tiles",
-            public_base_url=args.public_base_url,
-        ),
+        prediction_tiles_url=str(config_depth_levels[0]["prediction_tiles_url"]),
         ground_truth_tiles_url=(
             None
             if ground_truth_tiles_dir is None
-            else _resolve_layer_url(
-                "ground_truth_tiles",
-                public_base_url=args.public_base_url,
-            )
+            else config_depth_levels[0]["ground_truth_tiles_url"]
         ),
+        depth_levels=config_depth_levels,
         argo_points_url=(
             None
             if copied_points_path is None
@@ -619,9 +731,10 @@ def main() -> None:
     shutil.rmtree(temp_dir, ignore_errors=True)
 
     print(f"Wrote globe assets to: {globe_dir}")
-    print(f"- prediction tiles: {prediction_tiles_dir}")
+    print(f"- prediction depth tile sets: {len(config_depth_levels)}")
+    print(f"- first prediction tiles: {prediction_tiles_dir}")
     if ground_truth_tiles_dir is not None:
-        print(f"- ground-truth tiles: {ground_truth_tiles_dir}")
+        print(f"- first ground-truth tiles: {ground_truth_tiles_dir}")
     if copied_points_path is not None:
         print(f"- points GeoJSON: {copied_points_path}")
     if copied_patch_splits_path is not None:

@@ -20,8 +20,8 @@ The repository currently supports:
     <p class="globe-cta__eyebrow">New viewer</p>
     <h2 class="globe-cta__title">Inspect DepthDif outputs on a 3D globe</h2>
     <p class="globe-cta__text">
-      Open the Cesium web viewer to compare the stitched top-level prediction,
-      the GLORYS top-band ground truth, and the observed Argo points on one globe.
+      Open the Cesium web viewer to compare stitched prediction and GLORYS
+      depth levels with observed Argo points on one globe.
     </p>
   </div>
   <a class="globe-cta__button" href="globe/">Open 3D Globe</a>

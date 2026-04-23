@@ -74,7 +74,14 @@ DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
-DEFAULT_FULL_SAMPLE_COUNT = 100
+DEFAULT_FULL_SAMPLE_COUNT = 200
+DEFAULT_DEPTH_EXPORT_REQUESTS = (
+    ("surface", "Surface", 0.0),
+    ("100m", "100m", 100.0),
+    ("250m", "250m", 250.0),
+    ("500m", "500m", 500.0),
+    ("1000m", "1000m", 1000.0),
+)
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,15 @@ class RasterAccumulator:
     count_array: np.memmap
 
 
+@dataclass(frozen=True)
+class DepthExportLevel:
+    suffix: str
+    label: str
+    requested_depth_m: float
+    actual_depth_m: float
+    channel_index: int
+
+
 @dataclass
 class FullProfileSample:
     dataset_index: int
@@ -121,6 +137,7 @@ class FullProfileSample:
     x_profile_c: np.ndarray
     y_hat_profile_c: np.ndarray
     y_target_profile_c: np.ndarray
+    ostia_sst_c: float
     observed_profile: np.ndarray
     target_valid_profile: np.ndarray
 
@@ -134,30 +151,36 @@ class ExportInferenceWrapper(nn.Module):
         *,
         export_ground_truth: bool,
         export_full_prediction_stack: bool,
+        depth_channel_indices: Sequence[int],
     ) -> None:
         super().__init__()
         self.model = model
         self.export_ground_truth = bool(export_ground_truth)
         self.export_full_prediction_stack = bool(export_full_prediction_stack)
+        self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         pred = self.model.predict_step(batch, batch_idx=0)
+        y_hat_denorm = pred["y_hat_denorm"]
         out: dict[str, torch.Tensor] = {
-            "prediction_top_band": pred["y_hat_denorm"][:, 0].contiguous(),
+            "prediction_depth_stack": y_hat_denorm[
+                :, self.depth_channel_indices
+            ].contiguous(),
         }
         if self.export_full_prediction_stack:
-            out["prediction_full_stack"] = pred["y_hat_denorm"].contiguous()
+            out["prediction_full_stack"] = y_hat_denorm.contiguous()
         if self.export_ground_truth:
             target_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
             y_valid_mask = batch["y_valid_mask"]
-            gt_top_band = target_denorm[:, 0]
+            gt_depth_stack = target_denorm[:, self.depth_channel_indices]
+            gt_depth_mask = y_valid_mask[:, self.depth_channel_indices]
             # Match the inference export mask semantics so both rasters share support.
-            gt_top_band = torch.where(
-                y_valid_mask[:, 0],
-                gt_top_band,
-                torch.full_like(gt_top_band, float("nan")),
+            gt_depth_stack = torch.where(
+                gt_depth_mask,
+                gt_depth_stack,
+                torch.full_like(gt_depth_stack, float("nan")),
             )
-            out["ground_truth_top_band"] = gt_top_band.contiguous()
+            out["ground_truth_depth_stack"] = gt_depth_stack.contiguous()
         return out
 
 
@@ -250,6 +273,14 @@ def _rewrite_summary_for_production(
         if isinstance(value, str):
             summary[key] = _production_artifact_name(value, run_stem=run_stem)
 
+    for depth_export in summary.get("depth_exports", []):
+        if not isinstance(depth_export, dict):
+            continue
+        for key in ("prediction_tif_path", "ground_truth_tif_path"):
+            value = depth_export.get(key)
+            if isinstance(value, str):
+                depth_export[key] = _production_artifact_name(value, run_stem=run_stem)
+
     summary["run_dir"] = str(production_dir)
     with summary_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(summary, f, sort_keys=False)
@@ -320,6 +351,18 @@ def _summary_artifact_path(path: Path) -> str:
 
 def _parse_yyyymmdd(value: Any) -> date:
     return datetime.strptime(str(int(value)), "%Y%m%d").date()
+
+
+def _profile_graph_figure_title(*, sample_date: Any, lat: float, lon: float) -> str:
+    parsed_date = _parse_yyyymmdd(sample_date)
+
+    def _format_coord(value: float, *, positive_label: str, negative_label: str) -> str:
+        direction = positive_label if float(value) >= 0.0 else negative_label
+        return f"{abs(float(value)):.4f} deg {direction}"
+
+    lat_text = _format_coord(lat, positive_label="N", negative_label="S")
+    lon_text = _format_coord(lon, positive_label="E", negative_label="W")
+    return f"Date: {parsed_date:%Y-%m-%d}\nLocation: {lat_text}, {lon_text}"
 
 
 def _date_sort_key(row: dict[str, Any]) -> tuple[float, float]:
@@ -548,6 +591,29 @@ def _load_glorys_depth_axis_m(
     )
 
 
+def resolve_depth_export_levels(depth_axis_m: np.ndarray) -> list[DepthExportLevel]:
+    depth_values = np.asarray(depth_axis_m, dtype=np.float64).reshape(-1)
+    if depth_values.size < 1:
+        raise RuntimeError("Cannot resolve export depths from an empty depth axis.")
+    if not np.all(np.isfinite(depth_values)):
+        raise RuntimeError("GLORYS depth axis must contain only finite values.")
+
+    levels: list[DepthExportLevel] = []
+    for suffix, label, requested_depth_m in DEFAULT_DEPTH_EXPORT_REQUESTS:
+        # Preserve model/GLORYS channels exactly; only choose the nearest physical depth.
+        channel_index = int(np.argmin(np.abs(depth_values - float(requested_depth_m))))
+        levels.append(
+            DepthExportLevel(
+                suffix=str(suffix),
+                label=str(label),
+                requested_depth_m=float(requested_depth_m),
+                actual_depth_m=float(depth_values[channel_index]),
+                channel_index=channel_index,
+            )
+        )
+    return levels
+
+
 def _profile_to_json_list(
     profile_values: np.ndarray,
     *,
@@ -579,6 +645,11 @@ def _full_profile_feature_for_sample(
             "location_id": str(location_id),
             "graph_png_path": str(graph_png_path),
             "depth_m": _profile_to_json_list(depth_axis_m),
+            "ostia_sst_c": (
+                None
+                if not np.isfinite(float(sample.ostia_sst_c))
+                else float(sample.ostia_sst_c)
+            ),
             "argo_profile_c": _profile_to_json_list(
                 sample.x_profile_c,
                 valid_mask=sample.observed_profile,
@@ -987,7 +1058,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--export-ground-truth",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Also export the GLORYS top-band ground-truth raster for the selected timestep.",
+        help="Also export GLORYS ground-truth rasters for the selected depth levels.",
     )
     parser.add_argument(
         "--seed",
@@ -1082,21 +1153,36 @@ def main() -> None:
 
     sample_for_shape = dataset[selection.indices[0]]
     patch_shape = tuple(int(v) for v in sample_for_shape["y"].shape[-2:])
+    depth_axis_m = _load_glorys_depth_axis_m(
+        dataset,
+        selected_rows[0],
+        expected_size=int(sample_for_shape["y"].shape[0]),
+    )
+    depth_export_levels = resolve_depth_export_levels(depth_axis_m)
+    depth_channel_indices = tuple(
+        int(level.channel_index) for level in depth_export_levels
+    )
     layout = build_mosaic_layout(selected_rows, patch_shape=patch_shape)
     scratch_dir = run_dir / ".scratch"
-    pred_accumulator = create_raster_accumulator(
-        root_dir=scratch_dir,
-        stem="prediction_top_band",
-        layout=layout,
-    )
-    gt_accumulator = (
-        create_raster_accumulator(
+    pred_accumulators = {
+        level.suffix: create_raster_accumulator(
             root_dir=scratch_dir,
-            stem="ground_truth_top_band",
+            stem=f"prediction_{level.suffix}",
             layout=layout,
         )
+        for level in depth_export_levels
+    }
+    gt_accumulators = (
+        {
+            level.suffix: create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem=f"ground_truth_{level.suffix}",
+                layout=layout,
+            )
+            for level in depth_export_levels
+        }
         if bool(args.export_ground_truth)
-        else None
+        else {}
     )
     argo_points_geojson_path = (
         run_dir / f"{run_stem}_argo_points.geojson"
@@ -1130,7 +1216,8 @@ def main() -> None:
         f"selected_patches={len(selection.indices)}, "
         f"batch_size={batch_size}, "
         f"export_ground_truth={bool(args.export_ground_truth)}, "
-        f"full_sample_count={full_sample_count}"
+        f"full_sample_count={full_sample_count}, "
+        f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
     device = choose_device(args.device)
@@ -1175,6 +1262,7 @@ def main() -> None:
         model,
         export_ground_truth=bool(args.export_ground_truth),
         export_full_prediction_stack=(full_sample_count > 0),
+        depth_channel_indices=depth_channel_indices,
     )
     if use_multi_gpu:
         inference_runner: nn.Module = nn.DataParallel(inference_module)
@@ -1196,15 +1284,26 @@ def main() -> None:
         with torch.no_grad():
             outputs = inference_runner(model_batch)
 
-        prediction_batch = outputs["prediction_top_band"].detach().float().cpu().numpy()
+        prediction_depth_batch = (
+            outputs["prediction_depth_stack"].detach().float().cpu().numpy()
+        )
         prediction_full_stack_batch = (
             outputs["prediction_full_stack"].detach().float().cpu().numpy()
             if full_sample_count > 0
             else None
         )
         ground_truth_batch = (
-            outputs["ground_truth_top_band"].detach().float().cpu().numpy()
+            outputs["ground_truth_depth_stack"].detach().float().cpu().numpy()
             if bool(args.export_ground_truth)
+            else None
+        )
+        eo_denorm_batch = (
+            temperature_normalize(mode="denorm", tensor=batch["eo"])
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
+            if full_sample_count > 0
             else None
         )
         x_denorm_batch = (
@@ -1232,21 +1331,24 @@ def main() -> None:
             patch_split_feature = _patch_split_feature_for_row(row)
             if patch_split_feature is not None:
                 patch_splits_writer.write_feature(patch_split_feature)
-            _accumulate_patch_into_arrays(
-                pred_accumulator.sum_array,
-                pred_accumulator.count_array,
-                row=row,
-                patch_values=prediction_batch[local_idx],
-                layout=layout,
-            )
-            if gt_accumulator is not None and ground_truth_batch is not None:
+            for depth_idx, level in enumerate(depth_export_levels):
+                pred_accumulator = pred_accumulators[level.suffix]
                 _accumulate_patch_into_arrays(
-                    gt_accumulator.sum_array,
-                    gt_accumulator.count_array,
+                    pred_accumulator.sum_array,
+                    pred_accumulator.count_array,
                     row=row,
-                    patch_values=ground_truth_batch[local_idx],
+                    patch_values=prediction_depth_batch[local_idx, depth_idx],
                     layout=layout,
                 )
+                if ground_truth_batch is not None and level.suffix in gt_accumulators:
+                    gt_accumulator = gt_accumulators[level.suffix]
+                    _accumulate_patch_into_arrays(
+                        gt_accumulator.sum_array,
+                        gt_accumulator.count_array,
+                        row=row,
+                        patch_values=ground_truth_batch[local_idx, depth_idx],
+                        layout=layout,
+                    )
             if argo_points_writer is not None:
                 # Use the dataset's horizontal support mask so the globe shows one
                 # marker per observed location instead of one marker per depth level.
@@ -1276,6 +1378,7 @@ def main() -> None:
                 and prediction_full_stack_batch is not None
                 and x_denorm_batch is not None
                 and y_denorm_batch is not None
+                and eo_denorm_batch is not None
             ):
                 point_rows, point_cols = np.nonzero(observed_mask_2d)
                 patch_shape = tuple(int(v) for v in observed_mask_2d.shape)
@@ -1305,6 +1408,9 @@ def main() -> None:
                         y_target_profile_c=y_denorm_batch[
                             local_idx, :, point_row, point_col
                         ].copy(),
+                        ostia_sst_c=float(
+                            eo_denorm_batch[local_idx, 0, point_row, point_col]
+                        ),
                         observed_profile=batch["x_valid_mask"][
                             local_idx, :, point_row, point_col
                         ]
@@ -1328,9 +1434,10 @@ def main() -> None:
                         candidate=candidate,
                     )
 
-    _flush_accumulator(pred_accumulator)
-    if gt_accumulator is not None:
-        _flush_accumulator(gt_accumulator)
+    for accumulator in pred_accumulators.values():
+        _flush_accumulator(accumulator)
+    for accumulator in gt_accumulators.values():
+        _flush_accumulator(accumulator)
     if argo_points_writer is not None:
         argo_points_writer.close()
     patch_splits_writer.close()
@@ -1376,10 +1483,11 @@ def main() -> None:
                 y_target_profile=y_target_profile_plot,
                 observed_profile=sample.observed_profile,
                 depth_axis=depth_axis_m,
-                title=f"Pixel ({sample.point_row}, {sample.point_col})",
-                figure_title=(
-                    f"{location_id}, patch={sample.row.get('patch_id', '')}, "
-                    f"date={int(sample.row['date'])}"
+                ostia_sst_c=sample.ostia_sst_c,
+                figure_title=_profile_graph_figure_title(
+                    sample_date=sample.row["date"],
+                    lat=sample.lat,
+                    lon=sample.lon,
                 ),
             )
             full_sample_locations_writer.write_feature(
@@ -1394,40 +1502,78 @@ def main() -> None:
     else:
         full_sample_locations_geojson_path = None
 
-    prediction_tif_path = run_dir / f"{run_stem}_prediction.tif"
-    write_global_top_band_geotiff(
-        output_path=prediction_tif_path,
-        accumulator=pred_accumulator,
-        layout=layout,
-        nodata=float(args.nodata),
-        band_description="predicted_top_band_celsius",
-        tags={
-            "source": "DepthDif global weekly inference export",
+    depth_export_records: list[dict[str, Any]] = []
+    for level in depth_export_levels:
+        prediction_tif_path_for_level = (
+            run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
+        )
+        common_depth_tags = {
             "selected_date": str(int(selection.selected_date)),
-            "checkpoint_path": str(ckpt_path),
             "selected_patch_count": str(int(len(selection.indices))),
-            "kind": "prediction",
-        },
-    )
-    print(f"Wrote prediction GeoTIFF: {prediction_tif_path}")
-
-    ground_truth_tif_path: Path | None = None
-    if gt_accumulator is not None:
-        ground_truth_tif_path = run_dir / f"{run_stem}_glorys_top_band.tif"
+            "depth_label": level.label,
+            "requested_depth_m": f"{float(level.requested_depth_m):.3f}",
+            "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
+            "channel_index": str(int(level.channel_index)),
+        }
         write_global_top_band_geotiff(
-            output_path=ground_truth_tif_path,
-            accumulator=gt_accumulator,
+            output_path=prediction_tif_path_for_level,
+            accumulator=pred_accumulators[level.suffix],
             layout=layout,
             nodata=float(args.nodata),
-            band_description="glorys_top_band_celsius",
+            band_description=f"predicted_{level.suffix}_celsius",
             tags={
-                "source": "DepthDif global weekly ground-truth export",
-                "selected_date": str(int(selection.selected_date)),
-                "selected_patch_count": str(int(len(selection.indices))),
-                "kind": "ground_truth",
+                **common_depth_tags,
+                "source": "DepthDif global weekly inference export",
+                "checkpoint_path": str(ckpt_path),
+                "kind": "prediction",
             },
         )
-        print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path}")
+        print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
+
+        ground_truth_tif_path_for_level: Path | None = None
+        if level.suffix in gt_accumulators:
+            ground_truth_tif_path_for_level = (
+                run_dir / f"{run_stem}_glorys_{level.suffix}.tif"
+            )
+            write_global_top_band_geotiff(
+                output_path=ground_truth_tif_path_for_level,
+                accumulator=gt_accumulators[level.suffix],
+                layout=layout,
+                nodata=float(args.nodata),
+                band_description=f"glorys_{level.suffix}_celsius",
+                tags={
+                    **common_depth_tags,
+                    "source": "DepthDif global weekly ground-truth export",
+                    "kind": "ground_truth",
+                },
+            )
+            print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
+
+        depth_export_records.append(
+            {
+                "suffix": level.suffix,
+                "label": level.label,
+                "requested_depth_m": float(level.requested_depth_m),
+                "actual_depth_m": float(level.actual_depth_m),
+                "channel_index": int(level.channel_index),
+                "prediction_tif_path": _summary_artifact_path(
+                    prediction_tif_path_for_level
+                ),
+                "ground_truth_tif_path": (
+                    None
+                    if ground_truth_tif_path_for_level is None
+                    else _summary_artifact_path(ground_truth_tif_path_for_level)
+                ),
+            }
+        )
+
+    prediction_tif_path = run_dir / str(depth_export_records[0]["prediction_tif_path"])
+    ground_truth_tif_path = (
+        None
+        if depth_export_records[0]["ground_truth_tif_path"] is None
+        else run_dir / str(depth_export_records[0]["ground_truth_tif_path"])
+    )
+    if ground_truth_tif_path is not None:
         print(f"Wrote Argo points GeoJSON: {argo_points_geojson_path}")
     if full_sample_locations_geojson_path is not None and graphs_dir_path is not None:
         print(f"Wrote full-sample locations GeoJSON: {full_sample_locations_geojson_path}")
@@ -1457,6 +1603,7 @@ def main() -> None:
             if ground_truth_tif_path is None
             else _summary_artifact_path(ground_truth_tif_path)
         ),
+        "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
             None
             if argo_points_geojson_path is None
@@ -1485,17 +1632,24 @@ def main() -> None:
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
 
-    _cleanup_accumulator(pred_accumulator)
-    if gt_accumulator is not None:
-        _cleanup_accumulator(gt_accumulator)
+    for accumulator in pred_accumulators.values():
+        _cleanup_accumulator(accumulator)
+    for accumulator in gt_accumulators.values():
+        _cleanup_accumulator(accumulator)
     scratch_dir.rmdir()
 
     if production_dir is not None:
         _promote_production_run(run_dir, production_dir)
         run_dir = production_dir
-        prediction_tif_path = run_dir / prediction_tif_path.name
+        prediction_tif_path = run_dir / _production_artifact_name(
+            prediction_tif_path.name,
+            run_stem=_default_run_stem(selection.selected_date),
+        )
         if ground_truth_tif_path is not None:
-            ground_truth_tif_path = run_dir / ground_truth_tif_path.name
+            ground_truth_tif_path = run_dir / _production_artifact_name(
+                ground_truth_tif_path.name,
+                run_stem=_default_run_stem(selection.selected_date),
+            )
         if argo_points_geojson_path is not None:
             argo_points_geojson_path = run_dir / argo_points_geojson_path.name
         if full_sample_locations_geojson_path is not None:
