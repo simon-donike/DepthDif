@@ -1080,6 +1080,36 @@ def _resolve_profile_depth_axis(
     return depth_axis_np, "Depth (m)"
 
 
+def _profile_depth_plot_limits(
+    *,
+    depth_values: np.ndarray,
+    x_profile: np.ndarray,
+    y_hat_profile: np.ndarray,
+    y_target_profile: np.ndarray,
+    observed_profile: np.ndarray,
+) -> tuple[float, float]:
+    """Clip profile plots to the deepest actually plotted level plus light headroom."""
+    depth_values_np = np.asarray(depth_values, dtype=np.float64).reshape(-1)
+    observed_profile_np = np.asarray(observed_profile, dtype=bool).reshape(-1)
+    plotted_mask = (
+        (np.isfinite(np.asarray(y_hat_profile, dtype=np.float64).reshape(-1)))
+        | (np.isfinite(np.asarray(y_target_profile, dtype=np.float64).reshape(-1)))
+        | (
+            observed_profile_np
+            & np.isfinite(np.asarray(x_profile, dtype=np.float64).reshape(-1))
+        )
+    ) & np.isfinite(depth_values_np)
+    if bool(np.any(plotted_mask)):
+        plotted_depth_max = float(np.nanmax(depth_values_np[plotted_mask]))
+    else:
+        plotted_depth_max = float(np.nanmax(depth_values_np))
+
+    # Add a small buffer below the deepest visible level so shallow samples do not
+    # waste the whole lower half of the axis, while still avoiding a cramped edge.
+    depth_headroom = max(5.0, 0.08 * max(plotted_depth_max, 1.0))
+    return 0.0, plotted_depth_max + depth_headroom
+
+
 def plot_glorys_profile_comparison_axis(
     ax: Any,
     *,
@@ -1108,8 +1138,13 @@ def plot_glorys_profile_comparison_axis(
         profile_size=int(y_target_profile_np.size),
         depth_axis=depth_axis,
     )
-    depth_top = 0.0
-    depth_bottom = float(np.nanmax(depth_values))
+    depth_top, depth_bottom = _profile_depth_plot_limits(
+        depth_values=depth_values,
+        x_profile=x_profile_np,
+        y_hat_profile=y_hat_profile_np,
+        y_target_profile=y_target_profile_np,
+        observed_profile=observed_profile_np,
+    )
     ax.plot(
         y_target_profile_np,
         depth_values,
@@ -1184,8 +1219,13 @@ def plot_glorys_profile_error_axis(
         profile_size=int(y_target_profile_np.size),
         depth_axis=depth_axis,
     )
-    depth_top = 0.0
-    depth_bottom = float(np.nanmax(depth_values))
+    depth_top, depth_bottom = _profile_depth_plot_limits(
+        depth_values=depth_values,
+        x_profile=x_profile_np,
+        y_hat_profile=y_hat_profile_np,
+        y_target_profile=y_target_profile_np,
+        observed_profile=observed_profile_np,
+    )
     pred_vs_glorys_mask = np.isfinite(y_hat_profile_np) & np.isfinite(y_target_profile_np)
     if bool(np.any(pred_vs_glorys_mask)):
         ax.plot(

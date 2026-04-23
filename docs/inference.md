@@ -40,7 +40,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
 - exports matching GLORYS rasters for the same seven depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
-- samples `250` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel  
+- exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset  
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 
 Typical run:  

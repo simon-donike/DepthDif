@@ -76,7 +76,9 @@ DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
-DEFAULT_FULL_SAMPLE_COUNT = 250
+# Default to all observed ARGO locations so every clickable full-profile marker
+# can open a hosted PNG without requiring a separate export override.
+DEFAULT_FULL_SAMPLE_COUNT = -1
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 1.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
@@ -699,6 +701,50 @@ def _full_profile_feature_for_sample(
     )
 
 
+def _write_full_profile_sample_artifacts(
+    *,
+    run_dir: Path,
+    dataset: OstiaArgoTiffDataset,
+    writer: GeoJSONPointWriter,
+    sample: FullProfileSample,
+    location_id: str,
+) -> None:
+    graph_rel_path = Path("graphs") / f"{location_id}.png"
+    depth_axis_m = _load_glorys_depth_axis_m(
+        dataset,
+        sample.row,
+        expected_size=int(sample.y_target_profile_c.shape[0]),
+    )
+    x_profile_plot = np.asarray(sample.x_profile_c, dtype=np.float64).copy()
+    y_hat_profile_plot = np.asarray(sample.y_hat_profile_c, dtype=np.float64).copy()
+    y_target_profile_plot = np.asarray(sample.y_target_profile_c, dtype=np.float64).copy()
+    x_profile_plot[~sample.observed_profile] = np.nan
+    y_hat_profile_plot[~sample.target_valid_profile] = np.nan
+    y_target_profile_plot[~sample.target_valid_profile] = np.nan
+    save_glorys_profile_comparison_plot(
+        output_path=run_dir / graph_rel_path,
+        x_profile=x_profile_plot,
+        y_hat_profile=y_hat_profile_plot,
+        y_target_profile=y_target_profile_plot,
+        observed_profile=sample.observed_profile,
+        depth_axis=depth_axis_m,
+        ostia_sst_c=sample.ostia_sst_c,
+        figure_title=_profile_graph_figure_title(
+            sample_date=sample.row["date"],
+            lat=sample.lat,
+            lon=sample.lon,
+        ),
+    )
+    writer.write_feature(
+        _full_profile_feature_for_sample(
+            sample=sample,
+            location_id=location_id,
+            graph_png_path=str(graph_rel_path).replace("\\", "/"),
+            depth_axis_m=depth_axis_m,
+        )
+    )
+
+
 def _maybe_store_full_profile_sample(
     *,
     samples: list[FullProfileSample],
@@ -1210,8 +1256,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_FULL_SAMPLE_COUNT,
         help=(
-            "Number of random observed Argo locations whose full depth profiles are "
-            "saved with graph PNGs for the globe viewer."
+            "Number of observed Argo locations whose full depth profiles are saved "
+            "with graph PNGs for the globe viewer. Use 0 to disable and any "
+            "negative value to export all observed locations."
         ),
     )
     return parser
@@ -1269,7 +1316,10 @@ def main() -> None:
         if args.batch_size is not None
         else training_cfg.get("dataloader", {}).get("val_batch_size", 4)
     )
-    full_sample_count = int(max(0, int(args.full_sample_count)))
+    requested_full_sample_count = int(args.full_sample_count)
+    export_all_full_samples = requested_full_sample_count < 0
+    full_sample_count = int(max(0, requested_full_sample_count))
+    export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
     if batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
 
@@ -1313,7 +1363,7 @@ def main() -> None:
     )
     full_sample_locations_geojson_path = (
         run_dir / f"{run_stem}_full_sample_locations.geojson"
-        if full_sample_count > 0
+        if export_full_profiles
         else None
     )
     patch_splits_geojson_path = run_dir / f"{run_stem}_patch_splits.geojson"
@@ -1330,6 +1380,14 @@ def main() -> None:
         argo_points_writer.open()
     patch_splits_writer.open()
 
+    graphs_dir_path: Path | None = run_dir / "graphs" if export_full_profiles else None
+    full_sample_locations_writer: GeoJSONPointWriter | None = None
+    if full_sample_locations_geojson_path is not None and export_all_full_samples:
+        full_sample_locations_writer = GeoJSONPointWriter(
+            full_sample_locations_geojson_path
+        )
+        full_sample_locations_writer.open()
+
     print(
         "Preparing global export: "
         f"split={args.split}, "
@@ -1338,7 +1396,8 @@ def main() -> None:
         f"selected_patches={len(selection.indices)}, "
         f"batch_size={batch_size}, "
         f"export_ground_truth={bool(args.export_ground_truth)}, "
-        f"full_sample_count={full_sample_count}, "
+        f"full_sample_count="
+        f"{'all' if export_all_full_samples else full_sample_count}, "
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
@@ -1384,7 +1443,7 @@ def main() -> None:
     inference_module = ExportInferenceWrapper(
         model,
         export_ground_truth=bool(args.export_ground_truth),
-        export_full_prediction_stack=(full_sample_count > 0),
+        export_full_prediction_stack=export_full_profiles,
         depth_channel_indices=depth_channel_indices,
     )
     if use_multi_gpu:
@@ -1412,7 +1471,7 @@ def main() -> None:
         )
         prediction_full_stack_batch = (
             outputs["prediction_full_stack"].detach().float().cpu().numpy()
-            if full_sample_count > 0
+            if export_full_profiles
             else None
         )
         ground_truth_batch = (
@@ -1426,7 +1485,7 @@ def main() -> None:
             .float()
             .cpu()
             .numpy()
-            if full_sample_count > 0
+            if export_full_profiles
             else None
         )
         x_denorm_batch = (
@@ -1435,7 +1494,7 @@ def main() -> None:
             .float()
             .cpu()
             .numpy()
-            if full_sample_count > 0
+            if export_full_profiles
             else None
         )
         y_denorm_batch = (
@@ -1444,7 +1503,7 @@ def main() -> None:
             .float()
             .cpu()
             .numpy()
-            if full_sample_count > 0
+            if export_full_profiles
             else None
         )
         selected_row_batch = selected_rows[start : start + len(batch_indices)]
@@ -1497,7 +1556,7 @@ def main() -> None:
                 )
 
             if (
-                full_sample_count > 0
+                export_full_profiles
                 and prediction_full_stack_batch is not None
                 and x_denorm_batch is not None
                 and y_denorm_batch is not None
@@ -1549,13 +1608,26 @@ def main() -> None:
                         .numpy()
                         .astype(bool, copy=False),
                     )
-                    _maybe_store_full_profile_sample(
-                        samples=sampled_full_profiles,
-                        seen_count=int(observed_point_total),
-                        limit=full_sample_count,
-                        rng=full_sample_rng,
-                        candidate=candidate,
-                    )
+                    if export_all_full_samples:
+                        if full_sample_locations_writer is None:
+                            raise RuntimeError(
+                                "Full-sample writer was not initialized for all-location export."
+                            )
+                        _write_full_profile_sample_artifacts(
+                            run_dir=run_dir,
+                            dataset=dataset,
+                            writer=full_sample_locations_writer,
+                            sample=candidate,
+                            location_id=f"full_sample_{observed_point_total:03d}",
+                        )
+                    else:
+                        _maybe_store_full_profile_sample(
+                            samples=sampled_full_profiles,
+                            seen_count=int(observed_point_total),
+                            limit=full_sample_count,
+                            rng=full_sample_rng,
+                            candidate=candidate,
+                        )
 
     for accumulator in pred_accumulators.values():
         _flush_accumulator(accumulator)
@@ -1564,15 +1636,22 @@ def main() -> None:
     if argo_points_writer is not None:
         argo_points_writer.close()
     patch_splits_writer.close()
+    if full_sample_locations_writer is not None:
+        full_sample_locations_writer.close()
+        if full_sample_locations_writer.feature_count < 1:
+            if full_sample_locations_geojson_path is not None:
+                full_sample_locations_geojson_path.unlink(missing_ok=True)
+            full_sample_locations_geojson_path = None
+            if graphs_dir_path is not None and graphs_dir_path.exists():
+                graphs_dir_path.rmdir()
+            graphs_dir_path = None
     print(f"Finished inference for {len(selection.indices)} patches.")
 
-    graphs_dir_path: Path | None = None
-    full_sample_locations_writer: GeoJSONPointWriter | None = None
     if (
-        full_sample_locations_geojson_path is not None
+        not export_all_full_samples
+        and full_sample_locations_geojson_path is not None
         and len(sampled_full_profiles) > 0
     ):
-        graphs_dir_path = run_dir / "graphs"
         full_sample_locations_writer = GeoJSONPointWriter(
             full_sample_locations_geojson_path
         )
@@ -1586,44 +1665,17 @@ def main() -> None:
             ),
         )
         for sample_idx, sample in enumerate(sampled_full_profiles_sorted, start=1):
-            location_id = f"full_sample_{sample_idx:03d}"
-            graph_rel_path = Path("graphs") / f"{location_id}.png"
-            depth_axis_m = _load_glorys_depth_axis_m(
-                dataset,
-                sample.row,
-                expected_size=int(sample.y_target_profile_c.shape[0]),
-            )
-            x_profile_plot = np.asarray(sample.x_profile_c, dtype=np.float64).copy()
-            y_hat_profile_plot = np.asarray(sample.y_hat_profile_c, dtype=np.float64).copy()
-            y_target_profile_plot = np.asarray(sample.y_target_profile_c, dtype=np.float64).copy()
-            x_profile_plot[~sample.observed_profile] = np.nan
-            y_hat_profile_plot[~sample.target_valid_profile] = np.nan
-            y_target_profile_plot[~sample.target_valid_profile] = np.nan
-            save_glorys_profile_comparison_plot(
-                output_path=run_dir / graph_rel_path,
-                x_profile=x_profile_plot,
-                y_hat_profile=y_hat_profile_plot,
-                y_target_profile=y_target_profile_plot,
-                observed_profile=sample.observed_profile,
-                depth_axis=depth_axis_m,
-                ostia_sst_c=sample.ostia_sst_c,
-                figure_title=_profile_graph_figure_title(
-                    sample_date=sample.row["date"],
-                    lat=sample.lat,
-                    lon=sample.lon,
-                ),
-            )
-            full_sample_locations_writer.write_feature(
-                _full_profile_feature_for_sample(
-                    sample=sample,
-                    location_id=location_id,
-                    graph_png_path=str(graph_rel_path).replace("\\", "/"),
-                    depth_axis_m=depth_axis_m,
-                )
+            _write_full_profile_sample_artifacts(
+                run_dir=run_dir,
+                dataset=dataset,
+                writer=full_sample_locations_writer,
+                sample=sample,
+                location_id=f"full_sample_{sample_idx:03d}",
             )
         full_sample_locations_writer.close()
-    else:
+    elif not export_all_full_samples:
         full_sample_locations_geojson_path = None
+        graphs_dir_path = None
 
     depth_export_records: list[dict[str, Any]] = []
     for level in depth_export_levels:
@@ -1744,7 +1796,7 @@ def main() -> None:
         "argo_point_count": (
             0 if argo_points_writer is None else int(argo_points_writer.feature_count)
         ),
-        "full_sample_count_requested": int(full_sample_count),
+        "full_sample_count_requested": int(requested_full_sample_count),
         "full_sample_locations_geojson_path": (
             None
             if full_sample_locations_geojson_path is None

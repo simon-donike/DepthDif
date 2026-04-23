@@ -486,6 +486,15 @@
     });
   }
 
+  function formatFullSampleTitle(locationId) {
+    const raw = String(locationId || "").trim();
+    const match = raw.match(/^full_sample_(\d+)$/i);
+    if (match) {
+      return "Full Sample #" + match[1];
+    }
+    return raw || "Full Sample";
+  }
+
   function updateArgoLegendVisibility(state) {
     const argoLegend = state.elements.argoLegend;
     if (!argoLegend) {
@@ -594,14 +603,14 @@
     if (!graphPath) {
       return;
     }
-    const locationId = properties.location_id ? properties.location_id.getValue(now) : "Full sample";
+    const locationId = properties.location_id ? properties.location_id.getValue(now) : "Full Sample";
     const dateValue = properties.date ? properties.date.getValue(now) : state.config.selected_date;
     const patchId = properties.patch_id ? properties.patch_id.getValue(now) : "";
     const pixelRow = properties.pixel_row ? properties.pixel_row.getValue(now) : null;
     const pixelCol = properties.pixel_col ? properties.pixel_col.getValue(now) : null;
 
     if (elements.profilePopupTitle) {
-      elements.profilePopupTitle.textContent = String(locationId);
+      elements.profilePopupTitle.textContent = formatFullSampleTitle(locationId);
     }
     if (elements.profilePopupSubtitle) {
       elements.profilePopupSubtitle.textContent =
@@ -616,7 +625,7 @@
         ")";
     }
     elements.profilePopupImage.src = new URL(String(graphPath), state.configUrl).toString();
-    elements.profilePopupImage.alt = String(locationId) + " profile comparison";
+    elements.profilePopupImage.alt = formatFullSampleTitle(locationId) + " profile comparison";
     elements.profilePopupImage.hidden = false;
     openProfilePopup(state);
   }
