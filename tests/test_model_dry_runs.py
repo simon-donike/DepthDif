@@ -215,6 +215,7 @@ class TestModelDryRuns(unittest.TestCase):
                             "sampler": "ddim",
                             "ddim_num_timesteps": 3,
                             "ddim_eta": 0.2,
+                            "ddim_temperature": 0.5,
                             "log_intermediates": False,
                             "skip_full_reconstruction_in_sanity_check": True,
                             "max_full_reconstruction_samples": 1,
@@ -269,6 +270,7 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertEqual(model.model.parameterization, "x0")
             self.assertEqual(model.model.condition_channels, 3)
             self.assertEqual(model.val_sampler.num_timesteps, 3)
+            self.assertEqual(model.val_sampler.temperature, 0.5)
             self.assertIsInstance(optim_config, dict)
             self.assertEqual(optim_config["lr_scheduler"]["monitor"], "val/custom")
 

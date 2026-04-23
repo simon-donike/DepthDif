@@ -176,7 +176,13 @@ class DenoisingDiffusionProcess(nn.Module):
         num_timesteps = sampler.num_timesteps
         it = reversed(range(0, num_timesteps))
 
-        x_t = torch.randn([b, self.generated_channels, h, w], device=device)
+        noise_temperature = float(getattr(sampler, "temperature", 1.0))
+        if noise_temperature < 0.0:
+            raise ValueError("sampler temperature must be >= 0.0.")
+        x_t = (
+            torch.randn([b, self.generated_channels, h, w], device=device)
+            * noise_temperature
+        )
 
         for i in (
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
@@ -401,7 +407,13 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         num_timesteps = sampler.num_timesteps
         it = reversed(range(0, num_timesteps))
 
-        x_t = torch.randn([b, self.generated_channels, h, w], device=device)
+        noise_temperature = float(getattr(sampler, "temperature", 1.0))
+        if noise_temperature < 0.0:
+            raise ValueError("sampler temperature must be >= 0.0.")
+        x_t = (
+            torch.randn([b, self.generated_channels, h, w], device=device)
+            * noise_temperature
+        )
         intermediates: list[tuple[int, torch.Tensor]] = []
         x0_intermediates: list[tuple[int, torch.Tensor]] = []
         capture_indices: set[int] = set()

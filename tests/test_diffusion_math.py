@@ -11,6 +11,7 @@ from torch import nn
 from models.difFF.DenoisingDiffusionProcess.DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
 )
+from models.difFF.DenoisingDiffusionProcess.samplers import DDIM_Sampler
 from models.difFF.DenoisingDiffusionProcess.beta_schedules import (
     cosine_beta_schedule,
     get_beta_schedule,
@@ -157,6 +158,40 @@ class TestDiffusionMath(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Unknown beta schedule"):
             get_beta_schedule("unknown", 4)
+
+    def test_ddim_temperature_scales_initial_sampling_noise(self) -> None:
+        process = DenoisingDiffusionConditionalProcess(
+            generated_channels=1,
+            condition_channels=1,
+            parameterization="x0",
+            num_timesteps=4,
+            schedule="linear",
+            unet_dim=8,
+            unet_dim_mults=(1,),
+        )
+        prediction = torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+        capturing_model = _CapturingPredictor(prediction)
+        process.model = capturing_model
+        condition = torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+        sampler = DDIM_Sampler(
+            num_timesteps=1,
+            train_timesteps=4,
+            betas=process.forward_process.betas.detach().clone(),
+            parameterization="x0",
+            clip_sample=False,
+            eta=0.0,
+            temperature=0.0,
+        )
+
+        _ = process(condition, sampler=sampler)
+
+        assert capturing_model.last_model_input is not None
+        noisy_branch = capturing_model.last_model_input[:, :1]
+        self.assertTrue(torch.equal(noisy_branch, torch.zeros_like(noisy_branch)))
+
+    def test_ddim_temperature_rejects_negative_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "temperature must be >= 0.0"):
+            DDIM_Sampler(temperature=-0.1)
 
     def test_build_valid_mask_aligns_channels_and_inverts_missing_mode(self) -> None:
         reference = torch.zeros((2, 3, 2, 2), dtype=torch.float32)

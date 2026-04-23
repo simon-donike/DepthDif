@@ -54,6 +54,7 @@ NUM_SAMPLES = 100
 BATCH_SIZE = 5
 DEPTH_LEVEL = 0
 DDIM_STEPS = 100
+DDIM_TEMPERATURE = 0.5
 ROWS_PER_FIGURE = 10
 OUTPUT_DIR = Path("temp/ddpm_ddim_sampling_comparison_real_argo")
 
@@ -75,6 +76,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--depth-level", type=int, default=DEPTH_LEVEL)
     parser.add_argument("--ddim-steps", type=int, default=DDIM_STEPS)
+    parser.add_argument("--ddim-temperature", type=float, default=DDIM_TEMPERATURE)
     parser.add_argument("--rows-per-figure", type=int, default=ROWS_PER_FIGURE)
     return parser.parse_args()
 
@@ -133,6 +135,7 @@ def _build_ddim_sampler(
     train_betas: torch.Tensor,
     ddim_steps: int,
     eta: float,
+    temperature: float,
 ) -> DDIM_Sampler:
     """Build a DDIM sampler that matches the loaded model's training schedule."""
     diffusion_process = getattr(model, "model", None)
@@ -145,6 +148,7 @@ def _build_ddim_sampler(
         # Predictions are in the model's standardized temperature domain.
         clip_sample=False,
         eta=float(eta),
+        temperature=float(temperature),
     )
 
 
@@ -205,13 +209,20 @@ def _save_page(
     output_dir: Path,
     page_idx: int,
     ddim_steps: int,
+    ddim_temperature: float,
 ) -> Path:
     """Save one page of side-by-side sampler comparisons."""
     columns = [
         ("input", "Input"),
         ("ddpm", "DDPM"),
-        ("ddim_eta0", f"DDIM eta=0, {int(ddim_steps)} steps"),
-        ("ddim_eta1", f"DDIM eta=1, {int(ddim_steps)} steps"),
+        (
+            "ddim_eta0",
+            f"DDIM eta=0, {int(ddim_steps)} steps, temp={float(ddim_temperature):g}",
+        ),
+        (
+            "ddim_eta1",
+            f"DDIM eta=1, {int(ddim_steps)} steps, temp={float(ddim_temperature):g}",
+        ),
         ("target", "Ground truth"),
     ]
     cmap = plt.get_cmap(PLOT_CMAP).copy()
@@ -311,6 +322,8 @@ def _append_plot_rows(
 def main() -> None:
     """Run the sampler comparison script."""
     args = _parse_args()
+    if float(args.ddim_temperature) < 0.0:
+        raise ValueError("--ddim-temperature must be >= 0.0.")
     torch.manual_seed(int(args.seed))
 
     output_dir = Path(args.output_dir)
@@ -369,12 +382,14 @@ def main() -> None:
         train_betas=train_betas,
         ddim_steps=int(args.ddim_steps),
         eta=0.0,
+        temperature=float(args.ddim_temperature),
     )
     ddim_eta1_sampler = _build_ddim_sampler(
         model=model,
         train_betas=train_betas,
         ddim_steps=int(args.ddim_steps),
         eta=1.0,
+        temperature=float(args.ddim_temperature),
     )
 
     loader = (
@@ -434,6 +449,7 @@ def main() -> None:
                 output_dir=output_dir,
                 page_idx=page_idx,
                 ddim_steps=int(args.ddim_steps),
+                ddim_temperature=float(args.ddim_temperature),
             )
             saved_pages.append(saved_path)
             print(f"Saved plot: {saved_path}")
@@ -445,6 +461,7 @@ def main() -> None:
             output_dir=output_dir,
             page_idx=page_idx,
             ddim_steps=int(args.ddim_steps),
+            ddim_temperature=float(args.ddim_temperature),
         )
         saved_pages.append(saved_path)
         print(f"Saved plot: {saved_path}")

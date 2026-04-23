@@ -10,6 +10,7 @@ training:
     sampler: "ddpm" # Use the full validation reverse chain to match the training diffusion schedule.
     ddim_num_timesteps: 100 # Validation DDIM steps when sampler="ddim".
     ddim_eta: 0.0 # Deterministic DDIM validation when sampler="ddim".
+    ddim_temperature: 1.0 # DDIM noise temperature; lower values reduce generative variation.
     log_intermediates: false # Disable dense intermediate image logging by default.
     skip_full_reconstruction_in_sanity_check: true # Keep startup sanity validation lightweight.
     max_full_reconstruction_samples: 2 # Cap qualitative reconstruction logging to a small sample count.

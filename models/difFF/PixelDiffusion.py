@@ -75,6 +75,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         val_inference_sampler: str = "ddpm",
         val_ddim_num_timesteps: int = 200,
         val_ddim_eta: float = 0.0,
+        val_ddim_temperature: float = 1.0,
         log_intermediates: bool = True,
         ambient_occlusion_enabled: bool = False,
         ambient_further_drop_prob: float = 0.1,
@@ -135,6 +136,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             val_inference_sampler (str): Input value.
             val_ddim_num_timesteps (int): Input value.
             val_ddim_eta (float): Input value.
+            val_ddim_temperature (float): Scale for DDIM initial and step noise.
             log_intermediates (bool): Boolean flag controlling behavior.
             ambient_occlusion_enabled (bool): Boolean flag controlling behavior.
             ambient_further_drop_prob (float): Input value.
@@ -180,6 +182,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.val_inference_sampler = str(val_inference_sampler).strip().lower()
         self.val_ddim_num_timesteps = max(1, int(val_ddim_num_timesteps))
         self.val_ddim_eta = float(val_ddim_eta)
+        self.val_ddim_temperature = float(val_ddim_temperature)
+        if self.val_ddim_temperature < 0.0:
+            raise ValueError("val_ddim_temperature must be >= 0.0.")
         self.log_intermediates = bool(log_intermediates)
         self.ambient_occlusion_enabled = bool(ambient_occlusion_enabled)
         self.ambient_further_drop_prob = float(ambient_further_drop_prob)
@@ -360,6 +365,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             val_inference_sampler=str(val_sampling_cfg.get("sampler", "ddpm")),
             val_ddim_num_timesteps=int(val_sampling_cfg.get("ddim_num_timesteps", 200)),
             val_ddim_eta=float(val_sampling_cfg.get("ddim_eta", 0.0)),
+            val_ddim_temperature=float(val_sampling_cfg.get("ddim_temperature", 1.0)),
             log_intermediates=bool(
                 val_sampling_cfg.get(
                     "log_intermediates", m.get("log_intermediates", True)
@@ -748,6 +754,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 # Keep sampler in standardized-space domain; do not clamp to [-1, 1].
                 clip_sample=False,
                 eta=self.val_ddim_eta,
+                temperature=self.val_ddim_temperature,
             )
         raise ValueError(
             "training.validation_sampling.sampler must be one of {'ddpm', 'ddim'} "

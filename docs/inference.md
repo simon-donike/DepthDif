@@ -173,6 +173,7 @@ Validation/inference sampler can be switched via training config:
 - DDIM controls:  
   - `ddim_num_timesteps`  
   - `ddim_eta`  
+  - `ddim_temperature`  
   
 The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.  
   

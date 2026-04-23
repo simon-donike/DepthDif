@@ -87,7 +87,7 @@ Config (`training.noise`):
 ### Validation sampling mode  
 Config (`training.validation_sampling`):  
 - `sampler`: `ddpm` or `ddim`  
-- `ddim_num_timesteps`, `ddim_eta`  
+- `ddim_num_timesteps`, `ddim_eta`, `ddim_temperature`  
 - `log_intermediates`  
   
 Runtime effect:  
@@ -199,6 +199,7 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `training.validation_sampling.sampler` | `"ddim"` | Validation sampler (`ddpm` full chain, `ddim` faster). |  
 | `training.validation_sampling.ddim_num_timesteps` | `100` | DDIM steps when `sampler="ddim"`. |  
 | `training.validation_sampling.ddim_eta` | `0.0` | DDIM eta; `0.0` is deterministic DDIM. |  
+| `training.validation_sampling.ddim_temperature` | `1.0` | DDIM initial and stochastic step noise scale; lower values reduce generative variation. |  
 | `training.validation_sampling.log_intermediates` | `false` | Captures/logs denoising intermediate images in validation. |  
 | `training.validation_sampling.skip_full_reconstruction_in_sanity_check` | `true` | Skips expensive full reconstruction during Lightning sanity checks when true. |  
 | `training.validation_sampling.max_full_reconstruction_samples` | `2` | Max first-batch val samples used for full reconstruction pass. |  

@@ -26,6 +26,7 @@ class DDIM_Sampler(nn.Module):
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
         eta: float = 0.0,
+        temperature: float = 1.0,
         betas: torch.Tensor | list[float] | tuple[float, ...] | None = None,
         parameterization: str = "epsilon",
     ) -> None:
@@ -39,6 +40,7 @@ class DDIM_Sampler(nn.Module):
             beta_start (float): Input value.
             beta_end (float): Input value.
             eta (float): Input value.
+            temperature (float): Scale for DDIM initial and stochastic step noise.
             betas (torch.Tensor | list[float] | tuple[float, ...] | None): Tensor input for the computation.
             parameterization (str): Input value.
 
@@ -52,6 +54,9 @@ class DDIM_Sampler(nn.Module):
         self.clip_sample = bool(clip_sample)
         self.schedule = schedule
         self.eta = float(eta)
+        self.temperature = float(temperature)
+        if self.temperature < 0.0:
+            raise ValueError("DDIM_Sampler temperature must be >= 0.0.")
         self.parameterization = self._normalize_parameterization(parameterization)
         self.final_alpha_cumprod = torch.tensor(1.0)
 
@@ -158,7 +163,11 @@ class DDIM_Sampler(nn.Module):
         prev_sample = alpha_cumprod_prev.sqrt() * x_0_pred + dir_xt
 
         if self.eta > 0:
-            prev_sample = prev_sample + sigma_t * torch.randn_like(x_t)
+            # Temperature scales stochastic DDIM noise; values below 1 reduce
+            # sample diversity for more conservative conditional reconstructions.
+            prev_sample = (
+                prev_sample + sigma_t * self.temperature * torch.randn_like(x_t)
+            )
 
         return prev_sample
 
