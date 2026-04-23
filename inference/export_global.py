@@ -11,7 +11,8 @@ Typical CLI:
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
-  --export-ground-truth
+  --export-ground-truth \
+  --sigma 1.0
   
   
 Run full including push:
@@ -21,7 +22,8 @@ Run full including push:
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
-  --export-ground-truth;
+  --export-ground-truth \
+  --sigma 1.0;
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_20150615 \
   --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \
@@ -75,6 +77,8 @@ DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 DEFAULT_FULL_SAMPLE_COUNT = 200
+DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 1.0
+DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
     ("100m", "100m", 100.0),
@@ -888,6 +892,63 @@ def _repair_small_nodata_gaps_2d(
     return repaired, repair_mask
 
 
+def _apply_valid_gaussian_blur_2d(
+    image: np.ndarray,
+    *,
+    nodata: float,
+    sigma: float,
+    kernel_size: int = DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE,
+) -> np.ndarray:
+    """Apply Gaussian blur to valid raster pixels while preserving nodata support."""
+    blur_sigma = float(sigma)
+    if blur_sigma <= 0.0:
+        return np.asarray(image, dtype=np.float32).copy()
+
+    if kernel_size < 1:
+        raise ValueError("kernel_size must be >= 1.")
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    patch = np.asarray(image, dtype=np.float32)
+    if patch.ndim != 2:
+        raise RuntimeError(
+            "Expected a 2D raster for Gaussian blur, "
+            f"got shape {tuple(patch.shape)}."
+        )
+
+    valid_mask = np.isfinite(patch)
+    if np.isfinite(nodata):
+        valid_mask &= ~np.isclose(patch, float(nodata), atol=0.0, rtol=0.0)
+
+    if not np.any(valid_mask):
+        return patch.copy()
+
+    radius = int(kernel_size // 2)
+    truncate = float(radius) / blur_sigma
+    valid_weights = valid_mask.astype(np.float32)
+    valid_values = np.where(valid_mask, patch, 0.0).astype(np.float32, copy=False)
+    # Blur values and support separately so nodata pixels do not leak into valid water cells.
+    blurred_values = ndi.gaussian_filter(
+        valid_values,
+        sigma=blur_sigma,
+        mode="nearest",
+        truncate=truncate,
+    )
+    blurred_weights = ndi.gaussian_filter(
+        valid_weights,
+        sigma=blur_sigma,
+        mode="nearest",
+        truncate=truncate,
+    )
+
+    blurred = patch.copy()
+    weighted_valid_mask = valid_mask & (blurred_weights > 0.0)
+    blurred[weighted_valid_mask] = (
+        blurred_values[weighted_valid_mask] / blurred_weights[weighted_valid_mask]
+    ).astype(np.float32, copy=False)
+    return blurred
+
+
 def _geotiff_block_size(dimension: int) -> int:
     """Pick a tile size that satisfies GDAL's 16-pixel block constraint."""
     if dimension < 1:
@@ -959,6 +1020,7 @@ def write_global_top_band_geotiff(
     nodata: float,
     band_description: str,
     tags: dict[str, str],
+    extra_gaussian_blur_sigma: float = 0.0,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     profile = {
@@ -1017,8 +1079,20 @@ def write_global_top_band_geotiff(
             ds.read(1),
             nodata=nodata,
         )
+        final_band = (
+            _apply_valid_gaussian_blur_2d(
+                repaired_band,
+                nodata=nodata,
+                sigma=float(extra_gaussian_blur_sigma),
+                kernel_size=DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE,
+            )
+            if float(extra_gaussian_blur_sigma) > 0.0
+            else repaired_band
+        )
         if np.any(repaired_mask):
-            ds.write(repaired_band, 1)
+            ds.write(final_band, 1)
+        elif float(extra_gaussian_blur_sigma) > 0.0:
+            ds.write(final_band, 1)
 
     overview_factors = _overview_factors(layout.width, layout.height)
     if overview_factors:
@@ -1118,6 +1192,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Nodata value stored in the exported GeoTIFF.",
     )
     parser.add_argument(
+        "--sigma",
+        type=float,
+        default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
+        help=(
+            "Extra export-time Gaussian blur sigma for prediction GeoTIFFs. "
+            "Defaults to 1.0 with kernel size 3; pass --sigma 0 to disable."
+        ),
+    )
+    parser.add_argument(
         "--strict-load",
         action="store_true",
         help="Load checkpoint weights with strict=True instead of the repo default strict=False.",
@@ -1134,9 +1217,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _normalize_cli_args(argv: Sequence[str]) -> list[str]:
+    normalized: list[str] = []
+    for arg in argv:
+        if arg.startswith("sigma:"):
+            normalized.extend(["--sigma", arg.split(":", 1)[1]])
+            continue
+        normalized.append(arg)
+    return normalized
+
+
 def main() -> None:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_cli_args(sys.argv[1:]))
     torch.manual_seed(int(args.seed))
     if args.split != "all":
         raise ValueError(
@@ -1246,6 +1339,7 @@ def main() -> None:
         f"batch_size={batch_size}, "
         f"export_ground_truth={bool(args.export_ground_truth)}, "
         f"full_sample_count={full_sample_count}, "
+        f"extra_gaussian_blur_sigma={float(args.sigma)}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
@@ -1555,7 +1649,12 @@ def main() -> None:
                 "source": "DepthDif global weekly inference export",
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
+                "extra_gaussian_blur_sigma": f"{float(args.sigma):.3f}",
+                "extra_gaussian_blur_kernel_size": str(
+                    int(DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE)
+                ),
             },
+            extra_gaussian_blur_sigma=float(args.sigma),
         )
         print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
 
@@ -1622,6 +1721,10 @@ def main() -> None:
         "visible_gpus": int(visible_gpu_count),
         "multi_gpu_enabled": bool(use_multi_gpu),
         "batch_size": int(batch_size),
+        "extra_gaussian_blur_sigma": float(args.sigma),
+        "extra_gaussian_blur_kernel_size": int(
+            DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE
+        ),
         "split": str(args.split),
         "run_dir": (
             str(production_dir) if production_dir is not None else str(run_dir)

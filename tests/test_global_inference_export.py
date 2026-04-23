@@ -10,6 +10,7 @@ import yaml
 from rasterio.transform import from_origin
 
 from inference.export_global import (
+    DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     FullProfileSample,
     MosaicLayout,
@@ -18,6 +19,7 @@ from inference.export_global import (
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _default_run_stem,
+    _normalize_cli_args,
     _profile_graph_figure_title,
     _prepare_run_directory,
     _promote_production_run,
@@ -33,6 +35,15 @@ from inference.export_global import (
 class TestGlobalInferenceExport(unittest.TestCase):
     def test_default_full_sample_count_is_two_hundred(self) -> None:
         self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, 200)
+
+    def test_default_export_gaussian_blur_sigma_is_one(self) -> None:
+        self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 1.0)
+
+    def test_normalize_cli_args_accepts_sigma_colon_zero(self) -> None:
+        self.assertEqual(
+            _normalize_cli_args(["--device", "cpu", "sigma:0"]),
+            ["--device", "cpu", "--sigma", "0"],
+        )
 
     def test_select_export_indices_picks_earliest_date_in_iso_week(self) -> None:
         rows = [
@@ -136,6 +147,97 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     self.assertEqual(ds.nodata, -9999.0)
 
                 np.testing.assert_allclose(band, np.full((32, 32), 7.0, dtype=np.float32))
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_blurs_completed_raster_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=16.0,
+                top=16.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=16,
+                height=16,
+                patch_width=16,
+                patch_height=16,
+                transform=from_origin(0.0, 16.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_blur",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 0.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[8, 8] = 9.0
+
+                tif_path = tmp_path / "prediction_blurred.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={"kind": "prediction"},
+                    extra_gaussian_blur_sigma=1.0,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+
+                self.assertLess(band[8, 8], 9.0)
+                self.assertGreater(band[8, 7], 0.0)
+                self.assertEqual(band[0, 0], 0.0)
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_skips_extra_blur_when_sigma_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=16.0,
+                top=16.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=16,
+                height=16,
+                patch_width=16,
+                patch_height=16,
+                transform=from_origin(0.0, 16.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_no_blur",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 0.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[8, 8] = 9.0
+
+                tif_path = tmp_path / "prediction_unblurred.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={"kind": "prediction"},
+                    extra_gaussian_blur_sigma=0.0,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+
+                self.assertEqual(band[8, 8], 9.0)
+                self.assertEqual(band[8, 7], 0.0)
             finally:
                 _cleanup_accumulator(accumulator)
 
