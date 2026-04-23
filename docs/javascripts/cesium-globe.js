@@ -1,5 +1,6 @@
 (function () {
-  const DEFAULT_GLOBE_CONFIG_URL = new URL("./globe-config.json", window.location.href).toString();
+  const DEFAULT_GLOBE_CONFIG_URL =
+    "https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json";
   const DEFAULT_CAMERA_DESTINATION = {
     lon: -38.56452881619089,
     lat: 34.53988238358822,
