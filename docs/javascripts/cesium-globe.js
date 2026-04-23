@@ -1,6 +1,5 @@
 (function () {
-  const DEFAULT_GLOBE_CONFIG_URL =
-    "https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe/globe-config.json";
+  const DEFAULT_GLOBE_CONFIG_URL = new URL("./globe-config.json", window.location.href).toString();
   const DEFAULT_CAMERA_DESTINATION = {
     lon: -38.56452881619089,
     lat: 34.53988238358822,
@@ -1295,7 +1294,15 @@
       updatePageHeader(elements, loaded.config);
       updateDepthControl(state);
 
-      state.predictionLayer = await addPredictionLayer(state);
+      try {
+        state.predictionLayer = await addPredictionLayer(state);
+      } catch (error) {
+        // Keep the base globe interactive even when the hosted overlay tiles are
+        // unavailable. Otherwise one failing asset host tears down the whole page.
+        markToggleUnavailable(elements.predictionToggle);
+        console.error(error);
+        state.predictionLayer = null;
+      }
       if (initToken !== getCurrentInitToken()) {
         cleanupState(state);
         return false;

@@ -172,6 +172,31 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("default_camera_destination", template)
         self.assertIn("color_scale_min_c", template)
 
+    def test_standalone_globe_page_uses_full_window_root_shell(self) -> None:
+        html = Path("docs/globe/index.html").read_text(encoding="utf-8")
+        css = Path("docs/stylesheets/globe.css").read_text(encoding="utf-8")
+        loader = Path("docs/javascripts/load-cesium-globe.js").read_text(
+            encoding="utf-8"
+        )
+        globe_script = Path("docs/javascripts/cesium-globe.js").read_text(
+            encoding="utf-8"
+        )
+        default_config = json.loads(
+            Path("docs/globe/globe-config.json").read_text(encoding="utf-8")
+        )
+
+        self.assertIn('class="standalone-globe-root"', html)
+        self.assertIn('id="globe-depth-level-ticks"', html)
+        self.assertIn(".standalone-globe-root,", css)
+        self.assertIn("box-sizing: border-box;", css)
+        self.assertIn('document.querySelectorAll("script[src]")', loader)
+        self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
+        self.assertIn(
+            'new URL("./globe-config.json", window.location.href).toString()',
+            globe_script,
+        )
+        self.assertIn("depth_levels", default_config)
+
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch(
             "inference.export_cesium_globe_assets.shutil.which", return_value=None

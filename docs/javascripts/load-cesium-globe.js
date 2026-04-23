@@ -3,15 +3,38 @@
     "https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Cesium.js";
   const CESIUM_CSS_URL =
     "https://cesium.com/downloads/cesiumjs/releases/1.140/Build/Cesium/Widgets/widgets.css";
-  const LOADER_SCRIPT_BASE_URL =
-    document.currentScript && document.currentScript.src
-      ? new URL(".", document.currentScript.src).toString()
-      : new URL("./", document.baseURI).toString();
+  const LOADER_SCRIPT_NAME = "load-cesium-globe.js";
   const CESIUM_APP_SCRIPT_PATH = "cesium-globe.js";
   const CESIUM_JS_SCRIPT_ID = "depthdif-cesium-js";
   const CESIUM_CSS_LINK_ID = "depthdif-cesium-css";
   const CESIUM_APP_SCRIPT_ID = "depthdif-cesium-app";
   const MOBILE_BLOCK_MEDIA_QUERY = "(max-width: 900px), (pointer: coarse) and (max-width: 1024px)";
+
+  function resolveLoaderScriptBaseUrl() {
+    if (document.currentScript && document.currentScript.src) {
+      return new URL(".", document.currentScript.src).toString();
+    }
+
+    const scripts = document.querySelectorAll("script[src]");
+    for (let index = scripts.length - 1; index >= 0; index -= 1) {
+      const script = scripts[index];
+      const src = script.getAttribute("src");
+      if (!src) {
+        continue;
+      }
+
+      const scriptUrl = new URL(src, document.baseURI);
+      if (scriptUrl.pathname.endsWith("/" + LOADER_SCRIPT_NAME)) {
+        return new URL(".", scriptUrl).toString();
+      }
+    }
+
+    // Fall back to the built docs root so the standalone /globe/ page still
+    // resolves the app bundle even when currentScript is unavailable.
+    return new URL("/javascripts/", document.baseURI).toString();
+  }
+
+  const LOADER_SCRIPT_BASE_URL = resolveLoaderScriptBaseUrl();
 
   function isLikelyIPad() {
     const navigatorObject = window.navigator;

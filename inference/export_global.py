@@ -26,7 +26,7 @@ Run full including push:
   --sigma 1.5;
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_20150615 \
-  --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
   --rclone-remote r2:depth-data/inference_production/globe \
   --rclone-sync-scope globe
 
