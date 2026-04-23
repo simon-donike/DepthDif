@@ -25,6 +25,20 @@
     train: "#1f9d55",
     val: "#d64545",
   };
+  const MONTH_ABBREVIATIONS = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   const ARGO_POINT_MARKER_IMAGE = buildMarkerImage(
     [
       '<circle cx="32" cy="32" r="15" fill="rgba(6, 23, 38, 0.82)" stroke="#7cf5ff" stroke-width="3"/>',
@@ -117,7 +131,7 @@
     return DEFAULT_GLOBE_CONFIG_URL;
   }
 
-  function resolveSelectedDateParts(selectedDate) {
+  function parseCompactUtcDate(selectedDate) {
     const raw = String(selectedDate || "").trim();
     if (!/^\d{8}$/.test(raw)) {
       return null;
@@ -135,14 +149,59 @@
     ) {
       return null;
     }
+    return date;
+  }
 
+  function dominantIsoWeekMonthLabel(date) {
+    const weekStart = new Date(date.getTime());
+    const isoDay = weekStart.getUTCDay() || 7;
+    weekStart.setUTCDate(weekStart.getUTCDate() - isoDay + 1);
+
+    const counts = new Map();
+    for (let offset = 0; offset < 7; offset += 1) {
+      const weekDate = new Date(weekStart.getTime());
+      weekDate.setUTCDate(weekStart.getUTCDate() + offset);
+      const monthIndex = weekDate.getUTCMonth();
+      counts.set(monthIndex, (counts.get(monthIndex) || 0) + 1);
+    }
+
+    let dominantMonthIndex = date.getUTCMonth();
+    let dominantCount = -1;
+    counts.forEach(function (count, monthIndex) {
+      if (count > dominantCount) {
+        dominantMonthIndex = monthIndex;
+        dominantCount = count;
+      }
+    });
+    return MONTH_ABBREVIATIONS[dominantMonthIndex] || "";
+  }
+
+  function resolveSelectedDateParts(selectedDate) {
+    const date = parseCompactUtcDate(selectedDate);
+    if (!date) {
+      return null;
+    }
     const isoDate = new Date(date.getTime());
     const dayOfWeek = isoDate.getUTCDay() || 7;
     isoDate.setUTCDate(isoDate.getUTCDate() + 4 - dayOfWeek);
     const isoYear = isoDate.getUTCFullYear();
     const yearStart = new Date(Date.UTC(isoYear, 0, 1));
     const isoWeek = Math.ceil((((isoDate - yearStart) / 86400000) + 1) / 7);
-    return { isoYear, isoWeek };
+    const dominantMonthLabel = dominantIsoWeekMonthLabel(date);
+    return { isoYear, isoWeek, dominantMonthLabel };
+  }
+
+  function formatCompactIsoWeek(dateValue) {
+    const dateParts = resolveSelectedDateParts(dateValue);
+    if (!dateParts) {
+      return "Unknown week";
+    }
+    return (
+      String(dateParts.isoYear) +
+      "-W" +
+      String(dateParts.isoWeek).padStart(2, "0") +
+      (dateParts.dominantMonthLabel ? " (" + dateParts.dominantMonthLabel + ")" : "")
+    );
   }
 
   function updatePageHeader(elements, config) {
@@ -158,9 +217,13 @@
     if (elements.pageDescription) {
       if (selectedDateParts) {
         elements.pageDescription.textContent =
-          "Densifies deep sea measurements using diffusion. This 3D globe represents a weekly aggregate from week " +
-          String(selectedDateParts.isoWeek) +
-          " of year 2015.";
+          "Densifies deep sea measurements using diffusion. This 3D globe represents a weekly aggregate from ISO week " +
+          String(selectedDateParts.isoYear) +
+          "-W" +
+          String(selectedDateParts.isoWeek).padStart(2, "0") +
+          (selectedDateParts.dominantMonthLabel
+            ? " (" + selectedDateParts.dominantMonthLabel + ")."
+            : ".");
       } else {
         elements.pageDescription.textContent =
           "Densifies deep sea measurements using diffusion.";
@@ -325,6 +388,30 @@
     return Cesium.Color.fromCssColorString(PATCH_SPLIT_COLORS[normalized] || "#ffffff");
   }
 
+  function formatCoordinate(value, positiveLabel, negativeLabel) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      return "unknown";
+    }
+    const direction = numericValue >= 0.0 ? positiveLabel : negativeLabel;
+    return Math.abs(numericValue).toFixed(4) + " deg " + direction;
+  }
+
+  function positionToLonLat(entity, now) {
+    if (!entity || !entity.position) {
+      return null;
+    }
+    const position = entity.position.getValue(now);
+    if (!position) {
+      return null;
+    }
+    const cartographic = Cesium.Cartographic.fromCartesian(position);
+    return {
+      lon: Cesium.Math.toDegrees(cartographic.longitude),
+      lat: Cesium.Math.toDegrees(cartographic.latitude),
+    };
+  }
+
   function buildMarkerImage(shapeMarkup, sizePx) {
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" width="',
@@ -434,6 +521,17 @@
     requestRender(state);
   }
 
+  function openProfilePopup(state) {
+    const elements = state.elements;
+    clearProfilePopupCloseTimer(state);
+    elements.profilePopup.hidden = false;
+    elements.profilePopup.classList.remove("is-closing");
+    window.requestAnimationFrame(function () {
+      elements.profilePopup.classList.add("is-open");
+      requestRender(state);
+    });
+  }
+
   function showProfilePopup(state, entity) {
     const elements = state.elements;
     if (!elements.profilePopup || !elements.profilePopupImage) {
@@ -449,6 +547,7 @@
       return;
     }
     const locationId = properties.location_id ? properties.location_id.getValue(now) : "Full sample";
+    const dateValue = properties.date ? properties.date.getValue(now) : state.config.selected_date;
     const patchId = properties.patch_id ? properties.patch_id.getValue(now) : "";
     const pixelRow = properties.pixel_row ? properties.pixel_row.getValue(now) : null;
     const pixelCol = properties.pixel_col ? properties.pixel_col.getValue(now) : null;
@@ -458,7 +557,9 @@
     }
     if (elements.profilePopupSubtitle) {
       elements.profilePopupSubtitle.textContent =
-        "Patch " +
+        "Week: " +
+        formatCompactIsoWeek(dateValue) +
+        "\nPatch " +
         String(patchId || "") +
         ", pixel (" +
         String(pixelRow) +
@@ -468,13 +569,56 @@
     }
     elements.profilePopupImage.src = new URL(String(graphPath), state.configUrl).toString();
     elements.profilePopupImage.alt = String(locationId) + " profile comparison";
-    clearProfilePopupCloseTimer(state);
-    elements.profilePopup.hidden = false;
-    elements.profilePopup.classList.remove("is-closing");
-    window.requestAnimationFrame(function () {
-      elements.profilePopup.classList.add("is-open");
-      requestRender(state);
-    });
+    elements.profilePopupImage.hidden = false;
+    openProfilePopup(state);
+  }
+
+  function showArgoPointPopup(state, entity) {
+    const elements = state.elements;
+    if (!elements.profilePopup || !elements.profilePopupImage) {
+      return;
+    }
+    const now = Cesium.JulianDate.now();
+    const properties = entity.properties;
+    const lonLat = positionToLonLat(entity, now);
+    const dateValue =
+      properties && properties.date
+        ? properties.date.getValue(now)
+        : state.config.selected_date;
+    const patchId = properties && properties.patch_id ? properties.patch_id.getValue(now) : "";
+    const pixelRow = properties && properties.pixel_row ? properties.pixel_row.getValue(now) : null;
+    const pixelCol = properties && properties.pixel_col ? properties.pixel_col.getValue(now) : null;
+    const locationText = lonLat
+      ? formatCoordinate(lonLat.lat, "N", "S") +
+        ", " +
+        formatCoordinate(lonLat.lon, "E", "W")
+      : "Unknown location";
+
+    if (elements.profilePopupTitle) {
+      elements.profilePopupTitle.textContent = "Argo observation";
+    }
+    if (elements.profilePopupSubtitle) {
+      // Prefer observation metadata from the GeoJSON, but keep the location visible even
+      // for older point files that were exported before these properties were retained.
+      elements.profilePopupSubtitle.textContent =
+        "Location: " +
+        locationText +
+        "\nWeek: " +
+        formatCompactIsoWeek(dateValue) +
+        (patchId || pixelRow !== null || pixelCol !== null
+          ? "\nPatch " +
+            String(patchId || "") +
+            ", pixel (" +
+            String(pixelRow) +
+            ", " +
+            String(pixelCol) +
+            ")"
+          : "");
+    }
+    elements.profilePopupImage.hidden = true;
+    elements.profilePopupImage.removeAttribute("src");
+    elements.profilePopupImage.alt = "";
+    openProfilePopup(state);
   }
 
   function enforceOverlayOrder(state) {
@@ -1168,15 +1312,19 @@
       setToolbarCollapsed(elements, false);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
         const picked = viewer.scene.pick(movement.position);
-        if (
-          !picked ||
-          !picked.id ||
-          !state.fullSampleDataSource ||
-          !state.fullSampleDataSource.entities.contains(picked.id)
-        ) {
+        if (!picked || !picked.id) {
           return;
         }
-        showProfilePopup(state, picked.id);
+        if (
+          state.fullSampleDataSource &&
+          state.fullSampleDataSource.entities.contains(picked.id)
+        ) {
+          showProfilePopup(state, picked.id);
+          return;
+        }
+        if (state.pointsDataSource && state.pointsDataSource.entities.contains(picked.id)) {
+          showArgoPointPopup(state, picked.id);
+        }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       flyToConfig(state);
       forceViewerResize(state);

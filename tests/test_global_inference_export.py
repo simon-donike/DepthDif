@@ -141,11 +141,17 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
     def test_resolve_depth_export_levels_uses_nearest_glorys_depths(self) -> None:
         levels = resolve_depth_export_levels(
-            np.asarray([0.5, 97.0, 247.0, 505.0, 980.0], dtype=np.float64)
+            np.asarray(
+                [0.5, 97.0, 247.0, 505.0, 980.0, 2502.0, 4997.0],
+                dtype=np.float64,
+            )
         )
 
-        self.assertEqual([level.suffix for level in levels], ["surface", "100m", "250m", "500m", "1000m"])
-        self.assertEqual([level.channel_index for level in levels], [0, 1, 2, 3, 4])
+        self.assertEqual(
+            [level.suffix for level in levels],
+            ["surface", "100m", "250m", "500m", "1000m", "2500m", "5000m"],
+        )
+        self.assertEqual([level.channel_index for level in levels], [0, 1, 2, 3, 4, 5, 6])
         self.assertAlmostEqual(levels[1].requested_depth_m, 100.0)
         self.assertAlmostEqual(levels[1].actual_depth_m, 97.0)
 
@@ -298,6 +304,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         )
 
         self.assertEqual(feature["geometry"]["coordinates"], [10.5, 0.5])
+        self.assertEqual(feature["properties"]["date"], 20260105)
         self.assertEqual(feature["properties"]["location_id"], "full_sample_001")
         self.assertEqual(
             feature["properties"]["graph_png_path"], "graphs/full_sample_001.png"
@@ -310,16 +317,16 @@ class TestGlobalInferenceExport(unittest.TestCase):
         )
         self.assertEqual(feature["properties"]["glorys_profile_c"], [10.5, 11.5, None])
 
-    def test_profile_graph_title_uses_date_and_geographic_coordinates_only(self) -> None:
+    def test_profile_graph_title_uses_iso_week_and_geographic_coordinates_only(self) -> None:
         title = _profile_graph_figure_title(
-            sample_date=20260105,
+            sample_date=20260630,
             lat=-12.345678,
             lon=45.125,
         )
 
         self.assertEqual(
             title,
-            "Date: 2026-01-05\nLocation: 12.3457 deg S, 45.1250 deg E",
+            "Week: ISO week 2026-W27 (Jul)\nLocation: 12.3457 deg S, 45.1250 deg E",
         )
         self.assertNotIn("Pixel", title)
 

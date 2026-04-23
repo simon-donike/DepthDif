@@ -11,10 +11,12 @@ import rasterio
 from rasterio.transform import from_origin
 
 from inference.export_cesium_globe_assets import (
+    ARGO_POINT_PROPERTY_KEYS,
     DEFAULT_CAMERA_HEIGHT,
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
     DEFAULT_RCLONE_SYNC_SCOPE,
+    FULL_SAMPLE_PROPERTY_KEYS,
     _build_parser,
     _build_gdal2tiles_command,
     _estimate_native_zoom_level,
@@ -365,6 +367,53 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(feature["geometry"]["coordinates"], [12.1235, -45.7654])
         self.assertNotIn("properties", feature)
 
+    def test_rewrite_geojson_keeps_argo_point_popup_properties(self) -> None:
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [12.1234567, -45.7654321],
+                    },
+                    "properties": {
+                        "date": 20260105,
+                        "patch_id": "patch-7",
+                        "export_index": 11,
+                        "pixel_row": 2,
+                        "pixel_col": 3,
+                        "temperature": 18.4,
+                    },
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "source.geojson"
+            destination_path = Path(tmp_dir) / "rewritten.geojson"
+            source_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            _rewrite_geojson(
+                source_path,
+                destination_path,
+                allowed_property_keys=ARGO_POINT_PROPERTY_KEYS,
+            )
+
+            rewritten = json.loads(destination_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            rewritten["features"][0]["properties"],
+            {
+                "date": 20260105,
+                "patch_id": "patch-7",
+                "export_index": 11,
+                "pixel_row": 2,
+                "pixel_col": 3,
+            },
+        )
+        self.assertNotIn("temperature", rewritten["features"][0]["properties"])
+
     def test_rewrite_geojson_keeps_only_required_popup_and_split_properties(self) -> None:
         payload = {
             "type": "FeatureCollection",
@@ -394,6 +443,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                         "coordinates": [-10.123456, 44.987654],
                     },
                     "properties": {
+                        "date": 20260105,
                         "graph_png_path": "graphs/example.png",
                         "location_id": "sample-17",
                         "patch_id": "patch-3",
@@ -419,13 +469,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             _rewrite_geojson(
                 source_path,
                 full_sample_destination_path,
-                allowed_property_keys=(
-                    "graph_png_path",
-                    "location_id",
-                    "patch_id",
-                    "pixel_row",
-                    "pixel_col",
-                ),
+                allowed_property_keys=FULL_SAMPLE_PROPERTY_KEYS,
             )
 
             rewritten_patch = json.loads(
@@ -446,6 +490,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             rewritten_full_sample["features"][1]["properties"],
             {
+                "date": 20260105,
                 "graph_png_path": "graphs/example.png",
                 "location_id": "sample-17",
                 "patch_id": "patch-3",

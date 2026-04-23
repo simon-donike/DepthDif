@@ -392,6 +392,7 @@
   margin-top: 0.2rem;
   color: rgba(234, 248, 255, 0.82);
   font-size: 0.86rem;
+  white-space: pre-line;
 }
 
 .globe-profile-popup__image {

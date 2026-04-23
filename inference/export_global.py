@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
 import shutil
@@ -81,6 +81,23 @@ DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("250m", "250m", 250.0),
     ("500m", "500m", 500.0),
     ("1000m", "1000m", 1000.0),
+    ("2500m", "2500m", 2500.0),
+    ("5000m", "5000m", 5000.0),
+)
+MONTH_ABBREVIATIONS = (
+    "",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
 )
 
 
@@ -353,6 +370,18 @@ def _parse_yyyymmdd(value: Any) -> date:
     return datetime.strptime(str(int(value)), "%Y%m%d").date()
 
 
+def _iso_week_label_for_date(parsed_date: date) -> str:
+    iso_year, iso_week, _iso_day = parsed_date.isocalendar()
+    week_start = parsed_date - timedelta(days=parsed_date.isoweekday() - 1)
+    month_counts: dict[int, int] = {}
+    for offset in range(7):
+        month = int((week_start + timedelta(days=offset)).month)
+        month_counts[month] = month_counts.get(month, 0) + 1
+    # ISO weeks span at most two months; the month with four or more days is the label.
+    dominant_month = max(month_counts.items(), key=lambda item: item[1])[0]
+    return f"ISO week {int(iso_year)}-W{int(iso_week):02d} ({MONTH_ABBREVIATIONS[dominant_month]})"
+
+
 def _profile_graph_figure_title(*, sample_date: Any, lat: float, lon: float) -> str:
     parsed_date = _parse_yyyymmdd(sample_date)
 
@@ -362,7 +391,7 @@ def _profile_graph_figure_title(*, sample_date: Any, lat: float, lon: float) -> 
 
     lat_text = _format_coord(lat, positive_label="N", negative_label="S")
     lon_text = _format_coord(lon, positive_label="E", negative_label="W")
-    return f"Date: {parsed_date:%Y-%m-%d}\nLocation: {lat_text}, {lon_text}"
+    return f"Week: {_iso_week_label_for_date(parsed_date)}\nLocation: {lat_text}, {lon_text}"
 
 
 def _date_sort_key(row: dict[str, Any]) -> tuple[float, float]:

@@ -43,7 +43,15 @@ DEFAULT_CAMERA_LON = -38.56452881619089
 DEFAULT_CAMERA_LAT = 34.53988238358822
 DEFAULT_CAMERA_HEIGHT = 9_500_000.0
 DEFAULT_GEOJSON_COORD_PRECISION = 4
+ARGO_POINT_PROPERTY_KEYS = (
+    "date",
+    "patch_id",
+    "export_index",
+    "pixel_row",
+    "pixel_col",
+)
 FULL_SAMPLE_PROPERTY_KEYS = (
+    "date",
     "graph_png_path",
     "location_id",
     "patch_id",
@@ -636,7 +644,7 @@ def main() -> None:
         _rewrite_geojson(
             points_path,
             copied_points_path,
-            allowed_property_keys=(),
+            allowed_property_keys=ARGO_POINT_PROPERTY_KEYS,
         )
 
     copied_patch_splits_path: Path | None = None
