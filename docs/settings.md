@@ -171,8 +171,8 @@ Defaults below refer to `configs/px_space/data_ostia_argo_disk.yaml` unless note
 | `model.ambient_occlusion.shared_spatial_mask` | `true` | Uses one spatial further-mask per sample and shares it across channels. |  
 | `model.ambient_occlusion.min_kept_observed_pixels` | `1` | Guarantees a minimum number of observed pixels kept after further corruption. |  
 | `model.ambient_occlusion.require_x0_parameterization` | `true` | Enforces `model.parameterization == "x0"` when ambient objective is enabled. |  
-| `model.post_process.gaussian_blur.enabled` | `false` | Enables final denormalized Gaussian blur post-process. |  
-| `model.post_process.gaussian_blur.sigma` | `0.5` | Gaussian blur sigma in pixels. |  
+| `model.post_process.gaussian_blur.enabled` | `true` | Enables final denormalized Gaussian blur post-process. |  
+| `model.post_process.gaussian_blur.sigma` | `0.75` | Gaussian blur sigma in pixels. |  
 | `model.post_process.gaussian_blur.kernel_size` | `3` | Blur kernel size; even values are adjusted to odd. |  
 | `model.coord_conditioning.enabled` | `true` | Enables coordinate conditioning with FiLM. |  
 | `model.coord_conditioning.encoding` | `"unit_sphere"` | Coordinate encoding type (`"unit_sphere"`, `"sincos"`, `"raw"`). |  

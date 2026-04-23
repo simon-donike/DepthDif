@@ -60,6 +60,7 @@
       toolbarToggle: document.getElementById("globe-toggle-toolbar"),
       depthSlider: document.getElementById("globe-depth-level"),
       depthLabel: document.getElementById("globe-depth-level-label"),
+      depthTicks: document.getElementById("globe-depth-level-ticks"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
       pageTitle: document.getElementById("globe-page-title"),
@@ -239,6 +240,38 @@
     return depthLevels[index] || depthLevels[0];
   }
 
+  function formatDepthMeters(depthLevel) {
+    const requestedDepthM = Number(depthLevel.requested_depth_m);
+    const actualDepthM = Number(depthLevel.actual_depth_m);
+    const depthM = Number.isFinite(requestedDepthM) ? requestedDepthM : actualDepthM;
+    if (!Number.isFinite(depthM)) {
+      return String(depthLevel.label || "");
+    }
+    if (Math.abs(depthM) < 0.05) {
+      return "0 m";
+    }
+    if (Math.abs(depthM - Math.round(depthM)) < 0.05) {
+      return String(Math.round(depthM)) + " m";
+    }
+    return String(Number(depthM.toFixed(depthM < 10.0 ? 1 : 0))) + " m";
+  }
+
+  function updateDepthTicks(state, depthLevels) {
+    const depthTicks = state.elements.depthTicks;
+    if (!depthTicks) {
+      return;
+    }
+    depthTicks.replaceChildren();
+    depthLevels.forEach(function (depthLevel, index) {
+      const tick = document.createElement("span");
+      const offsetPercent = depthLevels.length <= 1 ? 0.0 : (index / (depthLevels.length - 1)) * 100.0;
+      tick.className = "globe-depth-ticks__tick";
+      tick.style.left = String(offsetPercent) + "%";
+      tick.textContent = formatDepthMeters(depthLevel);
+      depthTicks.appendChild(tick);
+    });
+  }
+
   function updateDepthControl(state) {
     const depthLevels = getDepthLevels(state.config);
     if (state.elements.depthSlider) {
@@ -254,6 +287,7 @@
       const depthLevel = selectedDepthLevel(state);
       state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
     }
+    updateDepthTicks(state, depthLevels);
   }
 
   function colorForTemperature(tempC, colorScale) {
@@ -770,13 +804,40 @@
   }
 
   async function ensureGroundTruthLayer(state) {
-    return loadOptionalLayer(
-      state,
-      state.elements.groundTruthToggle,
-      "groundTruthLayer",
-      "groundTruthLayerLoadPromise",
-      addGroundTruthLayer
-    );
+    if (state.groundTruthLayer) {
+      return state.groundTruthLayer;
+    }
+    if (state.groundTruthLayerLoadPromise) {
+      return state.groundTruthLayerLoadPromise;
+    }
+
+    const rasterDepthReloadToken = state.rasterDepthReloadToken;
+    setToggleLoading(state.elements.groundTruthToggle, true);
+    const loadPromise = addGroundTruthLayer(state)
+      .then(function (layer) {
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (layer) {
+            // Drop late-arriving imagery from an older depth so it cannot remain
+            // visible underneath the currently selected depth layer.
+            state.viewer.imageryLayers.remove(layer, true);
+          }
+          requestRender(state);
+          return null;
+        }
+        state.groundTruthLayer = layer;
+        enforceOverlayOrder(state);
+        requestRender(state);
+        return layer;
+      })
+      .finally(function () {
+        if (state.groundTruthLayerLoadPromise === loadPromise) {
+          state.groundTruthLayerLoadPromise = null;
+          setToggleLoading(state.elements.groundTruthToggle, false);
+        }
+      });
+
+    state.groundTruthLayerLoadPromise = loadPromise;
+    return state.groundTruthLayerLoadPromise;
   }
 
   async function ensurePointsLayer(state) {
@@ -869,6 +930,8 @@
     const imageryLayers = state.viewer.imageryLayers;
     const showPrediction = state.elements.predictionToggle.checked;
     const showGroundTruth = state.elements.groundTruthToggle.checked;
+    const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
+    state.rasterDepthReloadToken = rasterDepthReloadToken;
 
     if (state.predictionLayer) {
       imageryLayers.remove(state.predictionLayer, true);
@@ -882,14 +945,28 @@
     state.groundTruthLayerLoadPromise = null;
 
     try {
-      state.predictionLayer = await addPredictionLayer(state);
-      if (state.predictionLayer) {
-        state.predictionLayer.show = showPrediction;
+      const predictionLayer = await addPredictionLayer(state);
+      if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+        if (predictionLayer) {
+          imageryLayers.remove(predictionLayer, true);
+        }
+        return;
+      }
+      state.predictionLayer = predictionLayer;
+      if (predictionLayer) {
+        predictionLayer.show = showPrediction;
       }
       if (showGroundTruth) {
-        state.groundTruthLayer = await addGroundTruthLayer(state);
-        if (state.groundTruthLayer) {
-          state.groundTruthLayer.show = true;
+        const groundTruthLayer = await addGroundTruthLayer(state);
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (groundTruthLayer) {
+            imageryLayers.remove(groundTruthLayer, true);
+          }
+          return;
+        }
+        state.groundTruthLayer = groundTruthLayer;
+        if (groundTruthLayer) {
+          groundTruthLayer.show = true;
         }
       }
       enforceOverlayOrder(state);
@@ -1065,6 +1142,7 @@
         fullSampleDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
         selectedDepthIndex: 0,
+        rasterDepthReloadToken: 0,
         spinEnabled: false,
         lastSpinTime: null,
         profilePopupCloseTimer: null,

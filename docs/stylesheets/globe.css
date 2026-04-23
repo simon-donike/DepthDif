@@ -188,6 +188,43 @@
   align-items: center;
 }
 
+.globe-range__control {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 14rem;
+}
+
+.globe-range__control input {
+  width: 100%;
+}
+
+.globe-depth-ticks {
+  position: relative;
+  min-height: 1rem;
+  color: rgba(234, 248, 255, 0.82);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.globe-depth-ticks__tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.globe-depth-ticks__tick:first-child {
+  transform: translateX(0);
+}
+
+.globe-depth-ticks__tick:last-child {
+  transform: translateX(-100%);
+}
+
+.globe-depth-ticks__tick:only-child {
+  transform: translateX(0);
+}
+
 .globe-legend {
   position: absolute;
   right: 1rem;

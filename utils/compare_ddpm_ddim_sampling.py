@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from scipy import ndimage as ndi
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -55,6 +56,7 @@ BATCH_SIZE = 5
 DEPTH_LEVEL = 0
 DDIM_STEPS = 100
 DDIM_TEMPERATURE = 0.5
+DDPM_BLUR_SIGMAS: tuple[float, float, float] = (0.5, 1.0, 2.0)
 ROWS_PER_FIGURE = 10
 OUTPUT_DIR = Path("temp/ddpm_ddim_sampling_comparison_real_argo")
 
@@ -198,6 +200,21 @@ def _masked_array(
     return arr
 
 
+def _gaussian_blur_nan_aware(array: np.ndarray, sigma: float) -> np.ndarray:
+    """Apply Gaussian blur while keeping invalid/masked pixels as NaN."""
+    finite = np.isfinite(array)
+    if not finite.any() or float(sigma) <= 0.0:
+        return array.copy()
+    values = np.where(finite, array, 0.0).astype(np.float32, copy=False)
+    weights = finite.astype(np.float32, copy=False)
+    blurred_values = ndi.gaussian_filter(values, sigma=float(sigma), mode="nearest")
+    blurred_weights = ndi.gaussian_filter(weights, sigma=float(sigma), mode="nearest")
+    out = blurred_values / np.maximum(blurred_weights, np.finfo(np.float32).eps)
+    # Do not let the blur invent visible pixels outside the original valid support.
+    out[~finite] = np.nan
+    return out.astype(np.float32, copy=False)
+
+
 def _page_path(output_dir: Path, page_idx: int) -> Path:
     """Return the output path for one comparison page."""
     return output_dir / f"ddpm_ddim_comparison_page_{int(page_idx):03d}.png"
@@ -224,6 +241,9 @@ def _save_page(
             f"DDIM eta=1, {int(ddim_steps)} steps, temp={float(ddim_temperature):g}",
         ),
         ("target", "Ground truth"),
+        ("ddpm_blur_low", f"DDPM blur low\nsigma={DDPM_BLUR_SIGMAS[0]:g}"),
+        ("ddpm_blur_medium", f"DDPM blur medium\nsigma={DDPM_BLUR_SIGMAS[1]:g}"),
+        ("ddpm_blur_high", f"DDPM blur high\nsigma={DDPM_BLUR_SIGMAS[2]:g}"),
     ]
     cmap = plt.get_cmap(PLOT_CMAP).copy()
     cmap.set_bad("black")
@@ -231,7 +251,7 @@ def _save_page(
     fig, axes = plt.subplots(
         len(rows),
         len(columns),
-        figsize=(3.2 * len(columns), 3.0 * len(rows)),
+        figsize=(2.8 * len(columns), 3.0 * len(rows)),
         squeeze=False,
     )
     try:
@@ -281,6 +301,12 @@ def _append_plot_rows(
         x_valid_mask = _band_mask(batch.get("x_valid_mask"), sample_idx, depth_level)
         y_valid_mask = _band_mask(batch.get("y_valid_mask"), sample_idx, depth_level)
         output_masks = [land_mask, y_valid_mask]
+        ddpm_array = _masked_array(
+            pred_ddpm["y_hat_denorm"],
+            sample_idx,
+            depth_level,
+            masks=output_masks,
+        )
 
         rows.append(
             {
@@ -291,12 +317,7 @@ def _append_plot_rows(
                     depth_level,
                     masks=[land_mask, x_valid_mask],
                 ),
-                "ddpm": _masked_array(
-                    pred_ddpm["y_hat_denorm"],
-                    sample_idx,
-                    depth_level,
-                    masks=output_masks,
-                ),
+                "ddpm": ddpm_array,
                 "ddim_eta0": _masked_array(
                     pred_ddim_eta0["y_hat_denorm"],
                     sample_idx,
@@ -314,6 +335,15 @@ def _append_plot_rows(
                     sample_idx,
                     depth_level,
                     masks=output_masks,
+                ),
+                "ddpm_blur_low": _gaussian_blur_nan_aware(
+                    ddpm_array, DDPM_BLUR_SIGMAS[0]
+                ),
+                "ddpm_blur_medium": _gaussian_blur_nan_aware(
+                    ddpm_array, DDPM_BLUR_SIGMAS[1]
+                ),
+                "ddpm_blur_high": _gaussian_blur_nan_aware(
+                    ddpm_array, DDPM_BLUR_SIGMAS[2]
                 ),
             }
         )

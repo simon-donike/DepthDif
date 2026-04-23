@@ -73,7 +73,10 @@
               <div class="globe-toolbar__group">
                 <label class="globe-range" for="globe-depth-level">
                   <span class="globe-toolbar__label">Depth <span id="globe-depth-level-label">Surface</span></span>
-                  <input id="globe-depth-level" type="range" min="0" max="4" step="1" value="0" />
+                  <span class="globe-range__control">
+                    <input id="globe-depth-level" type="range" min="0" max="4" step="1" value="0" />
+                    <span id="globe-depth-level-ticks" class="globe-depth-ticks" aria-hidden="true"></span>
+                  </span>
                 </label>
                 <button id="globe-toggle-spin" class="globe-reset-button" type="button" aria-pressed="false">
                   Spin Globe

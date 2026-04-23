@@ -21,9 +21,9 @@ model:
     require_x0_parameterization: true # Ambient objective stays tied to x0 parameterization.
   post_process:
     gaussian_blur:
-      enabled: false # Keep raw denormalized predictions without additional smoothing.
-      sigma: 0.5 # Small blur strength in pixels if enabled later.
-      kernel_size: 3 # Even values are auto-adjusted to the next odd number.
+      enabled: true # Apply final denormalized smoothing for global export inference.
+      sigma: 0.75 # Medium blur strength selected from DDPM/DDIM visual comparison.
+      kernel_size: 5 # Even values are auto-adjusted to the next odd number.
 
   coord_conditioning:
     enabled: true # Enable patch-center coordinate conditioning via FiLM.
