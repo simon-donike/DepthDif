@@ -23,7 +23,7 @@ Run full including push:
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
   --export-ground-truth \
-  --sigma 1.0;
+  --sigma 1.5;
 /work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
   --run-dir inference/outputs/global_top_band_20150615 \
   --public-base-url https://pub-a0d604187e144d18a52f7c9e679577dc.r2.dev/inference_production/globe \

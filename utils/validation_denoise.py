@@ -1108,6 +1108,69 @@ def plot_glorys_profile_comparison_axis(
         ax.legend(loc="best")
 
 
+def plot_glorys_profile_error_axis(
+    ax: Any,
+    *,
+    x_profile: np.ndarray,
+    y_hat_profile: np.ndarray,
+    y_target_profile: np.ndarray,
+    observed_profile: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    title: str | None = None,
+    show_legend: bool = False,
+) -> None:
+    """Draw one absolute-error-vs-depth axis for prediction errors."""
+    x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
+    y_hat_profile_np = np.asarray(y_hat_profile, dtype=np.float64).reshape(-1)
+    y_target_profile_np = np.asarray(y_target_profile, dtype=np.float64).reshape(-1)
+    observed_profile_np = np.asarray(observed_profile, dtype=bool).reshape(-1)
+    if (
+        x_profile_np.size != y_hat_profile_np.size
+        or x_profile_np.size != y_target_profile_np.size
+        or x_profile_np.size != observed_profile_np.size
+    ):
+        raise ValueError("All profile inputs must share the same depth dimension.")
+
+    depth_values, depth_label = _resolve_profile_depth_axis(
+        profile_size=int(y_target_profile_np.size),
+        depth_axis=depth_axis,
+    )
+    pred_vs_glorys_mask = np.isfinite(y_hat_profile_np) & np.isfinite(y_target_profile_np)
+    if bool(np.any(pred_vs_glorys_mask)):
+        ax.plot(
+            np.abs(y_hat_profile_np[pred_vs_glorys_mask] - y_target_profile_np[pred_vs_glorys_mask]),
+            depth_values[pred_vs_glorys_mask],
+            label="|Prediction - GLORYS|",
+            color="tab:red",
+            linewidth=1.8,
+        )
+
+    # Restrict the ARGO error trace to actually observed levels so NaN-masked
+    # placeholders from sparse profiles never show up as fake low error.
+    pred_vs_argo_mask = (
+        observed_profile_np & np.isfinite(x_profile_np) & np.isfinite(y_hat_profile_np)
+    )
+    if bool(np.any(pred_vs_argo_mask)):
+        ax.plot(
+            np.abs(y_hat_profile_np[pred_vs_argo_mask] - x_profile_np[pred_vs_argo_mask]),
+            depth_values[pred_vs_argo_mask],
+            label="|Prediction - ARGO|",
+            color="tab:purple",
+            marker="o",
+            linewidth=1.4,
+            markersize=3.5,
+        )
+
+    ax.invert_yaxis()
+    ax.set_xlabel("Absolute error (deg C)")
+    ax.set_ylabel(depth_label)
+    if title is not None:
+        ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    if show_legend:
+        ax.legend(loc="best")
+
+
 def save_glorys_profile_comparison_plot(
     *,
     output_path: str | Path,
@@ -1119,7 +1182,7 @@ def save_glorys_profile_comparison_plot(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     figure_title: str | None = None,
-    dpi: int = 180,
+    dpi: int = 135,
 ) -> Path:
     """Save one validation-style profile comparison plot to disk."""
     output_path = Path(output_path)
@@ -1127,7 +1190,14 @@ def save_glorys_profile_comparison_plot(
 
     fig = None
     try:
-        fig, ax = plt.subplots(1, 1, figsize=(7.5, 6.0), squeeze=False)
+        fig, ax = plt.subplots(
+            1,
+            2,
+            figsize=(7.2, 3.6),
+            squeeze=False,
+            sharey=True,
+            gridspec_kw={"width_ratios": [1.25, 1.0]},
+        )
         plot_glorys_profile_comparison_axis(
             ax[0, 0],
             x_profile=x_profile,
@@ -1139,12 +1209,29 @@ def save_glorys_profile_comparison_plot(
             title=title,
             show_legend=True,
         )
+        plot_glorys_profile_error_axis(
+            ax[0, 1],
+            x_profile=x_profile,
+            y_hat_profile=y_hat_profile,
+            y_target_profile=y_target_profile,
+            observed_profile=observed_profile,
+            depth_axis=depth_axis,
+            title="Absolute error",
+            show_legend=True,
+        )
         if figure_title is not None:
-            fig.suptitle(figure_title, fontsize=13)
-            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+            fig.suptitle(figure_title, fontsize=11)
+            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
         else:
             fig.tight_layout()
-        fig.savefig(output_path, dpi=int(dpi))
+        # Keep the popup PNGs compact because the globe UI may fetch them over
+        # the network on demand for many different samples.
+        fig.savefig(
+            output_path,
+            dpi=int(dpi),
+            bbox_inches="tight",
+            pil_kwargs={"optimize": True, "compress_level": 9},
+        )
     finally:
         if fig is not None:
             plt.close(fig)

@@ -237,11 +237,17 @@
   transform: translateX(0);
 }
 
-.globe-legend {
+.globe-legend-stack {
   position: absolute;
   right: 1rem;
   bottom: 1rem;
   z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.globe-legend {
   display: grid;
   gap: 0.45rem;
   min-width: 13rem;
@@ -286,6 +292,75 @@
   color: rgba(234, 248, 255, 0.92);
   font-size: 0.82rem;
   font-weight: 600;
+}
+
+.globe-legend--points[hidden] {
+  display: none;
+}
+
+.globe-point-legend {
+  display: grid;
+  gap: 0.55rem;
+  color: rgba(234, 248, 255, 0.92);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.globe-point-legend__item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.globe-point-legend__marker {
+  position: relative;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 1.25rem;
+}
+
+.globe-point-legend__marker::before,
+.globe-point-legend__marker::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.globe-point-legend__marker--argo::before {
+  top: 0.14rem;
+  width: 0.74rem;
+  height: 0.74rem;
+  border: 2px solid #7cf5ff;
+  border-radius: 999px;
+  background: rgba(6, 23, 38, 0.82);
+}
+
+.globe-point-legend__marker--argo::after {
+  top: 0.32rem;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: #dffcff;
+}
+
+.globe-point-legend__marker--full-depth::before {
+  top: 0.02rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  clip-path: polygon(50% 0%, 100% 28%, 82% 76%, 50% 100%, 18% 76%, 0% 28%);
+  border: 2px solid #ffd166;
+  background: rgba(9, 34, 56, 0.9);
+  box-sizing: border-box;
+}
+
+.globe-point-legend__marker--full-depth::after {
+  top: 0.29rem;
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 999px;
+  background: #fff4cf;
+  border: 1px solid #ffd166;
 }
 
 .globe-reset-button {
@@ -482,8 +557,13 @@
     max-width: none;
   }
 
-  .globe-legend {
+  .globe-legend-stack {
     position: static;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .globe-legend {
     min-width: 0;
   }
 

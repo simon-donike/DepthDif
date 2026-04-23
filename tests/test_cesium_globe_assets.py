@@ -11,6 +11,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from inference.export_cesium_globe_assets import (
+    ARGO_SAMPLE_LOCATION_PROPERTY_KEYS,
     ARGO_POINT_PROPERTY_KEYS,
     DEFAULT_CAMERA_HEIGHT,
     DEFAULT_CAMERA_LAT,
@@ -23,6 +24,7 @@ from inference.export_cesium_globe_assets import (
     _read_raster_metadata,
     _resolve_depth_export_artifacts,
     _resolve_rclone_sync_source,
+    _rewrite_argo_sample_locations_geojson,
     _rewrite_geojson,
     _sync_with_rclone,
     build_globe_config,
@@ -74,6 +76,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "prediction_tiles_url": None,
             "ground_truth_tiles_url": None,
             "depth_levels": [],
+            "argo_sample_locations_url": None,
             "argo_points_url": None,
             "patch_splits_url": None,
             "full_sample_points_url": None,
@@ -106,6 +109,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                     "ground_truth_tiles_url": "./ground_truth_tiles_surface",
                 }
             ],
+            argo_sample_locations_url="./argo_sample_locations.geojson",
             argo_points_url="./argo_points.geojson",
             patch_splits_url="./patch_splits.geojson",
             full_sample_points_url="./full_sample_locations.geojson",
@@ -128,6 +132,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             config["depth_levels"][0]["prediction_tiles_url"],
             "./prediction_tiles_surface",
+        )
+        self.assertEqual(
+            config["argo_sample_locations_url"], "./argo_sample_locations.geojson"
         )
         self.assertEqual(config["argo_points_url"], "./argo_points.geojson")
         self.assertEqual(config["patch_splits_url"], "./patch_splits.geojson")
@@ -159,6 +166,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertIn("prediction_tiles_url", template)
         self.assertIn("depth_levels", template)
+        self.assertIn("argo_sample_locations_url", template)
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
         self.assertIn("default_camera_destination", template)
@@ -502,6 +510,115 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             rewritten_full_sample["features"][1]["geometry"]["coordinates"],
             [-10.1235, 44.9877],
         )
+
+    def test_rewrite_argo_sample_locations_geojson_merges_marker_types_without_duplicates(
+        self,
+    ) -> None:
+        argo_payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [10.123456, -20.654321],
+                    },
+                    "properties": {
+                        "date": 20260105,
+                        "patch_id": "patch-1",
+                        "export_index": 4,
+                        "pixel_row": 5,
+                        "pixel_col": 6,
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [15.987654, -30.123456],
+                    },
+                    "properties": {
+                        "date": 20260105,
+                        "patch_id": "patch-2",
+                        "export_index": 8,
+                        "pixel_row": 7,
+                        "pixel_col": 9,
+                    },
+                },
+            ],
+        }
+        full_sample_payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [15.9876544, -30.1234564],
+                    },
+                    "properties": {
+                        "date": 20260105,
+                        "graph_png_path": "graphs/full_sample_001.png",
+                        "location_id": "full_sample_001",
+                        "patch_id": "patch-2",
+                        "pixel_row": 7,
+                        "pixel_col": 9,
+                    },
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            argo_source_path = Path(tmp_dir) / "argo.geojson"
+            full_sample_source_path = Path(tmp_dir) / "full_sample.geojson"
+            destination_path = Path(tmp_dir) / "combined.geojson"
+            argo_source_path.write_text(json.dumps(argo_payload), encoding="utf-8")
+            full_sample_source_path.write_text(
+                json.dumps(full_sample_payload), encoding="utf-8"
+            )
+
+            _rewrite_argo_sample_locations_geojson(
+                destination_path,
+                points_path=argo_source_path,
+                full_sample_points_path=full_sample_source_path,
+            )
+
+            combined = json.loads(destination_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(combined["features"]), 2)
+        argo_feature = combined["features"][0]
+        full_sample_feature = combined["features"][1]
+        self.assertEqual(
+            argo_feature["properties"],
+            {
+                "date": 20260105,
+                "patch_id": "patch-1",
+                "export_index": 4,
+                "pixel_row": 5,
+                "pixel_col": 6,
+                "marker_kind": "argo",
+                "has_full_depth_graph": False,
+            },
+        )
+        self.assertEqual(
+            full_sample_feature["properties"],
+            {
+                "date": 20260105,
+                "graph_png_path": "graphs/full_sample_001.png",
+                "location_id": "full_sample_001",
+                "patch_id": "patch-2",
+                "pixel_row": 7,
+                "pixel_col": 9,
+                "marker_kind": "full_depth_profile",
+                "has_full_depth_graph": True,
+            },
+        )
+        self.assertEqual(
+            full_sample_feature["geometry"]["coordinates"],
+            [15.9877, -30.1235],
+        )
+        self.assertIn("marker_kind", ARGO_SAMPLE_LOCATION_PROPERTY_KEYS)
+        self.assertIn("has_full_depth_graph", ARGO_SAMPLE_LOCATION_PROPERTY_KEYS)
 
 
 if __name__ == "__main__":

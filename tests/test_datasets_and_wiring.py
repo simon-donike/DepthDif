@@ -21,7 +21,10 @@ from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from train import apply_config_overrides, build_dataset, parse_config_override
 from utils.normalizations import temperature_normalize, temperature_to_plot_unit
-from utils.validation_denoise import _temperature_band_to_plot_image
+from utils.validation_denoise import (
+    _temperature_band_to_plot_image,
+    save_glorys_profile_comparison_plot,
+)
 
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
@@ -825,6 +828,30 @@ class TestDatasetsAndWiring(unittest.TestCase):
 
         self.assertAlmostEqual(float(cool_plot[0, 1]), expected_twenty, places=6)
         self.assertAlmostEqual(float(warm_plot[0, 0]), expected_twenty, places=6)
+
+    def test_save_glorys_profile_comparison_plot_writes_two_panel_png(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "profile.png"
+
+            saved_path = save_glorys_profile_comparison_plot(
+                output_path=output_path,
+                x_profile=np.asarray([15.0, np.nan, 10.0, 8.0], dtype=np.float32),
+                y_hat_profile=np.asarray([14.0, 13.0, 11.0, 7.5], dtype=np.float32),
+                y_target_profile=np.asarray([14.5, 12.5, 10.5, 7.0], dtype=np.float32),
+                observed_profile=np.asarray([True, False, True, True], dtype=bool),
+                depth_axis=np.asarray([0.0, 50.0, 100.0, 250.0], dtype=np.float64),
+                ostia_sst_c=16.0,
+                figure_title=(
+                    "Week: ISO week 2026-W27 (Jul)\n"
+                    "Location: 12.3457 deg S, 45.1250 deg E"
+                ),
+            )
+
+            image = matplotlib.image.imread(saved_path)
+
+            self.assertEqual(saved_path, output_path)
+            self.assertTrue(saved_path.exists())
+            self.assertGreater(int(image.shape[1]), int(image.shape[0]))
 
     def test_datamodule_split_is_deterministic_and_loader_settings_are_applied(
         self,

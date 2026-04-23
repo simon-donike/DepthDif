@@ -67,7 +67,6 @@
       predictionToggle: document.getElementById("globe-toggle-prediction"),
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
       pointsToggle: document.getElementById("globe-toggle-points"),
-      fullSampleToggle: document.getElementById("globe-toggle-full-samples"),
       patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
       toolbar: document.querySelector(".globe-toolbar"),
       toolbarContent: document.getElementById("globe-toolbar-content"),
@@ -79,6 +78,7 @@
       resetButton: document.getElementById("globe-reset-camera"),
       pageTitle: document.getElementById("globe-page-title"),
       pageDescription: document.getElementById("globe-page-description"),
+      argoLegend: document.getElementById("globe-argo-legend"),
       profilePopup: document.getElementById("globe-profile-popup"),
       profilePopupTitle: document.getElementById("globe-profile-popup-title"),
       profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
@@ -425,26 +425,74 @@
     return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   }
 
+  function stylePointEntity(entity, options) {
+    if (!entity.billboard) {
+      return;
+    }
+
+    // Replace Cesium's default GeoJSON pins with custom SVG billboards so each
+    // observation type has a distinct, cleaner visual signature.
+    entity.billboard.image = options.image;
+    entity.billboard.width = options.width;
+    entity.billboard.height = options.height;
+    entity.billboard.scale = 1;
+    entity.billboard.verticalOrigin = Cesium.VerticalOrigin.BOTTOM;
+    entity.billboard.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+    entity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+    entity.billboard.pixelOffset = new Cesium.Cartesian2(0, options.pixelOffsetY);
+    // Keep markers anchored to their geographic position instead of shifting
+    // them toward the camera, which makes them appear to drift while orbiting.
+    entity.billboard.eyeOffset = Cesium.Cartesian3.ZERO;
+  }
+
   function stylePointEntities(dataSource, options) {
+    dataSource.entities.values.forEach(function (entity) {
+      stylePointEntity(entity, options);
+    });
+  }
+
+  function markerKindForEntity(entity, now) {
+    const properties = entity && entity.properties ? entity.properties : null;
+    if (!properties) {
+      return "argo";
+    }
+    if (properties.marker_kind) {
+      return String(properties.marker_kind.getValue(now) || "argo");
+    }
+    if (properties.has_full_depth_graph) {
+      return properties.has_full_depth_graph.getValue(now) ? "full_depth_profile" : "argo";
+    }
+    return properties.graph_png_path ? "full_depth_profile" : "argo";
+  }
+
+  function entityHasFullDepthGraph(entity, now) {
+    return markerKindForEntity(entity, now) === "full_depth_profile";
+  }
+
+  function styleArgoSampleEntities(dataSource) {
+    const now = Cesium.JulianDate.now();
     dataSource.entities.values.forEach(function (entity) {
       if (!entity.billboard) {
         return;
       }
 
-      // Replace Cesium's default GeoJSON pins with custom SVG billboards so each
-      // observation type has a distinct, cleaner visual signature.
-      entity.billboard.image = options.image;
-      entity.billboard.width = options.width;
-      entity.billboard.height = options.height;
-      entity.billboard.scale = 1;
-      entity.billboard.verticalOrigin = Cesium.VerticalOrigin.BOTTOM;
-      entity.billboard.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
-      entity.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
-      entity.billboard.pixelOffset = new Cesium.Cartesian2(0, options.pixelOffsetY);
-      // Keep markers anchored to their geographic position instead of shifting
-      // them toward the camera, which makes them appear to drift while orbiting.
-      entity.billboard.eyeOffset = Cesium.Cartesian3.ZERO;
+      const isFullDepthProfile = entityHasFullDepthGraph(entity, now);
+      stylePointEntity(entity, {
+        image: isFullDepthProfile ? FULL_SAMPLE_MARKER_IMAGE : ARGO_POINT_MARKER_IMAGE,
+        width: isFullDepthProfile ? 34 : 24,
+        height: isFullDepthProfile ? 34 : 24,
+        pixelOffsetY: isFullDepthProfile ? -2 : 0,
+      });
     });
+  }
+
+  function updateArgoLegendVisibility(state) {
+    const argoLegend = state.elements.argoLegend;
+    if (!argoLegend) {
+      return;
+    }
+    const hasCombinedLayer = Boolean(state.config && state.config.argo_sample_locations_url);
+    argoLegend.hidden = !hasCombinedLayer || !state.elements.pointsToggle.checked;
   }
 
   function stylePatchSplitEntities(dataSource) {
@@ -634,9 +682,6 @@
     }
     if (state.pointsDataSource) {
       dataSources.raiseToTop(state.pointsDataSource);
-    }
-    if (state.fullSampleDataSource) {
-      dataSources.raiseToTop(state.fullSampleDataSource);
     }
   }
 
@@ -858,9 +903,10 @@
   }
 
   async function addPointsLayer(state) {
-    const pointsUrl = resolveAssetUrl(state.config.argo_points_url, state.configUrl);
+    const pointsUrl = resolveAssetUrl(state.config.argo_sample_locations_url, state.configUrl);
     if (!pointsUrl) {
       markToggleUnavailable(state.elements.pointsToggle);
+      updateArgoLegendVisibility(state);
       return null;
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(pointsUrl, {
@@ -871,39 +917,10 @@
       strokeWidth: 1,
       credit: state.config.credits && state.config.credits.points,
     });
-    stylePointEntities(dataSource, {
-      image: ARGO_POINT_MARKER_IMAGE,
-      width: 24,
-      height: 24,
-      pixelOffsetY: 0,
-    });
+    styleArgoSampleEntities(dataSource);
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.pointsToggle.checked;
-    return dataSource;
-  }
-
-  async function addFullSampleLayer(state) {
-    const fullSampleUrl = resolveAssetUrl(state.config.full_sample_points_url, state.configUrl);
-    if (!fullSampleUrl) {
-      markToggleUnavailable(state.elements.fullSampleToggle);
-      return null;
-    }
-    const dataSource = await Cesium.GeoJsonDataSource.load(fullSampleUrl, {
-      clampToGround: true,
-      markerColor: Cesium.Color.fromCssColorString("#ffd166"),
-      markerSize: 21, // Bump the full-sample profile markers to ~1.5x their previous size.
-      stroke: Cesium.Color.BLACK,
-      strokeWidth: 1,
-      credit: state.config.credits && state.config.credits.full_sample_points,
-    });
-    stylePointEntities(dataSource, {
-      image: FULL_SAMPLE_MARKER_IMAGE,
-      width: 34,
-      height: 34,
-      pixelOffsetY: -2,
-    });
-    state.viewer.dataSources.add(dataSource);
-    dataSource.show = state.elements.fullSampleToggle.checked;
+    updateArgoLegendVisibility(state);
     return dataSource;
   }
 
@@ -994,16 +1011,6 @@
     );
   }
 
-  async function ensureFullSampleLayer(state) {
-    return loadOptionalLayer(
-      state,
-      state.elements.fullSampleToggle,
-      "fullSampleDataSource",
-      "fullSampleDataSourceLoadPromise",
-      addFullSampleLayer
-    );
-  }
-
   async function ensurePatchSplitsLayer(state) {
     return loadOptionalLayer(
       state,
@@ -1024,7 +1031,6 @@
       const loaders = [
         ensureGroundTruthLayer,
         ensurePointsLayer,
-        ensureFullSampleLayer,
         ensurePatchSplitsLayer,
       ];
 
@@ -1053,6 +1059,9 @@
       if (state[stateKey]) {
         state[stateKey].show = false;
       }
+      if (stateKey === "pointsDataSource") {
+        updateArgoLegendVisibility(state);
+      }
       requestRender(state);
       return;
     }
@@ -1061,6 +1070,9 @@
       const layerOrSource = await ensureLayer(state);
       if (layerOrSource) {
         layerOrSource.show = toggle.checked;
+        if (stateKey === "pointsDataSource") {
+          updateArgoLegendVisibility(state);
+        }
         requestRender(state);
       }
     } catch (error) {
@@ -1156,20 +1168,6 @@
         ensurePointsLayer
       );
     });
-
-    if (elements.fullSampleToggle) {
-      elements.fullSampleToggle.addEventListener("change", function () {
-        handleOptionalLayerToggle(
-          state,
-          elements.fullSampleToggle,
-          "fullSampleDataSource",
-          ensureFullSampleLayer
-        );
-        if (!elements.fullSampleToggle.checked) {
-          closeProfilePopup(state);
-        }
-      });
-    }
 
     if (elements.patchSplitsToggle) {
       elements.patchSplitsToggle.addEventListener("change", function () {
@@ -1278,12 +1276,10 @@
         predictionLayer: null,
         groundTruthLayer: null,
         pointsDataSource: null,
-        fullSampleDataSource: null,
         patchSplitsDataSource: null,
         predictionLayerLoadPromise: null,
         groundTruthLayerLoadPromise: null,
         pointsDataSourceLoadPromise: null,
-        fullSampleDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
         selectedDepthIndex: 0,
         rasterDepthReloadToken: 0,
@@ -1310,19 +1306,17 @@
       setSpinEnabled(state, false);
       wireUi(state);
       setToolbarCollapsed(elements, false);
+      updateArgoLegendVisibility(state);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
         const picked = viewer.scene.pick(movement.position);
         if (!picked || !picked.id) {
           return;
         }
-        if (
-          state.fullSampleDataSource &&
-          state.fullSampleDataSource.entities.contains(picked.id)
-        ) {
-          showProfilePopup(state, picked.id);
-          return;
-        }
         if (state.pointsDataSource && state.pointsDataSource.entities.contains(picked.id)) {
+          if (entityHasFullDepthGraph(picked.id, Cesium.JulianDate.now())) {
+            showProfilePopup(state, picked.id);
+            return;
+          }
           showArgoPointPopup(state, picked.id);
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);

@@ -58,6 +58,13 @@ FULL_SAMPLE_PROPERTY_KEYS = (
     "pixel_row",
     "pixel_col",
 )
+ARGO_SAMPLE_LOCATION_PROPERTY_KEYS = tuple(
+    dict.fromkeys(
+        ARGO_POINT_PROPERTY_KEYS
+        + FULL_SAMPLE_PROPERTY_KEYS
+        + ("marker_kind", "has_full_depth_graph")
+    )
+)
 PATCH_SPLIT_PROPERTY_KEYS = ("split",)
 
 
@@ -367,6 +374,12 @@ def _round_geojson_coordinates(value: Any, *, decimals: int) -> Any:
     return value
 
 
+def _freeze_geojson_coordinates(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_freeze_geojson_coordinates(item) for item in value)
+    return value
+
+
 def _rewrite_geojson(
     source_path: Path,
     destination_path: Path,
@@ -407,6 +420,98 @@ def _rewrite_geojson(
         f.write("\n")
 
 
+def _feature_identity(feature: dict[str, Any], *, coordinate_precision: int) -> tuple[Any, ...]:
+    properties = feature.get("properties", {})
+    geometry = feature.get("geometry", {})
+    coordinates = _freeze_geojson_coordinates(
+        _round_geojson_coordinates(
+            geometry.get("coordinates", []),
+            decimals=coordinate_precision,
+        )
+    )
+    return (
+        coordinates,
+        properties.get("date"),
+        properties.get("patch_id"),
+        properties.get("pixel_row"),
+        properties.get("pixel_col"),
+    )
+
+
+def _rewrite_argo_sample_locations_geojson(
+    destination_path: Path,
+    *,
+    points_path: Path | None,
+    full_sample_points_path: Path | None,
+    coordinate_precision: int = DEFAULT_GEOJSON_COORD_PRECISION,
+) -> None:
+    payload: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+    features: list[dict[str, Any]] = []
+    full_sample_identities: set[tuple[Any, ...]] = set()
+
+    if full_sample_points_path is not None:
+        with full_sample_points_path.open("r", encoding="utf-8") as f:
+            full_sample_payload = json.load(f)
+        for feature in full_sample_payload.get("features", []):
+            if feature.get("geometry", {}).get("type") != "Point":
+                continue
+            full_sample_identities.add(
+                _feature_identity(feature, coordinate_precision=coordinate_precision)
+            )
+
+    sources = (
+        (points_path, "argo", False, full_sample_identities),
+        (full_sample_points_path, "full_depth_profile", True, set()),
+    )
+    for source_path, marker_kind, has_full_depth_graph, skip_identities in sources:
+        if source_path is None:
+            continue
+        with source_path.open("r", encoding="utf-8") as f:
+            source_payload = json.load(f)
+        if not payload["features"] and source_payload.get("type"):
+            payload["type"] = source_payload["type"]
+
+        for feature in source_payload.get("features", []):
+            if feature.get("geometry", {}).get("type") != "Point":
+                continue
+            identity = _feature_identity(
+                feature,
+                coordinate_precision=coordinate_precision,
+            )
+            if identity in skip_identities:
+                continue
+
+            geometry = dict(feature.get("geometry", {}))
+            geometry["coordinates"] = _round_geojson_coordinates(
+                geometry.get("coordinates", []),
+                decimals=coordinate_precision,
+            )
+            rewritten_feature = {
+                key: value
+                for key, value in feature.items()
+                if key not in {"geometry", "properties"}
+            }
+            rewritten_feature["geometry"] = geometry
+
+            # The viewer uses marker_kind to choose between the two ARGO marker
+            # symbols while keeping both sample types in one toggleable layer.
+            raw_properties = feature.get("properties", {})
+            filtered_properties = {
+                key: raw_properties.get(key)
+                for key in ARGO_SAMPLE_LOCATION_PROPERTY_KEYS
+                if key in raw_properties
+            }
+            filtered_properties["marker_kind"] = marker_kind
+            filtered_properties["has_full_depth_graph"] = has_full_depth_graph
+            rewritten_feature["properties"] = filtered_properties
+            features.append(rewritten_feature)
+
+    payload["features"] = features
+    with destination_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+        f.write("\n")
+
+
 def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
     if public_base_url is None:
         return f"./{name}"
@@ -419,6 +524,7 @@ def build_globe_config(
     prediction_tiles_url: str,
     ground_truth_tiles_url: str | None,
     depth_levels: list[dict[str, Any]],
+    argo_sample_locations_url: str | None,
     argo_points_url: str | None,
     patch_splits_url: str | None,
     full_sample_points_url: str | None,
@@ -440,6 +546,7 @@ def build_globe_config(
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "depth_levels": depth_levels,
+            "argo_sample_locations_url": argo_sample_locations_url,
             "argo_points_url": argo_points_url,
             "patch_splits_url": patch_splits_url,
             "full_sample_points_url": full_sample_points_url,
@@ -665,6 +772,15 @@ def main() -> None:
             allowed_property_keys=FULL_SAMPLE_PROPERTY_KEYS,
         )
 
+    copied_argo_sample_locations_path: Path | None = None
+    if points_path is not None or full_sample_points_path is not None:
+        copied_argo_sample_locations_path = globe_dir / "argo_sample_locations.geojson"
+        _rewrite_argo_sample_locations_geojson(
+            copied_argo_sample_locations_path,
+            points_path=points_path,
+            full_sample_points_path=full_sample_points_path,
+        )
+
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():
         copied_graphs_dir_path = globe_dir / "graphs"
@@ -688,6 +804,14 @@ def main() -> None:
             else config_depth_levels[0]["ground_truth_tiles_url"]
         ),
         depth_levels=config_depth_levels,
+        argo_sample_locations_url=(
+            None
+            if copied_argo_sample_locations_path is None
+            else _resolve_layer_url(
+                copied_argo_sample_locations_path.name,
+                public_base_url=args.public_base_url,
+            )
+        ),
         argo_points_url=(
             None
             if copied_points_path is None
@@ -743,6 +867,11 @@ def main() -> None:
     print(f"- first prediction tiles: {prediction_tiles_dir}")
     if ground_truth_tiles_dir is not None:
         print(f"- first ground-truth tiles: {ground_truth_tiles_dir}")
+    if copied_argo_sample_locations_path is not None:
+        print(
+            "- combined ARGO sample locations GeoJSON: "
+            f"{copied_argo_sample_locations_path}"
+        )
     if copied_points_path is not None:
         print(f"- points GeoJSON: {copied_points_path}")
     if copied_patch_splits_path is not None:

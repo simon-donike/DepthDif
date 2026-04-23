@@ -40,7 +40,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
 - exports matching GLORYS rasters for the same seven depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
-- samples `200` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one validation-style profile PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0  
+- samples `200` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one compact two-panel PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel  
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 
 Typical run:  
@@ -59,7 +59,7 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers  
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only  
-- `graphs/`: one PNG per sampled full-profile location, reusing the validation profile-comparison plot style  
+- `graphs/`: one compact PNG per sampled full-profile location with side-by-side temperature-vs-depth and absolute-error-vs-depth panels  
 - `selected_patches.csv`: the manifest rows used for the run  
 - `run_summary.yaml`: checkpoint/config/date metadata for traceability  
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
@@ -70,6 +70,7 @@ Use `inference/export_cesium_globe_assets.py` after the global export when you w
 - tiles every stitched prediction and ground-truth depth GeoTIFF with `gdal2tiles.py`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder
+- merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points
 - rewrites the train/val patch-split GeoJSON with rounded coordinates and only the `split` property
 - writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider
 
@@ -92,8 +93,9 @@ To upload one selected run into the hosted production area in the same step, pro
 The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced with the example above. It includes:
 - `prediction_tiles_surface/`, `prediction_tiles_100m/`, etc.: TMS imagery tiles for each prediction depth raster
 - `ground_truth_tiles_surface/`, `ground_truth_tiles_100m/`, etc.: TMS imagery tiles for each GLORYS depth raster when present
-- `argo_points.geojson`: hosted point overlay
-- `full_sample_locations.geojson`: hosted sampled-profile point overlay used by the clickable "Full sample locations" globe layer
+- `argo_sample_locations.geojson`: hosted combined ARGO point overlay used by the single ARGO globe layer, with per-feature marker metadata for ordinary points versus full-depth profiles
+- `argo_points.geojson`: hosted raw observed-point overlay source retained alongside the combined file
+- `full_sample_locations.geojson`: hosted sampled-profile point overlay source retained alongside the combined file
 - `graphs/`: hosted PNGs opened by the sampled-profile popup
 - `patch_splits.geojson`: hosted train/val patch grid overlay rendered as solid red/green fills at fixed 50% opacity in the globe viewer
 - `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route

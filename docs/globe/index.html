@@ -59,11 +59,7 @@
                 </label>
                 <label class="globe-toggle">
                   <input id="globe-toggle-points" type="checkbox" />
-                  <span>Argo points</span>
-                </label>
-                <label class="globe-toggle">
-                  <input id="globe-toggle-full-samples" type="checkbox" />
-                  <span>Full sample locations</span>
+                  <span>Argo sample locations</span>
                 </label>
                 <label class="globe-toggle">
                   <input id="globe-toggle-patch-splits" type="checkbox" />
@@ -87,12 +83,35 @@
               </div>
             </div>
           </div>
-          <div class="globe-legend" aria-label="Temperature color scale">
-            <span class="globe-legend__title">Temperature</span>
-            <div class="globe-legend__bar"></div>
-            <div class="globe-legend__labels">
-              <span>0°C</span>
-              <span>30°C</span>
+          <div class="globe-legend-stack">
+            <div class="globe-legend" aria-label="Temperature color scale">
+              <span class="globe-legend__title">Temperature</span>
+              <div class="globe-legend__bar"></div>
+              <div class="globe-legend__labels">
+                <span>0°C</span>
+                <span>30°C</span>
+              </div>
+            </div>
+            <div
+              id="globe-argo-legend"
+              class="globe-legend globe-legend--points"
+              aria-label="ARGO sample location markers"
+              hidden
+            >
+              <span class="globe-legend__title">ARGO Samples</span>
+              <div class="globe-point-legend">
+                <div class="globe-point-legend__item">
+                  <span class="globe-point-legend__marker globe-point-legend__marker--argo" aria-hidden="true"></span>
+                  <span>ARGO</span>
+                </div>
+                <div class="globe-point-legend__item">
+                  <span
+                    class="globe-point-legend__marker globe-point-legend__marker--full-depth"
+                    aria-hidden="true"
+                  ></span>
+                  <span>ARGO Full-Depth Profile</span>
+                </div>
+              </div>
             </div>
           </div>
           <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
