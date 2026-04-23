@@ -40,7 +40,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
 - exports matching GLORYS rasters for the same seven depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
-- samples `200` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one compact two-panel PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel  
+- samples `250` observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per sampled location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel  
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 
 Typical run:  
@@ -59,7 +59,7 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers  
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only  
-- `graphs/`: one compact PNG per sampled full-profile location with side-by-side temperature-vs-depth and absolute-error-vs-depth panels  
+- `graphs/`: one large PNG per sampled full-profile location with side-by-side temperature-vs-depth and absolute-error-vs-depth panels  
 - `selected_patches.csv`: the manifest rows used for the run  
 - `run_summary.yaml`: checkpoint/config/date metadata for traceability  
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.

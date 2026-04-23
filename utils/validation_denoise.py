@@ -12,6 +12,51 @@ import torch.nn.functional as F
 from utils.normalizations import temperature_normalize, temperature_to_plot_unit
 
 
+PROFILE_GRAPH_LOGO_PATH = (
+    Path(__file__).resolve().parents[1] / "docs/assets/branding/website_icon.png"
+)
+
+
+def _overlay_profile_graph_logo(
+    *,
+    output_path: str | Path,
+    dpi: int,
+) -> None:
+    """Stamp the small website icon onto the saved graph PNG."""
+    try:
+        from PIL import Image
+    except Exception:
+        return
+
+    output_path = Path(output_path)
+    if not output_path.exists() or not PROFILE_GRAPH_LOGO_PATH.exists():
+        return
+
+    font_size_pt = float(plt.rcParams.get("font.size", 10.0))
+    text_height_px = max(1, int(round((font_size_pt / 72.0) * float(dpi))))
+    logo_height_px = max(12, int(round(text_height_px * 1.5)))
+    logo_padding_px = max(6, int(round(text_height_px * 0.4)))
+
+    try:
+        base = Image.open(output_path).convert("RGBA")
+        logo = Image.open(PROFILE_GRAPH_LOGO_PATH).convert("RGBA")
+    except Exception:
+        return
+
+    if logo.height <= 0 or logo.width <= 0:
+        return
+
+    logo_width_px = max(1, int(round((logo.width / logo.height) * logo_height_px)))
+    resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+    logo = logo.resize((logo_width_px, logo_height_px), resample=resampling)
+
+    # Add the icon after matplotlib has finished so figure layout stays untouched.
+    overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
+    overlay.alpha_composite(logo, dest=(logo_padding_px, logo_padding_px))
+    base = Image.alpha_composite(base, overlay)
+    base.save(output_path)
+
+
 def build_capture_indices(
     total_steps: int,
     intermediate_step_indices: list[int] | None,
@@ -1063,6 +1108,8 @@ def plot_glorys_profile_comparison_axis(
         profile_size=int(y_target_profile_np.size),
         depth_axis=depth_axis,
     )
+    depth_top = 0.0
+    depth_bottom = float(np.nanmax(depth_values))
     ax.plot(
         y_target_profile_np,
         depth_values,
@@ -1098,7 +1145,9 @@ def plot_glorys_profile_comparison_axis(
             s=42,
             zorder=5,
         )
-    ax.invert_yaxis()
+    # Keep shallow water at the top regardless of any other subplot settings.
+    ax.set_ylim(depth_bottom, depth_top)
+    ax.margins(y=0.0)
     ax.set_xlabel("Temperature (deg C)")
     ax.set_ylabel(depth_label)
     if title is not None:
@@ -1135,13 +1184,15 @@ def plot_glorys_profile_error_axis(
         profile_size=int(y_target_profile_np.size),
         depth_axis=depth_axis,
     )
+    depth_top = 0.0
+    depth_bottom = float(np.nanmax(depth_values))
     pred_vs_glorys_mask = np.isfinite(y_hat_profile_np) & np.isfinite(y_target_profile_np)
     if bool(np.any(pred_vs_glorys_mask)):
         ax.plot(
             np.abs(y_hat_profile_np[pred_vs_glorys_mask] - y_target_profile_np[pred_vs_glorys_mask]),
             depth_values[pred_vs_glorys_mask],
             label="|Prediction - GLORYS|",
-            color="tab:red",
+            color="black",
             linewidth=1.8,
         )
 
@@ -1155,13 +1206,15 @@ def plot_glorys_profile_error_axis(
             np.abs(y_hat_profile_np[pred_vs_argo_mask] - x_profile_np[pred_vs_argo_mask]),
             depth_values[pred_vs_argo_mask],
             label="|Prediction - ARGO|",
-            color="tab:purple",
+            color="tab:blue",
             marker="o",
             linewidth=1.4,
             markersize=3.5,
         )
 
-    ax.invert_yaxis()
+    # Match the main profile panel: 0 m stays at the top and deeper values go down.
+    ax.set_ylim(depth_bottom, depth_top)
+    ax.margins(y=0.0)
     ax.set_xlabel("Absolute error (deg C)")
     ax.set_ylabel(depth_label)
     if title is not None:
@@ -1182,7 +1235,7 @@ def save_glorys_profile_comparison_plot(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     figure_title: str | None = None,
-    dpi: int = 135,
+    dpi: int = 180,
 ) -> Path:
     """Save one validation-style profile comparison plot to disk."""
     output_path = Path(output_path)
@@ -1193,9 +1246,8 @@ def save_glorys_profile_comparison_plot(
         fig, ax = plt.subplots(
             1,
             2,
-            figsize=(7.2, 3.6),
+            figsize=(10.125, 8.1),
             squeeze=False,
-            sharey=True,
             gridspec_kw={"width_ratios": [1.25, 1.0]},
         )
         plot_glorys_profile_comparison_axis(
@@ -1220,18 +1272,12 @@ def save_glorys_profile_comparison_plot(
             show_legend=True,
         )
         if figure_title is not None:
-            fig.suptitle(figure_title, fontsize=11)
-            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.94])
+            fig.suptitle(figure_title, fontsize=13)
+            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
         else:
             fig.tight_layout()
-        # Keep the popup PNGs compact because the globe UI may fetch them over
-        # the network on demand for many different samples.
-        fig.savefig(
-            output_path,
-            dpi=int(dpi),
-            bbox_inches="tight",
-            pil_kwargs={"optimize": True, "compress_level": 9},
-        )
+        fig.savefig(output_path, dpi=int(dpi))
+        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
     finally:
         if fig is not None:
             plt.close(fig)

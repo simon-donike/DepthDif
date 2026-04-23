@@ -33,8 +33,8 @@ from inference.export_global import (
 
 
 class TestGlobalInferenceExport(unittest.TestCase):
-    def test_default_full_sample_count_is_two_hundred(self) -> None:
-        self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, 200)
+    def test_default_full_sample_count_is_two_hundred_fifty(self) -> None:
+        self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, 250)
 
     def test_default_export_gaussian_blur_sigma_is_one(self) -> None:
         self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 1.0)
