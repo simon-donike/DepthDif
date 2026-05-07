@@ -6,12 +6,15 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import torch
 import yaml
 from rasterio.transform import from_origin
+from torch import nn
 
 from inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
+    ExportInferenceWrapper,
     FullProfileSample,
     MosaicLayout,
     _cleanup_accumulator,
@@ -32,7 +35,49 @@ from inference.export_global import (
 )
 
 
+class _IncrementingPredictModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_count = 0
+
+    def predict_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor]:
+        _ = batch, batch_idx
+        self.call_count += 1
+        call_value = float(self.call_count)
+        y_hat_denorm = torch.tensor(
+            [[[[call_value]], [[call_value + 10.0]], [[call_value + 20.0]]]],
+            dtype=torch.float32,
+        )
+        return {"y_hat_denorm": y_hat_denorm}
+
+
 class TestGlobalInferenceExport(unittest.TestCase):
+    def test_export_inference_wrapper_averages_prediction_ensemble_runs(self) -> None:
+        model = _IncrementingPredictModel()
+        wrapper = ExportInferenceWrapper(
+            model,
+            export_ground_truth=False,
+            export_full_prediction_stack=True,
+            depth_channel_indices=(0, 2),
+            prediction_ensemble_runs=3,
+        )
+
+        outputs = wrapper({"y": torch.zeros((1, 3, 1, 1), dtype=torch.float32)})
+
+        self.assertEqual(model.call_count, 3)
+        torch.testing.assert_close(
+            outputs["prediction_depth_stack"],
+            torch.tensor([[[[2.0]], [[22.0]]]], dtype=torch.float32),
+        )
+        torch.testing.assert_close(
+            outputs["prediction_full_stack"],
+            torch.tensor([[[[2.0]], [[12.0]], [[22.0]]]], dtype=torch.float32),
+        )
+
     def test_default_full_sample_count_exports_all_locations(self) -> None:
         self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, -1)
 

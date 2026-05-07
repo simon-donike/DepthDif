@@ -83,7 +83,19 @@ Use `inference/run_single.py`:
 /work/envs/depth/bin/python inference/run_single.py  
 ```  
 
-For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 100m, 250m, 500m, and 1000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares.
+For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 100m, 250m, 500m, and 1000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. Pass `--prediction-ensemble-runs 5` to average five stochastic predictions per patch before writing the GeoTIFFs consumed by the globe packager; the default `1` keeps the existing single-run behavior.
+
+For a pooled validation-set depth summary, use `inference/export_validation_error_summary.py`. It loads the explicit manifest `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
+
+```bash
+/work/envs/depth/bin/python inference/export_validation_error_summary.py \
+  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --checkpoint logs/<run>/best.ckpt \
+  --split val \
+  --year 2015 \
+  --iso-week 25 \
+  --device cuda
+```
 
 To package one exported run for the Cesium globe viewer in the docs, use:
 

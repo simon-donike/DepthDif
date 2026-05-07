@@ -1264,6 +1264,85 @@ def plot_glorys_profile_error_axis(
         ax.legend(loc="best")
 
 
+def _depth_plot_limits_for_series(
+    *,
+    depth_values: np.ndarray,
+    series: list[np.ndarray],
+) -> tuple[float, float]:
+    """Clip depth plots to the deepest finite level across the provided traces."""
+    depth_values_np = np.asarray(depth_values, dtype=np.float64).reshape(-1)
+    plotted_mask = np.isfinite(depth_values_np)
+    if bool(np.any(plotted_mask)):
+        finite_series_mask = np.zeros(depth_values_np.shape, dtype=bool)
+        for values in series:
+            finite_series_mask |= np.isfinite(np.asarray(values, dtype=np.float64).reshape(-1))
+        plotted_mask &= finite_series_mask
+    if bool(np.any(plotted_mask)):
+        plotted_depth_max = float(np.nanmax(depth_values_np[plotted_mask]))
+    else:
+        plotted_depth_max = float(np.nanmax(depth_values_np))
+
+    depth_headroom = max(5.0, 0.08 * max(plotted_depth_max, 1.0))
+    return 0.0, plotted_depth_max + depth_headroom
+
+
+def plot_average_glorys_profile_error_axis(
+    ax: Any,
+    *,
+    mean_abs_error_prediction_vs_glorys: np.ndarray,
+    mean_abs_error_prediction_vs_argo: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    title: str | None = None,
+    show_legend: bool = False,
+) -> None:
+    """Draw one pooled absolute-error-vs-depth axis for the validation summary."""
+    glorys_error_np = np.asarray(
+        mean_abs_error_prediction_vs_glorys, dtype=np.float64
+    ).reshape(-1)
+    argo_error_np = np.asarray(
+        mean_abs_error_prediction_vs_argo, dtype=np.float64
+    ).reshape(-1)
+    if glorys_error_np.size != argo_error_np.size:
+        raise ValueError("Average error traces must share the same depth dimension.")
+
+    depth_values, depth_label = _resolve_profile_depth_axis(
+        profile_size=int(glorys_error_np.size),
+        depth_axis=depth_axis,
+    )
+    depth_top, depth_bottom = _depth_plot_limits_for_series(
+        depth_values=depth_values,
+        series=[glorys_error_np, argo_error_np],
+    )
+    if bool(np.any(np.isfinite(glorys_error_np))):
+        ax.plot(
+            glorys_error_np,
+            depth_values,
+            label="|Prediction - GLORYS|",
+            color="black",
+            linewidth=1.8,
+        )
+    if bool(np.any(np.isfinite(argo_error_np))):
+        ax.plot(
+            argo_error_np,
+            depth_values,
+            label="|Prediction - ARGO|",
+            color="tab:blue",
+            marker="o",
+            linewidth=1.4,
+            markersize=3.5,
+        )
+
+    ax.set_ylim(depth_bottom, depth_top)
+    ax.margins(y=0.0)
+    ax.set_xlabel("Absolute error (deg C)")
+    ax.set_ylabel(depth_label)
+    if title is not None:
+        ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    if show_legend:
+        ax.legend(loc="best")
+
+
 def save_glorys_profile_comparison_plot(
     *,
     output_path: str | Path,
@@ -1309,6 +1388,106 @@ def save_glorys_profile_comparison_plot(
             observed_profile=observed_profile,
             depth_axis=depth_axis,
             title="Absolute error",
+            show_legend=True,
+        )
+        if figure_title is not None:
+            fig.suptitle(figure_title, fontsize=13)
+            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+        else:
+            fig.tight_layout()
+        fig.savefig(output_path, dpi=int(dpi))
+        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
+    finally:
+        if fig is not None:
+            plt.close(fig)
+    return output_path
+
+
+def save_average_glorys_profile_error_plot(
+    *,
+    output_path: str | Path,
+    mean_abs_error_prediction_vs_glorys: np.ndarray,
+    mean_abs_error_prediction_vs_argo: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    figure_title: str | None = None,
+    dpi: int = 180,
+) -> Path:
+    """Save one single-panel validation-summary error plot to disk."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fig = None
+    try:
+        fig, ax = plt.subplots(1, 1, figsize=(5.4, 8.1))
+        plot_average_glorys_profile_error_axis(
+            ax,
+            mean_abs_error_prediction_vs_glorys=mean_abs_error_prediction_vs_glorys,
+            mean_abs_error_prediction_vs_argo=mean_abs_error_prediction_vs_argo,
+            depth_axis=depth_axis,
+            title="Median absolute error",
+            show_legend=True,
+        )
+        if figure_title is not None:
+            fig.suptitle(figure_title, fontsize=13)
+            fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+        else:
+            fig.tight_layout()
+        fig.savefig(output_path, dpi=int(dpi))
+        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
+    finally:
+        if fig is not None:
+            plt.close(fig)
+    return output_path
+
+
+def save_average_glorys_profile_and_error_plot(
+    *,
+    output_path: str | Path,
+    mean_argo_profile_c: np.ndarray,
+    mean_prediction_profile_c: np.ndarray,
+    mean_glorys_profile_c: np.ndarray,
+    mean_abs_error_prediction_vs_glorys: np.ndarray,
+    mean_abs_error_prediction_vs_argo: np.ndarray,
+    depth_axis: np.ndarray | None = None,
+    figure_title: str | None = None,
+    dpi: int = 180,
+) -> Path:
+    """Save one two-panel pooled profile/error validation summary plot to disk."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    mean_argo_profile_np = np.asarray(mean_argo_profile_c, dtype=np.float64).reshape(-1)
+    mean_prediction_profile_np = np.asarray(
+        mean_prediction_profile_c, dtype=np.float64
+    ).reshape(-1)
+    mean_glorys_profile_np = np.asarray(mean_glorys_profile_c, dtype=np.float64).reshape(-1)
+    observed_profile_np = np.isfinite(mean_argo_profile_np)
+
+    fig = None
+    try:
+        fig, ax = plt.subplots(
+            1,
+            2,
+            figsize=(10.125, 8.1),
+            squeeze=False,
+            gridspec_kw={"width_ratios": [1.25, 1.0]},
+        )
+        plot_glorys_profile_comparison_axis(
+            ax[0, 0],
+            x_profile=mean_argo_profile_np,
+            y_hat_profile=mean_prediction_profile_np,
+            y_target_profile=mean_glorys_profile_np,
+            observed_profile=observed_profile_np,
+            depth_axis=depth_axis,
+            title="Median profile",
+            show_legend=True,
+        )
+        plot_average_glorys_profile_error_axis(
+            ax[0, 1],
+            mean_abs_error_prediction_vs_glorys=mean_abs_error_prediction_vs_glorys,
+            mean_abs_error_prediction_vs_argo=mean_abs_error_prediction_vs_argo,
+            depth_axis=depth_axis,
+            title="Median absolute error",
             show_legend=True,
         )
         if figure_title is not None:

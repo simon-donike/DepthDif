@@ -34,6 +34,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 - loads the configured checkpoint and disk-manifest dataset  
 - selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`  
 - runs batched `predict_step(...)` over all spatial patches for that day  
+- can average multiple stochastic predictions per patch via `--prediction-ensemble-runs`; the default `1` preserves single-run inference, while `--prediction-ensemble-runs 5` writes five-run averaged prediction GeoTIFFs for later XYZ tile/globe packaging  
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`  
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM  
 - stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, 1000m, 2500m, and 5000m, then conservatively fills 1-2 pixel nodata seams in each written TIFF before finalizing it  
@@ -52,6 +53,7 @@ Typical run:
   --iso-week 1 \
   --device cuda
 ```  
+Add `--prediction-ensemble-runs 5` when you want five-run averaged predictions for the exported GeoTIFFs and the downstream globe tiles.
 
 Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_prediction_surface.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters  
@@ -64,7 +66,35 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `run_summary.yaml`: checkpoint/config/date metadata for traceability  
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
 
-## Workflow 1c: Package One Run for the Cesium Globe
+## Workflow 1c: Export One Pooled Validation Error Summary
+Use `inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole manifest split instead of one map export or one sampled batch. The script:
+- loads the configured checkpoint and the explicit manifest split selected by `--split` (`val` by default)
+- optionally narrows that split to one ISO week via `--year ... --iso-week ...`, matching the same week-style selection used by the global export workflow
+- forces real-observation semantics by evaluating `|Prediction - GLORYS|` only on valid `y` support and `|Prediction - ARGO|` only on observed `x` support
+- pools all eligible validation pixels by depth level across the entire split and reports pooled medians rather than per-patch averages
+- writes `validation_error_by_depth.csv` with per-depth medians, counts, and the support-aware median profiles
+- saves `validation_median_absolute_error_by_depth.png` with the two pooled error traces
+- saves `validation_median_profile_and_error_by_depth.png` with the median `(ARGO, prediction, GLORYS)` profiles plus the pooled error panel
+- writes `run_summary.yaml` with checkpoint/config/device/split metadata and artifact names
+
+Typical run:
+```bash
+/work/envs/depth/bin/python inference/export_validation_error_summary.py \
+  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --checkpoint logs/<run>/best.ckpt \
+  --split val \
+  --year 2015 \
+  --iso-week 25 \
+  --device cuda
+```
+
+Default outputs land under `inference/outputs/validation_error_summary/`:
+- `validation_error_by_depth.csv`: per-depth pooled error/profile summary table
+- `validation_median_absolute_error_by_depth.png`: single-panel pooled median absolute-error graph
+- `validation_median_profile_and_error_by_depth.png`: two-panel pooled median-profile/error figure
+- `run_summary.yaml`: checkpoint/config/split metadata plus artifact filenames
+
+## Workflow 1d: Package One Run for the Cesium Globe
 Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
 - reads one completed `inference/outputs/<run_name>/` directory
 - tiles every stitched prediction and ground-truth depth GeoTIFF with `gdal2tiles.py`

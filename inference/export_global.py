@@ -175,23 +175,54 @@ class ExportInferenceWrapper(nn.Module):
         export_ground_truth: bool,
         export_full_prediction_stack: bool,
         depth_channel_indices: Sequence[int],
+        prediction_ensemble_runs: int = 1,
     ) -> None:
         super().__init__()
         self.model = model
         self.export_ground_truth = bool(export_ground_truth)
         self.export_full_prediction_stack = bool(export_full_prediction_stack)
         self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
+        self.prediction_ensemble_runs = int(prediction_ensemble_runs)
+        if self.prediction_ensemble_runs < 1:
+            raise ValueError("prediction_ensemble_runs must be >= 1.")
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        pred = self.model.predict_step(batch, batch_idx=0)
-        y_hat_denorm = pred["y_hat_denorm"]
+        prediction_depth_sum: torch.Tensor | None = None
+        prediction_full_sum: torch.Tensor | None = None
+        for _ in range(self.prediction_ensemble_runs):
+            pred = self.model.predict_step(batch, batch_idx=0)
+            y_hat_denorm = pred["y_hat_denorm"]
+            prediction_depth = y_hat_denorm[:, self.depth_channel_indices].contiguous()
+            # Average stochastic diffusion samples per patch before the mosaic
+            # accumulator sees them.
+            prediction_depth_sum = (
+                prediction_depth
+                if prediction_depth_sum is None
+                else prediction_depth_sum + prediction_depth
+            )
+            if self.export_full_prediction_stack:
+                prediction_full = y_hat_denorm.contiguous()
+                prediction_full_sum = (
+                    prediction_full
+                    if prediction_full_sum is None
+                    else prediction_full_sum + prediction_full
+                )
+
+        if prediction_depth_sum is None:
+            raise RuntimeError("Missing depth prediction accumulator.")
+
+        ensemble_scale = float(self.prediction_ensemble_runs)
         out: dict[str, torch.Tensor] = {
-            "prediction_depth_stack": y_hat_denorm[
-                :, self.depth_channel_indices
-            ].contiguous(),
+            "prediction_depth_stack": (
+                prediction_depth_sum / ensemble_scale
+            ).contiguous(),
         }
         if self.export_full_prediction_stack:
-            out["prediction_full_stack"] = y_hat_denorm.contiguous()
+            if prediction_full_sum is None:
+                raise RuntimeError("Missing full-stack prediction accumulator.")
+            out["prediction_full_stack"] = (
+                prediction_full_sum / ensemble_scale
+            ).contiguous()
         if self.export_ground_truth:
             target_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
             y_valid_mask = batch["y_valid_mask"]
@@ -1216,6 +1247,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Torch RNG seed so stochastic samplers remain reproducible.",
     )
     parser.add_argument(
+        "--prediction-ensemble-runs",
+        type=int,
+        default=1,
+        help=(
+            "Number of predict_step runs to average per patch before writing "
+            "prediction GeoTIFFs. Use 1 for the normal single-run export; pass 5 "
+            "to average five stochastic diffusion predictions."
+        ),
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
@@ -1322,6 +1363,9 @@ def main() -> None:
     export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
     if batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
+    prediction_ensemble_runs = int(args.prediction_ensemble_runs)
+    if prediction_ensemble_runs < 1:
+        raise ValueError("--prediction-ensemble-runs must be >= 1.")
 
     sample_for_shape = dataset[selection.indices[0]]
     patch_shape = tuple(int(v) for v in sample_for_shape["y"].shape[-2:])
@@ -1398,6 +1442,7 @@ def main() -> None:
         f"export_ground_truth={bool(args.export_ground_truth)}, "
         f"full_sample_count="
         f"{'all' if export_all_full_samples else full_sample_count}, "
+        f"prediction_ensemble_runs={prediction_ensemble_runs}, "
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
@@ -1445,6 +1490,7 @@ def main() -> None:
         export_ground_truth=bool(args.export_ground_truth),
         export_full_prediction_stack=export_full_profiles,
         depth_channel_indices=depth_channel_indices,
+        prediction_ensemble_runs=prediction_ensemble_runs,
     )
     if use_multi_gpu:
         inference_runner: nn.Module = nn.DataParallel(inference_module)
@@ -1701,6 +1747,7 @@ def main() -> None:
                 "source": "DepthDif global weekly inference export",
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
+                "prediction_ensemble_runs": str(int(prediction_ensemble_runs)),
                 "extra_gaussian_blur_sigma": f"{float(args.sigma):.3f}",
                 "extra_gaussian_blur_kernel_size": str(
                     int(DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE)
@@ -1773,6 +1820,7 @@ def main() -> None:
         "visible_gpus": int(visible_gpu_count),
         "multi_gpu_enabled": bool(use_multi_gpu),
         "batch_size": int(batch_size),
+        "prediction_ensemble_runs": int(prediction_ensemble_runs),
         "extra_gaussian_blur_sigma": float(args.sigma),
         "extra_gaussian_blur_kernel_size": int(
             DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE
