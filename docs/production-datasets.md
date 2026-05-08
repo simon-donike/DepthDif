@@ -14,6 +14,7 @@ Expected source trees:
 - `/data1/datasets/depth_v2/ostia`  
 - `/data1/datasets/depth_v2/en4_profiles`  
 - optional aligned GLORYS helpers in `/data1/datasets/depth_v2/glorys_weekly`  
+- optional Copernicus sea-level daily files in `/data1/datasets/depth_v2/sealevel_daily`  
   
 Main build scripts:  
 - `data/get_ostia/build_ostia_patch_time_index.py`  
@@ -139,6 +140,7 @@ Snapshot numbers below were measured/recomputed on **March 10, 2026**.
 Shared source inventory:  
 - OSTIA daily files (`ostia/*.nc`): `5,326`  
 - EN4 monthly profile files (`en4_profiles/*.nc`): `186`  
+- optional sea-level daily files (`sealevel_daily/*.nc`): expected to match the OSTIA date range when downloaded  
 - daily-index date range: `2010-01-01` to `2024-07-31`  
   
 ### Version A: 0.05 Degree, Daily  
@@ -199,10 +201,11 @@ Median valid pixels per spatial patch:
 ## 6) End-To-End Build Order
 1. Download OSTIA daily files with `data/get_ostia/download_ostia.sh`.  
 2. Download and extract EN4 profile data with `data/get_argo/download_en4_profiles.sh`.  
-3. Build the OSTIA spatial and daily patch index.  
-4. Build the ARGO <-> OSTIA datetime match table.  
-5. Merge ARGO validity and linkage columns into the daily patch CSV.  
-6. Choose the dataset version:  
+3. Optionally download Copernicus sea-level daily files with `data/get_sealevel/download_sealevel_daily.sh`.  
+4. Build the OSTIA spatial and daily patch index.  
+5. Build the ARGO <-> OSTIA datetime match table.  
+6. Merge ARGO validity and linkage columns into the daily patch CSV.  
+7. Choose the dataset version:  
    - daily rows  
    - or multi-day temporal windows at load time  
   

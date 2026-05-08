@@ -138,6 +138,11 @@ Disk export helper:
   
 Current scope note:  
 - profile extraction remains date-based within the monthly EN4 file, while vertical alignment is now performed against the GLORYS depth axis before the profile samples are tiled into the patch grid  
+
+Enriched profile export:  
+- `data/export_enriched_argo_profiles.py` builds a profile-level Zarr directly from raw EN4, GLORYS, OSTIA, and sea-level NetCDF folders, without using existing CSV manifests or overlap files  
+- each ARGO profile is projected onto the GLORYS depth grid for `TEMP`, `POTM_CORRECTED`, and `PSAL_CORRECTED`, then collocated with all configured GLORYS, OSTIA, and `/data1/datasets/depth_v2/sealevel_daily` variables at the profile lat/lon and time  
+- temporal collocation linearly interpolates continuous fields between bracketing source files, uses nearest temporal values for categorical flags/masks, and records per-source temporal status flags in the Zarr  
   
 ## Synthetic Transformations  
 ## Masking, Validity, and Augmentation  

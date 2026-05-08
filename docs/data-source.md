@@ -9,6 +9,7 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 | GLORYS | 3D ocean reanalysis field | global gridded field, fixed 50 depth levels | `thetao`, `depth` |
 | OSTIA | daily surface temperature field | daily global 2D grid | `analysed_sst` |
 | EN4 / ARGO profiles | in-situ temperature observations | profile-specific corrected depths | `TEMP`, `DEPH_CORRECTED` |
+| Sea Level L4 | daily surface height and currents | daily global 0.125 degree grid | sea-surface-height fields, geostrophic currents |
 
 ## Product A: GLORYS Reanalysis
 ![GLORYS banner](assets/data/glorys_banner.png)
@@ -67,6 +68,21 @@ Archive-wide corrected-depth histogram with GLORYS reference levels:
 Example ARGO profile in 3D:  
 ![img](assets/data/argo_profile_3D.gif)  
 Important: `z` shows the netCDF dimension (400), not actual depth. 
+
+## Product D: Global Ocean L4 Sea Level
+
+The Copernicus reprocessed global sea-level product provides daily gridded sea-surface-height fields and derived geostrophic currents.
+
+- Provider: Copernicus Marine Service
+- Product ID: `SEALEVEL_GLO_PHY_L4_MY_008_047`
+- Dataset ID used here: `cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D`
+- Native resolution: `0.125° x 0.125°`
+- Temporal resolution: daily
+- Format: NetCDF-4
+- Native variables include sea-surface-height fields and geostrophic currents.
+
+Relevant helper script:
+- `data/get_sealevel/download_sealevel_daily.sh`
 
 ## Raw Product Notes
 Representative raw GLORYS variables:  
