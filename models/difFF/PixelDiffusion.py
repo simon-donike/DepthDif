@@ -277,7 +277,7 @@ class PixelDiffusionConditional(pl.LightningModule):
     def from_config(
         cls,
         model_config_path: str = "configs/px_space/model_config.yaml",
-        data_config_path: str = "configs/px_space/data_config.yaml",
+        data_config_path: str = "configs/px_space/data_ostia_argo_netcdf.yaml",
         training_config_path: str = "configs/px_space/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
@@ -1721,8 +1721,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                             x_mask_bool & y_mask_bool & ~(further_valid_mask > 0.5)
                         )
                 else:
-                    # Standard and synthetic runs should plot valid y pixels that were
-                    # never available to the model through the sparse x conditioning.
+                    # Standard runs should plot valid y pixels that were never
+                    # available to the model through sparse ARGO conditioning.
                     generated_profile_mask = y_mask_bool & ~x_mask_bool
             y_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 y_denorm, y_valid_mask

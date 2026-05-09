@@ -1,19 +1,19 @@
-<p align="center">  
-  <img src="assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />  
-</p>  
-  
-# Densifying Sparse Ocean Depth Observations  
-DepthDif explores conditional diffusion for reconstructing dense subsurface ocean temperature fields from sparse, masked observations.  
-  
-The repository currently supports:  
-- EO-conditioned multi-band reconstruction (surface condition + deeper target bands)  
-- cross-source conditioning where EO surface SST can come from OSTIA while deeper targets remain Copernicus reanalysis  
-- latent diffusion workflow with autoencoder-based depth compression (see [Autoencoder](autoencoder.md))  
-  
-## Project Links  
-- [GitHub Repository](https://github.com/simon-donike/DepthDif)  
-- [Open Issues](https://github.com/simon-donike/DepthDif/issues)  
-- [Releases](https://github.com/simon-donike/DepthDif/releases)  
+<p align="center">
+  <img src="assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
+</p>
+
+# Densifying Sparse Ocean Depth Observations
+DepthDif explores conditional diffusion for reconstructing dense subsurface ocean temperature fields from sparse, masked observations.
+
+The repository currently supports:
+- EO-conditioned multi-band reconstruction (surface condition + deeper target bands)
+- cross-source conditioning where EO surface SST can come from OSTIA while deeper targets remain Copernicus reanalysis
+- latent diffusion workflow with autoencoder-based depth compression (see [Autoencoder](autoencoder.md))
+
+## Project Links
+- [GitHub Repository](https://github.com/simon-donike/DepthDif)
+- [Open Issues](https://github.com/simon-donike/DepthDif/issues)
+- [Releases](https://github.com/simon-donike/DepthDif/releases)
 
 <div class="globe-cta">
   <div class="globe-cta__body">
@@ -27,33 +27,33 @@ The repository currently supports:
   <a class="globe-cta__button" href="globe/">Open 3D Globe</a>
 </div>
 
-## Model Description  
-  
-![depthdif_schema](assets/figures/depthdif_schema.png)  
-  
-DepthDif is a conditional diffusion model: it reconstructs dense depth fields from corrupted submarine observations, conditioned on EO (surface) data plus sparse corrupted subsurface input. Synthetic sparse inputs are generated with continuous curved trajectory masks to mimic submarine movement; in the current dataset version, each track keeps one measurement every few pixels (random 2-8 pixel stride) until the configured corruption percentage is reached. It can inject coordinate/date context via FiLM conditioning and reconstruct the full target image. See the full model details in [Model](model.md).  
-  
-In the OSTIA setup, EO surface conditioning comes from mid-month OSTIA SST snapshots (15th, 12:00 UTC), while subsurface targets remain monthly Copernicus reanalysis.  
-  
-Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.  
-For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize  
-`L` on the original `x` support intersected with valid target support (`x_valid_mask ∩ y_valid_mask`) while conditioning on the stronger corruption `m'`.  
-  
-## Documentation Map  
-- [Quick Start](quickstart.md): environment setup + fastest train/infer path  
-- [Production Datasets](production-datasets.md): OSTIA L4 + EN4 profile dataset specs and download workflows  
-- [Data Source](data-source.md): source product, download, and raw variable tables  
-- [Synthetic Dataset](data.md): preprocessing, synthetic corruption, and split behavior  
-- [Model](model.md): architecture and diffusion conditioning flow  
-- [Temporal Dimension Ideas](temporal_dimension.md): options and tradeoffs for extending from `B,C,H,W` to `B,T,C,H,W` on real dataset windows  
-- [Autoencoder + Latent Diffusion](autoencoder.md): AE architecture, latent task setup, launch commands, and constraints  
-- [Data + Coordinate Injection](data-coordinate-injection.md): coordinate/date FiLM conditioning details  
-- [Training](training.md): CLI usage, run outputs, logging, checkpoints  
-- [Inference](inference.md): script and direct `predict_step` workflows  
-- [FUll settings documentation](settings.md#full-settings-documentation): per-file config keys, defaults, and explanations  
-- [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling  
-- [Experiments](experiments.md): qualitative test results  
-- [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference  
-- [Development](development.md): known issues, TODOs, and roadmap  
-- [API Reference](api.md): auto-generated module reference via `mkdocstrings`  
-  
+## Model Description
+
+![depthdif_schema](assets/figures/depthdif_schema.png)
+
+DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST plus coordinate/date context. See the full model details in [Model](model.md).
+
+In the active OSTIA setup, EO surface conditioning comes from OSTIA NetCDF files, while subsurface targets come from GLORYS NetCDF files and sparse inputs come from ARGO/EN4 profile NetCDF files.
+
+Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.
+For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize
+`L` on the original `x` support intersected with valid target support (`x_valid_mask ∩ y_valid_mask`) while conditioning on the stronger corruption `m'`.
+
+## Documentation Map
+- [Quick Start](quickstart.md): environment setup + fastest train/infer path
+- [Production Datasets](production-datasets.md): OSTIA L4 + EN4 profile dataset specs and download workflows
+- [Data Source](data-source.md): source product, download, and raw variable tables
+- [NetCDF Patch Dataset](data.md): source roots, lazy patch assembly, masks, and split behavior
+- [Model](model.md): architecture and diffusion conditioning flow
+- [Temporal Dimension Ideas](temporal_dimension.md): options and tradeoffs for extending from `B,C,H,W` to `B,T,C,H,W` on real dataset windows
+- [Autoencoder + Latent Diffusion](autoencoder.md): AE architecture, latent task setup, launch commands, and constraints
+- [Data + Coordinate Injection](data-coordinate-injection.md): coordinate/date FiLM conditioning details
+- [Training](training.md): CLI usage, run outputs, logging, checkpoints
+- [Inference](inference.md): script and direct `predict_step` workflows
+- [FUll settings documentation](settings.md#full-settings-documentation): per-file config keys, defaults, and explanations
+- [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling
+- [Experiments](experiments.md): qualitative test results
+- [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference
+- [Development](development.md): known issues, TODOs, and roadmap
+- [API Reference](api.md): auto-generated module reference via `mkdocstrings`
+

@@ -4,7 +4,7 @@ This script loads the configured dataset/datamodule, builds the autoencoder
 Lightning module, restores checkpoints if configured, and runs the training job.
 
 Typical CLI:
-    /work/envs/depth/bin/python train_autoencoder.py --data-config configs/lat_space/data_config.yaml --train-config configs/lat_space/training_config.yaml --ae-config configs/lat_space/ae_config.yaml
+    /work/envs/depth/bin/python train_autoencoder.py --data-config configs/px_space/data_ostia_argo_netcdf.yaml --train-config configs/lat_space/training_config.yaml --ae-config configs/lat_space/ae_config.yaml
 """
 
 from __future__ import annotations
@@ -23,8 +23,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
-from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
-from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
+from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from models.latent import DepthBandAutoencoderLightning
 
 
@@ -74,15 +73,9 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
         ds_cfg,
         "core.dataset_variant",
         "dataset_variant",
-        default=None,
+        default="argo_netcdf_gridded",
     )
-    if variant is None:
-        stem = Path(data_config_path).stem.lower()
-        if "ostia" in stem:
-            return "ostia"
-        if "4band" in stem or "eo" in stem:
-            return "eo_4band"
-        return "eo_4band"
+    _ = data_config_path
     return str(variant).strip().lower()
 
 
@@ -92,16 +85,10 @@ def build_dataset(
 ) -> torch.utils.data.Dataset:
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
-    if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
-        return SurfaceTempPatch4BandsLightDataset.from_config(
-            data_config_path, split="all"
-        )
-    if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
-        return SurfaceTempPatchOstiaLightDataset.from_config(
-            data_config_path, split="all"
-        )
+    if dataset_variant == "argo_netcdf_gridded":
+        return ArgoNetCDFGriddedPatchDataset.from_config(data_config_path, split="all")
     raise ValueError(
-        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['eo_4band', 'ostia']."
+        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['argo_netcdf_gridded']."
     )
 
 
@@ -164,7 +151,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--data-config",
-        default="configs/lat_space/data_config.yaml",
+        default="configs/px_space/data_ostia_argo_netcdf.yaml",
         help="Path to data config yaml.",
     )
     parser.add_argument(

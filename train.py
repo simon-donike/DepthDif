@@ -26,9 +26,6 @@ from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
-from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
-from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
 
@@ -288,7 +285,6 @@ def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> Non
 
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
-    # Prefer explicit dataset variant from grouped config, with filename-based fallback.
     """Resolve and validate dataset variant.
 
     Args:
@@ -302,16 +298,9 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
         ds_cfg,
         "core.dataset_variant",
         "dataset_variant",
-        default=None,
+        default="argo_netcdf_gridded",
     )
-    if variant is None:
-        # Fallback: infer from config filename if explicit variant is absent.
-        stem = Path(data_config_path).stem.lower()
-        if "ostia" in stem:
-            return "ostia"
-        if "4band" in stem or "eo" in stem:
-            return "eo_4band"
-        return "eo_4band"
+    _ = data_config_path
     return str(variant).strip().lower()
 
 
@@ -341,7 +330,7 @@ def build_dataset(
     *,
     split: str,
 ) -> torch.utils.data.Dataset:
-    # Route to dataset implementation matching the requested training task.
+    # Keep one active dataset path so stale configs fail loudly.
     """Build and return dataset.
 
     Args:
@@ -353,50 +342,7 @@ def build_dataset(
         torch.utils.data.Dataset: Computed output value.
     """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
-    if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
-        return SurfaceTempPatch4BandsLightDataset.from_config(
-            data_config_path,
-            split=split,
-        )
-    if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
-        return SurfaceTempPatchOstiaLightDataset.from_config(
-            data_config_path,
-            split=split,
-        )
-    if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
-        return OstiaArgoTiffDataset(
-            csv_path=str(
-                ds_cfg_value(
-                    ds_cfg,
-                    "core.manifest_csv_path",
-                    "manifest_csv_path",
-                    default=OstiaArgoTiffDataset.DEFAULT_CSV_PATH,
-                )
-            ),
-            split=split,
-            return_info=bool(
-                ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
-            ),
-            return_coords=bool(
-                ds_cfg_value(
-                    ds_cfg, "output.return_coords", "return_coords", default=True
-                )
-            ),
-            synthetic_mode=bool(
-                ds_cfg_value(
-                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
-                )
-            ),
-            synthetic_pixel_count=int(
-                ds_cfg_value(
-                    ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20
-                )
-            ),
-            random_seed=int(
-                ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
-            ),
-        )
-    if dataset_variant in {"argo_netcdf_gridded", "ostia_argo_netcdf"}:
+    if dataset_variant == "argo_netcdf_gridded":
         return ArgoNetCDFGriddedPatchDataset.from_config(
             data_config_path,
             split=split,
@@ -404,7 +350,7 @@ def build_dataset(
     raise ValueError(
         "Unsupported dataset variant in data config. "
         f"Got '{dataset_variant}', expected one of "
-        "{'eo_4band', 'ostia', 'ostia_argo_disk', 'argo_netcdf_gridded'}."
+        "{'argo_netcdf_gridded'}."
     )
 
 
@@ -430,7 +376,7 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
 
 def main(
     model_config_path: str = "configs/px_space/model_config.yaml",
-    data_config_path: str = "configs/px_space/data_config.yaml",
+    data_config_path: str = "configs/px_space/data_ostia_argo_netcdf.yaml",
     training_config_path: str = "configs/px_space/training_config.yaml",
     overrides: list[str] | None = None,
     fast_dev_run: int = 0,
@@ -590,7 +536,7 @@ def main(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
     # Instantiate dataset variant and inject EO dropout probability from data config.
-    # Train/val datasets are instantiated separately so explicit CSV split labels are respected.
+    # Train/val datasets are instantiated separately so dataset split labels are respected.
     train_dataset = build_dataset(
         data_config_path=effective_data_config_path,
         ds_cfg=ds_cfg,
@@ -737,7 +683,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",
-        default="configs/px_space/data_config.yaml",
+        default="configs/px_space/data_ostia_argo_netcdf.yaml",
         help="Path to data config yaml.",
     )
     parser.add_argument(
@@ -790,7 +736,7 @@ if __name__ == "__main__":
 """
 # Training quick start (single command):
 python train.py --model-config configs/px_space/model_config.yaml \
-    --data-config configs/px_space/data_config.yaml \
+    --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
     --training-config configs/px_space/training_config.yaml
 
 # Sweep quick start (single command):

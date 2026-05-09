@@ -13,17 +13,18 @@ from torch.utils.data import Dataset
 import xarray as xr
 import yaml
 
-from data.dataset_creation.source_files import (
+from data.dataset_creation.export_aligned_argo.source_files import (
     ARGO_DEPTH_VAR,
     TimedFile,
     date_to_days_since_1950,
     open_argo_dataset,
     scan_timed_files,
 )
-from data.dataset_ostia_argo import OstiaArgoTileDataset
 from utils.normalizations import temperature_normalize
 
 MISSING_TEXT_VALUES = frozenset({"", "__missing__", "nan", "none", "null"})
+GLORYS_RELATIVE_DEPTH_CUTOFF = 0.10
+GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M = 10.0
 
 
 def _parse_date_int(value: Any) -> int:
@@ -89,6 +90,78 @@ def _first_present_name(names: Sequence[str], candidates: Sequence[str]) -> str 
         if candidate in available:
             return candidate
     return None
+
+
+def _collapse_duplicate_profile_depths(
+    depth: np.ndarray,
+    temperature: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    unique_depths, inverse = np.unique(depth, return_inverse=True)
+    if unique_depths.size == depth.size:
+        return depth, temperature
+    # Average repeated source depths so interpolation receives one strictly increasing axis.
+    temp_sum = np.bincount(inverse, weights=temperature)
+    temp_count = np.bincount(inverse)
+    return (
+        unique_depths.astype(np.float64, copy=False),
+        (temp_sum / np.maximum(temp_count, 1)).astype(np.float64, copy=False),
+    )
+
+
+def _align_argo_profile_to_glorys_depths(
+    *,
+    temperature: np.ndarray,
+    depth: np.ndarray,
+    glorys_depths: np.ndarray,
+) -> np.ndarray:
+    target_depths = np.asarray(glorys_depths, dtype=np.float64).reshape(-1)
+    out = np.full(target_depths.shape, np.nan, dtype=np.float32)
+    temp = np.asarray(temperature, dtype=np.float64).reshape(-1)
+    depth = np.asarray(depth, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(temp) & np.isfinite(depth) & (depth >= 0.0)
+    if not np.any(valid):
+        return out
+
+    depth = depth[valid]
+    temp = temp[valid]
+    order = np.argsort(depth, kind="mergesort")
+    depth = depth[order]
+    temp = temp[order]
+    depth, temp = _collapse_duplicate_profile_depths(depth, temp)
+    if depth.size == 0:
+        return out
+
+    insert_idx = np.searchsorted(depth, target_depths, side="left")
+    left_idx = np.clip(insert_idx - 1, 0, max(depth.size - 1, 0))
+    right_idx = np.clip(insert_idx, 0, max(depth.size - 1, 0))
+    nearest_depth_distance = np.minimum(
+        np.abs(target_depths - depth[left_idx]),
+        np.abs(target_depths - depth[right_idx]),
+    )
+    max_allowed_distance = np.maximum(
+        GLORYS_RELATIVE_DEPTH_CUTOFF * target_depths,
+        GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
+    )
+    valid_targets = (
+        np.isfinite(target_depths)
+        & (target_depths >= depth[0])
+        & (target_depths <= depth[-1])
+        & np.isfinite(nearest_depth_distance)
+        & (nearest_depth_distance <= max_allowed_distance)
+    )
+    if not np.any(valid_targets):
+        return out
+
+    if depth.size == 1:
+        exact = valid_targets & np.isclose(target_depths, depth[0], rtol=0.0, atol=1.0e-6)
+        out[exact] = np.float32(temp[0])
+        return out
+
+    out[valid_targets] = np.interp(target_depths[valid_targets], depth, temp).astype(
+        np.float32,
+        copy=False,
+    )
+    return out
 
 
 @dataclass(frozen=True)
@@ -445,7 +518,7 @@ class ArgoNetCDFStore:
             depth = self._read_profile_matrix(ds, self.depth_var_name, profile_rows)
             for local_idx, output_idx in enumerate(local_positions.tolist()):
                 # Project raw profile observations onto the GLORYS target depth axis at read time.
-                out[int(output_idx)] = OstiaArgoTileDataset._align_argo_profile_to_glorys_depths(
+                out[int(output_idx)] = _align_argo_profile_to_glorys_depths(
                     temperature=temp[int(local_idx)],
                     depth=depth[int(local_idx)],
                     glorys_depths=self.depth_axis_m,
@@ -758,10 +831,10 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         require_argo_for_train: bool = True,
         require_argo_for_val: bool = True,
         require_argo_for_all: bool = False,
+        synthetic_mode: bool = False,
+        synthetic_pixel_count: int = 250,
         return_info: bool = True,
         return_coords: bool = True,
-        synthetic_mode: bool = False,
-        synthetic_pixel_count: int = 20,
         random_seed: int = 7,
         cache_size: int = 8,
     ) -> None:
@@ -775,16 +848,16 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         self.ostia_var_name = str(ostia_var_name)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
-        self.synthetic_mode = bool(synthetic_mode)
-        self.synthetic_pixel_count = int(synthetic_pixel_count)
         self.random_seed = int(random_seed)
         self.require_argo_for_train = bool(require_argo_for_train)
         self.require_argo_for_val = bool(require_argo_for_val)
         self.require_argo_for_all = bool(require_argo_for_all)
+        self.synthetic_mode = bool(synthetic_mode)
+        self.synthetic_pixel_count = int(synthetic_pixel_count)
         if self.temporal_window_days < 1:
             raise ValueError("sampling.temporal_window_days must be >= 1.")
-        if self.synthetic_pixel_count < 1:
-            raise ValueError("synthetic_pixel_count must be >= 1.")
+        if self.synthetic_pixel_count < 0:
+            raise ValueError("synthetic.pixel_count must be >= 0.")
 
         self.glorys_store = TimedNetCDFStore(glorys_dir, cache_size=cache_size)
         self.ostia_store = TimedNetCDFStore(ostia_dir, cache_size=cache_size)
@@ -948,12 +1021,6 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                     default=False,
                 )
             ),
-            return_info=bool(
-                cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=True)
-            ),
-            return_coords=bool(
-                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=True)
-            ),
             synthetic_mode=bool(
                 cls._cfg_get(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
             ),
@@ -962,8 +1029,14 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                     ds_cfg,
                     "synthetic.pixel_count",
                     "synthetic_pixel_count",
-                    default=20,
+                    default=250,
                 )
+            ),
+            return_info=bool(
+                cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=True)
+            ),
+            return_coords=bool(
+                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=True)
             ),
             random_seed=int(
                 cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
@@ -1006,6 +1079,8 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         return rows
 
     def _require_argo_for_current_split(self) -> bool:
+        if self.synthetic_mode:
+            return False
         if self.split == "train":
             return self.require_argo_for_train
         if self.split == "val":
@@ -1103,43 +1178,59 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         )
         return x_np, x_valid
 
+    def _synthetic_rng_for_row(
+        self,
+        row: dict[str, Any],
+        *,
+        idx: int,
+    ) -> np.random.Generator:
+        seed = np.random.SeedSequence(
+            [
+                int(self.random_seed),
+                int(row.get("patch_id", 0)),
+                int(row.get("date", 0)),
+                int(idx),
+            ]
+        )
+        return np.random.default_rng(seed)
+
     def _build_synthetic_x_from_glorys(
         self,
-        *,
         y_np: np.ndarray,
         y_valid_mask_np: np.ndarray,
+        row: dict[str, Any],
+        *,
         idx: int,
-    ) -> tuple[np.ndarray, np.ndarray, int]:
-        horizontal_valid = np.asarray(y_valid_mask_np, dtype=bool).any(axis=0)
-        candidate_flat = np.flatnonzero(horizontal_valid.reshape(-1))
-        if candidate_flat.size == 0:
-            raise RuntimeError("Synthetic mode found no finite GLORYS pixels to sample from.")
+    ) -> tuple[np.ndarray, np.ndarray]:
+        x_np = np.full(y_np.shape, np.nan, dtype=np.float32)
+        x_valid = np.zeros(y_valid_mask_np.shape, dtype=bool)
+        if self.synthetic_pixel_count == 0:
+            return x_np, x_valid
 
-        rng = np.random.default_rng(self.random_seed + int(idx))
-        pixel_count_std = max(1.0, 0.1 * float(self.synthetic_pixel_count))
-        sampled_pixel_count = int(
-            np.rint(rng.normal(self.synthetic_pixel_count, pixel_count_std))
-        )
-        sampled_pixel_count = int(
-            np.clip(
-                sampled_pixel_count,
-                max(1, int(np.floor(0.9 * self.synthetic_pixel_count))),
-                max(1, int(np.ceil(1.1 * self.synthetic_pixel_count))),
-            )
-        )
-        sampled_pixel_count = min(sampled_pixel_count, int(candidate_flat.size))
+        valid_columns = np.asarray(y_valid_mask_np, dtype=bool).any(axis=0)
+        flat_valid_columns = np.flatnonzero(valid_columns.reshape(-1))
+        if flat_valid_columns.size == 0:
+            return x_np, x_valid
 
-        selected_flat = rng.choice(
-            candidate_flat, size=sampled_pixel_count, replace=False
+        sample_count = min(int(self.synthetic_pixel_count), int(flat_valid_columns.size))
+        rng = self._synthetic_rng_for_row(row, idx=idx)
+        selected = rng.choice(flat_valid_columns, size=sample_count, replace=False)
+        row_indices, col_indices = np.unravel_index(
+            selected,
+            valid_columns.shape,
         )
-        selected_mask_2d = np.zeros(horizontal_valid.shape, dtype=bool)
-        selected_mask_2d.reshape(-1)[selected_flat] = True
-
-        x_np = np.full_like(y_np, np.nan, dtype=np.float32)
-        selected_mask_3d = np.broadcast_to(selected_mask_2d[None, :, :], y_np.shape)
-        x_valid_mask_np = selected_mask_3d & np.asarray(y_valid_mask_np, dtype=bool)
-        x_np[x_valid_mask_np] = y_np[x_valid_mask_np]
-        return x_np, x_valid_mask_np, int(sampled_pixel_count)
+        for row_idx, col_idx in zip(row_indices.tolist(), col_indices.tolist()):
+            depth_valid = y_valid_mask_np[:, int(row_idx), int(col_idx)]
+            if not np.any(depth_valid):
+                continue
+            # Synthetic mode uses GLORYS itself as sparse input at sampled columns.
+            x_np[depth_valid, int(row_idx), int(col_idx)] = y_np[
+                depth_valid,
+                int(row_idx),
+                int(col_idx),
+            ]
+            x_valid[depth_valid, int(row_idx), int(col_idx)] = True
+        return x_np, x_valid
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         row = self._rows[int(idx)]
@@ -1147,11 +1238,11 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         eo_np = self._load_eo_patch(row, axes)
         y_np = self._load_y_patch(row, axes)
         y_valid_mask_np = np.isfinite(y_np)
-        synthetic_pixel_count: int | None = None
         if self.synthetic_mode:
-            x_np, x_valid_mask_np, synthetic_pixel_count = self._build_synthetic_x_from_glorys(
-                y_np=y_np,
-                y_valid_mask_np=y_valid_mask_np,
+            x_np, x_valid_mask_np = self._build_synthetic_x_from_glorys(
+                y_np,
+                y_valid_mask_np,
+                row,
                 idx=int(idx),
             )
         else:
@@ -1189,8 +1280,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             )
         if self.return_info:
             info = dict(row)
-            if self.synthetic_mode:
-                info["synthetic_mode"] = True
-                info["synthetic_pixel_count"] = int(synthetic_pixel_count or 0)
+            info["x_source"] = "glorys_synthetic" if self.synthetic_mode else "argo"
+            info["synthetic_pixel_count"] = (
+                int(self.synthetic_pixel_count) if self.synthetic_mode else 0
+            )
             sample["info"] = info
         return sample

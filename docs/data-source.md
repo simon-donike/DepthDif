@@ -42,7 +42,7 @@ OSTIA is a satellite- and in-situ-derived ocean surface temperature product that
 - Geometry: global 2D grid
 
 OSTIA example tile:  
-![img](assets/data/dataset_ostia.png)
+![img](assets/data/ostia_dataset.png)
 
 ## Product C: EN4 / ARGO Profiles
 ![ARGO banner](assets/data/argo_banner.png)

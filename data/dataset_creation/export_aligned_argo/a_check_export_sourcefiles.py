@@ -1,9 +1,9 @@
 """
 Default overlap-range check using the standard /data1/datasets/depth_v2 paths:
-/work/envs/depth/bin/python data/dataset_creation/a_check_export_sourcefiles.py
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/a_check_export_sourcefiles.py
 
 Explicit full-path equivalent:
-/work/envs/depth/bin/python data/dataset_creation/a_check_export_sourcefiles.py \
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/a_check_export_sourcefiles.py \
   --argo-dir /data1/datasets/depth_v2/en4_profiles \
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
@@ -12,11 +12,11 @@ Explicit full-path equivalent:
   --end-date 20240731
 
 Quick ARGO-only check:
-/work/envs/depth/bin/python data/dataset_creation/a_check_export_sourcefiles.py \
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/a_check_export_sourcefiles.py \
   --include argo
 
 Repair broken files after confirmation:
-/work/envs/depth/bin/python data/dataset_creation/a_check_export_sourcefiles.py --repair
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/a_check_export_sourcefiles.py --repair
 """
 
 from __future__ import annotations
@@ -35,11 +35,11 @@ import numpy as np
 import xarray as xr
 from tqdm import tqdm
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data.dataset_creation.source_files import (
+from data.dataset_creation.export_aligned_argo.source_files import (
     ARGO_DEPTH_VAR,
     ARGO_PROFILE_VARS,
     GLORYS_2D_VARS,

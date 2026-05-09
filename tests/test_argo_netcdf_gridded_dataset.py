@@ -142,7 +142,6 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                 **_dataset_kwargs(Path(tmpdir)),
                 split="train",
                 require_argo_for_train=True,
-                synthetic_mode=False,
             )
 
             self.assertEqual(len(dataset), 1)
@@ -183,7 +182,6 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                 **_dataset_kwargs(Path(tmpdir)),
                 split="all",
                 require_argo_for_all=False,
-                synthetic_mode=False,
             )
 
             self.assertEqual([int(row["date"]) for row in dataset.rows], [20240102, 20240103])
@@ -191,6 +189,28 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
             self.assertFalse(bool(no_argo_sample["x_valid_mask"].any().item()))
             self.assertTrue(bool(no_argo_sample["y_valid_mask"].any().item()))
             self.assertTrue(torch.equal(no_argo_sample["x"], torch.zeros_like(no_argo_sample["x"])))
+
+    def test_synthetic_mode_samples_sparse_x_from_glorys_y(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset = ArgoNetCDFGriddedPatchDataset(
+                **_dataset_kwargs(Path(tmpdir)),
+                split="train",
+                require_argo_for_train=True,
+                synthetic_mode=True,
+                synthetic_pixel_count=1,
+            )
+
+            self.assertEqual([int(row["date"]) for row in dataset.rows], [20240102, 20240103])
+            sample = dataset[1]
+            self.assertEqual(int(sample["x_valid_mask_1d"].sum().item()), 1)
+            self.assertEqual(int(sample["x_valid_mask"].sum().item()), 2)
+            self.assertEqual(sample["info"]["x_source"], "glorys_synthetic")
+            self.assertEqual(sample["info"]["synthetic_pixel_count"], 1)
+
+            x_c = temperature_normalize(mode="denorm", tensor=sample["x"])
+            y_c = temperature_normalize(mode="denorm", tensor=sample["y"])
+            valid = sample["x_valid_mask"]
+            self.assertTrue(torch.allclose(x_c[valid], y_c[valid], atol=1e-5))
 
     def test_train_builder_wires_argo_netcdf_gridded_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -223,8 +243,8 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                         "require_argo_for_val": False,
                         "require_argo_for_all": False,
                     },
+                    "synthetic": {"enabled": True, "pixel_count": 1},
                     "output": {"return_info": True, "return_coords": False},
-                    "synthetic": {"enabled": False, "pixel_count": 1},
                     "runtime": {"random_seed": 7, "cache_size": 2},
                 },
                 "split": {"val_fraction": 0.0},
@@ -234,9 +254,10 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
             dataset = build_dataset(str(config_path), payload["dataset"], split="train")
 
             self.assertIsInstance(dataset, ArgoNetCDFGriddedPatchDataset)
-            self.assertFalse(dataset.synthetic_mode)
             self.assertTrue(dataset.return_info)
             self.assertFalse(dataset.return_coords)
+            self.assertTrue(dataset.synthetic_mode)
+            self.assertEqual(dataset.synthetic_pixel_count, 1)
 
     def test_global_inference_depth_axis_uses_dataset_property(self) -> None:
         class _DatasetWithDepthAxis:

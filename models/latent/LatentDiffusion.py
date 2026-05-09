@@ -83,7 +83,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
     def from_config(
         cls,
         model_config_path: str = "configs/lat_space/model_config.yaml",
-        data_config_path: str = "configs/lat_space/data_config.yaml",
+        data_config_path: str = "configs/px_space/data_ostia_argo_netcdf.yaml",
         training_config_path: str = "configs/lat_space/training_config.yaml",
         datamodule: pl.LightningDataModule | None = None,
     ) -> "LatentDiffusionConditional":

@@ -10,9 +10,6 @@ import yaml
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
-from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
-from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
 
@@ -49,15 +46,9 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
         ds_cfg,
         "core.dataset_variant",
         "dataset_variant",
-        default=None,
+        default="argo_netcdf_gridded",
     )
-    if variant is None:
-        stem = Path(data_config_path).stem.lower()
-        if "ostia" in stem:
-            return "ostia"
-        if "4band" in stem or "eo" in stem:
-            return "eo_4band"
-        return "eo_4band"
+    _ = data_config_path
     return str(variant).strip().lower()
 
 
@@ -66,48 +57,7 @@ def build_dataset(
 ) -> torch.utils.data.Dataset:
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
-    if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
-        return SurfaceTempPatch4BandsLightDataset.from_config(
-            data_config_path, split=split
-        )
-    if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
-        return SurfaceTempPatchOstiaLightDataset.from_config(
-            data_config_path, split=split
-        )
-    if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
-        return OstiaArgoTiffDataset(
-            csv_path=str(
-                ds_cfg_value(
-                    ds_cfg,
-                    "core.manifest_csv_path",
-                    "manifest_csv_path",
-                    default=OstiaArgoTiffDataset.DEFAULT_CSV_PATH,
-                )
-            ),
-            split=split,
-            return_info=bool(
-                ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
-            ),
-            return_coords=bool(
-                ds_cfg_value(
-                    ds_cfg, "output.return_coords", "return_coords", default=True
-                )
-            ),
-            synthetic_mode=bool(
-                ds_cfg_value(
-                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
-                )
-            ),
-            synthetic_pixel_count=int(
-                ds_cfg_value(
-                    ds_cfg, "synthetic.pixel_count", "synthetic_pixel_count", default=20
-                )
-            ),
-            random_seed=int(
-                ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
-            ),
-        )
-    if dataset_variant in {"argo_netcdf_gridded", "ostia_argo_netcdf"}:
+    if dataset_variant == "argo_netcdf_gridded":
         return ArgoNetCDFGriddedPatchDataset.from_config(
             data_config_path,
             split=split,
@@ -115,7 +65,7 @@ def build_dataset(
     raise ValueError(
         "Unsupported dataset variant "
         f"'{dataset_variant}'. Expected one of "
-        "['eo_4band', 'ostia', 'ostia_argo_disk', 'argo_netcdf_gridded']."
+        "['argo_netcdf_gridded']."
     )
 
 

@@ -1000,7 +1000,7 @@ def log_wandb_depth_level_reconstruction_grid(
         land_mask_i = _mask_for_sample(land_mask, sample_i)
 
         for row_idx, requested_band_idx in enumerate(band_indices):
-            # Clamp requested indices so this view still renders for 1/3/4-band setups.
+            # Clamp requested indices so this view still renders for any depth count.
             band_idx = int(max(0, min(int(requested_band_idx), max_band_idx)))
             valid_band = valid_mask_i
             if valid_band is not None and valid_band.ndim == 3:

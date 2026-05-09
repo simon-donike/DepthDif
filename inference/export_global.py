@@ -6,7 +6,7 @@ that week so the output stays one spatially complete raster rather than seven.
 
 Typical CLI:
 /work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --year 2015 \
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
@@ -17,7 +17,7 @@ Typical CLI:
   
 Run full including push:
 /work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --year 2015 \
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
@@ -71,7 +71,7 @@ from utils.normalizations import temperature_normalize
 from utils.validation_denoise import save_glorys_profile_comparison_plot
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
-DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf_actual.yaml"
+DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
@@ -460,9 +460,7 @@ def select_export_indices(
             idx for sample_date, idx in parsed_dates if sample_date == selected
         ]
         if not matching_indices:
-            raise RuntimeError(
-                f"No manifest rows matched exact date {int(exact_date)}."
-            )
+            raise RuntimeError(f"No dataset rows matched exact date {int(exact_date)}.")
     elif iso_year is not None and iso_week is not None:
         matching_dates = [
             sample_date
@@ -471,10 +469,10 @@ def select_export_indices(
         ]
         if not matching_dates:
             raise RuntimeError(
-                f"No manifest rows matched ISO week {int(iso_year)}-W{int(iso_week):02d}."
+                f"No dataset rows matched ISO week {int(iso_year)}-W{int(iso_week):02d}."
             )
-        # One ISO week can contain several daily snapshots in this manifest. Keep the
-        # export single-raster by choosing the earliest date that week.
+        # One ISO week can contain several daily snapshots. Keep the export
+        # single-raster by choosing the earliest date that week.
         selected = min(matching_dates)
         matching_indices = [
             idx for sample_date, idx in parsed_dates if sample_date == selected
@@ -1199,7 +1197,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run DepthDif inference for one globally complete daily snapshot selected "
-            "from the OSTIA/ARGO disk manifest, then export band 0 as one large GeoTIFF."
+            "from the NetCDF patch dataset, then export configured depth rasters."
         )
     )
     parser.add_argument("--model-config", type=str, default=DEFAULT_MODEL_CONFIG)
@@ -1230,7 +1228,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="all",
         choices=("all", "train", "val"),
-        help="Manifest split filter. Global raster export requires 'all'.",
+        help="Dataset split filter. Global raster export requires 'all'.",
     )
     parser.add_argument(
         "--batch-size",
@@ -1369,8 +1367,8 @@ def main() -> None:
     )
 
     selected_rows = [rows[idx] for idx in selection.indices]
-    selected_manifest = pd.DataFrame.from_records(selected_rows)
-    selected_manifest.to_csv(run_dir / "selected_patches.csv", index=False)
+    selected_patches = pd.DataFrame.from_records(selected_rows)
+    selected_patches.to_csv(run_dir / "selected_patches.csv", index=False)
 
     model_cfg = load_yaml(args.model_config)
     batch_size = int(

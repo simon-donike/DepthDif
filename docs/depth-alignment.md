@@ -21,9 +21,9 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 5. Leave out-of-range or rejected targets invalid; no depth extrapolation is applied.
 
 ## Output Semantics
-- In `data/dataset_ostia_argo.py`, ARGO is resampled onto the GLORYS depth axis before tile aggregation.
+- In `data/dataset_argo_netcdf_gridded.py`, ARGO is resampled onto the GLORYS depth axis before patch rasterization.
 - `x_valid_mask` marks aligned Argo depths that passed the profile-range and nearest-depth checks.
-- Exported Argo GeoTIFFs remain georeferenced in `EPSG:4326` and store GLORYS depth-aligned band metadata.
+- The model-facing `x`, `y`, `x_valid_mask`, and `y_valid_mask` tensors share this GLORYS depth axis.
 
 ## Visual Diagnostics
 ### Archive-wide ARGO depth frequencies

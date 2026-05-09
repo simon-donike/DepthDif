@@ -19,7 +19,6 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data.datamodule import DepthTileDataModule
-from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from inference.core import (
     build_dataset,
     build_model,
@@ -36,7 +35,7 @@ from utils.validation_denoise import (
 )
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
-DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf_actual.yaml"
+DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_OUTPUT_NAME = "validation_error_summary"
@@ -63,31 +62,14 @@ def build_validation_summary_dataset(
     *,
     split: str,
 ) -> torch.utils.data.Dataset:
-    """Build the explicit manifest split used for validation summary export."""
+    """Build the explicit dataset split used for validation summary export."""
     data_cfg = load_yaml(data_config_path)
     ds_cfg = data_cfg.get("dataset", {})
-    core_cfg = ds_cfg.get("core", {}) if isinstance(ds_cfg, dict) else {}
-    if (
-        isinstance(core_cfg, dict)
-        and "dataset_variant" not in core_cfg
-        and "manifest_csv_path" in core_cfg
-    ):
-        dataset = OstiaArgoTiffDataset.from_config(
-            config_path=str(data_config_path),
-            split=str(split),
-        )
-        dataset.synthetic_mode = False
-        return dataset
-
-    dataset = build_dataset(
+    return build_dataset(
         str(data_config_path),
         ds_cfg,
         split=str(split),
     )
-    # The export must compare against real observed Argo profiles, not synthetic mode.
-    if hasattr(dataset, "synthetic_mode"):
-        dataset.synthetic_mode = False
-    return dataset
 
 
 def _dataset_rows(dataset: torch.utils.data.Dataset) -> list[dict[str, Any]]:
@@ -113,7 +95,7 @@ def filter_validation_summary_dataset_by_iso_week(
     iso_year: int | None = None,
     iso_week: int | None = None,
 ) -> tuple[int | None, int | None]:
-    """Restrict the already split manifest rows to one requested ISO week."""
+    """Restrict the already split dataset rows to one requested ISO week."""
     if iso_year is None and iso_week is None:
         return None, None
     if (iso_year is None) ^ (iso_week is None):
@@ -128,7 +110,7 @@ def filter_validation_summary_dataset_by_iso_week(
     ]
     if not filtered_rows:
         raise RuntimeError(
-            f"No manifest rows matched ISO week {int(iso_year)}-W{int(iso_week):02d} "
+            f"No dataset rows matched ISO week {int(iso_year)}-W{int(iso_week):02d} "
             f"within split '{getattr(dataset, 'split', '')}'."
         )
     _set_dataset_rows(dataset, filtered_rows)
@@ -297,7 +279,7 @@ def build_validation_error_summary_dataframe(
 def resolve_validation_summary_depth_axis_m(
     dataset: torch.utils.data.Dataset,
 ) -> np.ndarray:
-    """Load the physical GLORYS depth axis from the first manifest row."""
+    """Load the physical GLORYS depth axis from dataset metadata or a sample row."""
     if len(dataset) <= 0:
         raise RuntimeError("Validation summary export requires a non-empty dataset.")
     first_row = _dataset_rows(dataset)[0]
@@ -347,7 +329,7 @@ def _figure_title_for_split(split: str) -> str:
     """Build the user-facing figure title for exported validation summary plots."""
     split_label = str(split).strip().lower()
     if split_label == "all":
-        return "Median profile and absolute error across manifest"
+        return "Median profile and absolute error across all dataset rows"
     return (
         f"Median profile and absolute error across "
         f"{split_label.capitalize()} split"
@@ -370,7 +352,7 @@ def _figure_title_for_export(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run DepthDif inference across one manifest split and export pooled "
+            "Run DepthDif inference across one dataset split and export pooled "
             "per-depth absolute error summaries against GLORYS and observed ARGO."
         )
     )
@@ -394,7 +376,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="val",
         choices=("train", "val", "all"),
-        help="Explicit manifest split to summarize.",
+        help="Explicit dataset split to summarize.",
     )
     parser.add_argument("--year", type=int, default=None, help="ISO year filter.")
     parser.add_argument("--iso-week", type=int, default=None, help="ISO week filter.")

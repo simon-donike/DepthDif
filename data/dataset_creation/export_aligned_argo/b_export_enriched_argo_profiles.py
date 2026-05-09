@@ -1,12 +1,12 @@
 """
 Production-range enriched ARGO export:
-/work/envs/depth/bin/python data/dataset_creation/b_export_enriched_argo_profiles.py \
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/b_export_enriched_argo_profiles.py \
   --start-date 20100101 \
   --end-date 20240731 \
   --output-zarr /data1/datasets/depth_v2/enriched_argo_profiles.zarr
 
 Small smoke export:
-/work/envs/depth/bin/python data/dataset_creation/b_export_enriched_argo_profiles.py \
+/work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/b_export_enriched_argo_profiles.py \
   --start-date 20100101 \
   --end-date 20100101 \
   --max-profiles 4 \
@@ -30,12 +30,16 @@ import numpy as np
 import xarray as xr
 from tqdm import tqdm
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data.dataset_ostia_argo import OstiaArgoTileDataset
-from data.dataset_creation.source_files import (
+from data.dataset_argo_netcdf_gridded import (
+    GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
+    GLORYS_RELATIVE_DEPTH_CUTOFF,
+    _align_argo_profile_to_glorys_depths,
+)
+from data.dataset_creation.export_aligned_argo.source_files import (
     ARGO_DEPTH_VAR,
     ARGO_LEVEL_QC_VARS,
     ARGO_PROFILE_VARS,
@@ -162,7 +166,8 @@ def project_argo_profile_to_glorys_depths(
     depths: np.ndarray,
     glorys_depths: np.ndarray,
 ) -> np.ndarray:
-    return OstiaArgoTileDataset._align_argo_profile_to_glorys_depths(
+    # Keep the export projection identical to the active NetCDF patch dataset.
+    return _align_argo_profile_to_glorys_depths(
         temperature=np.asarray(values, dtype=np.float32),
         depth=np.asarray(depths, dtype=np.float32),
         glorys_depths=np.asarray(glorys_depths, dtype=np.float32),
@@ -237,8 +242,8 @@ def _project_argo_qc_to_glorys_depths(
         np.abs(target_depths - right_depth),
     )
     max_allowed_distance = np.maximum(
-        OstiaArgoTileDataset.GLORYS_RELATIVE_DEPTH_CUTOFF * target_depths,
-        OstiaArgoTileDataset.GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
+        GLORYS_RELATIVE_DEPTH_CUTOFF * target_depths,
+        GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
     )
     in_range = (
         np.isfinite(target_depths)
@@ -484,7 +489,7 @@ def _build_export_metadata(
     }
     return {
         "description": "ARGO profiles enriched with freshly collocated GLORYS, OSTIA, and sea-level fields.",
-        "created_by": "data/dataset_creation/b_export_enriched_argo_profiles.py",
+        "created_by": "data/dataset_creation/export_aligned_argo/b_export_enriched_argo_profiles.py",
         "created_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "requested_date_range": {"start_date": start_date, "end_date": end_date},
         "batch_size": int(batch_size),

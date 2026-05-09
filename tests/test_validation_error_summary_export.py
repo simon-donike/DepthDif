@@ -5,13 +5,10 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
-import yaml
 
 from inference.export_validation_error_summary import (
     build_validation_error_summary_dataframe,
-    build_validation_summary_dataset,
     create_validation_error_summary_accumulator,
     filter_validation_summary_dataset_by_iso_week,
     update_validation_error_summary_accumulator,
@@ -156,112 +153,30 @@ class TestValidationErrorSummaryExport(unittest.TestCase):
             self.assertTrue(profile_error_plot_path.is_file())
             self.assertGreater(profile_error_plot_path.stat().st_size, 0)
 
-    def test_build_validation_summary_dataset_uses_explicit_manifest_split(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            csv_path = tmp_path / "manifest.csv"
-            config_path = tmp_path / "data_config.yaml"
-
-            pd.DataFrame(
-                [
-                    {
-                        "ostia_tif_path": "ostia_a.tif",
-                        "argo_tif_path": "argo_a.tif",
-                        "glorys_tif_path": "glorys_a.tif",
-                        "phase": "train",
-                    },
-                    {
-                        "ostia_tif_path": "ostia_b.tif",
-                        "argo_tif_path": "argo_b.tif",
-                        "glorys_tif_path": "glorys_b.tif",
-                        "phase": "val",
-                    },
-                ]
-            ).to_csv(csv_path, index=False)
-            with config_path.open("w", encoding="utf-8") as f:
-                yaml.safe_dump(
-                    {
-                        "dataset": {
-                            "core": {
-                                "manifest_csv_path": str(csv_path),
-                            },
-                            "synthetic": {
-                                "enabled": True,
-                            },
-                        }
-                    },
-                    f,
-                    sort_keys=False,
-                )
-
-            dataset = build_validation_summary_dataset(
-                str(config_path),
-                split="val",
-            )
-
-            self.assertEqual(len(dataset), 1)
-            self.assertFalse(dataset.synthetic_mode)
-            self.assertEqual(str(dataset._rows[0]["phase"]).lower(), "val")
-
     def test_filter_validation_summary_dataset_by_iso_week_keeps_requested_week(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            csv_path = tmp_path / "manifest.csv"
-            config_path = tmp_path / "data_config.yaml"
-
-            pd.DataFrame(
-                [
-                    {
-                        "ostia_tif_path": "ostia_a.tif",
-                        "argo_tif_path": "argo_a.tif",
-                        "glorys_tif_path": "glorys_a.tif",
-                        "phase": "val",
-                        "date": 20150615,
-                    },
-                    {
-                        "ostia_tif_path": "ostia_b.tif",
-                        "argo_tif_path": "argo_b.tif",
-                        "glorys_tif_path": "glorys_b.tif",
-                        "phase": "val",
-                        "date": 20150618,
-                    },
-                    {
-                        "ostia_tif_path": "ostia_c.tif",
-                        "argo_tif_path": "argo_c.tif",
-                        "glorys_tif_path": "glorys_c.tif",
-                        "phase": "val",
-                        "date": 20150625,
-                    },
-                ]
-            ).to_csv(csv_path, index=False)
-            with config_path.open("w", encoding="utf-8") as f:
-                yaml.safe_dump(
-                    {
-                        "dataset": {
-                            "core": {
-                                "manifest_csv_path": str(csv_path),
-                            },
-                        }
-                    },
-                    f,
-                    sort_keys=False,
-                )
-
-            dataset = build_validation_summary_dataset(
-                str(config_path),
-                split="val",
+        dataset = type(
+            "DatasetStub",
+            (),
+            {
+                "_rows": [
+                    {"phase": "val", "date": 20150615},
+                    {"phase": "val", "date": 20150618},
+                    {"phase": "val", "date": 20150625},
+                ],
+                "split": "val",
+            },
+        )()
+        selected_iso_year, selected_iso_week = (
+            filter_validation_summary_dataset_by_iso_week(
+                dataset,
+                iso_year=2015,
+                iso_week=25,
             )
-            selected_iso_year, selected_iso_week = (
-                filter_validation_summary_dataset_by_iso_week(
-                    dataset,
-                    iso_year=2015,
-                    iso_week=25,
-                )
-            )
+        )
 
-            self.assertEqual((selected_iso_year, selected_iso_week), (2015, 25))
-            self.assertEqual(len(dataset), 2)
-            self.assertEqual([int(row["date"]) for row in dataset._rows], [20150615, 20150618])
+        self.assertEqual((selected_iso_year, selected_iso_week), (2015, 25))
+        self.assertEqual(len(dataset._rows), 2)
+        self.assertEqual([int(row["date"]) for row in dataset._rows], [20150615, 20150618])
 
     def test_filter_validation_summary_dataset_by_iso_week_requires_both_fields(self) -> None:
         dataset = type("DatasetStub", (), {"_rows": [], "split": "val"})()

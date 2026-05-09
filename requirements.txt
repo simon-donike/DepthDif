@@ -92,7 +92,6 @@ shapely==2.1.2
 six==1.17.0
 smmap==5.0.2
 sympy==1.14.0
-tifffile==2026.1.28
 toolz==1.1.0
 torch==2.10.0
 torchmetrics==1.8.2
@@ -106,4 +105,3 @@ urllib3==2.6.3
 wandb==0.24.1
 xarray==2026.1.0
 yarl==1.22.0
-zarr==3.1.5

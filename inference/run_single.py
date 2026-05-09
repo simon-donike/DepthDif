@@ -1,8 +1,8 @@
 """Run one-off inference with a configured checkpoint.
 
 This script loads the model and dataset configuration, restores a checkpoint,
-and generates predictions either from the dataloader or from synthetic random
-inputs depending on the in-file mode settings.
+and generates predictions either from the dataloader or from a random tensor
+batch depending on the in-file mode settings.
 
 Typical CLI:
     /work/envs/depth/bin/python inference/run_single.py
@@ -37,7 +37,7 @@ from inference.core import (
 # In-script settings
 # ----------------------------
 MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
-DATA_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
+DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"
 TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 
 # Optional explicit checkpoint path. If None, uses model.load_checkpoint then model.resume_checkpoint from model config.

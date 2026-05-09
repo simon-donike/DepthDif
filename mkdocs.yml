@@ -80,9 +80,9 @@ nav:
       - Data Sources: data-source.md
       - Depth Alignment: depth-alignment.md
       - Production Dataset: production-datasets.md
-      - Synthetic Dataset: data.md
+      - NetCDF Patch Dataset: data.md
   - Experiments:
-      - Synthetic + Early Experiments: experiments.md
+      - Early Experiments: experiments.md
       - GLORYS/Argo Aligned Experiments: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
   - 3D Globe: https://depthdif.donike.net/globe/

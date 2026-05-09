@@ -42,7 +42,7 @@ from utils.normalizations import (
 )
 
 MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
-DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_disk_actual.yaml"
+DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"
 TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 CHECKPOINT_PATH: str | None = None
 

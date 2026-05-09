@@ -22,12 +22,12 @@ dataset:
     require_argo_for_train: true
     require_argo_for_val: true
     require_argo_for_all: false
+  synthetic:
+    enabled: false # If true, build sparse x by sampling GLORYS y instead of ARGO profiles.
+    pixel_count: 250 # Number of horizontal pixels copied from GLORYS y into sparse x.
   output:
     return_info: false # Keep training batches lean; enable only for debugging source metadata.
     return_coords: true # Required by the coord/date-conditioning model preset.
-  synthetic:
-    enabled: true # Rebuild sparse x from GLORYS instead of using raw ARGO observations.
-    pixel_count: 500 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
   runtime:
     random_seed: 7 # Seed used for deterministic split and dataset-side sampling.
     cache_size: 8 # Maximum open NetCDF files per source store.
