@@ -39,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data.dataset_creation.b_export_enriched_argo_profiles import (
+from data.dataset_creation.source_files import (
     ARGO_DEPTH_VAR,
     ARGO_PROFILE_VARS,
     GLORYS_2D_VARS,

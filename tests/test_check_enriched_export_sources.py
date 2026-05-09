@@ -7,7 +7,7 @@ from data.dataset_creation.a_check_export_sourcefiles import (
     _select_timed_files_for_range,
     check_sources,
 )
-from data.dataset_creation.b_export_enriched_argo_profiles import TimedFile
+from data.dataset_creation.source_files import TimedFile
 
 
 class CheckEnrichedExportSourcesTests(unittest.TestCase):

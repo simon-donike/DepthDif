@@ -22,7 +22,6 @@ import re
 import shutil
 import sys
 from collections import OrderedDict
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -36,33 +35,22 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.dataset_ostia_argo import OstiaArgoTileDataset
-
-
-ARGO_PROFILE_VARS = ("TEMP", "POTM_CORRECTED", "PSAL_CORRECTED")
-ARGO_DEPTH_VAR = "DEPH_CORRECTED"
-GLORYS_3D_VARS = ("thetao", "so", "uo", "vo")
-GLORYS_2D_VARS = ("zos", "mlotst", "bottomT", "sithick", "siconc", "usi", "vsi")
-OSTIA_VARS = ("analysed_sst", "analysis_error", "sea_ice_fraction", "mask")
-SEALEVEL_VARS = (
-    "sla",
-    "err_sla",
-    "ugosa",
-    "err_ugosa",
-    "vgosa",
-    "err_vgosa",
-    "adt",
-    "ugos",
-    "vgos",
-    "flag_ice",
-    "tpa_correction",
+from data.dataset_creation.source_files import (
+    ARGO_DEPTH_VAR,
+    ARGO_LEVEL_QC_VARS,
+    ARGO_PROFILE_VARS,
+    ARGO_PROFILE_QC_VARS,
+    GLORYS_2D_VARS,
+    GLORYS_3D_VARS,
+    OSTIA_VARS,
+    SEALEVEL_VARS,
+    SOURCE_VARIABLES,
+    TimedFile,
+    _filter_argo_files_by_date_range,
+    _open_argo_dataset,
+    scan_timed_files,
 )
 CATEGORICAL_VARS = {"mask", "flag_ice"}
-SOURCE_VARIABLES = {
-    "argo": ("JULD", "LATITUDE", "LONGITUDE", ARGO_DEPTH_VAR) + ARGO_PROFILE_VARS,
-    "glorys": GLORYS_3D_VARS + GLORYS_2D_VARS,
-    "ostia": OSTIA_VARS,
-    "sealevel": SEALEVEL_VARS,
-}
 SOURCE_PRODUCTS = {
     "argo": {
         "provider": "UK Met Office Hadley Centre",
@@ -93,12 +81,13 @@ _ABSOLUTE_PATH_PATTERN = re.compile(
 MISSING_STATUS = np.int8(2)
 INTERPOLATED_STATUS = np.int8(0)
 NEAREST_EDGE_STATUS = np.int8(1)
-
-
-@dataclass(frozen=True)
-class TimedFile:
-    path: Path
-    day: float
+MISSING_QC_FLAG = np.int8(-1)
+ARGO_LEVEL_QC_VALUE_KEYS = {
+    "depth": "depth",
+    "temp": "temp",
+    "potm": "potm",
+    "psal": "psal",
+}
 
 
 class DatasetCache:
@@ -131,12 +120,6 @@ class DatasetCache:
         self._items.clear()
 
 
-def _date_to_days_since_1950(date_yyyymmdd: int) -> float:
-    text = str(int(date_yyyymmdd))
-    day = np.datetime64(f"{text[:4]}-{text[4:6]}-{text[6:8]}", "D")
-    return float((day - np.datetime64("1950-01-01", "D")).astype("timedelta64[D]").astype(int))
-
-
 def _juld_to_yyyymmdd(juld_days: np.ndarray) -> np.ndarray:
     out = np.zeros(juld_days.shape, dtype=np.int32)
     valid = np.isfinite(juld_days) & (juld_days < 90000.0) & (juld_days > -20000.0)
@@ -152,110 +135,6 @@ def _juld_to_yyyymmdd(juld_days: np.ndarray) -> np.ndarray:
 
 def _normalize_lon(lon: float) -> float:
     return float(((float(lon) + 180.0) % 360.0) - 180.0)
-
-
-def _parse_first_date(path: Path) -> int | None:
-    match = re.search(r"(\d{8})", path.name)
-    if match is None:
-        return None
-    return int(match.group(1))
-
-
-def _parse_argo_file_month(path: Path) -> int | None:
-    match = re.search(r"\.(\d{6})\.nc$", path.name)
-    if match is None:
-        return None
-    return int(match.group(1))
-
-
-def _filter_argo_files_by_date_range(
-    argo_files: list[Path],
-    *,
-    start_date: int | None,
-    end_date: int | None,
-) -> list[Path]:
-    start_month = int(str(int(start_date))[:6]) if start_date is not None else None
-    end_month = int(str(int(end_date))[:6]) if end_date is not None else None
-    if start_month is None and end_month is None:
-        return argo_files
-
-    filtered: list[Path] = []
-    for path in argo_files:
-        month = _parse_argo_file_month(path)
-        if month is None:
-            filtered.append(path)
-            continue
-        # Profile-level day filtering still happens after opening the matching month.
-        if start_month is not None and month < start_month:
-            continue
-        if end_month is not None and month > end_month:
-            continue
-        filtered.append(path)
-    return filtered
-
-
-def _open_argo_dataset(path: Path) -> xr.Dataset:
-    # EN4 archives can mix NetCDF4/HDF5 and NetCDF3 months.
-    # Xarray backend autodetection picks the usable reader.
-    return xr.open_dataset(
-        path,
-        decode_times=False,
-        mask_and_scale=True,
-        cache=False,
-    )
-
-
-def _time_day_from_file(path: Path) -> float:
-    parsed = _parse_first_date(path)
-    if parsed is not None:
-        # Source filenames encode the valid observation/model date as the first YYYYMMDD.
-        # Reading NetCDF time is kept as a fallback, but opening thousands of files just
-        # for indexing makes startup unnecessarily expensive on the full raw archive.
-        return _date_to_days_since_1950(parsed)
-    try:
-        with xr.open_dataset(
-            path,
-            engine="h5netcdf",
-            decode_times=False,
-            mask_and_scale=False,
-            cache=False,
-        ) as ds:
-            if "time" in ds:
-                values = np.asarray(ds["time"].values, dtype=np.float64).reshape(-1)
-                if values.size > 0 and np.isfinite(values[0]):
-                    units = str(ds["time"].attrs.get("units", "")).lower()
-                    if "hours since 1950-01-01" in units:
-                        return float(values[0] / 24.0)
-                    if "days since 1950-01-01" in units:
-                        return float(values[0])
-    except Exception:
-        pass
-    raise RuntimeError(f"Could not determine date for source file: {path}")
-
-
-def scan_timed_files(
-    root: Path,
-    pattern: str = "*.nc",
-    *,
-    show_progress: bool = False,
-) -> list[TimedFile]:
-    files = sorted(Path(root).glob(pattern))
-    out: list[TimedFile] = []
-    iterator = tqdm(
-        files,
-        desc=f"Scanning {Path(root).name}",
-        unit="file",
-        dynamic_ncols=True,
-        disable=not show_progress,
-    )
-    for path in iterator:
-        try:
-            out.append(TimedFile(path=path, day=_time_day_from_file(path)))
-        except Exception:
-            # Download directories may contain partial or unrelated files; skip unreadable inputs.
-            continue
-    out.sort(key=lambda item: item.day)
-    return out
 
 
 def bracket_timed_files(index: list[TimedFile], target_day: float) -> tuple[TimedFile | None, TimedFile | None, float, np.int8]:
@@ -288,6 +167,108 @@ def project_argo_profile_to_glorys_depths(
         depth=np.asarray(depths, dtype=np.float32),
         glorys_depths=np.asarray(glorys_depths, dtype=np.float32),
     )
+
+
+def _qc_to_int_array(qc: np.ndarray | None, shape: tuple[int, ...]) -> np.ndarray:
+    out = np.full(shape, MISSING_QC_FLAG, dtype=np.int8)
+    if qc is None:
+        return out
+    arr = np.asarray(qc)
+    if arr.size != out.size:
+        return out
+    arr = arr.reshape(shape)
+    if np.issubdtype(arr.dtype, np.number):
+        valid = np.isfinite(arr)
+        out[valid] = arr[valid].astype(np.int8, copy=False)
+        return out
+
+    text = np.char.strip(arr.astype("U8"))
+    for code in range(10):
+        out[text == str(code)] = np.int8(code)
+    return out
+
+
+def _qc_scalar_to_int(qc: np.ndarray | np.generic | str | bytes | None) -> np.int8:
+    return _qc_to_int_array(None if qc is None else np.asarray([qc]), (1,))[0]
+
+
+def _collapse_duplicate_profile_qc(
+    depth: np.ndarray,
+    qc: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    unique_depths, starts = np.unique(depth, return_index=True)
+    collapsed_qc = np.maximum.reduceat(qc, starts)
+    return unique_depths, collapsed_qc.astype(np.int8, copy=False)
+
+
+def _project_argo_qc_to_glorys_depths(
+    qc: np.ndarray | None,
+    *,
+    values: np.ndarray,
+    depth: np.ndarray,
+    glorys_depths: np.ndarray,
+) -> np.ndarray:
+    target_depths = np.asarray(glorys_depths, dtype=np.float64).reshape(-1)
+    out = np.full(target_depths.shape, MISSING_QC_FLAG, dtype=np.int8)
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    depth = np.asarray(depth, dtype=np.float64).reshape(-1)
+    qc_values = _qc_to_int_array(qc, depth.shape).reshape(-1)
+    valid = np.isfinite(values) & np.isfinite(depth) & (depth >= 0.0)
+    if not np.any(valid):
+        return out
+
+    depth = depth[valid]
+    qc_values = qc_values[valid]
+    order = np.argsort(depth, kind="mergesort")
+    depth = depth[order]
+    qc_values = qc_values[order]
+    depth, qc_values = _collapse_duplicate_profile_qc(depth, qc_values)
+    if depth.size == 0:
+        return out
+
+    insert_idx = np.searchsorted(depth, target_depths, side="left")
+    left_idx = np.clip(insert_idx - 1, 0, max(depth.size - 1, 0))
+    right_idx = np.clip(insert_idx, 0, max(depth.size - 1, 0))
+
+    left_depth = depth[left_idx]
+    right_depth = depth[right_idx]
+    nearest_depth_distance = np.minimum(
+        np.abs(target_depths - left_depth),
+        np.abs(target_depths - right_depth),
+    )
+    max_allowed_distance = np.maximum(
+        OstiaArgoTileDataset.GLORYS_RELATIVE_DEPTH_CUTOFF * target_depths,
+        OstiaArgoTileDataset.GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
+    )
+    in_range = (
+        np.isfinite(target_depths)
+        & (target_depths >= depth[0])
+        & (target_depths <= depth[-1])
+    )
+    within_cutoff = np.isfinite(nearest_depth_distance) & (
+        nearest_depth_distance <= max_allowed_distance
+    )
+    valid_targets = in_range & within_cutoff
+    if not np.any(valid_targets):
+        return out
+
+    # Exact target-depth matches keep the source QC flag. Interpolated targets
+    # keep the worst available code from the bracketing source levels.
+    exact_right = valid_targets & np.isclose(
+        target_depths,
+        right_depth,
+        rtol=0.0,
+        atol=1.0e-6,
+    )
+    if np.any(exact_right):
+        out[exact_right] = qc_values[right_idx[exact_right]]
+    interpolated = valid_targets & ~exact_right
+    if np.any(interpolated):
+        out[interpolated] = np.maximum(
+            qc_values[left_idx[interpolated]],
+            qc_values[right_idx[interpolated]],
+        )
+    return out
 
 
 def _sample_dataarray_at_point(
@@ -473,6 +454,13 @@ def _metadata_file_list(index: list[TimedFile]) -> list[Path]:
     return [item.path for item in index]
 
 
+def _argo_metadata_variables() -> tuple[str, ...]:
+    optional_qc = tuple(ARGO_LEVEL_QC_VARS.values()) + tuple(ARGO_PROFILE_QC_VARS.values())
+    return SOURCE_VARIABLES["argo"] + tuple(
+        name for name in optional_qc if name not in SOURCE_VARIABLES["argo"]
+    )
+
+
 def _build_export_metadata(
     *,
     argo_files: list[Path],
@@ -509,7 +497,7 @@ def _build_export_metadata(
             "argo": _extract_source_metadata(
                 kind="argo",
                 files=argo_files,
-                variables=SOURCE_VARIABLES["argo"],
+                variables=_argo_metadata_variables(),
             ),
             "glorys": _extract_source_metadata(
                 kind="glorys",
@@ -540,6 +528,13 @@ def _build_export_metadata(
             "temporal_collocation": (
                 "Continuous fields are linearly interpolated between bracketing source "
                 "files. Categorical variables use the nearest bracketing source file."
+            ),
+            "argo_quality_flags": (
+                "Optional EN4/ARGO QC variables are stored as int8 QC codes. Depth-level "
+                "QC variables are projected onto the GLORYS depth coordinate by keeping "
+                "the exact source-depth code where possible, otherwise the worst code "
+                "from the bracketing source levels. A value of -1 means unavailable or "
+                "unsupported at that target depth."
             ),
             "longitude_handling": (
                 "Profile longitudes are normalized to [-180, 180), then converted to "
@@ -613,6 +608,8 @@ def _empty_batch() -> dict[str, list[Any]]:
         "ostia_temporal_status",
         "sealevel_temporal_status",
     ]
+    keys.extend(f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS)
+    keys.extend(f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS)
     keys.extend(f"glorys_{name}" for name in GLORYS_3D_VARS + GLORYS_2D_VARS)
     keys.extend(f"ostia_{name}" for name in OSTIA_VARS)
     keys.extend(f"sealevel_{name}" for name in SEALEVEL_VARS)
@@ -632,6 +629,8 @@ def _append_profile_to_batch(
     temp: np.ndarray,
     potm: np.ndarray,
     psal: np.ndarray,
+    argo_level_qc: dict[str, np.ndarray | None],
+    argo_profile_qc: dict[str, np.int8],
     glorys_depths: np.ndarray,
     glorys_index: list[TimedFile],
     ostia_index: list[TimedFile],
@@ -657,6 +656,26 @@ def _append_profile_to_batch(
     batch["argo_temp_valid_on_glorys_depth"].append(np.isfinite(projected_temp))
     batch["argo_potm_valid_on_glorys_depth"].append(np.isfinite(projected_potm))
     batch["argo_psal_valid_on_glorys_depth"].append(np.isfinite(projected_psal))
+    source_profile_values = {
+        "depth": depth,
+        "temp": temp,
+        "potm": potm,
+        "psal": psal,
+    }
+    for name in ARGO_LEVEL_QC_VARS:
+        value_key = ARGO_LEVEL_QC_VALUE_KEYS.get(name, "depth")
+        batch[f"argo_{name}_qc_on_glorys_depth"].append(
+            _project_argo_qc_to_glorys_depths(
+                argo_level_qc.get(name),
+                values=source_profile_values[value_key],
+                depth=depth,
+                glorys_depths=glorys_depths,
+            )
+        )
+    for name in ARGO_PROFILE_QC_VARS:
+        batch[f"argo_{name}_qc"].append(
+            np.int8(argo_profile_qc.get(name, MISSING_QC_FLAG))
+        )
 
     source_status: dict[str, np.int8] = {}
     for source_name, index, names in (
@@ -705,6 +724,11 @@ def _batch_to_dataset(
         "argo_potm_valid_on_glorys_depth",
         "argo_psal_valid_on_glorys_depth",
     }
+    depth_int8_vars = {
+        f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS
+    }
+    scalar_int8_vars = {f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS}
+    depth_vars.update(depth_int8_vars)
     for name in GLORYS_3D_VARS:
         depth_vars.add(f"glorys_{name}")
 
@@ -713,11 +737,15 @@ def _batch_to_dataset(
             data_vars[key] = (("profile",), np.asarray(values, dtype=str))
         elif key in depth_vars:
             arr = np.asarray(values)
-            if arr.dtype == bool:
+            if key in depth_int8_vars:
+                arr = arr.astype(np.int8, copy=False)
+            elif arr.dtype == bool:
                 arr = arr.astype(bool, copy=False)
             else:
                 arr = arr.astype(np.float32, copy=False)
             data_vars[key] = (("profile", "glorys_depth"), arr)
+        elif key in scalar_int8_vars:
+            data_vars[key] = (("profile",), np.asarray(values, dtype=np.int8))
         elif key in scalar_int:
             data_vars[key] = (("profile",), np.asarray(values, dtype=np.int64))
         elif key in scalar_float:
@@ -777,6 +805,26 @@ def _source_units(
 def _set_attrs(ds: xr.Dataset, name: str, attrs: dict[str, Any]) -> None:
     if name in ds:
         ds[name].attrs.update(_sanitize_attrs(attrs))
+
+
+def _argo_qc_attrs(
+    export_metadata: dict[str, Any],
+    *,
+    source_var: str,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "description": description,
+        "source_product": SOURCE_PRODUCTS["argo"]["product"],
+        "source_variable": source_var,
+        "source_attrs": _source_variable_attrs(
+            export_metadata,
+            kind="argo",
+            var_name=source_var,
+        ),
+        "flag_values": [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "missing_flag_value": -1,
+    }
 
 
 def _apply_output_metadata(
@@ -920,6 +968,43 @@ def _apply_output_metadata(
                 "long_name": f"{source_var} finite validity mask on GLORYS depth",
                 "description": "True where the projected ARGO variable has finite support at this GLORYS depth.",
                 "source_variable": source_var,
+            },
+        )
+
+    for name, source_var in ARGO_LEVEL_QC_VARS.items():
+        _set_attrs(
+            ds,
+            f"argo_{name}_qc_on_glorys_depth",
+            {
+                "long_name": f"{source_var} projected QC code on GLORYS depth",
+                **_argo_qc_attrs(
+                    export_metadata,
+                    source_var=source_var,
+                    description=(
+                        "Optional EN4/ARGO depth-level QC code carried onto the "
+                        "GLORYS depth coordinate. Exact depth matches keep the "
+                        "source code; interpolated targets use the worst bracketing "
+                        "source-level code. -1 means unavailable or unsupported."
+                    ),
+                ),
+                "projection": export_metadata["processing"]["argo_quality_flags"],
+            },
+        )
+
+    for name, source_var in ARGO_PROFILE_QC_VARS.items():
+        _set_attrs(
+            ds,
+            f"argo_{name}_qc",
+            {
+                "long_name": f"{source_var} profile QC code",
+                **_argo_qc_attrs(
+                    export_metadata,
+                    source_var=source_var,
+                    description=(
+                        "Optional EN4/ARGO profile-level QC code copied from the "
+                        "source profile. -1 means the source QC variable was absent."
+                    ),
+                ),
             },
         )
 
@@ -1092,6 +1177,18 @@ def export_enriched_argo_profiles(
                     temp = np.asarray(ds["TEMP"].values, dtype=np.float32)
                     potm = np.asarray(ds["POTM_CORRECTED"].values, dtype=np.float32)
                     psal = np.asarray(ds["PSAL_CORRECTED"].values, dtype=np.float32)
+                    level_qc_arrays = {
+                        name: np.asarray(ds[source_name].values)
+                        if source_name in ds
+                        else None
+                        for name, source_name in ARGO_LEVEL_QC_VARS.items()
+                    }
+                    profile_qc_arrays = {
+                        name: np.asarray(ds[source_name].values)
+                        if source_name in ds
+                        else None
+                        for name, source_name in ARGO_PROFILE_QC_VARS.items()
+                    }
 
                     for profile_idx in range(int(juld.size)):
                         date = int(dates[profile_idx])
@@ -1116,6 +1213,18 @@ def export_enriched_argo_profiles(
                             temp=temp[profile_idx],
                             potm=potm[profile_idx],
                             psal=psal[profile_idx],
+                            argo_level_qc={
+                                name: values[profile_idx]
+                                if values is not None
+                                else None
+                                for name, values in level_qc_arrays.items()
+                            },
+                            argo_profile_qc={
+                                name: _qc_scalar_to_int(values[profile_idx])
+                                if values is not None
+                                else MISSING_QC_FLAG
+                                for name, values in profile_qc_arrays.items()
+                            },
                             glorys_depths=glorys_depths,
                             glorys_index=glorys_index,
                             ostia_index=ostia_index,

@@ -10,6 +10,10 @@ Folder layout:
   EN4/ARGO, GLORYS, OSTIA, and sea-level files
 - `data_download_packaged/`: placeholder for future packaged dataset downloads
   from Hugging Face or similar distribution channels
+- `source_variables.yaml`: shared source variable names for EN4/ARGO, GLORYS,
+  OSTIA, and sea-level inputs
+- `source_files.py`: shared source-variable loading, source-file date parsing,
+  and NetCDF open/index helpers used by the check and export scripts
 - `a_check_export_sourcefiles.py`: raw source file validity checks and optional
   redownload/overwrite repair
 - `b_export_enriched_argo_profiles.py`: enriched ARGO profile Zarr export
@@ -25,6 +29,25 @@ All commands should use the project Python environment explicitly:
 ```bash
 /work/envs/depth/bin/python
 ```
+
+## Shared Configuration
+
+`source_variables.yaml` is the single editable list of upstream NetCDF
+variables used by the dataset-creation tools. It groups source variable names
+by product (`argo`, `glorys`, `ostia`, `sealevel`) and includes comments with
+the expected physical meaning and units from representative source metadata.
+Those comments are for humans; the scripts read only the variable-name lists.
+
+`source_files.py` loads `source_variables.yaml` and exposes the ordered tuples
+used by both scripts, including `ARGO_PROFILE_VARS`, `GLORYS_3D_VARS`,
+`GLORYS_2D_VARS`, `OSTIA_VARS`, `SEALEVEL_VARS`, and `SOURCE_VARIABLES`. It
+also owns the shared source-file mechanics: `TimedFile`, source date parsing,
+ARGO month filtering, EN4/ARGO NetCDF opening, and gridded-file time indexing.
+
+This keeps `a_check_export_sourcefiles.py` and
+`b_export_enriched_argo_profiles.py` as sibling consumers of the same source
+configuration instead of making the checker import implementation details from
+the exporter.
 
 ## Download Source Data
 
@@ -72,7 +95,8 @@ sample from each required variable so truncated or unreadable files are
 reported before the expensive export starts. The check uses `tqdm` progress
 bars with file counts, processing rate, ETA, source kind, and broken-file
 counts. The file header contains copy-pasteable CLI examples for the default
-check, explicit source paths, source-group filtering, and repair mode.
+check, explicit source paths, source-group filtering, and repair mode. Required
+variables come from `source_variables.yaml` through `source_files.py`.
 
 Default check for the overlap window:
 
@@ -114,6 +138,9 @@ For each EN4 profile, the exporter:
 
 - projects `TEMP`, `POTM_CORRECTED`, and `PSAL_CORRECTED` onto the GLORYS depth
   axis
+- carries optional EN4/ARGO QC flags into the output as `int8` codes, with
+  profile-level QC copied per profile and depth-level QC aligned to the GLORYS
+  depth axis
 - samples GLORYS, OSTIA, and sea-level variables at the profile latitude,
   longitude, and time
 - interpolates continuous time-varying fields between bracketing source files
@@ -126,6 +153,13 @@ date coverage, representative source filenames, source dimensions, source
 variable dtype/dims/attrs, collocation rules, and processing notes. It stores
 filenames only for source files; absolute local filesystem paths are
 intentionally sanitized out of the metadata.
+
+Source variable names are loaded from `source_variables.yaml` through
+`source_files.py`, so the source-file checker and the enriched-profile exporter
+validate and read the same configured fields without importing one script from
+the other. Units in the YAML comments are orientation notes; the exporter
+extracts the authoritative units and other attributes from the representative
+source NetCDF files and stores them in the output Zarr metadata.
 
 Recommended production-range export:
 

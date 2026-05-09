@@ -27,30 +27,53 @@ def _write_argo(
     *,
     juld: float = 21916.0,
     engine: str = "h5netcdf",
+    include_qc: bool = True,
 ) -> None:
-    ds = xr.Dataset(
-        {
-            "JULD": (("N_PROF",), np.asarray([juld], dtype=np.float64)),
-            "LATITUDE": (("N_PROF",), np.asarray([0.5], dtype=np.float64)),
-            "LONGITUDE": (("N_PROF",), np.asarray([10.5], dtype=np.float64)),
-            "DEPH_CORRECTED": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[0.0, 10.0, 20.0]], dtype=np.float32),
-            ),
-            "TEMP": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[1.0, 3.0, 5.0]], dtype=np.float32),
-            ),
-            "POTM_CORRECTED": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[2.0, 4.0, 6.0]], dtype=np.float32),
-            ),
-            "PSAL_CORRECTED": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[34.0, 35.0, 36.0]], dtype=np.float32),
-            ),
-        }
-    )
+    data_vars = {
+        "JULD": (("N_PROF",), np.asarray([juld], dtype=np.float64)),
+        "LATITUDE": (("N_PROF",), np.asarray([0.5], dtype=np.float64)),
+        "LONGITUDE": (("N_PROF",), np.asarray([10.5], dtype=np.float64)),
+        "DEPH_CORRECTED": (
+            ("N_PROF", "N_LEVELS"),
+            np.asarray([[0.0, 10.0, 20.0]], dtype=np.float32),
+        ),
+        "TEMP": (
+            ("N_PROF", "N_LEVELS"),
+            np.asarray([[1.0, 3.0, 5.0]], dtype=np.float32),
+        ),
+        "POTM_CORRECTED": (
+            ("N_PROF", "N_LEVELS"),
+            np.asarray([[2.0, 4.0, 6.0]], dtype=np.float32),
+        ),
+        "PSAL_CORRECTED": (
+            ("N_PROF", "N_LEVELS"),
+            np.asarray([[34.0, 35.0, 36.0]], dtype=np.float32),
+        ),
+    }
+    if include_qc:
+        qc_dims = ("N_PROF", "N_LEVELS")
+        data_vars.update(
+            {
+                "JULD_QC": (("N_PROF",), np.asarray([b"1"], dtype="S1")),
+                "POSITION_QC": (("N_PROF",), np.asarray([b"2"], dtype="S1")),
+                "PROFILE_DEPH_QC": (("N_PROF",), np.asarray([b"1"], dtype="S1")),
+                "PROFILE_POTM_QC": (("N_PROF",), np.asarray([b"3"], dtype="S1")),
+                "PROFILE_PSAL_QC": (("N_PROF",), np.asarray([b"4"], dtype="S1")),
+                "DEPH_CORRECTED_QC": (
+                    qc_dims,
+                    np.asarray([[b"1", b"2", b"3"]], dtype="S1"),
+                ),
+                "POTM_CORRECTED_QC": (
+                    qc_dims,
+                    np.asarray([[b"1", b"1", b"3"]], dtype="S1"),
+                ),
+                "PSAL_CORRECTED_QC": (
+                    qc_dims,
+                    np.asarray([[b"2", b"2", b"4"]], dtype="S1"),
+                ),
+            }
+        )
+    ds = xr.Dataset(data_vars)
     ds["JULD"].attrs["units"] = "days since 1950-01-01 00:00:00 utc"
     path.parent.mkdir(parents=True, exist_ok=True)
     ds.to_netcdf(path, engine=engine)
@@ -236,6 +259,23 @@ class EnrichedArgoExportTests(unittest.TestCase):
                 ds["profile_juld"].attrs["source_units"],
                 "days since 1950-01-01 00:00:00 utc",
             )
+            self.assertIn("argo_potm_qc_on_glorys_depth", ds)
+            self.assertIn("argo_juld_qc", ds)
+            np.testing.assert_array_equal(
+                ds["argo_depth_qc_on_glorys_depth"].values[0],
+                np.asarray([1, 2, 3], dtype=np.int8),
+            )
+            np.testing.assert_array_equal(
+                ds["argo_potm_qc_on_glorys_depth"].values[0],
+                np.asarray([1, 1, 3], dtype=np.int8),
+            )
+            np.testing.assert_array_equal(
+                ds["argo_temp_qc_on_glorys_depth"].values[0],
+                np.asarray([-1, -1, -1], dtype=np.int8),
+            )
+            self.assertEqual(int(ds["argo_juld_qc"].values[0]), 1)
+            self.assertEqual(int(ds["argo_position_qc"].values[0]), 2)
+            self.assertEqual(int(ds["argo_profile_psal_qc"].values[0]), 4)
             np.testing.assert_allclose(
                 ds["argo_temp_on_glorys_depth"].values[0],
                 np.asarray([1.0, 3.0, 5.0], dtype=np.float32),
@@ -263,6 +303,7 @@ class EnrichedArgoExportTests(unittest.TestCase):
             _write_argo(
                 argo_dir / "EN.4.2.2.f.profiles.g10.201001.nc",
                 engine="scipy",
+                include_qc=False,
             )
             # The date filter should exclude this later month before any NetCDF open.
             (argo_dir / "EN.4.2.2.f.profiles.g10.201002.nc").write_bytes(b"not-netcdf")
