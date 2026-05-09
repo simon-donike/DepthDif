@@ -107,19 +107,30 @@ def _write_glorys(root_dir: Path, *, date_value: int, base: float) -> None:
     ds.to_netcdf(root_dir / f"glorys_{int(date_value)}.nc", engine="h5netcdf")
 
 
-def _write_ostia(root_dir: Path, *, date_value: int, base_kelvin: float) -> None:
-    lat = np.asarray([0.5, 1.5], dtype=np.float32)
-    lon = np.asarray([10.5, 11.5], dtype=np.float32)
-    analysed_sst = np.asarray(
-        [
-            [
-                [base_kelvin + 1.0, base_kelvin + 2.0],
-                [base_kelvin + 3.0, base_kelvin + 4.0],
-            ]
-        ],
-        dtype=np.float32,
+def _write_ostia(
+    root_dir: Path,
+    *,
+    date_value: int,
+    base_kelvin: float,
+    lat_values: np.ndarray | None = None,
+    lon_values: np.ndarray | None = None,
+) -> None:
+    lat = (
+        np.asarray([0.5, 1.5], dtype=np.float32)
+        if lat_values is None
+        else np.asarray(lat_values, dtype=np.float32)
     )
-    mask = np.zeros((1, 2, 2), dtype=np.int16)
+    lon = (
+        np.asarray([10.5, 11.5], dtype=np.float32)
+        if lon_values is None
+        else np.asarray(lon_values, dtype=np.float32)
+    )
+    offsets = np.arange(int(lat.size) * int(lon.size), dtype=np.float32).reshape(
+        int(lat.size),
+        int(lon.size),
+    )
+    analysed_sst = (base_kelvin + 1.0 + offsets)[None, ...].astype(np.float32)
+    mask = np.zeros((1, int(lat.size), int(lon.size)), dtype=np.int16)
     ds = xr.Dataset(
         {
             "analysed_sst": (("time", "lat", "lon"), analysed_sst),
@@ -138,13 +149,29 @@ def _write_ostia(root_dir: Path, *, date_value: int, base_kelvin: float) -> None
     ds.to_netcdf(root_dir / f"{int(date_value)}120000-ostia.nc", engine="h5netcdf")
 
 
-def _write_sealevel(root_dir: Path, *, date_value: int, base: float = 1.0) -> None:
-    lat = np.asarray([0.5, 1.5], dtype=np.float32)
-    lon = np.asarray([10.5, 11.5], dtype=np.float32)
-    adt = np.asarray(
-        [[[base + 0.1, base + 0.2], [base + 0.3, base + 0.4]]],
-        dtype=np.float32,
+def _write_sealevel(
+    root_dir: Path,
+    *,
+    date_value: int,
+    base: float = 1.0,
+    lat_values: np.ndarray | None = None,
+    lon_values: np.ndarray | None = None,
+) -> None:
+    lat = (
+        np.asarray([0.5, 1.5], dtype=np.float32)
+        if lat_values is None
+        else np.asarray(lat_values, dtype=np.float32)
     )
+    lon = (
+        np.asarray([10.5, 11.5], dtype=np.float32)
+        if lon_values is None
+        else np.asarray(lon_values, dtype=np.float32)
+    )
+    offsets = np.arange(int(lat.size) * int(lon.size), dtype=np.float32).reshape(
+        int(lat.size),
+        int(lon.size),
+    )
+    adt = (base + 0.1 + (0.1 * offsets))[None, ...].astype(np.float32)
     ds = xr.Dataset(
         {"adt": (("time", "latitude", "longitude"), adt)},
         coords={
@@ -211,7 +238,41 @@ class TestExportDatasetZarr(unittest.TestCase):
     def test_export_resamples_raster_sources_to_target_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            argo_dir, glorys_dir, ostia_dir, sealevel_dir = _make_raw_sources(tmp_path)
+            argo_dir = tmp_path / "en4_profiles"
+            glorys_dir = tmp_path / "glorys"
+            ostia_dir = tmp_path / "ostia"
+            sealevel_dir = tmp_path / "sealevel"
+            _write_argo_netcdf(argo_dir)
+            _write_glorys(glorys_dir, date_value=20240102, base=30.0)
+            _write_glorys(glorys_dir, date_value=20240103, base=40.0)
+            source_lat = np.asarray([0.25, 0.75, 1.25, 1.75], dtype=np.float32)
+            source_lon = np.asarray([10.25, 10.75, 11.25, 11.75], dtype=np.float32)
+            _write_ostia(
+                ostia_dir,
+                date_value=20240102,
+                base_kelvin=280.0,
+                lat_values=source_lat,
+                lon_values=source_lon,
+            )
+            _write_ostia(
+                ostia_dir,
+                date_value=20240103,
+                base_kelvin=290.0,
+                lat_values=source_lat,
+                lon_values=source_lon,
+            )
+            _write_sealevel(
+                sealevel_dir,
+                date_value=20240102,
+                lat_values=source_lat,
+                lon_values=source_lon,
+            )
+            _write_sealevel(
+                sealevel_dir,
+                date_value=20240103,
+                lat_values=source_lat,
+                lon_values=source_lon,
+            )
             zarr_dir = export_training_zarr_dataset(
                 argo_dir=argo_dir,
                 glorys_dir=glorys_dir,
@@ -234,6 +295,7 @@ class TestExportDatasetZarr(unittest.TestCase):
             manifest = yaml.safe_load((zarr_dir / "manifest.yaml").read_text())
 
             self.assertEqual(manifest["raster_target_resolution_deg"], 0.5)
+            self.assertEqual(manifest["raster_target_grid"], "glorys")
             np.testing.assert_allclose(ostia["lat"].values, [0.5, 1.0, 1.5])
             np.testing.assert_allclose(ostia["lon"].values, [10.5, 11.0, 11.5])
             np.testing.assert_allclose(glorys["latitude"].values, [0.5, 1.0, 1.5])
@@ -241,12 +303,22 @@ class TestExportDatasetZarr(unittest.TestCase):
                 sealevel["longitude"].values,
                 [10.5, 11.0, 11.5],
             )
+            np.testing.assert_allclose(ostia["lat"].values, glorys["latitude"].values)
+            np.testing.assert_allclose(ostia["lon"].values, glorys["longitude"].values)
+            np.testing.assert_allclose(
+                sealevel["latitude"].values,
+                glorys["latitude"].values,
+            )
+            np.testing.assert_allclose(
+                sealevel["longitude"].values,
+                glorys["longitude"].values,
+            )
             self.assertEqual(int(ostia["analysed_sst"].sizes["lat"]), 3)
             self.assertEqual(int(glorys["thetao"].sizes["latitude"]), 3)
             self.assertEqual(int(sealevel["adt"].sizes["longitude"]), 3)
             self.assertAlmostEqual(
                 float(ostia["analysed_sst"].isel(time=0, lat=1, lon=1).values),
-                282.5,
+                288.5,
                 places=5,
             )
             ostia.close()

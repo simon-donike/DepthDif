@@ -35,12 +35,13 @@ The zarr variant reads compact stores exported by
 - `glorys.zarr`: `thetao`, `so`, `zos`
 - `sealevel.zarr`: `adt` by default
 
-By default, the exporter interpolates OSTIA, GLORYS, and sea-level raster
-stores to 0.1 degrees before writing. OSTIA and sea-level daily files are saved
-as centered 7-day aggregates around the GLORYS timesteps, matching the weekly
-training cadence. This matches the default patch grid and lets the zarr loader
-use exact grid selection for those rasters. Continuous fields are packed to
-int16, masks are stored as int8, and ARGO profile variables are pre-projected
+By default, the exporter interpolates GLORYS raster stores to 0.1 degrees and
+reprojects OSTIA plus sea-level rasters onto the exact same GLORYS
+latitude/longitude grid before writing. OSTIA and sea-level daily files are
+saved as centered 7-day aggregates around the GLORYS timesteps, matching the
+weekly training cadence. This matches the default patch grid and lets the zarr
+loader use exact grid selection for those rasters. Continuous fields are packed
+to int16, masks are stored as int8, and ARGO profile variables are pre-projected
 onto the GLORYS depth axis so the loader does not interpolate profiles at
 training time.
 

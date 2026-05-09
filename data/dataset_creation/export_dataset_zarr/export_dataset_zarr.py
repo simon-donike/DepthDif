@@ -49,6 +49,12 @@ class ZarrSourceVariables:
     sealevel_vars: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class RasterTargetGrid:
+    latitude: np.ndarray
+    longitude: np.ndarray
+
+
 def _section(config: dict[str, Any], name: str) -> dict[str, Any]:
     value = config.get(name)
     if not isinstance(value, dict):
@@ -186,18 +192,26 @@ def _resample_horizontal_grid(
     ds: xr.Dataset,
     *,
     target_resolution_deg: float | None,
+    target_grid: RasterTargetGrid | None,
 ) -> xr.Dataset:
-    if target_resolution_deg is None:
+    if target_resolution_deg is None and target_grid is None:
         return ds
 
     coord_names = _horizontal_coord_names(ds)
     if coord_names is None:
         return ds
     lat_name, lon_name = coord_names
-    target_coords = {
-        lat_name: _target_axis(ds[lat_name].values, float(target_resolution_deg)),
-        lon_name: _target_axis(ds[lon_name].values, float(target_resolution_deg)),
-    }
+    if target_grid is None:
+        target_coords = {
+            lat_name: _target_axis(ds[lat_name].values, float(target_resolution_deg)),
+            lon_name: _target_axis(ds[lon_name].values, float(target_resolution_deg)),
+        }
+    else:
+        # Reusing the GLORYS coordinates keeps all saved raster pixels aligned.
+        target_coords = {
+            lat_name: np.asarray(target_grid.latitude, dtype=np.float64),
+            lon_name: np.asarray(target_grid.longitude, dtype=np.float64),
+        }
 
     data_vars: dict[str, xr.DataArray] = {}
     for name, da in ds.data_vars.items():
@@ -205,7 +219,11 @@ def _resample_horizontal_grid(
             data_vars[name] = da
             continue
         method = "nearest" if _is_categorical_raster(str(name), da) else "linear"
-        resampled = da.interp(target_coords, method=method)
+        resampled = da.interp(
+            target_coords,
+            method=method,
+            kwargs={"fill_value": "extrapolate"},
+        )
         # Categorical rasters such as OSTIA mask must remain encoded labels, not floats.
         if method == "nearest":
             resampled = resampled.astype(da.dtype, copy=False)
@@ -215,8 +233,22 @@ def _resample_horizontal_grid(
     out = xr.Dataset(data_vars, attrs=dict(ds.attrs))
     for coord_name in (lat_name, lon_name):
         out[coord_name].attrs.update(ds[coord_name].attrs)
-    out.attrs["target_resolution_deg"] = float(target_resolution_deg)
+    if target_resolution_deg is not None:
+        out.attrs["target_resolution_deg"] = float(target_resolution_deg)
+    if target_grid is not None:
+        out.attrs["horizontal_grid_source"] = "glorys"
     return out
+
+
+def _raster_target_grid_from_dataset(ds: xr.Dataset) -> RasterTargetGrid:
+    coord_names = _horizontal_coord_names(ds)
+    if coord_names is None:
+        raise RuntimeError("GLORYS zarr export source is missing horizontal coordinates.")
+    lat_name, lon_name = coord_names
+    return RasterTargetGrid(
+        latitude=np.asarray(ds[lat_name].values, dtype=np.float64).copy(),
+        longitude=np.asarray(ds[lon_name].values, dtype=np.float64).copy(),
+    )
 
 
 def _target_dates_from_files(target_timed_files: Sequence[TimedFile]) -> np.ndarray:
@@ -375,6 +407,7 @@ def _open_time_series_dataset(
     *,
     variable_names: Sequence[str],
     target_resolution_deg: float | None,
+    target_grid: RasterTargetGrid | None,
     target_timed_files: Sequence[TimedFile] | None,
     aggregate_days: int,
     chunk_time: int,
@@ -419,6 +452,7 @@ def _open_time_series_dataset(
     ds = _resample_horizontal_grid(
         ds,
         target_resolution_deg=target_resolution_deg,
+        target_grid=target_grid,
     )
     chunk_map = {"time": int(chunk_time)}
     for lat_name in ("lat", "latitude"):
@@ -678,10 +712,29 @@ def export_training_zarr_dataset(
         end_date=end_date,
     )
 
+    glorys_ds = _open_time_series_dataset(
+        glorys_files,
+        variable_names=glorys_vars,
+        target_resolution_deg=target_resolution_deg,
+        target_grid=None,
+        target_timed_files=None,
+        aggregate_days=1,
+        chunk_time=chunk_time,
+        chunk_lat=chunk_lat,
+        chunk_lon=chunk_lon,
+    )
+    raster_target_grid = _raster_target_grid_from_dataset(glorys_ds)
+    glorys_depth_axis = _depth_axis_from_dataset(glorys_ds)
+    _write_dataset(
+        glorys_ds,
+        output_root / "glorys.zarr",
+        overwrite=overwrite,
+    )
     ostia_ds = _open_time_series_dataset(
         ostia_files,
         variable_names=ostia_vars,
         target_resolution_deg=target_resolution_deg,
+        target_grid=raster_target_grid,
         target_timed_files=glorys_files,
         aggregate_days=surface_aggregate_days,
         chunk_time=chunk_time,
@@ -691,22 +744,6 @@ def export_training_zarr_dataset(
     _write_dataset(
         ostia_ds,
         output_root / "ostia.zarr",
-        overwrite=overwrite,
-    )
-    glorys_ds = _open_time_series_dataset(
-        glorys_files,
-        variable_names=glorys_vars,
-        target_resolution_deg=target_resolution_deg,
-        target_timed_files=None,
-        aggregate_days=1,
-        chunk_time=chunk_time,
-        chunk_lat=chunk_lat,
-        chunk_lon=chunk_lon,
-    )
-    glorys_depth_axis = _depth_axis_from_dataset(glorys_ds)
-    _write_dataset(
-        glorys_ds,
-        output_root / "glorys.zarr",
         overwrite=overwrite,
     )
     _write_dataset(
@@ -734,6 +771,7 @@ def export_training_zarr_dataset(
                     sealevel_files,
                     variable_names=sealevel_vars,
                     target_resolution_deg=target_resolution_deg,
+                    target_grid=raster_target_grid,
                     target_timed_files=glorys_files,
                     aggregate_days=surface_aggregate_days,
                     chunk_time=chunk_time,
@@ -750,6 +788,7 @@ def export_training_zarr_dataset(
         "version": 1,
         "date_range": {"start_date": start_date, "end_date": end_date},
         "raster_target_resolution_deg": target_resolution_deg,
+        "raster_target_grid": "glorys",
         "surface_temporal_aggregation": {
             "target": "glorys",
             "window_days": int(surface_aggregate_days),
