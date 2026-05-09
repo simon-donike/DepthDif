@@ -22,6 +22,7 @@ import re
 import shutil
 import sys
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,7 @@ from data.dataset_creation.export_aligned_argo.source_files import (
     SEALEVEL_VARS,
     SOURCE_VARIABLES,
     TimedFile,
+    date_to_days_since_1950,
     _filter_argo_files_by_date_range,
     _open_argo_dataset,
     scan_timed_files,
@@ -83,7 +85,8 @@ _ABSOLUTE_PATH_PATTERN = re.compile(
 )
 
 MISSING_STATUS = np.int8(2)
-INTERPOLATED_STATUS = np.int8(0)
+NEAREST_STATUS = np.int8(0)
+INTERPOLATED_STATUS = NEAREST_STATUS
 NEAREST_EDGE_STATUS = np.int8(1)
 MISSING_QC_FLAG = np.int8(-1)
 ARGO_LEVEL_QC_VALUE_KEYS = {
@@ -92,6 +95,31 @@ ARGO_LEVEL_QC_VALUE_KEYS = {
     "potm": "potm",
     "psal": "psal",
 }
+
+
+@dataclass(frozen=True)
+class SpatialPointSelector:
+    lat_name: str
+    lon_name: str
+    nearest_lat_idx: int
+    nearest_lon_idx: int
+    linear_lat: tuple[int, int, float] | None
+    linear_lon: tuple[int, int, float] | None
+
+
+@dataclass(frozen=True)
+class SpatialPointBatchSelector:
+    lat_name: str
+    lon_name: str
+    nearest_lat_idx: np.ndarray
+    nearest_lon_idx: np.ndarray
+    linear_lat0: np.ndarray
+    linear_lat1: np.ndarray
+    linear_lat_weight: np.ndarray
+    linear_lon0: np.ndarray
+    linear_lon1: np.ndarray
+    linear_lon_weight: np.ndarray
+    linear_valid: np.ndarray
 
 
 class DatasetCache:
@@ -276,35 +304,418 @@ def _project_argo_qc_to_glorys_depths(
     return out
 
 
-def _sample_dataarray_at_point(
-    da: xr.DataArray,
+def _linear_axis_bracket(
+    axis: np.ndarray,
+    sample: float,
+) -> tuple[int, int, float] | None:
+    values = np.asarray(axis, dtype=np.float64).reshape(-1)
+    if values.size < 2 or not np.all(np.isfinite(values)):
+        return None
+    ascending = bool(values[-1] >= values[0])
+    search_values = values if ascending else values[::-1]
+    if float(sample) < search_values[0] or float(sample) > search_values[-1]:
+        return None
+    pos = int(np.searchsorted(search_values, float(sample), side="left"))
+    if pos < search_values.size and np.isclose(
+        search_values[pos],
+        float(sample),
+        rtol=0.0,
+        atol=1.0e-8,
+    ):
+        idx = pos if ascending else search_values.size - 1 - pos
+        return idx, idx, 0.0
+    if pos == 0 or pos >= search_values.size:
+        return None
+
+    left_pos = pos - 1
+    right_pos = pos
+    span = search_values[right_pos] - search_values[left_pos]
+    if span <= 0.0:
+        return None
+    weight = float((float(sample) - search_values[left_pos]) / span)
+    left_idx = left_pos if ascending else search_values.size - 1 - left_pos
+    right_idx = right_pos if ascending else search_values.size - 1 - right_pos
+    return left_idx, right_idx, weight
+
+
+def _nearest_axis_index(axis: np.ndarray, sample: float) -> int:
+    values = np.asarray(axis, dtype=np.float64).reshape(-1)
+    if values.size == 0:
+        return 0
+    return int(np.nanargmin(np.abs(values - float(sample))))
+
+
+def _nearest_axis_indices(
+    axis: np.ndarray,
+    samples: np.ndarray,
+) -> np.ndarray:
+    values = np.asarray(axis, dtype=np.float64).reshape(-1)
+    samples = np.asarray(samples, dtype=np.float64).reshape(-1)
+    if values.size == 0:
+        return np.zeros(samples.shape, dtype=np.int64)
+    ascending = bool(values[-1] >= values[0])
+    search_values = values if ascending else values[::-1]
+    pos = np.searchsorted(search_values, samples, side="left")
+    right = np.clip(pos, 0, search_values.size - 1)
+    left = np.clip(pos - 1, 0, search_values.size - 1)
+    choose_right = (
+        np.abs(search_values[right] - samples)
+        < np.abs(samples - search_values[left])
+    )
+    selected = np.where(choose_right, right, left)
+    if ascending:
+        return selected.astype(np.int64, copy=False)
+    return (search_values.size - 1 - selected).astype(np.int64, copy=False)
+
+
+def _linear_axis_brackets(
+    axis: np.ndarray,
+    samples: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    values = np.asarray(axis, dtype=np.float64).reshape(-1)
+    samples = np.asarray(samples, dtype=np.float64).reshape(-1)
+    if values.size < 2 or not np.all(np.isfinite(values)):
+        zeros = np.zeros(samples.shape, dtype=np.int64)
+        return zeros, zeros, np.zeros(samples.shape, dtype=np.float64), np.zeros(samples.shape, dtype=bool)
+
+    ascending = bool(values[-1] >= values[0])
+    search_values = values if ascending else values[::-1]
+    pos = np.searchsorted(search_values, samples, side="left")
+    exact_last = pos == search_values.size
+    pos = np.where(exact_last, search_values.size - 1, pos)
+    exact = (
+        (pos >= 0)
+        & (pos < search_values.size)
+        & np.isclose(search_values[pos], samples, rtol=0.0, atol=1.0e-8)
+    )
+    left_pos = np.where(exact, pos, pos - 1)
+    right_pos = np.where(exact, pos, pos)
+    in_range = (
+        np.isfinite(samples)
+        & (samples >= search_values[0])
+        & (samples <= search_values[-1])
+        & (left_pos >= 0)
+        & (right_pos < search_values.size)
+    )
+    left_pos = np.clip(left_pos, 0, search_values.size - 1)
+    right_pos = np.clip(right_pos, 0, search_values.size - 1)
+    span = search_values[right_pos] - search_values[left_pos]
+    weight = np.zeros(samples.shape, dtype=np.float64)
+    can_weight = in_range & (span > 0.0) & ~exact
+    weight[can_weight] = (
+        (samples[can_weight] - search_values[left_pos[can_weight]])
+        / span[can_weight]
+    )
+    if ascending:
+        left_idx = left_pos
+        right_idx = right_pos
+    else:
+        left_idx = search_values.size - 1 - left_pos
+        right_idx = search_values.size - 1 - right_pos
+    return (
+        left_idx.astype(np.int64, copy=False),
+        right_idx.astype(np.int64, copy=False),
+        weight,
+        in_range,
+    )
+
+
+def _spatial_coord_names(ds: xr.Dataset) -> tuple[str, str] | None:
+    if "latitude" in ds and "longitude" in ds:
+        return "latitude", "longitude"
+    if "lat" in ds and "lon" in ds:
+        return "lat", "lon"
+    return None
+
+
+def _build_spatial_selector(
+    ds: xr.Dataset,
     *,
     lat: float,
     lon: float,
-    method: str,
-) -> np.ndarray:
-    if "time" in da.dims:
-        da = da.isel(time=0)
-    if "latitude" in da.dims and "longitude" in da.dims:
-        lat_name = "latitude"
-        lon_name = "longitude"
-    elif "lat" in da.dims and "lon" in da.dims:
-        lat_name = "lat"
-        lon_name = "lon"
-    else:
-        return np.asarray(da.values, dtype=np.float32)
-
-    lon_values = np.asarray(da[lon_name].values, dtype=np.float64)
+) -> SpatialPointSelector | None:
+    names = _spatial_coord_names(ds)
+    if names is None:
+        return None
+    lat_name, lon_name = names
+    lat_values = np.asarray(ds[lat_name].values, dtype=np.float64)
+    lon_values = np.asarray(ds[lon_name].values, dtype=np.float64)
     sample_lon = _normalize_lon(lon)
     if lon_values.size > 0 and np.nanmin(lon_values) >= 0.0:
         sample_lon = sample_lon % 360.0
 
-    if method == "nearest":
-        sampled = da.sel({lat_name: float(lat), lon_name: sample_lon}, method="nearest")
-    else:
-        # Linear interpolation is only meaningful for continuous gridded fields.
-        sampled = da.interp({lat_name: float(lat), lon_name: sample_lon}, method="linear")
+    return SpatialPointSelector(
+        lat_name=lat_name,
+        lon_name=lon_name,
+        nearest_lat_idx=_nearest_axis_index(lat_values, lat),
+        nearest_lon_idx=_nearest_axis_index(lon_values, sample_lon),
+        linear_lat=_linear_axis_bracket(lat_values, lat),
+        linear_lon=_linear_axis_bracket(lon_values, sample_lon),
+    )
+
+
+def _build_spatial_batch_selector(
+    ds: xr.Dataset,
+    *,
+    lat: np.ndarray,
+    lon: np.ndarray,
+) -> SpatialPointBatchSelector | None:
+    names = _spatial_coord_names(ds)
+    if names is None:
+        return None
+    lat_name, lon_name = names
+    lat_values = np.asarray(ds[lat_name].values, dtype=np.float64)
+    lon_values = np.asarray(ds[lon_name].values, dtype=np.float64)
+    sample_lat = np.asarray(lat, dtype=np.float64).reshape(-1)
+    raw_lon = np.asarray(lon, dtype=np.float64).reshape(-1)
+    sample_lon = ((raw_lon + 180.0) % 360.0) - 180.0
+    if lon_values.size > 0 and np.nanmin(lon_values) >= 0.0:
+        sample_lon = sample_lon % 360.0
+
+    linear_lat0, linear_lat1, linear_lat_weight, linear_lat_valid = _linear_axis_brackets(
+        lat_values,
+        sample_lat,
+    )
+    linear_lon0, linear_lon1, linear_lon_weight, linear_lon_valid = _linear_axis_brackets(
+        lon_values,
+        sample_lon,
+    )
+    return SpatialPointBatchSelector(
+        lat_name=lat_name,
+        lon_name=lon_name,
+        nearest_lat_idx=_nearest_axis_indices(lat_values, sample_lat),
+        nearest_lon_idx=_nearest_axis_indices(lon_values, sample_lon),
+        linear_lat0=linear_lat0,
+        linear_lat1=linear_lat1,
+        linear_lat_weight=linear_lat_weight,
+        linear_lon0=linear_lon0,
+        linear_lon1=linear_lon1,
+        linear_lon_weight=linear_lon_weight,
+        linear_valid=linear_lat_valid & linear_lon_valid,
+    )
+
+
+def _nan_spatial_sample(
+    da: xr.DataArray,
+    selector: SpatialPointSelector,
+) -> np.ndarray:
+    out_shape = tuple(
+        int(da.sizes[dim])
+        for dim in da.dims
+        if dim not in {"time", selector.lat_name, selector.lon_name}
+    )
+    return np.full(out_shape, np.nan, dtype=np.float32)
+
+
+def _corner_values(
+    values: np.ndarray,
+    dims: tuple[str, ...],
+    selector: SpatialPointSelector,
+    *,
+    lat_idx: int,
+    lon_idx: int,
+) -> np.ndarray:
+    indexer: list[Any] = [slice(None)] * values.ndim
+    indexer[dims.index(selector.lat_name)] = lat_idx
+    indexer[dims.index(selector.lon_name)] = lon_idx
+    return values[tuple(indexer)]
+
+
+def _point_isel_values(
+    da: xr.DataArray,
+    selector: SpatialPointBatchSelector,
+    *,
+    lat_idx: np.ndarray,
+    lon_idx: np.ndarray,
+) -> np.ndarray:
+    point_dim = "_profile_point"
+    sampled = da.isel(
+        {
+            selector.lat_name: xr.DataArray(
+                np.asarray(lat_idx, dtype=np.int64),
+                dims=point_dim,
+            ),
+            selector.lon_name: xr.DataArray(
+                np.asarray(lon_idx, dtype=np.int64),
+                dims=point_dim,
+            ),
+        }
+    )
+    if point_dim in sampled.dims:
+        sampled = sampled.transpose(
+            point_dim,
+            *(dim for dim in sampled.dims if dim != point_dim),
+        )
     return np.asarray(sampled.values, dtype=np.float32)
+
+
+def _sample_dataarray_with_selector(
+    da: xr.DataArray,
+    selector: SpatialPointSelector | None,
+    *,
+    categorical: bool,
+) -> np.ndarray:
+    if "time" in da.dims:
+        da = da.isel(time=0)
+    if (
+        selector is None
+        or selector.lat_name not in da.dims
+        or selector.lon_name not in da.dims
+    ):
+        return np.asarray(da.values, dtype=np.float32)
+
+    if categorical:
+        sampled = da.isel(
+            {
+                selector.lat_name: selector.nearest_lat_idx,
+                selector.lon_name: selector.nearest_lon_idx,
+            }
+        )
+        return np.asarray(sampled.values, dtype=np.float32)
+
+    if selector.linear_lat is None or selector.linear_lon is None:
+        return _nan_spatial_sample(da, selector)
+
+    lat0, lat1, lat_weight = selector.linear_lat
+    lon0, lon1, lon_weight = selector.linear_lon
+    lat_start = min(lat0, lat1)
+    lon_start = min(lon0, lon1)
+    block = da.isel(
+        {
+            selector.lat_name: slice(lat_start, max(lat0, lat1) + 1),
+            selector.lon_name: slice(lon_start, max(lon0, lon1) + 1),
+        }
+    )
+    values = np.asarray(block.values, dtype=np.float32)
+    dims = tuple(block.dims)
+
+    # Read one local 2x2 cell block per variable, then do the bilinear blend in
+    # numpy. This avoids asking xarray to rebuild interpolation state per field.
+    local_lat0 = lat0 - lat_start
+    local_lat1 = lat1 - lat_start
+    local_lon0 = lon0 - lon_start
+    local_lon1 = lon1 - lon_start
+    v00 = _corner_values(values, dims, selector, lat_idx=local_lat0, lon_idx=local_lon0)
+    v01 = _corner_values(values, dims, selector, lat_idx=local_lat0, lon_idx=local_lon1)
+    v10 = _corner_values(values, dims, selector, lat_idx=local_lat1, lon_idx=local_lon0)
+    v11 = _corner_values(values, dims, selector, lat_idx=local_lat1, lon_idx=local_lon1)
+    return (
+        (v00 * np.float32((1.0 - lat_weight) * (1.0 - lon_weight)))
+        + (v01 * np.float32((1.0 - lat_weight) * lon_weight))
+        + (v10 * np.float32(lat_weight * (1.0 - lon_weight)))
+        + (v11 * np.float32(lat_weight * lon_weight))
+    ).astype(np.float32, copy=False)
+
+
+def _sample_dataarray_with_batch_selector(
+    da: xr.DataArray,
+    selector: SpatialPointBatchSelector | None,
+    *,
+    point_count: int,
+    categorical: bool,
+) -> np.ndarray:
+    if "time" in da.dims:
+        da = da.isel(time=0)
+    if (
+        selector is None
+        or selector.lat_name not in da.dims
+        or selector.lon_name not in da.dims
+    ):
+        values = np.asarray(da.values, dtype=np.float32)
+        return np.broadcast_to(values, (point_count,) + values.shape).copy()
+
+    if categorical:
+        return _point_isel_values(
+            da,
+            selector,
+            lat_idx=selector.nearest_lat_idx,
+            lon_idx=selector.nearest_lon_idx,
+        )
+
+    valid = selector.linear_valid
+    fill_lat = np.where(valid, selector.linear_lat0, selector.nearest_lat_idx)
+    fill_lon = np.where(valid, selector.linear_lon0, selector.nearest_lon_idx)
+    v00 = _point_isel_values(da, selector, lat_idx=fill_lat, lon_idx=fill_lon)
+    v01 = _point_isel_values(
+        da,
+        selector,
+        lat_idx=fill_lat,
+        lon_idx=np.where(valid, selector.linear_lon1, selector.nearest_lon_idx),
+    )
+    v10 = _point_isel_values(
+        da,
+        selector,
+        lat_idx=np.where(valid, selector.linear_lat1, selector.nearest_lat_idx),
+        lon_idx=fill_lon,
+    )
+    v11 = _point_isel_values(
+        da,
+        selector,
+        lat_idx=np.where(valid, selector.linear_lat1, selector.nearest_lat_idx),
+        lon_idx=np.where(valid, selector.linear_lon1, selector.nearest_lon_idx),
+    )
+    lat_weight = selector.linear_lat_weight.astype(np.float32, copy=False)
+    lon_weight = selector.linear_lon_weight.astype(np.float32, copy=False)
+    while lat_weight.ndim < v00.ndim:
+        lat_weight = lat_weight[..., None]
+        lon_weight = lon_weight[..., None]
+    out = (
+        (v00 * ((np.float32(1.0) - lat_weight) * (np.float32(1.0) - lon_weight)))
+        + (v01 * ((np.float32(1.0) - lat_weight) * lon_weight))
+        + (v10 * (lat_weight * (np.float32(1.0) - lon_weight)))
+        + (v11 * (lat_weight * lon_weight))
+    ).astype(np.float32, copy=False)
+    out[~valid] = np.nan
+    return out
+
+
+def sample_spatial_values(
+    ds: xr.Dataset,
+    var_names: tuple[str, ...],
+    *,
+    lat: float,
+    lon: float,
+    categorical_vars: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, np.ndarray]:
+    selector = _build_spatial_selector(ds, lat=lat, lon=lon)
+    out: dict[str, np.ndarray] = {}
+    for var_name in var_names:
+        if var_name not in ds:
+            out[var_name] = np.asarray(np.nan, dtype=np.float32)
+            continue
+        out[var_name] = _sample_dataarray_with_selector(
+            ds[var_name],
+            selector,
+            categorical=var_name in categorical_vars,
+        )
+    return out
+
+
+def sample_spatial_values_for_points(
+    ds: xr.Dataset,
+    var_names: tuple[str, ...],
+    *,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    categorical_vars: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, np.ndarray]:
+    lat_values = np.asarray(lat, dtype=np.float64).reshape(-1)
+    lon_values = np.asarray(lon, dtype=np.float64).reshape(-1)
+    if lat_values.shape != lon_values.shape:
+        raise ValueError("lat and lon point arrays must have matching shapes.")
+    selector = _build_spatial_batch_selector(ds, lat=lat_values, lon=lon_values)
+    out: dict[str, np.ndarray] = {}
+    for var_name in var_names:
+        if var_name not in ds:
+            out[var_name] = np.full(lat_values.shape, np.nan, dtype=np.float32)
+            continue
+        out[var_name] = _sample_dataarray_with_batch_selector(
+            ds[var_name],
+            selector,
+            point_count=int(lat_values.size),
+            categorical=var_name in categorical_vars,
+        )
+    return out
 
 
 def sample_spatial_value(
@@ -315,16 +726,37 @@ def sample_spatial_value(
     lon: float,
     categorical: bool = False,
 ) -> np.ndarray:
-    if var_name not in ds:
-        return np.asarray(np.nan, dtype=np.float32)
-    method = "nearest" if categorical else "linear"
-    return _sample_dataarray_at_point(ds[var_name], lat=lat, lon=lon, method=method)
+    values = sample_spatial_values(
+        ds,
+        (var_name,),
+        lat=lat,
+        lon=lon,
+        categorical_vars={var_name} if categorical else frozenset(),
+    )
+    return values[var_name]
 
 
 def _nearest_time_item(before: TimedFile, after: TimedFile, target_day: float) -> TimedFile:
     if abs(before.day - target_day) <= abs(after.day - target_day):
         return before
     return after
+
+
+def nearest_timed_file(
+    index: list[TimedFile],
+    target_day: float,
+) -> tuple[TimedFile | None, np.int8]:
+    if not index:
+        return None, MISSING_STATUS
+    days = np.asarray([item.day for item in index], dtype=np.float64)
+    pos = int(np.searchsorted(days, float(target_day), side="left"))
+    if pos < len(index) and np.isclose(days[pos], target_day, rtol=0.0, atol=1.0e-8):
+        return index[pos], NEAREST_STATUS
+    if pos == 0:
+        return index[0], NEAREST_EDGE_STATUS
+    if pos >= len(index):
+        return index[-1], NEAREST_EDGE_STATUS
+    return _nearest_time_item(index[pos - 1], index[pos], target_day), NEAREST_STATUS
 
 
 def sample_temporal_value(
@@ -337,21 +769,69 @@ def sample_temporal_value(
     lon: float,
     categorical: bool = False,
 ) -> tuple[np.ndarray, np.int8]:
-    before, after, weight, status = bracket_timed_files(index, target_day)
-    if before is None or after is None:
-        return np.asarray(np.nan, dtype=np.float32), status
-    if categorical:
-        item = _nearest_time_item(before, after, target_day)
-        return sample_spatial_value(
-            cache.get(item.path), var_name, lat=lat, lon=lon, categorical=True
-        ), status
-    first = sample_spatial_value(cache.get(before.path), var_name, lat=lat, lon=lon)
-    if before.path == after.path:
-        return first, status
-    second = sample_spatial_value(cache.get(after.path), var_name, lat=lat, lon=lon)
-    return (
-        (np.asarray(first, dtype=np.float32) * np.float32(1.0 - weight))
-        + (np.asarray(second, dtype=np.float32) * np.float32(weight))
+    values, status = sample_temporal_values(
+        index,
+        cache,
+        (var_name,),
+        target_day=target_day,
+        lat=lat,
+        lon=lon,
+        categorical_vars={var_name} if categorical else frozenset(),
+    )
+    return values[var_name], status
+
+
+def sample_temporal_values(
+    index: list[TimedFile],
+    cache: DatasetCache,
+    var_names: tuple[str, ...],
+    *,
+    target_day: float,
+    lat: float,
+    lon: float,
+    categorical_vars: set[str] | frozenset[str] = frozenset(),
+) -> tuple[dict[str, np.ndarray], np.int8]:
+    item, status = nearest_timed_file(index, target_day)
+    if item is None:
+        return {
+            var_name: np.asarray(np.nan, dtype=np.float32) for var_name in var_names
+        }, status
+    # The enriched ARGO export collocates to the nearest available source time;
+    # it must not blend weekly or daily source files across time.
+    return sample_spatial_values(
+        cache.get(item.path),
+        var_names,
+        lat=lat,
+        lon=lon,
+        categorical_vars=categorical_vars,
+    ), status
+
+
+def sample_temporal_values_for_points(
+    index: list[TimedFile],
+    cache: DatasetCache,
+    var_names: tuple[str, ...],
+    *,
+    target_day: float,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    categorical_vars: set[str] | frozenset[str] = frozenset(),
+) -> tuple[dict[str, np.ndarray], np.int8]:
+    lat_values = np.asarray(lat, dtype=np.float64).reshape(-1)
+    item, status = nearest_timed_file(index, target_day)
+    if item is None:
+        return {
+            var_name: np.full(lat_values.shape, np.nan, dtype=np.float32)
+            for var_name in var_names
+        }, status
+    # Same-day ARGO profiles share source files; sample all their locations while
+    # the nearest source dataset is already open in the cache.
+    return sample_spatial_values_for_points(
+        cache.get(item.path),
+        var_names,
+        lat=lat_values,
+        lon=np.asarray(lon, dtype=np.float64).reshape(-1),
+        categorical_vars=categorical_vars,
     ), status
 
 
@@ -531,8 +1011,8 @@ def _build_export_metadata(
                 "latitude/longitude. Categorical variables use nearest-neighbor sampling."
             ),
             "temporal_collocation": (
-                "Continuous fields are linearly interpolated between bracketing source "
-                "files. Categorical variables use the nearest bracketing source file."
+                "All gridded fields use the nearest available source file in time. "
+                "No temporal interpolation is applied between bracketing source files."
             ),
             "argo_quality_flags": (
                 "Optional EN4/ARGO QC variables are stored as int8 QC codes. Depth-level "
@@ -547,7 +1027,7 @@ def _build_export_metadata(
             ),
         },
         "status_values": {
-            "0": "interpolated_or_exact",
+            "0": "nearest_or_exact",
             "1": "nearest_edge",
             "2": "missing",
         },
@@ -641,6 +1121,9 @@ def _append_profile_to_batch(
     ostia_index: list[TimedFile],
     sealevel_index: list[TimedFile],
     cache: DatasetCache,
+    sampled_source_values: dict[str, dict[str, np.ndarray]] | None = None,
+    sampled_source_status: dict[str, np.int8] | None = None,
+    sampled_source_row: int | None = None,
 ) -> None:
     target_day = float(profile_juld)
     valid_depth_count = int(np.count_nonzero(np.isfinite(depth) & (depth >= 0.0)))
@@ -688,22 +1171,29 @@ def _append_profile_to_batch(
         ("ostia", ostia_index, OSTIA_VARS),
         ("sealevel", sealevel_index, SEALEVEL_VARS),
     ):
-        status_values: list[np.int8] = []
-        for name in names:
-            value, status = sample_temporal_value(
+        if (
+            sampled_source_values is None
+            or sampled_source_status is None
+            or sampled_source_row is None
+        ):
+            values_by_name, status = sample_temporal_values(
                 index,
                 cache,
-                name,
+                names,
                 target_day=target_day,
                 lat=lat,
                 lon=lon,
-                categorical=name in CATEGORICAL_VARS,
+                categorical_vars=CATEGORICAL_VARS,
             )
-            batch[f"{source_name}_{name}"].append(value)
-            status_values.append(status)
-        source_status[source_name] = (
-            MISSING_STATUS if not status_values else np.max(status_values).astype(np.int8)
-        )
+        else:
+            values_by_name = {
+                name: np.asarray(sampled_source_values[source_name][name][sampled_source_row])
+                for name in names
+            }
+            status = sampled_source_status[source_name]
+        for name in names:
+            batch[f"{source_name}_{name}"].append(values_by_name[name])
+        source_status[source_name] = status
     batch["glorys_temporal_status"].append(source_status["glorys"])
     batch["ostia_temporal_status"].append(source_status["ostia"])
     batch["sealevel_temporal_status"].append(source_status["sealevel"])
@@ -1024,7 +1514,7 @@ def _apply_output_metadata(
             interpolation = (
                 "nearest spatial and temporal sample"
                 if var_name in CATEGORICAL_VARS
-                else "linear spatial interpolation and linear temporal interpolation"
+                else "linear spatial interpolation and nearest temporal sample"
             )
             _set_attrs(
                 ds,
@@ -1059,7 +1549,7 @@ def _apply_output_metadata(
                 "long_name": f"{source_name} temporal collocation status",
                 "description": "Worst temporal status across variables sampled from this source for the profile.",
                 "flag_values": [0, 1, 2],
-                "flag_meanings": "interpolated_or_exact nearest_edge missing",
+                "flag_meanings": "nearest_or_exact nearest_edge missing",
             },
         )
     return ds
@@ -1195,6 +1685,8 @@ def export_enriched_argo_profiles(
                         for name, source_name in ARGO_PROFILE_QC_VARS.items()
                     }
 
+                    eligible_profile_indices: list[int] = []
+                    positions_by_date: OrderedDict[int, list[int]] = OrderedDict()
                     for profile_idx in range(int(juld.size)):
                         date = int(dates[profile_idx])
                         if date <= 0:
@@ -1206,69 +1698,109 @@ def export_enriched_argo_profiles(
                         if not (np.isfinite(lat[profile_idx]) and np.isfinite(lon[profile_idx])):
                             continue
 
-                        _append_profile_to_batch(
-                            batch,
-                            argo_path=argo_path,
-                            profile_idx=profile_idx,
-                            profile_date=date,
-                            profile_juld=float(juld[profile_idx]),
-                            lat=float(lat[profile_idx]),
-                            lon=float(lon[profile_idx]),
-                            depth=depth[profile_idx],
-                            temp=temp[profile_idx],
-                            potm=potm[profile_idx],
-                            psal=psal[profile_idx],
-                            argo_level_qc={
-                                name: values[profile_idx]
-                                if values is not None
-                                else None
-                                for name, values in level_qc_arrays.items()
-                            },
-                            argo_profile_qc={
-                                name: _qc_scalar_to_int(values[profile_idx])
-                                if values is not None
-                                else MISSING_QC_FLAG
-                                for name, values in profile_qc_arrays.items()
-                            },
-                            glorys_depths=glorys_depths,
-                            glorys_index=glorys_index,
-                            ostia_index=ostia_index,
-                            sealevel_index=sealevel_index,
-                            cache=cache,
-                        )
-                        profile_progress.update(1)
-                        if profile_progress.n == 1 or profile_progress.n % 100 == 0:
-                            profile_progress.set_postfix(
-                                written=written,
-                                queued=len(batch["profile_idx"]),
-                                refresh=False,
-                            )
-
-                        reached_profile_cap = (
+                        position = len(eligible_profile_indices)
+                        eligible_profile_indices.append(profile_idx)
+                        positions_by_date.setdefault(date, []).append(position)
+                        if (
                             max_profiles is not None
-                            and written + len(batch["profile_idx"]) >= int(max_profiles)
+                            and written + len(batch["profile_idx"]) + len(eligible_profile_indices)
+                            >= int(max_profiles)
+                        ):
+                            break
+
+                    for date, positions in positions_by_date.items():
+                        source_profile_indices = np.asarray(
+                            [eligible_profile_indices[position] for position in positions],
+                            dtype=np.int64,
                         )
-                        if len(batch["profile_idx"]) >= int(batch_size) or reached_profile_cap:
-                            count = _write_batch(
+                        source_values: dict[str, dict[str, np.ndarray]] = {}
+                        source_status: dict[str, np.int8] = {}
+                        target_day = date_to_days_since_1950(date)
+                        for source_name, index, names in (
+                            ("glorys", glorys_index, GLORYS_3D_VARS + GLORYS_2D_VARS),
+                            ("ostia", ostia_index, OSTIA_VARS),
+                            ("sealevel", sealevel_index, SEALEVEL_VARS),
+                        ):
+                            values_by_name, status = sample_temporal_values_for_points(
+                                index,
+                                cache,
+                                names,
+                                target_day=target_day,
+                                lat=lat[source_profile_indices],
+                                lon=lon[source_profile_indices],
+                                categorical_vars=CATEGORICAL_VARS,
+                            )
+                            source_values[source_name] = values_by_name
+                            source_status[source_name] = status
+
+                        for source_row, position in enumerate(positions):
+                            profile_idx = eligible_profile_indices[position]
+                            _append_profile_to_batch(
                                 batch,
-                                output_zarr=output_zarr,
-                                profile_start=written,
+                                argo_path=argo_path,
+                                profile_idx=profile_idx,
+                                profile_date=date,
+                                profile_juld=float(juld[profile_idx]),
+                                lat=float(lat[profile_idx]),
+                                lon=float(lon[profile_idx]),
+                                depth=depth[profile_idx],
+                                temp=temp[profile_idx],
+                                potm=potm[profile_idx],
+                                psal=psal[profile_idx],
+                                argo_level_qc={
+                                    name: values[profile_idx]
+                                    if values is not None
+                                    else None
+                                    for name, values in level_qc_arrays.items()
+                                },
+                                argo_profile_qc={
+                                    name: _qc_scalar_to_int(values[profile_idx])
+                                    if values is not None
+                                    else MISSING_QC_FLAG
+                                    for name, values in profile_qc_arrays.items()
+                                },
                                 glorys_depths=glorys_depths,
-                                chunk_size=batch_size,
-                                first_write=first_write,
-                                export_metadata=export_metadata,
+                                glorys_index=glorys_index,
+                                ostia_index=ostia_index,
+                                sealevel_index=sealevel_index,
+                                cache=cache,
+                                sampled_source_values=source_values,
+                                sampled_source_status=source_status,
+                                sampled_source_row=source_row,
                             )
-                            written += count
-                            first_write = False
-                            batch = _empty_batch()
-                            profile_progress.set_postfix(
-                                written=written,
-                                queued=0,
-                                refresh=False,
+                            profile_progress.update(1)
+                            if profile_progress.n == 1 or profile_progress.n % 100 == 0:
+                                profile_progress.set_postfix(
+                                    written=written,
+                                    queued=len(batch["profile_idx"]),
+                                    refresh=False,
+                                )
+
+                            reached_profile_cap = (
+                                max_profiles is not None
+                                and written + len(batch["profile_idx"]) >= int(max_profiles)
                             )
-                            if reached_profile_cap:
-                                file_progress.update(1)
-                                return output_zarr
+                            if len(batch["profile_idx"]) >= int(batch_size) or reached_profile_cap:
+                                count = _write_batch(
+                                    batch,
+                                    output_zarr=output_zarr,
+                                    profile_start=written,
+                                    glorys_depths=glorys_depths,
+                                    chunk_size=batch_size,
+                                    first_write=first_write,
+                                    export_metadata=export_metadata,
+                                )
+                                written += count
+                                first_write = False
+                                batch = _empty_batch()
+                                profile_progress.set_postfix(
+                                    written=written,
+                                    queued=0,
+                                    refresh=False,
+                                )
+                                if reached_profile_cap:
+                                    file_progress.update(1)
+                                    return output_zarr
 
                     if max_profiles is not None and written >= int(max_profiles):
                         file_progress.update(1)

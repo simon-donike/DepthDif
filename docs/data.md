@@ -35,6 +35,10 @@ The zarr variant reads compact stores exported by
 - `glorys.zarr`: `thetao`, `so`, `zos`
 - `sealevel.zarr`: `adt` by default
 
+By default, the exporter interpolates OSTIA, GLORYS, and sea-level raster
+stores to 0.1 degrees before writing. This matches the default patch grid and
+lets the zarr loader use exact grid selection for those rasters.
+
 Only compact cache files are allowed under `metadata_cache_dir`. These caches
 store patch rows, split labels, land fractions, and ARGO support flags. They do
 not store model-ready patch tensors.

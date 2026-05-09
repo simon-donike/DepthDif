@@ -67,7 +67,8 @@ metadata caches under `dataset.core.metadata_cache_dir`.
 ## Export Compact Zarr Training Stores
 
 To reduce disk footprint and speed loader access, export only the training
-modalities into zarr:
+modalities configured in `export_dataset_zarr/source_variables.yaml` into zarr.
+OSTIA, GLORYS, and sea-level rasters are resampled to 0.1 degrees by default:
 
 ```bash
 /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py \
@@ -78,6 +79,7 @@ modalities into zarr:
   --output-dir /data1/datasets/depth_v2/zarr_training \
   --start-date 20100101 \
   --end-date 20240731 \
+  --target-resolution-deg 0.1 \
   --overwrite
 ```
 

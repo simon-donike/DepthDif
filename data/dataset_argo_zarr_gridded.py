@@ -241,10 +241,23 @@ class TimedZarrStore:
             )
 
         lon_axis = self._lon_axis_for_source(da, lon_name, axes.lon_axis)
-        sampled = da.interp(
-            {lat_name: axes.lat_axis, lon_name: lon_axis},
-            method="nearest" if categorical else "linear",
-        )
+        if self._axes_are_on_source_grid(
+            da,
+            lat_name,
+            lon_name,
+            axes.lat_axis,
+            lon_axis,
+        ):
+            sampled = da.sel(
+                {lat_name: axes.lat_axis, lon_name: lon_axis},
+                method="nearest",
+                tolerance=self._coordinate_tolerance(da, lat_name, lon_name),
+            )
+        else:
+            sampled = da.interp(
+                {lat_name: axes.lat_axis, lon_name: lon_axis},
+                method="nearest" if categorical else "linear",
+            )
         if "depth" in sampled.dims:
             sampled = sampled.transpose("depth", lat_name, lon_name)
         else:
@@ -298,6 +311,66 @@ class TimedZarrStore:
         if np.nanmin(source_lons) >= 0.0 and np.nanmax(source_lons) > 180.0:
             return np.mod(lon_axis, 360.0)
         return lon_axis
+
+    @staticmethod
+    def _coordinate_tolerance(
+        da: xr.DataArray,
+        lat_name: str,
+        lon_name: str,
+    ) -> float:
+        steps: list[float] = []
+        for coord_name in (lat_name, lon_name):
+            values = np.sort(
+                np.asarray(da[coord_name].values, dtype=np.float64).reshape(-1)
+            )
+            diffs = np.diff(values[np.isfinite(values)])
+            diffs = np.abs(diffs[diffs != 0.0])
+            if diffs.size > 0:
+                steps.append(float(np.nanmin(diffs)))
+        return max(1.0e-8, min(steps) * 1.0e-6) if steps else 1.0e-8
+
+    @classmethod
+    def _axes_are_on_source_grid(
+        cls,
+        da: xr.DataArray,
+        lat_name: str,
+        lon_name: str,
+        lat_axis: np.ndarray,
+        lon_axis: np.ndarray,
+    ) -> bool:
+        tolerance = cls._coordinate_tolerance(da, lat_name, lon_name)
+        return cls._axis_is_on_source_grid(
+            da[lat_name].values,
+            lat_axis,
+            tolerance,
+        ) and cls._axis_is_on_source_grid(
+            da[lon_name].values,
+            lon_axis,
+            tolerance,
+        )
+
+    @staticmethod
+    def _axis_is_on_source_grid(
+        source_values: np.ndarray,
+        requested_values: np.ndarray,
+        tolerance: float,
+    ) -> bool:
+        source = np.sort(np.asarray(source_values, dtype=np.float64).reshape(-1))
+        source = source[np.isfinite(source)]
+        requested = np.asarray(requested_values, dtype=np.float64).reshape(-1)
+        if source.size == 0 or requested.size == 0:
+            return False
+        if not np.all(np.isfinite(requested)):
+            return False
+        positions = np.searchsorted(source, requested)
+        positions = np.clip(positions, 0, int(source.size) - 1)
+        prev_positions = np.clip(positions - 1, 0, int(source.size) - 1)
+        nearest = np.minimum(
+            np.abs(source[positions] - requested),
+            np.abs(source[prev_positions] - requested),
+        )
+        # Exact-grid Zarr exports can use label selection instead of interpolation.
+        return bool(np.all(nearest <= float(tolerance)))
 
 
 class ArgoZarrStore:

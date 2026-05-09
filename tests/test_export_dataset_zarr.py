@@ -11,6 +11,16 @@ import yaml
 
 from data.dataset_argo_zarr_gridded import ArgoZarrGriddedPatchDataset
 from data.dataset_creation.export_dataset_zarr import export_training_zarr_dataset
+from data.dataset_creation.export_dataset_zarr.export_dataset_zarr import (
+    DEFAULT_ARGO_DEPTH_VAR,
+    DEFAULT_ARGO_VARS,
+    DEFAULT_GLORYS_VARS,
+    DEFAULT_OSTIA_VARS,
+    DEFAULT_SEALEVEL_VARS,
+    DEFAULT_TARGET_RESOLUTION_DEG,
+    SOURCE_VARIABLE_CONFIG_PATH,
+    load_zarr_source_variables,
+)
 from train import build_dataset
 from utils.normalizations import temperature_normalize
 
@@ -179,11 +189,70 @@ def _export_zarr(tmp_path: Path) -> Path:
         chunk_profile=2,
         chunk_lat=2,
         chunk_lon=2,
+        target_resolution_deg=1.0,
         overwrite=True,
     )
 
 
 class TestExportDatasetZarr(unittest.TestCase):
+    def test_source_variable_config_defines_export_defaults(self) -> None:
+        source_variables = load_zarr_source_variables(SOURCE_VARIABLE_CONFIG_PATH)
+
+        self.assertEqual(source_variables.ostia_vars, DEFAULT_OSTIA_VARS)
+        self.assertEqual(source_variables.argo_vars, DEFAULT_ARGO_VARS)
+        self.assertEqual(source_variables.argo_depth_var, DEFAULT_ARGO_DEPTH_VAR)
+        self.assertEqual(source_variables.glorys_vars, DEFAULT_GLORYS_VARS)
+        self.assertEqual(source_variables.sealevel_vars, DEFAULT_SEALEVEL_VARS)
+
+    def test_export_resamples_raster_sources_to_target_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, sealevel_dir = _make_raw_sources(tmp_path)
+            zarr_dir = export_training_zarr_dataset(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                output_dir=tmp_path / "zarr_resampled",
+                start_date=20240102,
+                end_date=20240103,
+                chunk_time=1,
+                chunk_profile=2,
+                chunk_lat=2,
+                chunk_lon=2,
+                target_resolution_deg=0.5,
+                overwrite=True,
+            )
+
+            ostia = xr.open_zarr(zarr_dir / "ostia.zarr", consolidated=None)
+            glorys = xr.open_zarr(zarr_dir / "glorys.zarr", consolidated=None)
+            sealevel = xr.open_zarr(zarr_dir / "sealevel.zarr", consolidated=None)
+            manifest = yaml.safe_load((zarr_dir / "manifest.yaml").read_text())
+
+            self.assertEqual(manifest["raster_target_resolution_deg"], 0.5)
+            np.testing.assert_allclose(ostia["lat"].values, [0.5, 1.0, 1.5])
+            np.testing.assert_allclose(ostia["lon"].values, [10.5, 11.0, 11.5])
+            np.testing.assert_allclose(glorys["latitude"].values, [0.5, 1.0, 1.5])
+            np.testing.assert_allclose(
+                sealevel["longitude"].values,
+                [10.5, 11.0, 11.5],
+            )
+            self.assertEqual(int(ostia["analysed_sst"].sizes["lat"]), 3)
+            self.assertEqual(int(glorys["thetao"].sizes["latitude"]), 3)
+            self.assertEqual(int(sealevel["adt"].sizes["longitude"]), 3)
+            self.assertEqual(str(ostia["mask"].dtype), "int16")
+            self.assertAlmostEqual(
+                float(ostia["analysed_sst"].isel(time=0, lat=1, lon=1).values),
+                282.5,
+                places=5,
+            )
+            ostia.close()
+            glorys.close()
+            sealevel.close()
+
+    def test_default_raster_target_resolution_is_training_resolution(self) -> None:
+        self.assertEqual(DEFAULT_TARGET_RESOLUTION_DEG, 0.1)
+
     def test_exported_zarr_dataset_reads_training_contract_and_modalities(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
