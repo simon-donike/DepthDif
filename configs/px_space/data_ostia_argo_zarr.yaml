@@ -1,0 +1,45 @@
+dataset:
+  core:
+    dataset_variant: "argo_zarr_gridded" # Lazily builds patches from compact zarr stores.
+    dataloader_type: "light"
+    zarr_root_dir: "/data1/datasets/depth_v2/zarr_training"
+    argo_zarr: null # Defaults to <zarr_root_dir>/argo.zarr.
+    glorys_zarr: null # Defaults to <zarr_root_dir>/glorys.zarr.
+    ostia_zarr: null # Defaults to <zarr_root_dir>/ostia.zarr.
+    sealevel_zarr: null # Defaults to <zarr_root_dir>/sealevel.zarr when present.
+    metadata_cache_dir: "/data1/datasets/depth_v2/depthdif_cache"
+  grid:
+    tile_size: 128
+    resolution_deg: 0.1
+    invalid_threshold: 0.5
+    invalid_mask_flags: ["land"]
+  sampling:
+    temporal_window_days: 7
+    glorys_var_name: "thetao"
+    glorys_salinity_var_name: "so"
+    glorys_ssh_var_name: "zos"
+    ostia_var_name: "analysed_sst"
+    argo_temp_var_name: "TEMP"
+    argo_salinity_var_name: "PSAL_CORRECTED"
+    argo_depth_var_name: "DEPH_CORRECTED"
+    sealevel_ssh_var_name: "adt"
+  selection:
+    require_argo_for_train: true
+    require_argo_for_val: true
+    require_argo_for_all: false
+  synthetic:
+    enabled: false
+    pixel_count: 250
+  output:
+    return_info: false
+    return_coords: true
+    return_modalities: false # Enable to receive saved salinity/SSH modality tensors.
+  runtime:
+    random_seed: 7
+
+split:
+  val_year: 2018
+  val_fraction: 0.2
+
+dataloader:
+  val_shuffle: true

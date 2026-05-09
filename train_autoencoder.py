@@ -24,6 +24,7 @@ from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from data.dataset_argo_zarr_gridded import ArgoZarrGriddedPatchDataset
 from models.latent import DepthBandAutoencoderLightning
 
 
@@ -87,8 +88,11 @@ def build_dataset(
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant == "argo_netcdf_gridded":
         return ArgoNetCDFGriddedPatchDataset.from_config(data_config_path, split="all")
+    if dataset_variant == "argo_zarr_gridded":
+        return ArgoZarrGriddedPatchDataset.from_config(data_config_path, split="all")
     raise ValueError(
-        f"Unsupported dataset variant '{dataset_variant}'. Expected one of ['argo_netcdf_gridded']."
+        "Unsupported dataset variant "
+        f"'{dataset_variant}'. Expected one of ['argo_netcdf_gridded', 'argo_zarr_gridded']."
     )
 
 

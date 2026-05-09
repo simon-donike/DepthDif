@@ -1,17 +1,20 @@
 # NetCDF Patch Dataset
 
-DepthDif now uses one model-facing dataset path: `argo_netcdf_gridded`.
-It builds patch samples lazily from source NetCDF files and writes no patch
-tensors, NumPy exports, or dataset GeoTIFF manifests.
+DepthDif supports the raw NetCDF path `argo_netcdf_gridded` and a compact zarr
+path `argo_zarr_gridded`. Both build patch samples lazily and keep the same
+model-facing training keys.
 
 Active config:
 
 - `configs/px_space/data_ostia_argo_netcdf.yaml`
+- `configs/px_space/data_ostia_argo_zarr.yaml`
 
 Active implementation:
 
 - `data/dataset_argo_netcdf_gridded.py`
 - `ArgoNetCDFGriddedPatchDataset`
+- `data/dataset_argo_zarr_gridded.py`
+- `ArgoZarrGriddedPatchDataset`
 
 ## Sources
 
@@ -24,9 +27,17 @@ The dataset reads directly from local NetCDF roots configured under
 - `sealevel_dir`: sea-level NetCDF files, indexed for auxiliary metadata and
   diagnostics
 
+The zarr variant reads compact stores exported by
+`data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py`:
+
+- `ostia.zarr`: `analysed_sst` and optional `mask`
+- `argo.zarr`: `TEMP`, `PSAL_CORRECTED`, `DEPH_CORRECTED`, and profile helpers
+- `glorys.zarr`: `thetao`, `so`, `zos`
+- `sealevel.zarr`: `adt` by default
+
 Only compact cache files are allowed under `metadata_cache_dir`. These caches
-store source file indexes, patch rows, split labels, land fractions, and ARGO
-support flags. They do not store model-ready patch tensors.
+store patch rows, split labels, land fractions, and ARGO support flags. They do
+not store model-ready patch tensors.
 
 ## Sample Contract
 
@@ -43,11 +54,17 @@ Each dataset item keeps the current training and inference batch contract:
 - optional `coords`
 - optional `info`
 
+When `dataset.output.return_modalities: true` is enabled for the zarr dataset,
+additional raw modality tensors are returned in `sample["modalities"]` with
+matching masks in `sample["modality_valid_masks"]`. Variable names are resolved
+from the zarr data variables and config aliases instead of fixed file paths.
+
 Public dataset metadata used by inference:
 
 - `dataset.rows`
 - `dataset.depth_axis_m`
 - `ArgoNetCDFGriddedPatchDataset.from_config(...)`
+- `ArgoZarrGriddedPatchDataset.from_config(...)`
 
 Rows expose stable fields: `patch_id`, `date`, `lat0`, `lat1`, `lon0`, `lon1`,
 and `split`.
