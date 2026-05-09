@@ -412,11 +412,13 @@ class ArgoZarrStore:
 
     def _build_profile_index(self) -> None:
         missing = [name for name in self.REQUIRED_VARS if name not in self.ds]
-        missing += [
-            name
-            for name in (self.temp_var_name, self.depth_var_name)
-            if name not in self.ds
-        ]
+        missing += [name for name in (self.temp_var_name,) if name not in self.ds]
+        if (
+            self.temp_var_name in self.ds
+            and not self._is_projected_profile_var(self.temp_var_name)
+            and self.depth_var_name not in self.ds
+        ):
+            missing.append(self.depth_var_name)
         if missing:
             raise RuntimeError(
                 f"ARGO zarr is missing required variables {missing}: {self.root_dir}"
@@ -451,10 +453,18 @@ class ArgoZarrStore:
                 :n_prof
             ]
         values = self._read_profile_matrix(var_name, np.arange(n_prof, dtype=np.int64))
+        if self._is_projected_profile_var(var_name) or self.depth_var_name not in self.ds:
+            return np.isfinite(values).any(axis=1)
         depth = self._read_profile_matrix(
             self.depth_var_name, np.arange(n_prof, dtype=np.int64)
         )
         return (np.isfinite(values) & np.isfinite(depth) & (depth >= 0.0)).any(axis=1)
+
+    def _is_projected_profile_var(self, var_name: str) -> bool:
+        if var_name not in self.ds:
+            return False
+        da = self.ds[var_name]
+        return "depth" in da.dims and da.dims[0] in {"N_PROF", "profile"}
 
     def _build_indices_by_date(self) -> dict[int, np.ndarray]:
         out: dict[int, np.ndarray] = {}
@@ -536,6 +546,13 @@ class ArgoZarrStore:
             (int(indices.size), int(self.depth_axis_m.size)), np.nan, dtype=np.float32
         )
         values = self._read_profile_matrix(var_name, indices)
+        if self._is_projected_profile_var(var_name):
+            if int(values.shape[1]) != int(self.depth_axis_m.size):
+                raise RuntimeError(
+                    "Projected ARGO profile depth count does not match GLORYS depth axis: "
+                    f"{int(values.shape[1])} != {int(self.depth_axis_m.size)}"
+                )
+            return values.astype(np.float32, copy=False)
         depth = self._read_profile_matrix(self.depth_var_name, indices)
         for local_idx in range(int(indices.size)):
             # ARGO variables share the corrected-depth samples, so each profile is projected

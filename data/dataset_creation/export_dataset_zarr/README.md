@@ -4,13 +4,13 @@ This folder contains the compact zarr export path. The zarr-backed training
 loader lives in `data/dataset_argo_zarr_gridded.py`.
 
 The exporter keeps only the model-relevant variables configured in
-`source_variables.yaml` and writes raster sources on a 0.1 degree grid by
-default:
+`source_variables.yaml`, writes raster sources on a 0.1 degree grid by default,
+and stores continuous fields as packed int16 arrays:
 
-- OSTIA: `analysed_sst` plus optional `mask` for patch filtering
-- ARGO / EN4: `TEMP`, `PSAL_CORRECTED`, and `DEPH_CORRECTED`
+- OSTIA: weekly `analysed_sst` aggregates plus optional `mask` for patch filtering
+- ARGO / EN4: `TEMP` and `PSAL_CORRECTED` projected onto the GLORYS depth axis
 - GLORYS: `thetao`, `so`, and `zos`
-- Sea Level L4: `adt` by default
+- Sea Level L4: weekly `adt` aggregates by default
 
 Run from the repository root:
 
@@ -24,7 +24,8 @@ Run from the repository root:
   --start-date 20100101 \
   --end-date 20240731 \
   --target-resolution-deg 0.1 \
-  --chunk-time 16 \
+  --surface-aggregate-days 7 \
+  --chunk-time 1 \
   --chunk-profile 20000 \
   --chunk-lat 256 \
   --chunk-lon 256 \
@@ -41,10 +42,15 @@ The output folder contains:
 
 Edit `source_variables.yaml` to change the default variables kept in each Zarr
 store. By default, OSTIA, GLORYS, and sea-level rasters are interpolated to
-0.1 degrees before writing, while ARGO profiles stay at native profile
-locations. Set `--target-resolution-deg none` to keep native raster grids. The
-CLI `--ostia-vars`, `--argo-vars`, `--argo-depth-var`, `--glorys-vars`, and
-`--sealevel-vars` flags still override those defaults for one-off exports.
+0.1 degrees before writing. OSTIA and sea-level daily files are reduced to
+centered 7-day windows around the GLORYS timesteps, so the saved surface stores
+share the weekly GLORYS cadence. ARGO profile variables are projected from
+`DEPH_CORRECTED` onto the 50-level GLORYS depth coordinate. Continuous variables
+are packed to int16 with variable-specific scale factors, and the OSTIA mask is
+stored as int8. Set `--target-resolution-deg none` to keep native raster grids.
+The CLI `--surface-aggregate-days`, `--ostia-vars`, `--argo-vars`,
+`--argo-depth-var`, `--glorys-vars`, and `--sealevel-vars` flags still override
+those defaults for one-off exports.
 
 Training can use `configs/px_space/data_ostia_argo_zarr.yaml` with
 `dataset.core.dataset_variant: argo_zarr_gridded`.

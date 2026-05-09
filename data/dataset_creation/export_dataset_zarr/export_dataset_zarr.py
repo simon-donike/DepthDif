@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py --argo-dir /data1/datasets/depth_v2/en4_profiles --glorys-dir /data1/datasets/depth_v2/glorys --ostia-dir /data1/datasets/depth_v2/ostia --sealevel-dir /data1/datasets/depth_v2/sealevel_daily --output-dir /data1/datasets/depth_v2/zarr_training --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml --start-date 20100101 --end-date 20240731 --target-resolution-deg 0.1 --ostia-vars analysed_sst mask --argo-vars TEMP PSAL_CORRECTED --argo-depth-var DEPH_CORRECTED --glorys-vars thetao so zos --sealevel-vars adt --chunk-time 16 --chunk-profile 20000 --chunk-lat 256 --chunk-lon 256 --overwrite
+# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py --argo-dir /data1/datasets/depth_v2/en4_profiles --glorys-dir /data1/datasets/depth_v2/glorys --ostia-dir /data1/datasets/depth_v2/ostia --sealevel-dir /data1/datasets/depth_v2/sealevel_daily --output-dir /data1/datasets/depth_v2/zarr_training --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml --start-date 20100101 --end-date 20240731 --target-resolution-deg 0.1 --surface-aggregate-days 7 --ostia-vars analysed_sst mask --argo-vars TEMP PSAL_CORRECTED --argo-depth-var DEPH_CORRECTED --glorys-vars thetao so zos --sealevel-vars adt --chunk-time 1 --chunk-profile 20000 --chunk-lat 256 --chunk-lon 256 --overwrite
 """Export a compact ML-facing zarr dataset from the raw NetCDF source folders."""
 
 from __future__ import annotations
@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
+from numcodecs import Blosc
 import xarray as xr
 import yaml
 
+from data.dataset_argo_netcdf_gridded import _align_argo_profile_to_glorys_depths
 from data.dataset_creation.export_aligned_argo.source_files import (
     filter_argo_files_by_date_range,
     TimedFile,
@@ -21,6 +23,21 @@ from data.dataset_creation.export_aligned_argo.source_files import (
 
 SOURCE_VARIABLE_CONFIG_PATH = Path(__file__).with_name("source_variables.yaml")
 DEFAULT_TARGET_RESOLUTION_DEG = 0.1
+DEFAULT_SURFACE_AGGREGATE_DAYS = 7
+PACKED_FILL_VALUE = -32768
+MASK_FILL_VALUE = -128
+ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=7, shuffle=Blosc.BITSHUFFLE)
+PACKED_SCALE_FACTORS = {
+    "analysed_sst": 0.01,
+    "thetao": 0.01,
+    "TEMP": 0.01,
+    "POTM_CORRECTED": 0.01,
+    "so": 0.01,
+    "PSAL_CORRECTED": 0.01,
+    "zos": 0.001,
+    "adt": 0.001,
+    "sla": 0.001,
+}
 
 
 @dataclass(frozen=True)
@@ -95,11 +112,28 @@ def _optional_float(text: str) -> float | None:
     return value
 
 
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("value must be >= 1")
+    return value
+
+
 def _date_int_from_days_since_1950(day_value: float) -> int:
     day = np.datetime64("1950-01-01", "D") + np.timedelta64(
         int(round(float(day_value))), "D"
     )
     return int(np.datetime_as_string(day, unit="D").replace("-", ""))
+
+
+def _days_since_1950_from_date_int(date_value: int) -> float:
+    text = str(int(date_value))
+    day = np.datetime64(f"{text[:4]}-{text[4:6]}-{text[6:8]}", "D")
+    return float(
+        (day - np.datetime64("1950-01-01", "D"))
+        .astype("timedelta64[D]")
+        .astype(int)
+    )
 
 
 def _filter_timed_files(
@@ -185,11 +219,164 @@ def _resample_horizontal_grid(
     return out
 
 
+def _target_dates_from_files(target_timed_files: Sequence[TimedFile]) -> np.ndarray:
+    dates = np.asarray(
+        [
+            _date_int_from_days_since_1950(float(item.day))
+            for item in target_timed_files
+        ],
+        dtype=np.int32,
+    )
+    return np.unique(dates)
+
+
+def _nearest_target_date_labels(
+    source_dates: np.ndarray,
+    target_dates: np.ndarray,
+    *,
+    aggregate_days: int,
+) -> np.ndarray:
+    source_days = np.asarray(
+        [_days_since_1950_from_date_int(int(value)) for value in source_dates],
+        dtype=np.float64,
+    )
+    target_days = np.asarray(
+        [_days_since_1950_from_date_int(int(value)) for value in target_dates],
+        dtype=np.float64,
+    )
+    labels = np.zeros(source_days.shape, dtype=np.int32)
+    if source_days.size == 0 or target_days.size == 0:
+        return labels
+
+    radius_days = max(0.0, (float(aggregate_days) - 1.0) / 2.0)
+    positions = np.searchsorted(target_days, source_days)
+    right = np.clip(positions, 0, int(target_days.size) - 1)
+    left = np.clip(positions - 1, 0, int(target_days.size) - 1)
+    left_dist = np.abs(source_days - target_days[left])
+    right_dist = np.abs(source_days - target_days[right])
+    nearest = np.where(right_dist < left_dist, right, left)
+    nearest_dist = np.minimum(left_dist, right_dist)
+    valid = nearest_dist <= (radius_days + 1.0e-8)
+    labels[valid] = target_dates[nearest[valid]]
+    return labels
+
+
+def _aggregate_to_target_dates(
+    ds: xr.Dataset,
+    *,
+    target_timed_files: Sequence[TimedFile] | None,
+    aggregate_days: int,
+) -> xr.Dataset:
+    if target_timed_files is None:
+        return ds
+    if "time" not in ds.dims:
+        return ds
+
+    target_dates = _target_dates_from_files(target_timed_files)
+    source_dates = np.asarray(ds["time"].values, dtype=np.int32).reshape(-1)
+    labels = _nearest_target_date_labels(
+        source_dates,
+        target_dates,
+        aggregate_days=aggregate_days,
+    )
+    valid = labels > 0
+    if not np.any(valid):
+        raise RuntimeError("No source raster dates fall inside the target aggregate windows.")
+
+    grouped_parts: list[xr.Dataset] = []
+    continuous_names = [
+        name
+        for name, da in ds.data_vars.items()
+        if "time" in da.dims and not _is_categorical_raster(str(name), da)
+    ]
+    categorical_names = [
+        name
+        for name, da in ds.data_vars.items()
+        if "time" in da.dims and _is_categorical_raster(str(name), da)
+    ]
+    passthrough_names = [
+        name for name, da in ds.data_vars.items() if "time" not in da.dims
+    ]
+
+    if continuous_names:
+        grouped = (
+            ds[continuous_names]
+            .isel(time=valid)
+            .assign_coords(target_time=("time", labels[valid]))
+            .groupby("target_time")
+            .mean(dim="time", skipna=True)
+            .rename({"target_time": "time"})
+        )
+        grouped = grouped.assign_coords(time=grouped["time"].astype(np.int32))
+        for name in continuous_names:
+            grouped[name].attrs.update(ds[name].attrs)
+            grouped[name].attrs["temporal_aggregation"] = (
+                f"Centered {int(aggregate_days)}-day mean around GLORYS timestep."
+            )
+        grouped_parts.append(grouped)
+
+    if categorical_names:
+        source_days = np.asarray(
+            [_days_since_1950_from_date_int(int(value)) for value in source_dates],
+            dtype=np.float64,
+        )
+        target_days = np.asarray(
+            [_days_since_1950_from_date_int(int(value)) for value in target_dates],
+            dtype=np.float64,
+        )
+        radius_days = max(0.0, (float(aggregate_days) - 1.0) / 2.0)
+        nearest_indices: list[int] = []
+        nearest_dates: list[int] = []
+        for target_date, target_day in zip(target_dates.tolist(), target_days.tolist()):
+            distances = np.abs(source_days - float(target_day))
+            if distances.size == 0 or float(np.nanmin(distances)) > radius_days + 1.0e-8:
+                continue
+            nearest_indices.append(int(np.nanargmin(distances)))
+            nearest_dates.append(int(target_date))
+        if nearest_indices:
+            categorical = ds[categorical_names].isel(
+                time=xr.DataArray(nearest_indices, dims=("time",))
+            )
+            categorical = categorical.assign_coords(
+                time=np.asarray(nearest_dates, dtype=np.int32)
+            )
+            for name in categorical_names:
+                categorical[name].attrs.update(ds[name].attrs)
+                categorical[name].attrs["temporal_aggregation"] = (
+                    f"Nearest source date within centered {int(aggregate_days)}-day "
+                    "window around GLORYS timestep."
+                )
+            grouped_parts.append(categorical)
+
+    if passthrough_names:
+        grouped_parts.append(ds[passthrough_names])
+    if not grouped_parts:
+        raise RuntimeError("No raster variables remained after temporal aggregation.")
+
+    out = xr.merge(grouped_parts, compat="override", join="outer")
+    out.attrs.update(ds.attrs)
+    out.attrs["temporal_aggregation_days"] = int(aggregate_days)
+    out.attrs["temporal_aggregation_target"] = "glorys"
+    return out
+
+
+def _depth_axis_from_dataset(ds: xr.Dataset) -> np.ndarray:
+    if "depth" not in ds.coords and "depth" not in ds.variables:
+        raise RuntimeError("GLORYS zarr export source is missing a depth coordinate.")
+    depth = np.asarray(ds["depth"].values, dtype=np.float32).reshape(-1)
+    depth = depth[np.isfinite(depth)]
+    if depth.size == 0:
+        raise RuntimeError("GLORYS zarr export source has an empty depth coordinate.")
+    return depth.astype(np.float32, copy=False)
+
+
 def _open_time_series_dataset(
     timed_files: Sequence[TimedFile],
     *,
     variable_names: Sequence[str],
     target_resolution_deg: float | None,
+    target_timed_files: Sequence[TimedFile] | None,
+    aggregate_days: int,
     chunk_time: int,
     chunk_lat: int,
     chunk_lon: int,
@@ -223,6 +410,12 @@ def _open_time_series_dataset(
     )
     ds = ds.assign_coords(time=np.asarray(dates, dtype=np.int32))
     ds["time"].attrs["description"] = "Source date encoded as YYYYMMDD."
+    ds = _aggregate_to_target_dates(
+        ds,
+        target_timed_files=target_timed_files,
+        aggregate_days=aggregate_days,
+    )
+    ds["time"].attrs["description"] = "Source date encoded as YYYYMMDD."
     ds = _resample_horizontal_grid(
         ds,
         target_resolution_deg=target_resolution_deg,
@@ -244,6 +437,7 @@ def _open_argo_dataset(
     *,
     variable_names: Sequence[str],
     depth_var_name: str,
+    target_depths: np.ndarray,
     chunk_profile: int,
 ) -> xr.Dataset:
     if not paths:
@@ -276,10 +470,96 @@ def _open_argo_dataset(
     if "N_LEVELS" in ds.dims:
         chunk_map["N_LEVELS"] = -1
     ds = ds.chunk({name: size for name, size in chunk_map.items() if name in ds.dims})
-    return _add_argo_profile_helpers(ds, depth_var_name=depth_var_name)
+    projected = _project_argo_dataset_to_depths(
+        ds,
+        variable_names=variable_names,
+        depth_var_name=depth_var_name,
+        target_depths=target_depths,
+    )
+    projected = projected.chunk(
+        {
+            name: size
+            for name, size in {"N_PROF": int(chunk_profile), "depth": -1}.items()
+            if name in projected.dims
+        }
+    )
+    return _add_argo_profile_helpers(
+        projected,
+        variable_names=variable_names,
+    )
 
 
-def _add_argo_profile_helpers(ds: xr.Dataset, *, depth_var_name: str) -> xr.Dataset:
+def _align_profile_values_to_depths(
+    values: np.ndarray,
+    depths: np.ndarray,
+    target_depths: np.ndarray,
+) -> np.ndarray:
+    return _align_argo_profile_to_glorys_depths(
+        temperature=values,
+        depth=depths,
+        glorys_depths=target_depths,
+    )
+
+
+def _project_argo_dataset_to_depths(
+    ds: xr.Dataset,
+    *,
+    variable_names: Sequence[str],
+    depth_var_name: str,
+    target_depths: np.ndarray,
+) -> xr.Dataset:
+    target_depths = np.asarray(target_depths, dtype=np.float32).reshape(-1)
+    if target_depths.size == 0:
+        raise RuntimeError("Cannot project ARGO profiles to an empty GLORYS depth axis.")
+
+    coords: dict[str, Any] = {"depth": target_depths}
+    if "N_PROF" in ds.coords:
+        coords["N_PROF"] = ds["N_PROF"]
+    out = xr.Dataset(coords=coords, attrs=dict(ds.attrs))
+    for name in ("JULD", "LATITUDE", "LONGITUDE"):
+        if name in ds:
+            out[name] = ds[name]
+
+    target_depth_da = xr.DataArray(
+        target_depths,
+        dims=("depth",),
+        coords={"depth": target_depths},
+    )
+    for name in variable_names:
+        if name not in ds:
+            continue
+        valid = (
+            np.isfinite(ds[name])
+            & np.isfinite(ds[str(depth_var_name)])
+            & (ds[str(depth_var_name)] >= 0.0)
+        ).any(dim="N_LEVELS")
+        out[f"HAS_VALID_{name}"] = valid.astype(bool)
+        projected = xr.apply_ufunc(
+            _align_profile_values_to_depths,
+            ds[name],
+            ds[str(depth_var_name)],
+            target_depth_da,
+            input_core_dims=[["N_LEVELS"], ["N_LEVELS"], ["depth"]],
+            output_core_dims=[["depth"]],
+            vectorize=True,
+            dask="parallelized",
+            output_dtypes=[np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"depth": int(target_depths.size)}},
+        )
+        projected.attrs.update(ds[name].attrs)
+        projected.attrs["source_depth_var"] = str(depth_var_name)
+        projected.attrs["description"] = (
+            f"{name} projected onto the GLORYS depth coordinate during Zarr export."
+        )
+        out[name] = projected
+    return out
+
+
+def _add_argo_profile_helpers(
+    ds: xr.Dataset,
+    *,
+    variable_names: Sequence[str],
+) -> xr.Dataset:
     if "JULD" in ds:
         juld = np.asarray(ds["JULD"].values, dtype=np.float64).reshape(-1)
         dates = np.zeros(juld.shape, dtype=np.int32)
@@ -295,18 +575,17 @@ def _add_argo_profile_helpers(ds: xr.Dataset, *, depth_var_name: str) -> xr.Data
             ).astype(np.int32)
         ds["DATE"] = (("N_PROF",), dates)
 
-    depth = ds.get(str(depth_var_name))
-    if depth is not None:
-        finite_depth = np.isfinite(depth)
-        for name in ("TEMP", "PSAL_CORRECTED"):
-            if name not in ds:
-                continue
-            # The profile-level flags let loaders build row metadata without scanning
-            # full profile matrices every time a training job starts.
-            valid = np.asarray(
-                (np.isfinite(ds[name]) & finite_depth).any(dim="N_LEVELS")
-            )
-            ds[f"HAS_VALID_{name}"] = (("N_PROF",), valid.astype(bool))
+    for name in variable_names:
+        if name not in ds:
+            continue
+        if f"HAS_VALID_{name}" in ds:
+            continue
+        da = ds[name]
+        depth_dim = "depth" if "depth" in da.dims else da.dims[-1]
+        # The profile-level flags let loaders build row metadata without scanning
+        # full profile matrices every time a training job starts.
+        valid = np.isfinite(da).any(dim=depth_dim)
+        ds[f"HAS_VALID_{name}"] = valid.astype(bool)
     return ds
 
 
@@ -317,9 +596,45 @@ def _write_dataset(ds: xr.Dataset, path: Path, *, overwrite: bool) -> None:
         path,
         mode="w",
         consolidated=True,
+        encoding=_zarr_encoding(ds),
         zarr_format=2,
     )
     ds.close()
+
+
+def _zarr_encoding(ds: xr.Dataset) -> dict[str, dict[str, Any]]:
+    encoding: dict[str, dict[str, Any]] = {}
+    for name, variable in ds.variables.items():
+        item: dict[str, Any] = {"compressor": ZARR_COMPRESSOR}
+        if name in PACKED_SCALE_FACTORS:
+            item.update(
+                {
+                    "dtype": "int16",
+                    "scale_factor": float(PACKED_SCALE_FACTORS[name]),
+                    "_FillValue": np.int16(PACKED_FILL_VALUE),
+                }
+            )
+        elif str(name).lower() == "mask":
+            item.update({"dtype": "int8", "_FillValue": np.int8(MASK_FILL_VALUE)})
+        elif name in {
+            "JULD",
+            "LATITUDE",
+            "LONGITUDE",
+            "lat",
+            "lon",
+            "latitude",
+            "longitude",
+            "depth",
+        }:
+            item["dtype"] = "float32"
+        elif name == "DATE":
+            item["dtype"] = "int32"
+        elif name == "N_PROF":
+            item["dtype"] = "int32"
+        elif np.issubdtype(variable.dtype, np.floating):
+            item["dtype"] = "float32"
+        encoding[str(name)] = item
+    return encoding
 
 
 def export_training_zarr_dataset(
@@ -337,7 +652,8 @@ def export_training_zarr_dataset(
     glorys_vars: Sequence[str] = DEFAULT_GLORYS_VARS,
     sealevel_vars: Sequence[str] = DEFAULT_SEALEVEL_VARS,
     target_resolution_deg: float | None = DEFAULT_TARGET_RESOLUTION_DEG,
-    chunk_time: int = 16,
+    surface_aggregate_days: int = DEFAULT_SURFACE_AGGREGATE_DAYS,
+    chunk_time: int = 1,
     chunk_profile: int = 20000,
     chunk_lat: int = 256,
     chunk_lon: int = 256,
@@ -362,27 +678,34 @@ def export_training_zarr_dataset(
         end_date=end_date,
     )
 
+    ostia_ds = _open_time_series_dataset(
+        ostia_files,
+        variable_names=ostia_vars,
+        target_resolution_deg=target_resolution_deg,
+        target_timed_files=glorys_files,
+        aggregate_days=surface_aggregate_days,
+        chunk_time=chunk_time,
+        chunk_lat=chunk_lat,
+        chunk_lon=chunk_lon,
+    )
     _write_dataset(
-        _open_time_series_dataset(
-            ostia_files,
-            variable_names=ostia_vars,
-            target_resolution_deg=target_resolution_deg,
-            chunk_time=chunk_time,
-            chunk_lat=chunk_lat,
-            chunk_lon=chunk_lon,
-        ),
+        ostia_ds,
         output_root / "ostia.zarr",
         overwrite=overwrite,
     )
+    glorys_ds = _open_time_series_dataset(
+        glorys_files,
+        variable_names=glorys_vars,
+        target_resolution_deg=target_resolution_deg,
+        target_timed_files=None,
+        aggregate_days=1,
+        chunk_time=chunk_time,
+        chunk_lat=chunk_lat,
+        chunk_lon=chunk_lon,
+    )
+    glorys_depth_axis = _depth_axis_from_dataset(glorys_ds)
     _write_dataset(
-        _open_time_series_dataset(
-            glorys_files,
-            variable_names=glorys_vars,
-            target_resolution_deg=target_resolution_deg,
-            chunk_time=chunk_time,
-            chunk_lat=chunk_lat,
-            chunk_lon=chunk_lon,
-        ),
+        glorys_ds,
         output_root / "glorys.zarr",
         overwrite=overwrite,
     )
@@ -391,6 +714,7 @@ def export_training_zarr_dataset(
             argo_files,
             variable_names=argo_vars,
             depth_var_name=argo_depth_var,
+            target_depths=glorys_depth_axis,
             chunk_profile=chunk_profile,
         ),
         output_root / "argo.zarr",
@@ -410,6 +734,8 @@ def export_training_zarr_dataset(
                     sealevel_files,
                     variable_names=sealevel_vars,
                     target_resolution_deg=target_resolution_deg,
+                    target_timed_files=glorys_files,
+                    aggregate_days=surface_aggregate_days,
                     chunk_time=chunk_time,
                     chunk_lat=chunk_lat,
                     chunk_lon=chunk_lon,
@@ -424,13 +750,19 @@ def export_training_zarr_dataset(
         "version": 1,
         "date_range": {"start_date": start_date, "end_date": end_date},
         "raster_target_resolution_deg": target_resolution_deg,
+        "surface_temporal_aggregation": {
+            "target": "glorys",
+            "window_days": int(surface_aggregate_days),
+        },
         "groups": {
             "ostia": {"path": "ostia.zarr", "variables": list(ostia_vars)},
             "glorys": {"path": "glorys.zarr", "variables": list(glorys_vars)},
             "argo": {
                 "path": "argo.zarr",
                 "variables": list(argo_vars),
-                "depth_var": str(argo_depth_var),
+                "source_depth_var": str(argo_depth_var),
+                "depth_axis": "depth",
+                "projected_to_glorys_depth": True,
             },
         },
     }
@@ -465,12 +797,17 @@ def parse_args() -> argparse.Namespace:
         type=_optional_float,
         default=DEFAULT_TARGET_RESOLUTION_DEG,
     )
+    parser.add_argument(
+        "--surface-aggregate-days",
+        type=_positive_int,
+        default=DEFAULT_SURFACE_AGGREGATE_DAYS,
+    )
     parser.add_argument("--ostia-vars", nargs="+", default=None)
     parser.add_argument("--argo-vars", nargs="+", default=None)
     parser.add_argument("--argo-depth-var", default=None)
     parser.add_argument("--glorys-vars", nargs="+", default=None)
     parser.add_argument("--sealevel-vars", nargs="+", default=None)
-    parser.add_argument("--chunk-time", type=int, default=16)
+    parser.add_argument("--chunk-time", type=int, default=1)
     parser.add_argument("--chunk-profile", type=int, default=20000)
     parser.add_argument("--chunk-lat", type=int, default=256)
     parser.add_argument("--chunk-lon", type=int, default=256)
@@ -495,6 +832,7 @@ def main() -> None:
         glorys_vars=args.glorys_vars or source_variables.glorys_vars,
         sealevel_vars=args.sealevel_vars or source_variables.sealevel_vars,
         target_resolution_deg=args.target_resolution_deg,
+        surface_aggregate_days=args.surface_aggregate_days,
         chunk_time=args.chunk_time,
         chunk_profile=args.chunk_profile,
         chunk_lat=args.chunk_lat,

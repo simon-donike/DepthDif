@@ -9,6 +9,7 @@ from data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles i
     NEAREST_STATUS,
     NEAREST_EDGE_STATUS,
     DatasetCache,
+    export_enriched_argo_profiles,
     nearest_timed_file,
     sample_spatial_value,
     sample_spatial_values_for_points,
@@ -17,6 +18,10 @@ from data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles i
     sample_temporal_value,
 )
 from data.dataset_creation.export_aligned_argo.source_files import (
+    GLORYS_2D_VARS,
+    GLORYS_3D_VARS,
+    OSTIA_VARS,
+    SEALEVEL_VARS,
     TimedFile,
     date_to_days_since_1950,
 )
@@ -55,6 +60,142 @@ def _linear_point_dataset() -> xr.Dataset:
             "longitude": np.asarray([10.0, 11.0], dtype=np.float32),
         },
     )
+
+
+def _write_enriched_argo_source(root_dir: Path) -> None:
+    ds = xr.Dataset(
+        data_vars={
+            "JULD": (
+                ("N_PROF",),
+                np.asarray(
+                    [
+                        date_to_days_since_1950(20240102),
+                        date_to_days_since_1950(20240103),
+                        date_to_days_since_1950(20240102),
+                        date_to_days_since_1950(20240103),
+                    ],
+                    dtype=np.float64,
+                ),
+            ),
+            "LATITUDE": (("N_PROF",), np.asarray([1.25, 1.75, 1.25, 1.75], dtype=np.float64)),
+            "LONGITUDE": (("N_PROF",), np.asarray([10.25, 10.75, 10.75, 10.25], dtype=np.float64)),
+            "TEMP": (
+                ("N_PROF", "N_LEVELS"),
+                np.asarray(
+                    [[10.0, 20.0], [11.0, 21.0], [12.0, 22.0], [13.0, 23.0]],
+                    dtype=np.float32,
+                ),
+            ),
+            "POTM_CORRECTED": (
+                ("N_PROF", "N_LEVELS"),
+                np.asarray(
+                    [[9.0, 19.0], [10.0, 20.0], [11.0, 21.0], [12.0, 22.0]],
+                    dtype=np.float32,
+                ),
+            ),
+            "PSAL_CORRECTED": (
+                ("N_PROF", "N_LEVELS"),
+                np.asarray(
+                    [[35.0, 35.5], [36.0, 36.5], [37.0, 37.5], [38.0, 38.5]],
+                    dtype=np.float32,
+                ),
+            ),
+            "DEPH_CORRECTED": (
+                ("N_PROF", "N_LEVELS"),
+                np.asarray([[0.0, 10.0]] * 4, dtype=np.float32),
+            ),
+        },
+        coords={
+            "N_PROF": np.asarray([0, 1, 2, 3], dtype=np.int64),
+            "N_LEVELS": np.asarray([0, 1], dtype=np.int64),
+        },
+    )
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ds.to_netcdf(root_dir / "EN.4.2.2.f.profiles.g10.202401.nc", engine="h5netcdf")
+
+
+def _write_enriched_glorys_source(root_dir: Path, *, date_value: int, base: float) -> None:
+    lat = np.asarray([1.0, 2.0], dtype=np.float32)
+    lon = np.asarray([10.0, 11.0], dtype=np.float32)
+    depth = np.asarray([0.0, 10.0], dtype=np.float32)
+    data_vars = {}
+    for offset, name in enumerate(GLORYS_3D_VARS):
+        data_vars[name] = (
+            ("time", "depth", "latitude", "longitude"),
+            np.full((1, 2, 2, 2), base + offset, dtype=np.float32),
+        )
+    for offset, name in enumerate(GLORYS_2D_VARS):
+        data_vars[name] = (
+            ("time", "latitude", "longitude"),
+            np.full((1, 2, 2), base + 10.0 + offset, dtype=np.float32),
+        )
+    ds = xr.Dataset(
+        data_vars,
+        coords={
+            "time": np.asarray([0.0], dtype=np.float64),
+            "depth": depth,
+            "latitude": lat,
+            "longitude": lon,
+        },
+    )
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ds.to_netcdf(root_dir / f"glorys_{int(date_value)}.nc", engine="h5netcdf")
+
+
+def _write_enriched_surface_source(
+    root_dir: Path,
+    *,
+    filename: str,
+    variables: tuple[str, ...],
+    base: float,
+    lat_name: str,
+    lon_name: str,
+) -> None:
+    lat = np.asarray([1.0, 2.0], dtype=np.float32)
+    lon = np.asarray([10.0, 11.0], dtype=np.float32)
+    data_vars = {}
+    for offset, name in enumerate(variables):
+        data_vars[name] = (
+            ("time", lat_name, lon_name),
+            np.full((1, 2, 2), base + offset, dtype=np.float32),
+        )
+    ds = xr.Dataset(
+        data_vars,
+        coords={
+            "time": np.asarray([0.0], dtype=np.float64),
+            lat_name: lat,
+            lon_name: lon,
+        },
+    )
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ds.to_netcdf(root_dir / filename, engine="h5netcdf")
+
+
+def _make_enriched_export_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    argo_dir = tmp_path / "en4_profiles"
+    glorys_dir = tmp_path / "glorys"
+    ostia_dir = tmp_path / "ostia"
+    sealevel_dir = tmp_path / "sealevel"
+    _write_enriched_argo_source(argo_dir)
+    for date_value, base in ((20240102, 100.0), (20240103, 200.0)):
+        _write_enriched_glorys_source(glorys_dir, date_value=date_value, base=base)
+        _write_enriched_surface_source(
+            ostia_dir,
+            filename=f"{date_value}120000-ostia.nc",
+            variables=OSTIA_VARS,
+            base=base + 1000.0,
+            lat_name="lat",
+            lon_name="lon",
+        )
+        _write_enriched_surface_source(
+            sealevel_dir,
+            filename=f"sealevel_{date_value}.nc",
+            variables=SEALEVEL_VARS,
+            base=base + 2000.0,
+            lat_name="latitude",
+            lon_name="longitude",
+        )
+    return argo_dir, glorys_dir, ostia_dir, sealevel_dir
 
 
 class TestEnrichedArgoExport(unittest.TestCase):
@@ -176,6 +317,85 @@ class TestEnrichedArgoExport(unittest.TestCase):
 
         self.assertEqual(item, index[0])
         self.assertEqual(status, NEAREST_EDGE_STATUS)
+
+    def test_export_rejects_invalid_worker_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            with self.assertRaisesRegex(ValueError, "workers"):
+                export_enriched_argo_profiles(
+                    argo_dir=tmp_path / "argo",
+                    glorys_dir=tmp_path / "glorys",
+                    ostia_dir=tmp_path / "ostia",
+                    sealevel_dir=tmp_path / "sealevel",
+                    output_zarr=tmp_path / "out.zarr",
+                    workers=0,
+                )
+
+    def test_parallel_export_matches_serial_output_order_and_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, sealevel_dir = _make_enriched_export_sources(
+                tmp_path
+            )
+            serial_path = export_enriched_argo_profiles(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                output_zarr=tmp_path / "serial.zarr",
+                start_date=20240102,
+                end_date=20240103,
+                batch_size=2,
+                cache_size=2,
+                workers=1,
+                overwrite=True,
+            )
+            parallel_path = export_enriched_argo_profiles(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                output_zarr=tmp_path / "parallel.zarr",
+                start_date=20240102,
+                end_date=20240103,
+                batch_size=2,
+                cache_size=2,
+                workers=2,
+                overwrite=True,
+            )
+
+            serial = xr.open_zarr(serial_path, consolidated=None)
+            parallel = xr.open_zarr(parallel_path, consolidated=None)
+            try:
+                self.assertEqual(parallel.attrs["workers"], 2)
+                self.assertEqual(parallel.attrs["cache_size_per_worker"], 2)
+                for name in (
+                    "profile_source_file",
+                    "profile_idx",
+                    "profile_date",
+                    "glorys_temporal_status",
+                    "ostia_temporal_status",
+                    "sealevel_temporal_status",
+                ):
+                    np.testing.assert_array_equal(serial[name].values, parallel[name].values)
+                for name in (
+                    "latitude",
+                    "longitude",
+                    "argo_temp_on_glorys_depth",
+                    "argo_potm_on_glorys_depth",
+                    "argo_psal_on_glorys_depth",
+                    "glorys_thetao",
+                    "ostia_analysed_sst",
+                    "sealevel_adt",
+                ):
+                    np.testing.assert_allclose(
+                        serial[name].values,
+                        parallel[name].values,
+                        equal_nan=True,
+                    )
+            finally:
+                serial.close()
+                parallel.close()
 
 
 if __name__ == "__main__":

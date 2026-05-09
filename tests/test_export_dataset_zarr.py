@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -137,10 +138,13 @@ def _write_ostia(root_dir: Path, *, date_value: int, base_kelvin: float) -> None
     ds.to_netcdf(root_dir / f"{int(date_value)}120000-ostia.nc", engine="h5netcdf")
 
 
-def _write_sealevel(root_dir: Path, *, date_value: int) -> None:
+def _write_sealevel(root_dir: Path, *, date_value: int, base: float = 1.0) -> None:
     lat = np.asarray([0.5, 1.5], dtype=np.float32)
     lon = np.asarray([10.5, 11.5], dtype=np.float32)
-    adt = np.asarray([[[1.1, 1.2], [1.3, 1.4]]], dtype=np.float32)
+    adt = np.asarray(
+        [[[base + 0.1, base + 0.2], [base + 0.3, base + 0.4]]],
+        dtype=np.float32,
+    )
     ds = xr.Dataset(
         {"adt": (("time", "latitude", "longitude"), adt)},
         coords={
@@ -240,7 +244,6 @@ class TestExportDatasetZarr(unittest.TestCase):
             self.assertEqual(int(ostia["analysed_sst"].sizes["lat"]), 3)
             self.assertEqual(int(glorys["thetao"].sizes["latitude"]), 3)
             self.assertEqual(int(sealevel["adt"].sizes["longitude"]), 3)
-            self.assertEqual(str(ostia["mask"].dtype), "int16")
             self.assertAlmostEqual(
                 float(ostia["analysed_sst"].isel(time=0, lat=1, lon=1).values),
                 282.5,
@@ -249,6 +252,106 @@ class TestExportDatasetZarr(unittest.TestCase):
             ostia.close()
             glorys.close()
             sealevel.close()
+
+    def test_export_aggregates_surface_products_to_glorys_timesteps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir = tmp_path / "en4_profiles"
+            glorys_dir = tmp_path / "glorys"
+            ostia_dir = tmp_path / "ostia"
+            sealevel_dir = tmp_path / "sealevel"
+            _write_argo_netcdf(argo_dir)
+            _write_glorys(glorys_dir, date_value=20240108, base=30.0)
+            for date_value, ostia_base, sealevel_base in (
+                (20240105, 280.0, 1.0),
+                (20240108, 290.0, 2.0),
+                (20240111, 300.0, 3.0),
+            ):
+                _write_ostia(ostia_dir, date_value=date_value, base_kelvin=ostia_base)
+                _write_sealevel(
+                    sealevel_dir,
+                    date_value=date_value,
+                    base=sealevel_base,
+                )
+
+            zarr_dir = export_training_zarr_dataset(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                output_dir=tmp_path / "zarr_weekly",
+                start_date=20240105,
+                end_date=20240111,
+                chunk_time=1,
+                chunk_profile=2,
+                chunk_lat=2,
+                chunk_lon=2,
+                target_resolution_deg=1.0,
+                surface_aggregate_days=7,
+                overwrite=True,
+            )
+
+            ostia = xr.open_zarr(zarr_dir / "ostia.zarr", consolidated=None)
+            sealevel = xr.open_zarr(zarr_dir / "sealevel.zarr", consolidated=None)
+            manifest = yaml.safe_load((zarr_dir / "manifest.yaml").read_text())
+
+            np.testing.assert_array_equal(ostia["time"].values, [20240108])
+            np.testing.assert_array_equal(sealevel["time"].values, [20240108])
+            self.assertEqual(
+                manifest["surface_temporal_aggregation"],
+                {"target": "glorys", "window_days": 7},
+            )
+            self.assertAlmostEqual(
+                float(ostia["analysed_sst"].isel(time=0, lat=0, lon=0).values),
+                291.0,
+                places=5,
+            )
+            self.assertAlmostEqual(
+                float(sealevel["adt"].isel(time=0, latitude=0, longitude=0).values),
+                2.1,
+                places=5,
+            )
+            ostia.close()
+            sealevel.close()
+
+    def test_export_uses_packed_zarr_arrays_and_projected_argo_depths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            zarr_dir = _export_zarr(tmp_path)
+            argo = xr.open_zarr(zarr_dir / "argo.zarr", consolidated=None)
+
+            self.assertEqual(argo["TEMP"].dims, ("N_PROF", "depth"))
+            self.assertEqual(argo["PSAL_CORRECTED"].dims, ("N_PROF", "depth"))
+            self.assertNotIn("DEPH_CORRECTED", argo)
+            np.testing.assert_allclose(argo["depth"].values, [0.0, 10.0])
+            np.testing.assert_allclose(
+                argo["TEMP"].isel(N_PROF=0).values,
+                [10.0, 20.0],
+            )
+
+            encoded = {
+                "ostia_sst": json.loads(
+                    (zarr_dir / "ostia.zarr" / "analysed_sst" / ".zarray").read_text()
+                )["dtype"],
+                "ostia_mask": json.loads(
+                    (zarr_dir / "ostia.zarr" / "mask" / ".zarray").read_text()
+                )["dtype"],
+                "glorys_thetao": json.loads(
+                    (zarr_dir / "glorys.zarr" / "thetao" / ".zarray").read_text()
+                )["dtype"],
+                "sealevel_adt": json.loads(
+                    (zarr_dir / "sealevel.zarr" / "adt" / ".zarray").read_text()
+                )["dtype"],
+                "argo_temp": json.loads(
+                    (zarr_dir / "argo.zarr" / "TEMP" / ".zarray").read_text()
+                )["dtype"],
+            }
+            self.assertEqual(encoded["ostia_sst"], "<i2")
+            self.assertEqual(encoded["ostia_mask"], "|i1")
+            self.assertEqual(encoded["glorys_thetao"], "<i2")
+            self.assertEqual(encoded["sealevel_adt"], "<i2")
+            self.assertEqual(encoded["argo_temp"], "<i2")
+            argo.close()
 
     def test_default_raster_target_resolution_is_training_resolution(self) -> None:
         self.assertEqual(DEFAULT_TARGET_RESOLUTION_DEG, 0.1)

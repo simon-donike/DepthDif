@@ -68,7 +68,10 @@ metadata caches under `dataset.core.metadata_cache_dir`.
 
 To reduce disk footprint and speed loader access, export only the training
 modalities configured in `export_dataset_zarr/source_variables.yaml` into zarr.
-OSTIA, GLORYS, and sea-level rasters are resampled to 0.1 degrees by default:
+OSTIA, GLORYS, and sea-level rasters are resampled to 0.1 degrees by default.
+OSTIA and sea-level daily files are saved as centered weekly aggregates on the
+GLORYS timesteps; continuous arrays are packed to int16, and ARGO profiles are
+projected onto the GLORYS depth axis before writing:
 
 ```bash
 /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py \
@@ -80,6 +83,8 @@ OSTIA, GLORYS, and sea-level rasters are resampled to 0.1 degrees by default:
   --start-date 20100101 \
   --end-date 20240731 \
   --target-resolution-deg 0.1 \
+  --surface-aggregate-days 7 \
+  --chunk-time 1 \
   --overwrite
 ```
 

@@ -31,13 +31,18 @@ The zarr variant reads compact stores exported by
 `data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py`:
 
 - `ostia.zarr`: `analysed_sst` and optional `mask`
-- `argo.zarr`: `TEMP`, `PSAL_CORRECTED`, `DEPH_CORRECTED`, and profile helpers
+- `argo.zarr`: `TEMP`, `PSAL_CORRECTED`, GLORYS `depth`, and profile helpers
 - `glorys.zarr`: `thetao`, `so`, `zos`
 - `sealevel.zarr`: `adt` by default
 
 By default, the exporter interpolates OSTIA, GLORYS, and sea-level raster
-stores to 0.1 degrees before writing. This matches the default patch grid and
-lets the zarr loader use exact grid selection for those rasters.
+stores to 0.1 degrees before writing. OSTIA and sea-level daily files are saved
+as centered 7-day aggregates around the GLORYS timesteps, matching the weekly
+training cadence. This matches the default patch grid and lets the zarr loader
+use exact grid selection for those rasters. Continuous fields are packed to
+int16, masks are stored as int8, and ARGO profile variables are pre-projected
+onto the GLORYS depth axis so the loader does not interpolate profiles at
+training time.
 
 Only compact cache files are allowed under `metadata_cache_dir`. These caches
 store patch rows, split labels, land fractions, and ARGO support flags. They do

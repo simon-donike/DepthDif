@@ -3,6 +3,7 @@ Production-range enriched ARGO export:
 /work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/b_export_enriched_argo_profiles.py \
   --start-date 20100101 \
   --end-date 20240731 \
+  --workers 4 \
   --output-zarr /data1/datasets/depth_v2/enriched_argo_profiles.zarr
 
 Small smoke export:
@@ -21,6 +22,7 @@ import argparse
 import re
 import shutil
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -95,6 +97,11 @@ ARGO_LEVEL_QC_VALUE_KEYS = {
     "potm": "potm",
     "psal": "psal",
 }
+_WORKER_GLORYS_INDEX: list[TimedFile] | None = None
+_WORKER_OSTIA_INDEX: list[TimedFile] | None = None
+_WORKER_SEALEVEL_INDEX: list[TimedFile] | None = None
+_WORKER_GLORYS_DEPTHS: np.ndarray | None = None
+_WORKER_CACHE: DatasetCache | None = None
 
 
 @dataclass(frozen=True)
@@ -955,7 +962,9 @@ def _build_export_metadata(
     start_date: int | None,
     end_date: int | None,
     batch_size: int,
+    cache_size: int,
     max_profiles: int | None,
+    workers: int,
 ) -> dict[str, Any]:
     source_file_summaries = {
         "argo": {
@@ -973,7 +982,9 @@ def _build_export_metadata(
         "created_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "requested_date_range": {"start_date": start_date, "end_date": end_date},
         "batch_size": int(batch_size),
+        "cache_size_per_worker": int(cache_size),
         "max_profiles": None if max_profiles is None else int(max_profiles),
+        "workers": int(workers),
         "path_policy": "No absolute source filesystem paths are stored. profile_source_file stores source filenames only.",
         "profile_axis": "One row per valid EN4/ARGO profile passing date and coordinate filters.",
         "depth_axis": "GLORYS native depth coordinate, in meters, loaded from the first readable GLORYS file.",
@@ -1197,6 +1208,105 @@ def _append_profile_to_batch(
     batch["glorys_temporal_status"].append(source_status["glorys"])
     batch["ostia_temporal_status"].append(source_status["ostia"])
     batch["sealevel_temporal_status"].append(source_status["sealevel"])
+
+
+def _init_collocation_worker(
+    glorys_index: list[TimedFile],
+    ostia_index: list[TimedFile],
+    sealevel_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    cache_size: int,
+) -> None:
+    global _WORKER_GLORYS_INDEX
+    global _WORKER_OSTIA_INDEX
+    global _WORKER_SEALEVEL_INDEX
+    global _WORKER_GLORYS_DEPTHS
+    global _WORKER_CACHE
+
+    _WORKER_GLORYS_INDEX = glorys_index
+    _WORKER_OSTIA_INDEX = ostia_index
+    _WORKER_SEALEVEL_INDEX = sealevel_index
+    _WORKER_GLORYS_DEPTHS = np.asarray(glorys_depths, dtype=np.float32)
+    _WORKER_CACHE = DatasetCache(max_open=cache_size)
+
+
+def _collocate_argo_date_group(payload: dict[str, Any]) -> dict[str, list[Any]]:
+    if (
+        _WORKER_GLORYS_INDEX is None
+        or _WORKER_OSTIA_INDEX is None
+        or _WORKER_SEALEVEL_INDEX is None
+        or _WORKER_GLORYS_DEPTHS is None
+        or _WORKER_CACHE is None
+    ):
+        raise RuntimeError("Parallel ARGO collocation worker was not initialized.")
+
+    argo_path = Path(payload["argo_path"])
+    date = int(payload["date"])
+    profile_indices = np.asarray(payload["profile_indices"], dtype=np.int64).reshape(-1)
+    juld = np.asarray(payload["juld"], dtype=np.float64).reshape(-1)
+    lat = np.asarray(payload["lat"], dtype=np.float64).reshape(-1)
+    lon = np.asarray(payload["lon"], dtype=np.float64).reshape(-1)
+    depth = np.asarray(payload["depth"], dtype=np.float32)
+    temp = np.asarray(payload["temp"], dtype=np.float32)
+    potm = np.asarray(payload["potm"], dtype=np.float32)
+    psal = np.asarray(payload["psal"], dtype=np.float32)
+    level_qc_arrays = payload["level_qc_arrays"]
+    profile_qc_arrays = payload["profile_qc_arrays"]
+
+    source_values: dict[str, dict[str, np.ndarray]] = {}
+    source_status: dict[str, np.int8] = {}
+    target_day = date_to_days_since_1950(date)
+    for source_name, index, names in (
+        ("glorys", _WORKER_GLORYS_INDEX, GLORYS_3D_VARS + GLORYS_2D_VARS),
+        ("ostia", _WORKER_OSTIA_INDEX, OSTIA_VARS),
+        ("sealevel", _WORKER_SEALEVEL_INDEX, SEALEVEL_VARS),
+    ):
+        values_by_name, status = sample_temporal_values_for_points(
+            index,
+            _WORKER_CACHE,
+            names,
+            target_day=target_day,
+            lat=lat,
+            lon=lon,
+            categorical_vars=CATEGORICAL_VARS,
+        )
+        source_values[source_name] = values_by_name
+        source_status[source_name] = status
+
+    batch = _empty_batch()
+    for source_row, profile_idx in enumerate(profile_indices):
+        _append_profile_to_batch(
+            batch,
+            argo_path=argo_path,
+            profile_idx=int(profile_idx),
+            profile_date=date,
+            profile_juld=float(juld[source_row]),
+            lat=float(lat[source_row]),
+            lon=float(lon[source_row]),
+            depth=depth[source_row],
+            temp=temp[source_row],
+            potm=potm[source_row],
+            psal=psal[source_row],
+            argo_level_qc={
+                name: values[source_row] if values is not None else None
+                for name, values in level_qc_arrays.items()
+            },
+            argo_profile_qc={
+                name: _qc_scalar_to_int(values[source_row])
+                if values is not None
+                else MISSING_QC_FLAG
+                for name, values in profile_qc_arrays.items()
+            },
+            glorys_depths=_WORKER_GLORYS_DEPTHS,
+            glorys_index=_WORKER_GLORYS_INDEX,
+            ostia_index=_WORKER_OSTIA_INDEX,
+            sealevel_index=_WORKER_SEALEVEL_INDEX,
+            cache=_WORKER_CACHE,
+            sampled_source_values=source_values,
+            sampled_source_status=source_status,
+            sampled_source_row=source_row,
+        )
+    return batch
 
 
 def _batch_to_dataset(
@@ -1595,6 +1705,274 @@ def _write_batch(
     return int(ds.sizes["profile"])
 
 
+def _select_eligible_profile_positions(
+    *,
+    dates: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    start_date: int | None,
+    end_date: int | None,
+    written: int,
+    queued: int,
+    max_profiles: int | None,
+) -> tuple[list[int], OrderedDict[int, list[int]]]:
+    eligible_profile_indices: list[int] = []
+    positions_by_date: OrderedDict[int, list[int]] = OrderedDict()
+    for profile_idx in range(int(dates.size)):
+        date = int(dates[profile_idx])
+        if date <= 0:
+            continue
+        if start_date is not None and date < int(start_date):
+            continue
+        if end_date is not None and date > int(end_date):
+            continue
+        if not (np.isfinite(lat[profile_idx]) and np.isfinite(lon[profile_idx])):
+            continue
+
+        position = len(eligible_profile_indices)
+        eligible_profile_indices.append(profile_idx)
+        positions_by_date.setdefault(date, []).append(position)
+        if (
+            max_profiles is not None
+            and written + queued + len(eligible_profile_indices)
+            >= int(max_profiles)
+        ):
+            break
+    return eligible_profile_indices, positions_by_date
+
+
+def _build_argo_date_group_payload(
+    *,
+    argo_path: Path,
+    date: int,
+    positions: list[int],
+    eligible_profile_indices: list[int],
+    juld: np.ndarray,
+    lat: np.ndarray,
+    lon: np.ndarray,
+    depth: np.ndarray,
+    temp: np.ndarray,
+    potm: np.ndarray,
+    psal: np.ndarray,
+    level_qc_arrays: dict[str, np.ndarray | None],
+    profile_qc_arrays: dict[str, np.ndarray | None],
+) -> dict[str, Any]:
+    source_profile_indices = np.asarray(
+        [eligible_profile_indices[position] for position in positions],
+        dtype=np.int64,
+    )
+    return {
+        "argo_path": argo_path,
+        "date": int(date),
+        "profile_indices": source_profile_indices,
+        "juld": juld[source_profile_indices],
+        "lat": lat[source_profile_indices],
+        "lon": lon[source_profile_indices],
+        "depth": depth[source_profile_indices],
+        "temp": temp[source_profile_indices],
+        "potm": potm[source_profile_indices],
+        "psal": psal[source_profile_indices],
+        "level_qc_arrays": {
+            name: values[source_profile_indices] if values is not None else None
+            for name, values in level_qc_arrays.items()
+        },
+        "profile_qc_arrays": {
+            name: values[source_profile_indices] if values is not None else None
+            for name, values in profile_qc_arrays.items()
+        },
+    }
+
+
+def _append_collocated_batch_to_pending(
+    collocated_batch: dict[str, list[Any]],
+    *,
+    pending_batch: dict[str, list[Any]],
+    output_zarr: Path,
+    written: int,
+    glorys_depths: np.ndarray,
+    batch_size: int,
+    first_write: bool,
+    export_metadata: dict[str, Any],
+    profile_progress: Any,
+    max_profiles: int | None,
+) -> tuple[int, bool, dict[str, list[Any]], bool]:
+    for row in range(len(collocated_batch["profile_idx"])):
+        for key in pending_batch:
+            pending_batch[key].append(collocated_batch[key][row])
+        profile_progress.update(1)
+        if profile_progress.n == 1 or profile_progress.n % 100 == 0:
+            profile_progress.set_postfix(
+                written=written,
+                queued=len(pending_batch["profile_idx"]),
+                refresh=False,
+            )
+
+        reached_profile_cap = (
+            max_profiles is not None
+            and written + len(pending_batch["profile_idx"]) >= int(max_profiles)
+        )
+        if len(pending_batch["profile_idx"]) >= int(batch_size) or reached_profile_cap:
+            count = _write_batch(
+                pending_batch,
+                output_zarr=output_zarr,
+                profile_start=written,
+                glorys_depths=glorys_depths,
+                chunk_size=batch_size,
+                first_write=first_write,
+                export_metadata=export_metadata,
+            )
+            written += count
+            first_write = False
+            pending_batch = _empty_batch()
+            profile_progress.set_postfix(written=written, queued=0, refresh=False)
+            if reached_profile_cap:
+                return written, first_write, pending_batch, True
+    return written, first_write, pending_batch, False
+
+
+def _export_enriched_argo_profiles_parallel(
+    *,
+    argo_files: list[Path],
+    output_zarr: Path,
+    start_date: int | None,
+    end_date: int | None,
+    batch_size: int,
+    cache_size: int,
+    max_profiles: int | None,
+    workers: int,
+    glorys_index: list[TimedFile],
+    ostia_index: list[TimedFile],
+    sealevel_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    export_metadata: dict[str, Any],
+) -> Path:
+    written = 0
+    first_write = True
+    batch = _empty_batch()
+    profile_total = int(max_profiles) if max_profiles is not None else None
+    file_progress = tqdm(
+        argo_files,
+        desc="ARGO source months",
+        unit="month",
+        dynamic_ncols=True,
+    )
+    profile_progress = tqdm(
+        total=profile_total,
+        desc="Profiles collocated",
+        unit="profile",
+        dynamic_ncols=True,
+    )
+    with ProcessPoolExecutor(
+        max_workers=int(workers),
+        initializer=_init_collocation_worker,
+        initargs=(
+            glorys_index,
+            ostia_index,
+            sealevel_index,
+            glorys_depths,
+            int(cache_size),
+        ),
+    ) as executor:
+        with file_progress, profile_progress:
+            for argo_path in file_progress:
+                file_progress.set_postfix_str(argo_path.name, refresh=False)
+                with _open_argo_dataset(argo_path) as ds:
+                    required = ("JULD", "LATITUDE", "LONGITUDE", ARGO_DEPTH_VAR) + ARGO_PROFILE_VARS
+                    missing = [name for name in required if name not in ds]
+                    if missing:
+                        raise RuntimeError(f"ARGO file {argo_path} is missing variables: {missing}")
+
+                    juld = np.asarray(ds["JULD"].values, dtype=np.float64)
+                    dates = _juld_to_yyyymmdd(juld)
+                    lat = np.asarray(ds["LATITUDE"].values, dtype=np.float64)
+                    lon = np.asarray(ds["LONGITUDE"].values, dtype=np.float64)
+                    depth = np.asarray(ds[ARGO_DEPTH_VAR].values, dtype=np.float32)
+                    temp = np.asarray(ds["TEMP"].values, dtype=np.float32)
+                    potm = np.asarray(ds["POTM_CORRECTED"].values, dtype=np.float32)
+                    psal = np.asarray(ds["PSAL_CORRECTED"].values, dtype=np.float32)
+                    level_qc_arrays = {
+                        name: np.asarray(ds[source_name].values)
+                        if source_name in ds
+                        else None
+                        for name, source_name in ARGO_LEVEL_QC_VARS.items()
+                    }
+                    profile_qc_arrays = {
+                        name: np.asarray(ds[source_name].values)
+                        if source_name in ds
+                        else None
+                        for name, source_name in ARGO_PROFILE_QC_VARS.items()
+                    }
+
+                eligible_profile_indices, positions_by_date = _select_eligible_profile_positions(
+                    dates=dates,
+                    lat=lat,
+                    lon=lon,
+                    start_date=start_date,
+                    end_date=end_date,
+                    written=written,
+                    queued=len(batch["profile_idx"]),
+                    max_profiles=max_profiles,
+                )
+                futures = [
+                    executor.submit(
+                        _collocate_argo_date_group,
+                        _build_argo_date_group_payload(
+                            argo_path=argo_path,
+                            date=date,
+                            positions=positions,
+                            eligible_profile_indices=eligible_profile_indices,
+                            juld=juld,
+                            lat=lat,
+                            lon=lon,
+                            depth=depth,
+                            temp=temp,
+                            potm=potm,
+                            psal=psal,
+                            level_qc_arrays=level_qc_arrays,
+                            profile_qc_arrays=profile_qc_arrays,
+                        ),
+                    )
+                    for date, positions in positions_by_date.items()
+                ]
+                for future in futures:
+                    collocated_batch = future.result()
+                    written, first_write, batch, reached_profile_cap = (
+                        _append_collocated_batch_to_pending(
+                            collocated_batch,
+                            pending_batch=batch,
+                            output_zarr=output_zarr,
+                            written=written,
+                            glorys_depths=glorys_depths,
+                            batch_size=batch_size,
+                            first_write=first_write,
+                            export_metadata=export_metadata,
+                            profile_progress=profile_progress,
+                            max_profiles=max_profiles,
+                        )
+                    )
+                    if reached_profile_cap:
+                        file_progress.update(1)
+                        return output_zarr
+
+                if max_profiles is not None and written >= int(max_profiles):
+                    file_progress.update(1)
+                    return output_zarr
+
+            if batch["profile_idx"]:
+                count = _write_batch(
+                    batch,
+                    output_zarr=output_zarr,
+                    profile_start=written,
+                    glorys_depths=glorys_depths,
+                    chunk_size=batch_size,
+                    first_write=first_write,
+                    export_metadata=export_metadata,
+                )
+                written += count
+                profile_progress.set_postfix(written=written, queued=0, refresh=False)
+    return output_zarr
+
+
 def export_enriched_argo_profiles(
     *,
     argo_dir: Path,
@@ -1608,7 +1986,12 @@ def export_enriched_argo_profiles(
     cache_size: int = 8,
     overwrite: bool = False,
     max_profiles: int | None = None,
+    workers: int = 1,
 ) -> Path:
+    workers = int(workers)
+    if workers < 1:
+        raise ValueError("workers must be at least 1.")
+
     output_zarr = Path(output_zarr)
     if output_zarr.exists():
         if not overwrite:
@@ -1634,8 +2017,26 @@ def export_enriched_argo_profiles(
         start_date=start_date,
         end_date=end_date,
         batch_size=batch_size,
+        cache_size=cache_size,
         max_profiles=max_profiles,
+        workers=workers,
     )
+    if workers > 1:
+        return _export_enriched_argo_profiles_parallel(
+            argo_files=argo_files,
+            output_zarr=output_zarr,
+            start_date=start_date,
+            end_date=end_date,
+            batch_size=batch_size,
+            cache_size=cache_size,
+            max_profiles=max_profiles,
+            workers=workers,
+            glorys_index=glorys_index,
+            ostia_index=ostia_index,
+            sealevel_index=sealevel_index,
+            glorys_depths=glorys_depths,
+            export_metadata=export_metadata,
+        )
 
     cache = DatasetCache(max_open=cache_size)
     written = 0
@@ -1836,7 +2237,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", type=int, default=None, help="Optional YYYYMMDD inclusive start.")
     parser.add_argument("--end-date", type=int, default=None, help="Optional YYYYMMDD inclusive end.")
     parser.add_argument("--batch-size", type=int, default=2048)
-    parser.add_argument("--cache-size", type=int, default=8)
+    parser.add_argument("--cache-size", type=int, default=8, help="Maximum open source datasets per process.")
+    parser.add_argument("--workers", type=int, default=1, help="Read-only collocation worker processes; cache-size applies per worker.")
     parser.add_argument("--max-profiles", type=int, default=None, help="Optional smoke-test cap.")
     parser.add_argument("--overwrite", action="store_true")
     return parser
@@ -1856,6 +2258,7 @@ def main() -> None:
         cache_size=args.cache_size,
         overwrite=args.overwrite,
         max_profiles=args.max_profiles,
+        workers=args.workers,
     )
     print(f"Wrote enriched ARGO profile Zarr: {out}")
 
