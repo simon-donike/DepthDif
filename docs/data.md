@@ -67,8 +67,10 @@ Default outputs in `depth_v2`:
 - `/data1/datasets/depth_v2/ostia_patch_index_daily.csv`  
   
 ## Implemented Dataset  
-Current active pixel-space config supports `ostia_argo_disk`.  
-- `configs/px_space/data_ostia_argo_disk.yaml`: exported GeoTIFF manifest-backed `ostia_argo_disk`  
+Current active pixel-space config supports `argo_netcdf_gridded`; the older GeoTIFF path remains available as a legacy workflow.
+- `configs/px_space/data_ostia_argo_netcdf.yaml`: lazy NetCDF `argo_netcdf_gridded` with synthetic sparse Argo from GLORYS
+- `configs/px_space/data_ostia_argo_netcdf_actual.yaml`: lazy NetCDF `argo_netcdf_gridded` with real Argo sparse inputs
+- `configs/px_space/data_ostia_argo_disk.yaml`: legacy exported GeoTIFF manifest-backed `ostia_argo_disk`
 - `configs/lat_space/data_config.yaml`: latent-workflow data preset (currently `eo_4band` default)  
 For latent training flow, see [Autoencoder + Latent Diffusion](autoencoder.md).  
   
@@ -143,6 +145,14 @@ Enriched profile export:
 - `data/dataset_creation/b_export_enriched_argo_profiles.py` builds a profile-level Zarr directly from raw EN4, GLORYS, OSTIA, and sea-level NetCDF folders, without using existing CSV manifests or overlap files  
 - each ARGO profile is projected onto the GLORYS depth grid for `TEMP`, `POTM_CORRECTED`, and `PSAL_CORRECTED`, then collocated with all configured GLORYS, OSTIA, and `/data1/datasets/depth_v2/sealevel_daily` variables at the profile lat/lon and time  
 - temporal collocation linearly interpolates continuous fields between bracketing source files, uses nearest temporal values for categorical flags/masks, and records per-source temporal status flags in the Zarr  
+- this export is not used by the active `argo_netcdf_gridded` loader, which reads ARGO directly from the monthly EN4 NetCDF files
+
+Virtual NetCDF patch dataset:
+- `ArgoNetCDFGriddedPatchDataset` (`data/dataset_argo_netcdf_gridded.py`) keeps the training/inference patch contract while reading source data lazily from raw ARGO/EN4, GLORYS, and OSTIA NetCDF files
+- samples return `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`, `x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`
+- `x` is raw ARGO `TEMP` projected onto the GLORYS depth axis and rasterized into the patch; `y` is GLORYS `thetao`; `eo` is OSTIA `analysed_sst`
+- compact metadata caches may store patch rows, source date indexes, and optional Argo support flags; no patch tensors, TIFFs, or large NPY exports are written
+- public metadata access uses `dataset.rows` and `dataset.depth_axis_m` so inference does not depend on GeoTIFF tags
   
 ## Synthetic Transformations  
 ## Masking, Validity, and Augmentation  

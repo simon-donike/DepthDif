@@ -2,7 +2,9 @@
 This page maps key configuration flags to their runtime behavior in code.  
   
 Primary config files used in current EO setup:  
-- `configs/px_space/data_ostia_argo_disk.yaml` (OSTIA + Argo + GLORYS GeoTIFF disk preset)  
+- `configs/px_space/data_ostia_argo_netcdf.yaml` (OSTIA + Argo + GLORYS lazy NetCDF training preset)
+- `configs/px_space/data_ostia_argo_netcdf_actual.yaml` (real-Argo validation/inference preset)
+- `configs/px_space/data_ostia_argo_disk.yaml` (legacy OSTIA + Argo + GLORYS GeoTIFF disk preset)
 - `configs/px_space/model_config.yaml`  
 - `configs/px_space/model_config_ambient.yaml`  
 - `configs/px_space/training_config.yaml`  
@@ -136,15 +138,26 @@ Runtime notes:
 ## FUll settings documentation  
 This section contains the complete key-by-key configuration reference previously documented on the separate Configs page.  
   
-### Dataset Configs (`configs/px_space/data_ostia_argo_disk.yaml`)  
+### Dataset Configs (`configs/px_space/data_ostia_argo_netcdf.yaml`)
 Dataset settings are grouped by intent (`core`, `validity`, `degradation`, `conditioning`, `augmentation`, `output`, `runtime`).  
-Defaults below refer to `configs/px_space/data_ostia_argo_disk.yaml` unless noted.  
+Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless noted.
   
 | Config key | Default value | Explanation |  
 |---|---|---|  
-| `dataset.core.dataset_variant` | `"ostia_argo_disk"` | Selects dataset in `train.py` (`"eo_4band"`, `"ostia"`, or `"ostia_argo_disk"`). |  
+| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects dataset in `train.py` (`"eo_4band"`, `"ostia"`, `"ostia_argo_disk"`, or `"argo_netcdf_gridded"`). |
 | `dataset.core.dataloader_type` | `"light"` | The current training runner supports only `"light"` loading. |  
-| `dataset.core.manifest_csv_path` | `"/work/data/depth_prod/ostia_argo_tiff_index.csv"` | Manifest CSV used by `OstiaArgoTiffDataset`; paths inside it are resolved relative to the manifest location. |  
+| `dataset.core.argo_dir` | `"/data1/datasets/depth_v2/en4_profiles"` | Root directory scanned for raw ARGO/EN4 monthly NetCDF files. |
+| `dataset.core.glorys_dir` | `"/data1/datasets/depth_v2/glorys"` | Root directory scanned for GLORYS NetCDF target files. |
+| `dataset.core.ostia_dir` | `"/data1/datasets/depth_v2/ostia"` | Root directory scanned for OSTIA NetCDF EO files. |
+| `dataset.core.metadata_cache_dir` | `"/data1/datasets/depth_v2/depthdif_cache"` | Directory for compact patch/date metadata caches only. |
+| `dataset.grid.tile_size` | `128` | Patch height and width in pixels. |
+| `dataset.grid.resolution_deg` | `0.1` | Patch grid resolution in geographic degrees. |
+| `dataset.sampling.temporal_window_days` | `7` | Total date window centered on each patch date for Argo profile selection. |
+| `dataset.sampling.argo_temp_var_name` | `"TEMP"` | ARGO temperature profile variable projected onto the GLORYS depth axis. |
+| `dataset.sampling.argo_depth_var_name` | `"DEPH_CORRECTED"` | ARGO depth profile variable used for GLORYS-axis projection. |
+| `dataset.selection.require_argo_for_train` | `true` | Drops train rows with no Argo support. |
+| `dataset.selection.require_argo_for_val` | `true` | Drops validation rows with no Argo support. |
+| `dataset.selection.require_argo_for_all` | `false` | Keeps no-Argo rows for full-grid inference unless explicitly enabled. |
 | `dataset.output.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |  
 | `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |  
 | `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |  

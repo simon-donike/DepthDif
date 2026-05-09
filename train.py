@@ -5,7 +5,7 @@ or latent diffusion model, restores checkpoints when requested, and launches the
 PyTorch Lightning training run.
 
 Typical CLI:
-    /work/envs/depth/bin/python train.py --data-config configs/px_space/data_ostia_argo_disk.yaml --train-config configs/px_space/training_config.yaml --model-config configs/px_space/model_config.yaml
+    /work/envs/depth/bin/python train.py --data-config configs/px_space/data_ostia_argo_netcdf.yaml --train-config configs/px_space/training_config.yaml --model-config configs/px_space/model_config.yaml
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
@@ -395,10 +396,15 @@ def build_dataset(
                 ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
             ),
         )
+    if dataset_variant in {"argo_netcdf_gridded", "ostia_argo_netcdf"}:
+        return ArgoNetCDFGriddedPatchDataset.from_config(
+            data_config_path,
+            split=split,
+        )
     raise ValueError(
         "Unsupported dataset variant in data config. "
         f"Got '{dataset_variant}', expected one of "
-        "{'eo_4band', 'ostia', 'ostia_argo_disk'}."
+        "{'eo_4band', 'ostia', 'ostia_argo_disk', 'argo_netcdf_gridded'}."
     )
 
 

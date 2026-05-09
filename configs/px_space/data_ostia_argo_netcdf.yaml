@@ -1,0 +1,39 @@
+dataset:
+  core:
+    dataset_variant: "argo_netcdf_gridded" # Lazily builds patches from ARGO/GLORYS/OSTIA NetCDF.
+    dataloader_type: "light" # The current training runner supports only "light" dataset loading.
+    argo_dir: "/data1/datasets/depth_v2/en4_profiles"
+    glorys_dir: "/data1/datasets/depth_v2/glorys"
+    ostia_dir: "/data1/datasets/depth_v2/ostia"
+    sealevel_dir: "/data1/datasets/depth_v2/sealevel_daily"
+    metadata_cache_dir: "/data1/datasets/depth_v2/depthdif_cache"
+  grid:
+    tile_size: 128
+    resolution_deg: 0.1
+    invalid_threshold: 0.5
+    invalid_mask_flags: ["land"]
+  sampling:
+    temporal_window_days: 7
+    glorys_var_name: "thetao"
+    ostia_var_name: "analysed_sst"
+    argo_temp_var_name: "TEMP"
+    argo_depth_var_name: "DEPH_CORRECTED"
+  selection:
+    require_argo_for_train: true
+    require_argo_for_val: true
+    require_argo_for_all: false
+  output:
+    return_info: false # Keep training batches lean; enable only for debugging source metadata.
+    return_coords: true # Required by the coord/date-conditioning model preset.
+  synthetic:
+    enabled: true # Rebuild sparse x from GLORYS instead of using raw ARGO observations.
+    pixel_count: 500 # Mean sampled profile-column count; actual count is Gaussian-clamped to +-10%.
+  runtime:
+    random_seed: 7 # Seed used for deterministic split and dataset-side sampling.
+    cache_size: 8 # Maximum open NetCDF files per source store.
+
+split:
+  val_fraction: 0.2 # Deterministic spatial-patch validation fraction for virtual metadata.
+
+dataloader:
+  val_shuffle: true # Enable validation shuffling for the current experimentation workflow.

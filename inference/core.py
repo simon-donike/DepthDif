@@ -9,6 +9,7 @@ import torch
 import yaml
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from data.dataset_4bands import SurfaceTempPatch4BandsLightDataset
 from data.dataset_ostia import SurfaceTempPatchOstiaLightDataset
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
@@ -61,17 +62,17 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
 
 
 def build_dataset(
-    data_config_path: str, ds_cfg: dict[str, Any]
+    data_config_path: str, ds_cfg: dict[str, Any], *, split: str = "all"
 ) -> torch.utils.data.Dataset:
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant in {"eo_4band", "4band_eo", "4bands"}:
         return SurfaceTempPatch4BandsLightDataset.from_config(
-            data_config_path, split="all"
+            data_config_path, split=split
         )
     if dataset_variant in {"ostia", "ostia_4band", "4band_ostia"}:
         return SurfaceTempPatchOstiaLightDataset.from_config(
-            data_config_path, split="all"
+            data_config_path, split=split
         )
     if dataset_variant in {"ostia_argo_disk", "ostia_argo_tiff", "argo_ostia_tiff"}:
         return OstiaArgoTiffDataset(
@@ -83,7 +84,7 @@ def build_dataset(
                     default=OstiaArgoTiffDataset.DEFAULT_CSV_PATH,
                 )
             ),
-            split="all",
+            split=split,
             return_info=bool(
                 ds_cfg_value(ds_cfg, "output.return_info", "return_info", default=True)
             ),
@@ -106,9 +107,15 @@ def build_dataset(
                 ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)
             ),
         )
+    if dataset_variant in {"argo_netcdf_gridded", "ostia_argo_netcdf"}:
+        return ArgoNetCDFGriddedPatchDataset.from_config(
+            data_config_path,
+            split=split,
+        )
     raise ValueError(
         "Unsupported dataset variant "
-        f"'{dataset_variant}'. Expected one of ['eo_4band', 'ostia', 'ostia_argo_disk']."
+        f"'{dataset_variant}'. Expected one of "
+        "['eo_4band', 'ostia', 'ostia_argo_disk', 'argo_netcdf_gridded']."
     )
 
 

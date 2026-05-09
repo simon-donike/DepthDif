@@ -103,6 +103,10 @@ def date_to_days_since_1950(date_yyyymmdd: int) -> float:
     )
 
 
+# Backward-compatible names used by the dataset creation scripts/tests.
+_date_to_days_since_1950 = date_to_days_since_1950
+
+
 def _parse_first_date(path: Path) -> int | None:
     match = re.search(r"(\d{8})", path.name)
     if match is None:
@@ -115,6 +119,9 @@ def parse_argo_file_month(path: Path) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+_parse_argo_file_month = parse_argo_file_month
 
 
 def filter_argo_files_by_date_range(
@@ -143,6 +150,9 @@ def filter_argo_files_by_date_range(
     return filtered
 
 
+_filter_argo_files_by_date_range = filter_argo_files_by_date_range
+
+
 def open_argo_dataset(path: Path) -> xr.Dataset:
     # EN4 archives can mix NetCDF4/HDF5 and NetCDF3 months.
     # Xarray backend autodetection picks the usable reader.
@@ -152,6 +162,9 @@ def open_argo_dataset(path: Path) -> xr.Dataset:
         mask_and_scale=True,
         cache=False,
     )
+
+
+_open_argo_dataset = open_argo_dataset
 
 
 def _time_day_from_file(path: Path) -> float:

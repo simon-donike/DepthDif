@@ -6,7 +6,7 @@ that week so the output stays one spatially complete raster rather than seven.
 
 Typical CLI:
 /work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
   --year 2015 \
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
@@ -17,7 +17,7 @@ Typical CLI:
   
 Run full including push:
 /work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
   --year 2015 \
   --iso-week 25 \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
@@ -60,8 +60,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data.datamodule import DepthTileDataModule
-from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from inference.core import (
+    build_dataset,
     build_model,
     choose_device,
     load_yaml,
@@ -71,7 +71,7 @@ from utils.normalizations import temperature_normalize
 from utils.validation_denoise import save_glorys_profile_comparison_plot
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
-DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
+DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf_actual.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
@@ -452,7 +452,7 @@ def select_export_indices(
 
     parsed_dates = [(_parse_yyyymmdd(row["date"]), idx) for idx, row in enumerate(rows)]
     if not parsed_dates:
-        raise RuntimeError("The manifest dataset is empty.")
+        raise RuntimeError("The configured dataset has no row metadata.")
 
     if exact_date is not None:
         selected = _parse_yyyymmdd(exact_date)
@@ -639,12 +639,29 @@ def _parse_depth_values_text(
     return np.asarray(depth_values, dtype=np.float64)
 
 
+def _dataset_rows(dataset: Any) -> list[dict[str, Any]]:
+    if hasattr(dataset, "rows"):
+        return list(getattr(dataset, "rows"))
+    if hasattr(dataset, "_rows"):
+        return list(getattr(dataset, "_rows"))
+    raise RuntimeError("Dataset does not expose rows metadata for global export.")
+
+
 def _load_glorys_depth_axis_m(
-    dataset: OstiaArgoTiffDataset,
+    dataset: Any,
     row: dict[str, Any],
     *,
     expected_size: int,
 ) -> np.ndarray:
+    if hasattr(dataset, "depth_axis_m"):
+        depth_axis = np.asarray(getattr(dataset, "depth_axis_m"), dtype=np.float64)
+        if int(depth_axis.size) != int(expected_size):
+            raise RuntimeError(
+                "Dataset depth_axis_m does not match sample channel count: "
+                f"{int(depth_axis.size)} != {int(expected_size)}"
+            )
+        return depth_axis
+
     glorys_path = dataset._resolve_index_path(str(row[dataset._glorys_path_col]))
     with rasterio.open(glorys_path) as ds:
         tags = ds.tags()
@@ -735,7 +752,7 @@ def _full_profile_feature_for_sample(
 def _write_full_profile_sample_artifacts(
     *,
     run_dir: Path,
-    dataset: OstiaArgoTiffDataset,
+    dataset: Any,
     writer: GeoJSONPointWriter,
     sample: FullProfileSample,
     location_id: str,
@@ -1326,11 +1343,15 @@ def main() -> None:
         )
 
     training_cfg = _load_yaml(args.train_config)
-    dataset = OstiaArgoTiffDataset.from_config(args.data_config, split=args.split)
-    dataset.return_info = False
-    dataset.return_coords = True
+    data_cfg = load_yaml(args.data_config)
+    dataset = build_dataset(args.data_config, data_cfg.get("dataset", {}), split=args.split)
+    if hasattr(dataset, "return_info"):
+        dataset.return_info = False
+    if hasattr(dataset, "return_coords"):
+        dataset.return_coords = True
+    rows = _dataset_rows(dataset)
     selection = select_export_indices(
-        dataset._rows,
+        rows,
         exact_date=args.date,
         iso_year=args.year,
         iso_week=args.iso_week,
@@ -1347,7 +1368,7 @@ def main() -> None:
         output_name=args.output_name,
     )
 
-    selected_rows = [dataset._rows[idx] for idx in selection.indices]
+    selected_rows = [rows[idx] for idx in selection.indices]
     selected_manifest = pd.DataFrame.from_records(selected_rows)
     selected_manifest.to_csv(run_dir / "selected_patches.csv", index=False)
 

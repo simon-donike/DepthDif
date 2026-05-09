@@ -27,11 +27,11 @@ At the top of `inference/run_single.py`, set:
   
 ### Note on default paths  
 The script constants should be set explicitly. In this repository, the actively used configs are:  
-- OSTIA + Argo disk setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
+- OSTIA + Argo NetCDF setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_netcdf.yaml`, `configs/px_space/training_config.yaml`
 
 ## Workflow 1b: Export Global Depth Rasters  
-Use `inference/export_global.py` when you want one spatially complete raster from the `ostia_argo_disk` manifest rather than a single sampled batch. The script:
-- loads the configured checkpoint and disk-manifest dataset  
+Use `inference/export_global.py` when you want one spatially complete raster from the configured patch dataset rather than a single sampled batch. The script:
+- loads the configured checkpoint and patch dataset
 - selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`  
 - runs batched `predict_step(...)` over all spatial patches for that day  
 - can average multiple stochastic predictions per patch via `--prediction-ensemble-runs`; the default `1` preserves single-run inference, while `--prediction-ensemble-runs 5` writes five-run averaged prediction GeoTIFFs for later XYZ tile/globe packaging  
@@ -47,7 +47,7 @@ Use `inference/export_global.py` when you want one spatially complete raster fro
 Typical run:  
 ```bash
 /work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --year 2010 \
   --iso-week 1 \
@@ -67,8 +67,8 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
-Use `inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole manifest split instead of one map export or one sampled batch. The script:
-- loads the configured checkpoint and the explicit manifest split selected by `--split` (`val` by default)
+Use `inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
+- loads the configured checkpoint and the explicit dataset split selected by `--split` (`val` by default)
 - optionally narrows that split to one ISO week via `--year ... --iso-week ...`, matching the same week-style selection used by the global export workflow
 - forces real-observation semantics by evaluating `|Prediction - GLORYS|` only on valid `y` support and `|Prediction - ARGO|` only on observed `x` support
 - pools all eligible validation pixels by depth level across the entire split and reports pooled medians rather than per-patch averages
@@ -80,7 +80,7 @@ Use `inference/export_validation_error_summary.py` when you want one depth-vs-er
 Typical run:
 ```bash
 /work/envs/depth/bin/python inference/export_validation_error_summary.py \
-  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --split val \
   --year 2015 \
@@ -162,21 +162,21 @@ Common optional keys:
 - `x0_denoise_samples`: per-step x0 predictions (if requested)  
 - `sampler`: sampler used for prediction  
   
-## Example (`ostia_argo_disk` config)  
+## Example (`argo_netcdf_gridded` config)
 ```python  
 import torch  
   
 from data.datamodule import DepthTileDataModule  
-from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset  
+from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from models.difFF import PixelDiffusionConditional  
   
 model_config = "configs/px_space/model_config.yaml"  
-data_config = "configs/px_space/data_ostia_argo_disk.yaml"  
+data_config = "configs/px_space/data_ostia_argo_netcdf.yaml"
 train_config = "configs/px_space/training_config.yaml"  
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"  
   
-train_dataset = OstiaArgoTiffDataset.from_config(data_config, split="train")  
-val_dataset = OstiaArgoTiffDataset.from_config(data_config, split="val")  
+train_dataset = ArgoNetCDFGriddedPatchDataset.from_config(data_config, split="train")
+val_dataset = ArgoNetCDFGriddedPatchDataset.from_config(data_config, split="val")
 datamodule = DepthTileDataModule(dataset=train_dataset, val_dataset=val_dataset)  
   
 model = PixelDiffusionConditional.from_config(  

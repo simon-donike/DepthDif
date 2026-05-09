@@ -21,6 +21,7 @@ if __package__ in {None, ""}:
 from data.datamodule import DepthTileDataModule
 from data.dataset_ostia_argo_disk import OstiaArgoTiffDataset
 from inference.core import (
+    build_dataset,
     build_model,
     choose_device,
     load_yaml,
@@ -35,7 +36,7 @@ from utils.validation_denoise import (
 )
 
 DEFAULT_MODEL_CONFIG = "configs/px_space/model_config.yaml"
-DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_disk_actual.yaml"
+DEFAULT_DATA_CONFIG = "configs/px_space/data_ostia_argo_netcdf_actual.yaml"
 DEFAULT_TRAIN_CONFIG = "configs/px_space/training_config.yaml"
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_OUTPUT_NAME = "validation_error_summary"
@@ -61,19 +62,53 @@ def build_validation_summary_dataset(
     data_config_path: str,
     *,
     split: str,
-) -> OstiaArgoTiffDataset:
+) -> torch.utils.data.Dataset:
     """Build the explicit manifest split used for validation summary export."""
-    dataset = OstiaArgoTiffDataset.from_config(
-        config_path=str(data_config_path),
+    data_cfg = load_yaml(data_config_path)
+    ds_cfg = data_cfg.get("dataset", {})
+    core_cfg = ds_cfg.get("core", {}) if isinstance(ds_cfg, dict) else {}
+    if (
+        isinstance(core_cfg, dict)
+        and "dataset_variant" not in core_cfg
+        and "manifest_csv_path" in core_cfg
+    ):
+        dataset = OstiaArgoTiffDataset.from_config(
+            config_path=str(data_config_path),
+            split=str(split),
+        )
+        dataset.synthetic_mode = False
+        return dataset
+
+    dataset = build_dataset(
+        str(data_config_path),
+        ds_cfg,
         split=str(split),
     )
-    # The export must compare against real observed Argo profiles, not the synthetic mode.
-    dataset.synthetic_mode = False
+    # The export must compare against real observed Argo profiles, not synthetic mode.
+    if hasattr(dataset, "synthetic_mode"):
+        dataset.synthetic_mode = False
     return dataset
 
 
+def _dataset_rows(dataset: torch.utils.data.Dataset) -> list[dict[str, Any]]:
+    if hasattr(dataset, "rows"):
+        return list(getattr(dataset, "rows"))
+    if hasattr(dataset, "_rows"):
+        return list(getattr(dataset, "_rows"))
+    raise RuntimeError("Dataset does not expose rows metadata.")
+
+
+def _set_dataset_rows(
+    dataset: torch.utils.data.Dataset,
+    rows: list[dict[str, Any]],
+) -> None:
+    if not hasattr(dataset, "_rows"):
+        raise RuntimeError("Dataset rows cannot be replaced for ISO-week filtering.")
+    dataset._rows = rows
+
+
 def filter_validation_summary_dataset_by_iso_week(
-    dataset: OstiaArgoTiffDataset,
+    dataset: torch.utils.data.Dataset,
     *,
     iso_year: int | None = None,
     iso_week: int | None = None,
@@ -84,18 +119,19 @@ def filter_validation_summary_dataset_by_iso_week(
     if (iso_year is None) ^ (iso_week is None):
         raise ValueError("--year and --iso-week must be provided together.")
 
+    rows = _dataset_rows(dataset)
     filtered_rows = [
         row
-        for row in dataset._rows
+        for row in rows
         if _parse_yyyymmdd(row["date"]).isocalendar()[:2]
         == (int(iso_year), int(iso_week))
     ]
     if not filtered_rows:
         raise RuntimeError(
             f"No manifest rows matched ISO week {int(iso_year)}-W{int(iso_week):02d} "
-            f"within split '{dataset.split}'."
+            f"within split '{getattr(dataset, 'split', '')}'."
         )
-    dataset._rows = filtered_rows
+    _set_dataset_rows(dataset, filtered_rows)
     return int(iso_year), int(iso_week)
 
 
@@ -259,12 +295,12 @@ def build_validation_error_summary_dataframe(
 
 
 def resolve_validation_summary_depth_axis_m(
-    dataset: OstiaArgoTiffDataset,
+    dataset: torch.utils.data.Dataset,
 ) -> np.ndarray:
     """Load the physical GLORYS depth axis from the first manifest row."""
     if len(dataset) <= 0:
         raise RuntimeError("Validation summary export requires a non-empty dataset.")
-    first_row = dataset._rows[0]
+    first_row = _dataset_rows(dataset)[0]
     sample = dataset[0]
     return _load_glorys_depth_axis_m(
         dataset,
@@ -274,7 +310,7 @@ def resolve_validation_summary_depth_axis_m(
 
 
 def build_validation_summary_dataloader(
-    dataset: OstiaArgoTiffDataset,
+    dataset: torch.utils.data.Dataset,
     *,
     training_cfg: dict[str, Any],
     batch_size_override: int | None,

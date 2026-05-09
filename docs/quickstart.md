@@ -10,11 +10,11 @@ Use this page for the shortest path from setup to first train/inference run.
 ```  
   
 ## Quick Training  
-OSTIA + Argo disk training (`dataset.core.dataset_variant="ostia_argo_disk"`):  
+OSTIA + Argo NetCDF training (`dataset.core.dataset_variant="argo_netcdf_gridded"`):
   
 ```bash  
-python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+/work/envs/depth/bin/python train.py \
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config.yaml  
 ```  
@@ -48,7 +48,7 @@ Set config/checkpoint constants at the top of `inference/run_single.py`, then ru
 
 For EO multiband runs, use:  
 - `MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"`  
-- `DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_disk.yaml"`  
+- `DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"`
 - `TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"`  
 Remember to wire through your dataloaders in the config. Alternatively, pass the inputs individually through PL's `predict_step`.  
 

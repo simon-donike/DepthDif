@@ -30,7 +30,7 @@ python -m pip install -r requirements.txt
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).  
 - Main task modes:  
   - `eo_4band`: EO-conditioned multiband reconstruction (`[eo, x, x_valid_mask] -> y`).  
-- Additional standalone raw-source datasets: `data/dataset_ostia_argo.py` (`OstiaArgoTileDataset`) for CSV-driven OSTIA condition tile retrieval plus date-matched EN4 profile extraction from `argo_file_path`, with each Argo profile resampled onto the fixed 50-level GLORYS depth grid, optional temporal-window averaging via `days`, georeferenced GeoTIFF export via `save_to_disk(...)`, explicit `x_valid_mask` / `y_valid_mask` depth masks, a horizontal `land_mask`, and `x_valid_mask_1d` for profile-column support; and `data/dataset_ostia_argo_disk.py` (`OstiaArgoTiffDataset`) for loading the exported OSTIA/ARGO/GLORYS GeoTIFF triplets back from the manifest CSV, with GLORYS stored on disk as packed `int16` (`0.01°C` precision) and decoded back to Celsius on read. The disk loader also supports a synthetic mode that replaces exported Argo `x` with sparse GLORYS profile columns sampled at a Gaussian-distributed pixel count around `synthetic.pixel_count` and clamped to `+-10%`.
+- Additional standalone raw-source datasets: `data/dataset_argo_netcdf_gridded.py` (`ArgoNetCDFGriddedPatchDataset`) lazily builds model-ready patches from raw ARGO/EN4, GLORYS, and OSTIA NetCDF files without writing tensor exports; legacy `data/dataset_ostia_argo.py` and `data/dataset_ostia_argo_disk.py` remain available for the older CSV/GeoTIFF workflow.
 - Config layout:  
   - `configs/px_space/`: active pixel-space diffusion configs  
   - `configs/lat_space/`: latent-space config set (`model_config.yaml`, `training_config.yaml`, `data_config.yaml`, `ae_config.yaml`)  
@@ -43,11 +43,11 @@ See `docs/ambient-occlusion-objective.md` for the full mathematical objective, f
   
 ## Training  
   
-OSTIA + Argo disk training:  
+OSTIA + Argo NetCDF training:
 
 ```bash  
-python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+/work/envs/depth/bin/python train.py \
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config.yaml  
 ```  
@@ -55,11 +55,11 @@ python train.py \
 Ambient-occlusion objective example:  
 
 ```bash  
-python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+/work/envs/depth/bin/python train.py \
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config_ambient.yaml \  
-  --set training.wandb.run_name=ambient_ostia_argo_disk_v1  
+  --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
 ```  
   
 Notes:  
@@ -75,7 +75,7 @@ Use `inference/run_single.py`:
 
 1. Set config/checkpoint constants at the top of `inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).  
    For the active EO setup in this repository, use:  
-   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_disk.yaml`, `configs/px_space/training_config.yaml`  
+   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_netcdf.yaml`, `configs/px_space/training_config.yaml`
 2. Choose `MODE` (`"dataloader"` or `"random"`).  
 3. Run:  
   
@@ -83,13 +83,13 @@ Use `inference/run_single.py`:
 /work/envs/depth/bin/python inference/run_single.py  
 ```  
 
-For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the `ostia_argo_disk` manifest (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 100m, 250m, 500m, and 1000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. Pass `--prediction-ensemble-runs 5` to average five stochastic predictions per patch before writing the GeoTIFFs consumed by the globe packager; the default `1` keeps the existing single-run behavior.
+For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the configured patch dataset (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 100m, 250m, 500m, and 1000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. Pass `--prediction-ensemble-runs 5` to average five stochastic predictions per patch before writing the GeoTIFFs consumed by the globe packager; the default `1` keeps the existing single-run behavior.
 
-For a pooled validation-set depth summary, use `inference/export_validation_error_summary.py`. It loads the explicit manifest `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
+For a pooled validation-set depth summary, use `inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
 
 ```bash
 /work/envs/depth/bin/python inference/export_validation_error_summary.py \
-  --data-config configs/px_space/data_ostia_argo_disk_actual.yaml \
+  --data-config configs/px_space/data_ostia_argo_netcdf_actual.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --split val \
   --year 2015 \

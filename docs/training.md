@@ -6,7 +6,7 @@ Use explicit config paths to avoid ambiguity:
   
 ```bash  
 /work/envs/depth/bin/python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config.yaml  
 ```  
@@ -21,7 +21,7 @@ Override example:
   
 ```bash  
 /work/envs/depth/bin/python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config.yaml \  
   --set data.dataset.output.return_info=true \  
@@ -33,10 +33,10 @@ Ambient-occlusion objective example (self-supervised on `x`):
   
 ```bash  
 /work/envs/depth/bin/python train.py \  
-  --data-config configs/px_space/data_ostia_argo_disk.yaml \  
+  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
   --train-config configs/px_space/training_config.yaml \  
   --model-config configs/px_space/model_config_ambient.yaml \  
-  --set training.wandb.run_name=ambient_ostia_argo_disk_v1  
+  --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
 ```  
   
 When enabled, training logs:  
@@ -55,7 +55,7 @@ For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enab
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion.  
 - `model.model_type="latent_cond_dif"` runs latent diffusion with the autoencoder bridge.  
 - dataset variant is selected by `dataset.core.dataset_variant` (or inferred from data config filename)  
-- `dataset_variant` selects the dataset implementation in code (`"eo_4band"`, `"ostia"`, or `"ostia_argo_disk"`)  
+- `dataset_variant` selects the dataset implementation in code (`"eo_4band"`, `"ostia"`, `"ostia_argo_disk"`, or `"argo_netcdf_gridded"`)
 - `SurfaceTempPatchOstiaLightDataset` still does not apply EO degradation (no EO dropout/random-scale/speckle) when you train the legacy OSTIA overlap dataset through an older config.  
 - EO dropout from data config is injected into dataset object for both train and val  
 - parser defaults in `train.py` now point to `configs/px_space/*.yaml`; explicit CLI paths are still recommended for reproducibility  
