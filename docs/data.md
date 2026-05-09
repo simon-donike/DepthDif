@@ -24,7 +24,7 @@ For legacy `eo_4band` (same-source surface + depth), the on-disk 4-band layout i
 - channels 1..3: deeper temperature target bands  
   
 ## OSTIA EO Overlap Dataset  
-OSTIA EO tiles are generated with `data/get_ostia/overlap_ostia_depth.py`.  
+OSTIA EO tiles are generated with `data/dataset_creation/data_download_raw/get_ostia/overlap_ostia_depth.py`.  
   
 Core behavior:  
 - reads the depth index CSV (for example `patch_index_with_paths_split.csv`)  
@@ -53,7 +53,7 @@ Visual reference of the OSTIA-conditioned dataset:
   
 ## OSTIA Patch-Time Index CSV (Spatial x Daily)  
 For raw OSTIA-only indexing (before adding profile sources), use  
-`data/get_ostia/build_ostia_patch_time_index.py`.  
+`data/dataset_creation/data_download_raw/get_ostia/build_ostia_patch_time_index.py`.  
   
 This script:  
 - builds a fixed spatial patch grid from OSTIA coverage (`tile_size`, `resolution_deg`)  
@@ -88,7 +88,7 @@ Band selection for targets is configurable through:
 - `dataset.output.target_band_end` (exclusive)  
   
 ### `ostia` (OSTIA-conditioned multiband)  
-`SurfaceTempPatchOstiaLightDataset` (`data/dataset_ostia.py`) keeps the same output contract as `eo_4band`, but loads `eo` from `ostia_npy_path` in the overlap CSV produced by `data/get_ostia/overlap_ostia_depth.py`.  
+`SurfaceTempPatchOstiaLightDataset` (`data/dataset_ostia.py`) keeps the same output contract as `eo_4band`, but loads `eo` from `ostia_npy_path` in the overlap CSV produced by `data/dataset_creation/data_download_raw/get_ostia/overlap_ostia_depth.py`.  
   
 Important behavior:  
 - depth channels still come from `y_npy_path` (`[0]=legacy surface, [1:4]=deeper targets`)  
@@ -140,7 +140,7 @@ Current scope note:
 - profile extraction remains date-based within the monthly EN4 file, while vertical alignment is now performed against the GLORYS depth axis before the profile samples are tiled into the patch grid  
 
 Enriched profile export:  
-- `data/export_enriched_argo_profiles.py` builds a profile-level Zarr directly from raw EN4, GLORYS, OSTIA, and sea-level NetCDF folders, without using existing CSV manifests or overlap files  
+- `data/dataset_creation/b_export_enriched_argo_profiles.py` builds a profile-level Zarr directly from raw EN4, GLORYS, OSTIA, and sea-level NetCDF folders, without using existing CSV manifests or overlap files  
 - each ARGO profile is projected onto the GLORYS depth grid for `TEMP`, `POTM_CORRECTED`, and `PSAL_CORRECTED`, then collocated with all configured GLORYS, OSTIA, and `/data1/datasets/depth_v2/sealevel_daily` variables at the profile lat/lon and time  
 - temporal collocation linearly interpolates continuous fields between bracketing source files, uses nearest temporal values for categorical flags/masks, and records per-source temporal status flags in the Zarr  
   

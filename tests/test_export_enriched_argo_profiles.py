@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import xarray as xr
 
-from data.export_enriched_argo_profiles import (
+from data.dataset_creation.b_export_enriched_argo_profiles import (
     GLORYS_2D_VARS,
     GLORYS_3D_VARS,
     INTERPOLATED_STATUS,
@@ -13,14 +13,21 @@ from data.export_enriched_argo_profiles import (
     OSTIA_VARS,
     SEALEVEL_VARS,
     TimedFile,
+    _sanitize_metadata_value,
     bracket_timed_files,
     export_enriched_argo_profiles,
     project_argo_profile_to_glorys_depths,
     scan_timed_files,
 )
+sanitize_metadata_value = _sanitize_metadata_value
 
 
-def _write_argo(path: Path, *, juld: float = 21916.0) -> None:
+def _write_argo(
+    path: Path,
+    *,
+    juld: float = 21916.0,
+    engine: str = "h5netcdf",
+) -> None:
     ds = xr.Dataset(
         {
             "JULD": (("N_PROF",), np.asarray([juld], dtype=np.float64)),
@@ -44,8 +51,9 @@ def _write_argo(path: Path, *, juld: float = 21916.0) -> None:
             ),
         }
     )
+    ds["JULD"].attrs["units"] = "days since 1950-01-01 00:00:00 utc"
     path.parent.mkdir(parents=True, exist_ok=True)
-    ds.to_netcdf(path, engine="h5netcdf")
+    ds.to_netcdf(path, engine=engine)
 
 
 def _write_glorys(path: Path, *, day: float, base: float) -> None:
@@ -156,6 +164,17 @@ class EnrichedArgoExportTests(unittest.TestCase):
             self.assertEqual(len(index), 1)
             self.assertAlmostEqual(index[0].day, 21915.0)
 
+    def test_metadata_sanitizer_removes_absolute_paths_but_keeps_urls(self) -> None:
+        sanitized = sanitize_metadata_value(
+            "source=/data1/datasets/depth_v2/file.nc "
+            "also /tmp/other.nc https://example.test/path/file.nc"
+        )
+
+        self.assertEqual(
+            sanitized,
+            "source=file.nc also other.nc https://example.test/path/file.nc",
+        )
+
     def test_export_enriched_profiles_writes_expected_zarr(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -196,6 +215,27 @@ class EnrichedArgoExportTests(unittest.TestCase):
             self.assertEqual(ds.sizes["glorys_depth"], 3)
             self.assertIn("sealevel_adt", ds)
             self.assertIn("glorys_zos", ds)
+            self.assertEqual(
+                ds["profile_source_file"].values[0],
+                "EN.4.2.2.f.profiles.g10.201001.nc",
+            )
+            self.assertFalse(str(ds["profile_source_file"].values[0]).startswith("/"))
+            self.assertIn("source_metadata", ds.attrs)
+            self.assertEqual(
+                ds.attrs["source_metadata"]["sealevel"]["representative_file"],
+                "dt_global_allsat_phy_l4_20100101_20241016.nc",
+            )
+            self.assertIn("source_attrs", ds["sealevel_adt"].attrs)
+            self.assertEqual(ds["glorys_depth"].attrs["units"], "m")
+            self.assertEqual(ds["profile_juld"].attrs["value_units"], "days")
+            self.assertEqual(
+                ds["profile_juld"].attrs["reference_epoch"],
+                "1950-01-01T00:00:00Z",
+            )
+            self.assertEqual(
+                ds["profile_juld"].attrs["source_units"],
+                "days since 1950-01-01 00:00:00 utc",
+            )
             np.testing.assert_allclose(
                 ds["argo_temp_on_glorys_depth"].values[0],
                 np.asarray([1.0, 3.0, 5.0], dtype=np.float32),
@@ -209,6 +249,53 @@ class EnrichedArgoExportTests(unittest.TestCase):
             self.assertEqual(int(ds["glorys_temporal_status"].values[0]), 0)
             self.assertEqual(int(ds["ostia_temporal_status"].values[0]), 0)
             self.assertEqual(int(ds["sealevel_temporal_status"].values[0]), 0)
+            ds.close()
+
+    def test_export_reads_netcdf3_argo_and_filters_unneeded_months(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            argo_dir = root / "en4_profiles"
+            glorys_dir = root / "glorys_weekly"
+            ostia_dir = root / "ostia"
+            sealevel_dir = root / "sealevel_daily"
+            output_zarr = root / "enriched.zarr"
+
+            _write_argo(
+                argo_dir / "EN.4.2.2.f.profiles.g10.201001.nc",
+                engine="scipy",
+            )
+            # The date filter should exclude this later month before any NetCDF open.
+            (argo_dir / "EN.4.2.2.f.profiles.g10.201002.nc").write_bytes(b"not-netcdf")
+            _write_glorys(glorys_dir / "glorys_20100101.nc", day=21915.0, base=10.0)
+            _write_glorys(glorys_dir / "glorys_20100103.nc", day=21917.0, base=14.0)
+            _write_ostia(ostia_dir / "20100101120000-ostia.nc", day=21915.0, base=20.0)
+            _write_ostia(ostia_dir / "20100103120000-ostia.nc", day=21917.0, base=24.0)
+            _write_sealevel(
+                sealevel_dir / "dt_global_allsat_phy_l4_20100101_20241016.nc",
+                day=21915.0,
+                base=30.0,
+            )
+            _write_sealevel(
+                sealevel_dir / "dt_global_allsat_phy_l4_20100103_20241016.nc",
+                day=21917.0,
+                base=34.0,
+            )
+
+            export_enriched_argo_profiles(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                output_zarr=output_zarr,
+                start_date=20100101,
+                end_date=20100131,
+                batch_size=1,
+                overwrite=True,
+            )
+
+            ds = xr.open_zarr(output_zarr)
+            self.assertEqual(ds.sizes["profile"], 1)
+            self.assertEqual(int(ds["profile_date"].values[0]), 20100102)
             ds.close()
 
 

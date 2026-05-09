@@ -17,9 +17,9 @@ Expected source trees:
 - optional Copernicus sea-level daily files in `/data1/datasets/depth_v2/sealevel_daily`  
   
 Main build scripts:  
-- `data/get_ostia/build_ostia_patch_time_index.py`  
-- `data/get_argo/build_argo_datetime_match_index.py`  
-- `data/get_argo/merge_argo_into_ostia_daily_index.py`  
+- `data/dataset_creation/data_download_raw/get_ostia/build_ostia_patch_time_index.py`  
+- `data/dataset_creation/data_download_raw/get_argo/build_argo_datetime_match_index.py`  
+- `data/dataset_creation/data_download_raw/get_argo/merge_argo_into_ostia_daily_index.py`  
   
 ## 1) Spatial Sampling  
 The fixed patch geometry is derived from OSTIA because OSTIA defines the surface EO coverage.  
@@ -38,7 +38,7 @@ Current commonly used setup:
 Recommended native-grid OSTIA patch-index build:  
   
 ```bash  
-/work/envs/depth/bin/python data/get_ostia/build_ostia_patch_time_index.py \  
+/work/envs/depth/bin/python data/dataset_creation/data_download_raw/get_ostia/build_ostia_patch_time_index.py \  
   --ostia-dir /data1/datasets/depth_v2/ostia \  
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \  
   --output-spatial-csv /data1/datasets/depth_v2/ostia_patch_index_spatial.csv \  
@@ -79,7 +79,7 @@ ARGO is then attached date-wise:
 Datetime match command:  
   
 ```bash  
-/work/envs/depth/bin/python data/get_argo/build_argo_datetime_match_index.py \  
+/work/envs/depth/bin/python data/dataset_creation/data_download_raw/get_argo/build_argo_datetime_match_index.py \  
   --argo-dir /data1/datasets/depth_v2/en4_profiles \  
   --ostia-dir /data1/datasets/depth_v2/ostia \  
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \  
@@ -89,7 +89,7 @@ Datetime match command:
 Merge command:  
   
 ```bash  
-/work/envs/depth/bin/python data/get_argo/merge_argo_into_ostia_daily_index.py \  
+/work/envs/depth/bin/python data/dataset_creation/data_download_raw/get_argo/merge_argo_into_ostia_daily_index.py \  
   --daily-csv /data1/datasets/depth_v2/ostia_patch_index_daily.csv \  
   --argo-match-csv /data1/datasets/depth_v2/argo_profile_datetime_match.csv \  
   --output-csv /data1/datasets/depth_v2/ostia_patch_index_daily.csv  
@@ -199,9 +199,9 @@ Median valid pixels per spatial patch:
   
   
 ## 6) End-To-End Build Order
-1. Download OSTIA daily files with `data/get_ostia/download_ostia.sh`.  
-2. Download and extract EN4 profile data with `data/get_argo/download_en4_profiles.sh`.  
-3. Optionally download Copernicus sea-level daily files with `data/get_sealevel/download_sealevel_daily.sh`.  
+1. Download OSTIA daily files with `data/dataset_creation/data_download_raw/get_ostia/download_ostia.sh`.  
+2. Download and extract EN4 profile data with `data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh`.  
+3. Optionally download Copernicus sea-level daily files with `data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh`.  
 4. Build the OSTIA spatial and daily patch index.  
 5. Build the ARGO <-> OSTIA datetime match table.  
 6. Merge ARGO validity and linkage columns into the daily patch CSV.  
