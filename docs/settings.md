@@ -164,7 +164,8 @@ Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless no
 | `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |
 | `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |
 | `dataset.runtime.cache_size` | `8` | Maximum number of open NetCDF files cached per source store. |
-| `split.val_fraction` | `0.2` | Fraction of dataset reserved for validation. |
+| `split.val_year` | `2018` | Calendar year assigned to validation rows; all other years become training rows. |
+| `split.val_fraction` | `0.2` | Patch fraction reserved for validation when `split.val_year` is null. |
 
 ### `configs/px_space/model_config.yaml`
 | Config key | Default value | Explanation |

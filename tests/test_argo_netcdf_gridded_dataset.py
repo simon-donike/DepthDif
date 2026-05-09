@@ -190,6 +190,40 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(bool(no_argo_sample["y_valid_mask"].any().item()))
             self.assertTrue(torch.equal(no_argo_sample["x"], torch.zeros_like(no_argo_sample["x"])))
 
+    def test_val_year_assigns_only_that_year_to_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            kwargs = _dataset_kwargs(tmp_path)
+            glorys_dir = Path(kwargs["glorys_dir"])
+            ostia_dir = Path(kwargs["ostia_dir"])
+            _write_glorys(glorys_dir, date_value=20180102, base=10.0)
+            _write_glorys(glorys_dir, date_value=20190102, base=20.0)
+            _write_ostia(ostia_dir, date_value=20180102, base_kelvin=275.0)
+            _write_ostia(ostia_dir, date_value=20190102, base_kelvin=276.0)
+
+            train_dataset = ArgoNetCDFGriddedPatchDataset(
+                **kwargs,
+                split="train",
+                val_year=2018,
+                require_argo_for_train=False,
+            )
+            val_dataset = ArgoNetCDFGriddedPatchDataset(
+                **kwargs,
+                split="val",
+                val_year=2018,
+                require_argo_for_val=False,
+            )
+
+            self.assertTrue(
+                all((int(row["date"]) // 10000) != 2018 for row in train_dataset.rows)
+            )
+            self.assertEqual(
+                {int(row["date"]) // 10000 for row in val_dataset.rows},
+                {2018},
+            )
+            self.assertTrue(all(row["split"] == "train" for row in train_dataset.rows))
+            self.assertTrue(all(row["split"] == "val" for row in val_dataset.rows))
+
     def test_synthetic_mode_samples_sparse_x_from_glorys_y(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset = ArgoNetCDFGriddedPatchDataset(
@@ -247,7 +281,7 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                     "output": {"return_info": True, "return_coords": False},
                     "runtime": {"random_seed": 7, "cache_size": 2},
                 },
-                "split": {"val_fraction": 0.0},
+                "split": {"val_fraction": 0.0, "val_year": None},
             }
             _write_yaml(config_path, payload)
 

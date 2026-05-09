@@ -533,13 +533,14 @@ class _GridParams:
     invalid_threshold: float
     invalid_mask_flags: tuple[str, ...]
     val_fraction: float
+    val_year: int | None
     split_seed: int
 
 
 class VirtualPatchIndex:
     """Builds compact patch/date metadata rows without precomputing tensors."""
 
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
 
     def __init__(
         self,
@@ -576,6 +577,10 @@ class VirtualPatchIndex:
                 row = dict(patch)
                 row["date"] = int(date_value)
                 row["export_index"] = int(export_index)
+                if self.grid_params.val_year is not None:
+                    phase = self._phase_for_date(int(date_value))
+                    row["split"] = phase
+                    row["phase"] = phase
                 row["argo_profile_count"] = int(
                     support_counts.get((patch_id, int(date_value)), 0)
                 )
@@ -591,12 +596,21 @@ class VirtualPatchIndex:
         if self.cache_dir is None:
             return None
         res_text = str(float(self.grid_params.resolution_deg)).replace(".", "p")
+        split_text = (
+            f"valyear{int(self.grid_params.val_year)}"
+            if self.grid_params.val_year is not None
+            else "patchsplit"
+        )
         name = (
             f"argo_netcdf_gridded_v{self.CACHE_VERSION}_"
             f"tile{int(self.grid_params.tile_size)}_res{res_text}_"
-            f"days{int(self.temporal_window_days)}.csv"
+            f"days{int(self.temporal_window_days)}_{split_text}.csv"
         )
         return self.cache_dir / name
+
+    def _phase_for_date(self, date_value: int) -> str:
+        year = int(date_value) // 10000
+        return "val" if year == int(self.grid_params.val_year) else "train"
 
     def _overlapping_dates(self) -> list[int]:
         candidate_dates = sorted(set(int(v) for v in self.ostia_store.dates))
@@ -828,6 +842,7 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         invalid_threshold: float = 0.5,
         invalid_mask_flags: Sequence[str] = ("land",),
         val_fraction: float = 0.2,
+        val_year: int | None = None,
         require_argo_for_train: bool = True,
         require_argo_for_val: bool = True,
         require_argo_for_all: bool = False,
@@ -881,6 +896,7 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             invalid_threshold=float(invalid_threshold),
             invalid_mask_flags=tuple(str(v) for v in invalid_mask_flags),
             val_fraction=float(val_fraction),
+            val_year=None if val_year is None else int(val_year),
             split_seed=self.random_seed,
         )
         index = VirtualPatchIndex(
@@ -997,6 +1013,7 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 )
             ),
             val_fraction=float(cfg.get("split", {}).get("val_fraction", 0.2)),
+            val_year=cls._optional_int(cfg.get("split", {}).get("val_year", None)),
             require_argo_for_train=bool(
                 cls._cfg_get(
                     ds_cfg,
@@ -1064,6 +1081,14 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             return node
         _ = flat_key
         return default
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip().lower() in MISSING_TEXT_VALUES:
+            return None
+        return int(value)
 
     def _filter_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self.split in {"train", "val"}:

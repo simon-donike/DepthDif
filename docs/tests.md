@@ -31,6 +31,7 @@ and sea-level NetCDF fixtures in a temporary directory. It verifies:
 - normalized `eo`, `x`, and `y`
 - validity mask semantics
 - `coords`, `date`, and split filtering
+- year-based validation split assignment
 - ARGO rasterization and duplicate-hit averaging
 - synthetic sparse `x` sampled from GLORYS `y`
 - no-ARGO inference rows when allowed

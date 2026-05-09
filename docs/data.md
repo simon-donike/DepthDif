@@ -105,9 +105,17 @@ Mask semantics:
 
 ## Split Behavior
 
-Patch split labels are deterministic and stored in the compact metadata cache.
+The active config uses `split.val_year: 2018`, so every row dated in 2018 is
+assigned to `val` and every other year is assigned to `train`.
+
+When `split.val_year` is null, patch split labels are deterministic and use
+`split.val_fraction` instead. Split labels are stored in the compact metadata
+cache.
+
 Selection flags control whether rows without ARGO support are retained:
 
+- `split.val_year`
+- `split.val_fraction`
 - `dataset.selection.require_argo_for_train`
 - `dataset.selection.require_argo_for_val`
 - `dataset.selection.require_argo_for_all`

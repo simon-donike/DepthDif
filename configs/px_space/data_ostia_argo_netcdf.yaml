@@ -33,7 +33,8 @@ dataset:
     cache_size: 8 # Maximum open NetCDF files per source store.
 
 split:
-  val_fraction: 0.2 # Deterministic spatial-patch validation fraction for virtual metadata.
+  val_year: 2018 # Rows from this calendar year are validation; all other years are training.
+  val_fraction: 0.2 # Used only when val_year is null; deterministic spatial-patch validation fraction.
 
 dataloader:
   val_shuffle: true # Enable validation shuffling for the current experimentation workflow.
