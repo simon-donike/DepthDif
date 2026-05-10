@@ -3,7 +3,7 @@ dataset:
     dataset_variant: "argo_netcdf_gridded" # Lazily builds patches from ARGO/GLORYS/OSTIA NetCDF.
     dataloader_type: "light" # The current training runner supports only "light" dataset loading.
     argo_dir: "/data1/datasets/depth_v2/en4_profiles"
-    glorys_dir: "/data1/datasets/depth_v2/glorys"
+    glorys_dir: "/data1/datasets/depth_v2/glorys_weekly"
     ostia_dir: "/data1/datasets/depth_v2/ostia"
     sealevel_dir: "/data1/datasets/depth_v2/sealevel_daily"
     metadata_cache_dir: "/data1/datasets/depth_v2/depthdif_cache"

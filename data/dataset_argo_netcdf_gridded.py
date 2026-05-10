@@ -851,7 +851,7 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
 
     DEFAULT_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"
     DEFAULT_ARGO_DIR = "/data1/datasets/depth_v2/en4_profiles"
-    DEFAULT_GLORYS_DIR = "/data1/datasets/depth_v2/glorys"
+    DEFAULT_GLORYS_DIR = "/data1/datasets/depth_v2/glorys_weekly"
     DEFAULT_OSTIA_DIR = "/data1/datasets/depth_v2/ostia"
     DEFAULT_SEALEVEL_DIR = "/data1/datasets/depth_v2/sealevel_daily"
     DEFAULT_METADATA_CACHE_DIR = "/data1/datasets/depth_v2/depthdif_cache"

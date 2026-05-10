@@ -13,7 +13,7 @@ Expected source trees:
 
 - `/data1/datasets/depth_v2/ostia`
 - `/data1/datasets/depth_v2/en4_profiles`
-- `/data1/datasets/depth_v2/glorys`
+- `/data1/datasets/depth_v2/glorys_weekly`
 - `/data1/datasets/depth_v2/sealevel_daily`
 
 The active config is `configs/px_space/data_ostia_argo_netcdf.yaml`.
