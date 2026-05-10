@@ -151,9 +151,7 @@ def _masked_depthwise_values(
     depthwise_values: list[np.ndarray] = []
     for depth_idx in range(int(values_np.shape[1])):
         selected = values_np[:, depth_idx][valid_mask_np[:, depth_idx]]
-        depthwise_values.append(
-            np.asarray(selected, dtype=np.float64).reshape(-1)
-        )
+        depthwise_values.append(np.asarray(selected, dtype=np.float64).reshape(-1))
     return depthwise_values
 
 
@@ -222,7 +220,9 @@ def _pooled_nanmedian_and_count(
     for depth_idx, depth_values in enumerate(values_by_depth):
         if not depth_values:
             continue
-        concatenated = np.concatenate(depth_values, axis=0).astype(np.float64, copy=False)
+        concatenated = np.concatenate(depth_values, axis=0).astype(
+            np.float64, copy=False
+        )
         if concatenated.size <= 0:
             continue
         medians[depth_idx] = float(np.nanmedian(concatenated))
@@ -331,8 +331,7 @@ def _figure_title_for_split(split: str) -> str:
     if split_label == "all":
         return "Median profile and absolute error across all dataset rows"
     return (
-        f"Median profile and absolute error across "
-        f"{split_label.capitalize()} split"
+        f"Median profile and absolute error across " f"{split_label.capitalize()} split"
     )
 
 
@@ -431,10 +430,12 @@ def main() -> None:
     train_cfg = load_yaml(args.train_config)
 
     dataset = build_validation_summary_dataset(args.data_config, split=str(args.split))
-    selected_iso_year, selected_iso_week = filter_validation_summary_dataset_by_iso_week(
-        dataset,
-        iso_year=args.year,
-        iso_week=args.iso_week,
+    selected_iso_year, selected_iso_week = (
+        filter_validation_summary_dataset_by_iso_week(
+            dataset,
+            iso_year=args.year,
+            iso_week=args.iso_week,
+        )
     )
     depth_axis_m = resolve_validation_summary_depth_axis_m(dataset)
     accumulator = create_validation_error_summary_accumulator(int(depth_axis_m.size))
@@ -504,7 +505,9 @@ def main() -> None:
     median_prediction_profile = summary_df["median_prediction_profile_c"].to_numpy(
         dtype=np.float64
     )
-    median_glorys_profile = summary_df["median_glorys_profile_c"].to_numpy(dtype=np.float64)
+    median_glorys_profile = summary_df["median_glorys_profile_c"].to_numpy(
+        dtype=np.float64
+    )
     median_argo_profile = summary_df["median_argo_profile_c"].to_numpy(dtype=np.float64)
     median_abs_error_prediction_vs_glorys = summary_df[
         "median_abs_error_prediction_vs_glorys_c"

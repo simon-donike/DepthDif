@@ -65,7 +65,9 @@ def _section(config: dict[str, Any], name: str) -> dict[str, Any]:
 def _string_value(section: dict[str, Any], key: str, path: str) -> str:
     value = section.get(key)
     if not isinstance(value, str):
-        raise RuntimeError(f"zarr source variable config value must be a string: {path}")
+        raise RuntimeError(
+            f"zarr source variable config value must be a string: {path}"
+        )
     return value
 
 
@@ -136,9 +138,7 @@ def _days_since_1950_from_date_int(date_value: int) -> float:
     text = str(int(date_value))
     day = np.datetime64(f"{text[:4]}-{text[4:6]}-{text[6:8]}", "D")
     return float(
-        (day - np.datetime64("1950-01-01", "D"))
-        .astype("timedelta64[D]")
-        .astype(int)
+        (day - np.datetime64("1950-01-01", "D")).astype("timedelta64[D]").astype(int)
     )
 
 
@@ -185,7 +185,9 @@ def _target_axis(values: np.ndarray, resolution_deg: float) -> np.ndarray:
 def _is_categorical_raster(name: str, da: xr.DataArray) -> bool:
     if str(name).lower() in {"mask"}:
         return True
-    return bool(np.issubdtype(da.dtype, np.integer) or np.issubdtype(da.dtype, np.bool_))
+    return bool(
+        np.issubdtype(da.dtype, np.integer) or np.issubdtype(da.dtype, np.bool_)
+    )
 
 
 def _resample_horizontal_grid(
@@ -243,7 +245,9 @@ def _resample_horizontal_grid(
 def _raster_target_grid_from_dataset(ds: xr.Dataset) -> RasterTargetGrid:
     coord_names = _horizontal_coord_names(ds)
     if coord_names is None:
-        raise RuntimeError("GLORYS zarr export source is missing horizontal coordinates.")
+        raise RuntimeError(
+            "GLORYS zarr export source is missing horizontal coordinates."
+        )
     lat_name, lon_name = coord_names
     return RasterTargetGrid(
         latitude=np.asarray(ds[lat_name].values, dtype=np.float64).copy(),
@@ -313,7 +317,9 @@ def _aggregate_to_target_dates(
     )
     valid = labels > 0
     if not np.any(valid):
-        raise RuntimeError("No source raster dates fall inside the target aggregate windows.")
+        raise RuntimeError(
+            "No source raster dates fall inside the target aggregate windows."
+        )
 
     grouped_parts: list[xr.Dataset] = []
     continuous_names = [
@@ -342,9 +348,9 @@ def _aggregate_to_target_dates(
         grouped = grouped.assign_coords(time=grouped["time"].astype(np.int32))
         for name in continuous_names:
             grouped[name].attrs.update(ds[name].attrs)
-            grouped[name].attrs["temporal_aggregation"] = (
-                f"Centered {int(aggregate_days)}-day mean around GLORYS timestep."
-            )
+            grouped[name].attrs[
+                "temporal_aggregation"
+            ] = f"Centered {int(aggregate_days)}-day mean around GLORYS timestep."
         grouped_parts.append(grouped)
 
     if categorical_names:
@@ -361,7 +367,10 @@ def _aggregate_to_target_dates(
         nearest_dates: list[int] = []
         for target_date, target_day in zip(target_dates.tolist(), target_days.tolist()):
             distances = np.abs(source_days - float(target_day))
-            if distances.size == 0 or float(np.nanmin(distances)) > radius_days + 1.0e-8:
+            if (
+                distances.size == 0
+                or float(np.nanmin(distances)) > radius_days + 1.0e-8
+            ):
                 continue
             nearest_indices.append(int(np.nanargmin(distances)))
             nearest_dates.append(int(target_date))
@@ -544,7 +553,9 @@ def _project_argo_dataset_to_depths(
 ) -> xr.Dataset:
     target_depths = np.asarray(target_depths, dtype=np.float32).reshape(-1)
     if target_depths.size == 0:
-        raise RuntimeError("Cannot project ARGO profiles to an empty GLORYS depth axis.")
+        raise RuntimeError(
+            "Cannot project ARGO profiles to an empty GLORYS depth axis."
+        )
 
     coords: dict[str, Any] = {"depth": target_depths}
     if "N_PROF" in ds.coords:

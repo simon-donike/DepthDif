@@ -71,7 +71,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--train-config", default=TRAIN_CONFIG_PATH)
     parser.add_argument("--checkpoint", default=CHECKPOINT_PATH)
     parser.add_argument("--output-dir", default=str(OUTPUT_DIR))
-    parser.add_argument("--loader-split", choices=["train", "val"], default=LOADER_SPLIT)
+    parser.add_argument(
+        "--loader-split", choices=["train", "val"], default=LOADER_SPLIT
+    )
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--num-samples", type=int, default=NUM_SAMPLES)
@@ -96,7 +98,9 @@ def _first_n_batch(batch: dict[str, Any], n_items: int) -> dict[str, Any]:
     return sliced
 
 
-def _batch_with_sampler(batch: dict[str, Any], sampler: torch.nn.Module) -> dict[str, Any]:
+def _batch_with_sampler(
+    batch: dict[str, Any], sampler: torch.nn.Module
+) -> dict[str, Any]:
     """Attach one sampler without mutating the dataloader-owned batch."""
     out = dict(batch)
     out["sampler"] = sampler
@@ -154,7 +158,9 @@ def _build_ddim_sampler(
     )
 
 
-def _band_image(tensor: torch.Tensor, sample_idx: int, depth_level: int) -> torch.Tensor:
+def _band_image(
+    tensor: torch.Tensor, sample_idx: int, depth_level: int
+) -> torch.Tensor:
     """Extract one image band, clamping depth when a condition has fewer channels."""
     if tensor.ndim == 4:
         band_idx = int(max(0, min(int(depth_level), int(tensor.size(1)) - 1)))
@@ -369,7 +375,9 @@ def main() -> None:
         int(args.batch_size)
     )
     dataloader_cfg["val_shuffle" if args.loader_split == "val" else "shuffle"] = False
-    dataloader_cfg["val_num_workers" if args.loader_split == "val" else "num_workers"] = 0
+    dataloader_cfg[
+        "val_num_workers" if args.loader_split == "val" else "num_workers"
+    ] = 0
     # Keep the first 100 samples reproducible even when the data config asks for shuffled validation.
     data_cfg.setdefault("dataloader", {})["val_shuffle"] = False
 
@@ -393,7 +401,9 @@ def main() -> None:
     ckpt_path = resolve_checkpoint_path(args.checkpoint, model_cfg)
     if ckpt_path is not None:
         checkpoint = torch.load(ckpt_path, map_location="cpu")
-        state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        state_dict = (
+            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        )
         model.load_state_dict(state_dict, strict=bool(STRICT_LOAD))
         print(f"Loaded checkpoint: {ckpt_path}")
     else:
@@ -436,7 +446,9 @@ def main() -> None:
         if processed >= int(args.num_samples):
             break
         remaining = int(args.num_samples) - processed
-        batch = _first_n_batch(to_device(batch, device), min(remaining, int(args.batch_size)))
+        batch = _first_n_batch(
+            to_device(batch, device), min(remaining, int(args.batch_size))
+        )
         if int(batch["x"].size(0)) <= 0:
             continue
 

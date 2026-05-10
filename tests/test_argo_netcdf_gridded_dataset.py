@@ -24,7 +24,13 @@ def _days_since_1950(date_value: int) -> float:
 def _write_argo_netcdf(root_dir: Path) -> None:
     ds = xr.Dataset(
         data_vars={
-            "JULD": (("N_PROF",), np.asarray([_days_since_1950(20240102), _days_since_1950(20240102)], dtype=np.float64)),
+            "JULD": (
+                ("N_PROF",),
+                np.asarray(
+                    [_days_since_1950(20240102), _days_since_1950(20240102)],
+                    dtype=np.float64,
+                ),
+            ),
             "LATITUDE": (("N_PROF",), np.asarray([1.5, 1.6], dtype=np.float64)),
             "LONGITUDE": (("N_PROF",), np.asarray([10.5, 10.6], dtype=np.float64)),
             "TEMP": (
@@ -76,7 +82,12 @@ def _write_ostia(root_dir: Path, *, date_value: int, base_kelvin: float) -> None
     lat = np.asarray([0.5, 1.5], dtype=np.float32)
     lon = np.asarray([10.5, 11.5], dtype=np.float32)
     analysed_sst = np.asarray(
-        [[[base_kelvin + 1.0, base_kelvin + 2.0], [base_kelvin + 3.0, base_kelvin + 4.0]]],
+        [
+            [
+                [base_kelvin + 1.0, base_kelvin + 2.0],
+                [base_kelvin + 3.0, base_kelvin + 4.0],
+            ]
+        ],
         dtype=np.float32,
     )
     mask = np.zeros((1, 2, 2), dtype=np.int16)
@@ -184,11 +195,15 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                 require_argo_for_all=False,
             )
 
-            self.assertEqual([int(row["date"]) for row in dataset.rows], [20240102, 20240103])
+            self.assertEqual(
+                [int(row["date"]) for row in dataset.rows], [20240102, 20240103]
+            )
             no_argo_sample = dataset[1]
             self.assertFalse(bool(no_argo_sample["x_valid_mask"].any().item()))
             self.assertTrue(bool(no_argo_sample["y_valid_mask"].any().item()))
-            self.assertTrue(torch.equal(no_argo_sample["x"], torch.zeros_like(no_argo_sample["x"])))
+            self.assertTrue(
+                torch.equal(no_argo_sample["x"], torch.zeros_like(no_argo_sample["x"]))
+            )
 
     def test_val_year_assigns_only_that_year_to_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -234,7 +249,9 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                 synthetic_pixel_count=1,
             )
 
-            self.assertEqual([int(row["date"]) for row in dataset.rows], [20240102, 20240103])
+            self.assertEqual(
+                [int(row["date"]) for row in dataset.rows], [20240102, 20240103]
+            )
             sample = dataset[1]
             self.assertEqual(int(sample["x_valid_mask_1d"].sum().item()), 1)
             self.assertEqual(int(sample["x_valid_mask"].sum().item()), 2)

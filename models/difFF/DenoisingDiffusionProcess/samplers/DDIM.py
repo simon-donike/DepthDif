@@ -165,8 +165,8 @@ class DDIM_Sampler(nn.Module):
         if self.eta > 0:
             # Temperature scales stochastic DDIM noise; values below 1 reduce
             # sample diversity for more conservative conditional reconstructions.
-            prev_sample = (
-                prev_sample + sigma_t * self.temperature * torch.randn_like(x_t)
+            prev_sample = prev_sample + sigma_t * self.temperature * torch.randn_like(
+                x_t
             )
 
         return prev_sample

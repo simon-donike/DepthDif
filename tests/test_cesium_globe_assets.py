@@ -194,7 +194,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('document.querySelectorAll("script[src]")', loader)
         self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
         self.assertIn("function resolveConfigUrl()", globe_script)
-        self.assertIn('new URL(configParam, window.location.href).toString()', globe_script)
+        self.assertIn(
+            "new URL(configParam, window.location.href).toString()", globe_script
+        )
         self.assertIn("Full Sample #", globe_script)
         self.assertIn("depth_levels", default_config)
 
@@ -302,12 +304,18 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
 
-    def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(self) -> None:
+    def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             run_dir = Path(tmp_dir)
-            prediction_surface = run_dir / "global_top_band_20260105_prediction_surface.tif"
+            prediction_surface = (
+                run_dir / "global_top_band_20260105_prediction_surface.tif"
+            )
             prediction_100m = run_dir / "global_top_band_20260105_prediction_100m.tif"
-            ground_truth_surface = run_dir / "global_top_band_20260105_glorys_surface.tif"
+            ground_truth_surface = (
+                run_dir / "global_top_band_20260105_glorys_surface.tif"
+            )
             for path in (prediction_surface, prediction_100m, ground_truth_surface):
                 path.write_text("placeholder", encoding="utf-8")
 
@@ -339,13 +347,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 ground_truth_path=ground_truth_surface,
             )
 
-        self.assertEqual([item["suffix"] for item in depth_exports], ["surface", "100m"])
+        self.assertEqual(
+            [item["suffix"] for item in depth_exports], ["surface", "100m"]
+        )
         self.assertEqual(depth_exports[0]["prediction_path"], prediction_surface)
         self.assertEqual(depth_exports[0]["ground_truth_path"], ground_truth_surface)
         self.assertIsNone(depth_exports[1]["ground_truth_path"])
         self.assertEqual(depth_exports[1]["channel_index"], 1)
 
-    def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(self) -> None:
+    def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tif_path = Path(tmp_dir) / "global_0p1deg.tif"
             with rasterio.open(
@@ -448,7 +460,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
         self.assertNotIn("temperature", rewritten["features"][0]["properties"])
 
-    def test_rewrite_geojson_keeps_only_required_popup_and_split_properties(self) -> None:
+    def test_rewrite_geojson_keeps_only_required_popup_and_split_properties(
+        self,
+    ) -> None:
         payload = {
             "type": "FeatureCollection",
             "features": [

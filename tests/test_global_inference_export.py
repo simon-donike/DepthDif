@@ -191,11 +191,15 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     band = ds.read(1)
                     self.assertEqual(ds.nodata, -9999.0)
 
-                np.testing.assert_allclose(band, np.full((32, 32), 7.0, dtype=np.float32))
+                np.testing.assert_allclose(
+                    band, np.full((32, 32), 7.0, dtype=np.float32)
+                )
             finally:
                 _cleanup_accumulator(accumulator)
 
-    def test_write_global_top_band_geotiff_blurs_completed_raster_when_enabled(self) -> None:
+    def test_write_global_top_band_geotiff_blurs_completed_raster_when_enabled(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             layout = MosaicLayout(
@@ -241,7 +245,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             finally:
                 _cleanup_accumulator(accumulator)
 
-    def test_write_global_top_band_geotiff_skips_extra_blur_when_sigma_zero(self) -> None:
+    def test_write_global_top_band_geotiff_skips_extra_blur_when_sigma_zero(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             layout = MosaicLayout(
@@ -298,7 +304,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             [level.suffix for level in levels],
             ["surface", "100m", "250m", "500m", "1000m", "2500m", "5000m"],
         )
-        self.assertEqual([level.channel_index for level in levels], [0, 1, 2, 3, 4, 5, 6])
+        self.assertEqual(
+            [level.channel_index for level in levels], [0, 1, 2, 3, 4, 5, 6]
+        )
         self.assertAlmostEqual(levels[1].requested_depth_m, 100.0)
         self.assertAlmostEqual(levels[1].actual_depth_m, 97.0)
 
@@ -464,7 +472,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
         )
         self.assertEqual(feature["properties"]["glorys_profile_c"], [10.5, 11.5, None])
 
-    def test_profile_graph_title_uses_iso_week_and_geographic_coordinates_only(self) -> None:
+    def test_profile_graph_title_uses_iso_week_and_geographic_coordinates_only(
+        self,
+    ) -> None:
         title = _profile_graph_figure_title(
             sample_date=20260630,
             lat=-12.345678,
@@ -536,7 +546,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             _promote_production_run(staging_dir, production_dir)
 
             self.assertFalse(staging_dir.exists())
-            self.assertTrue((production_dir / "global_top_band_prediction.tif").exists())
+            self.assertTrue(
+                (production_dir / "global_top_band_prediction.tif").exists()
+            )
             self.assertTrue(
                 (production_dir / "global_top_band_prediction_100m.tif").exists()
             )
@@ -551,7 +563,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 summary = yaml.safe_load(f)
 
             self.assertEqual(summary["run_dir"], str(production_dir))
-            self.assertEqual(summary["prediction_tif_path"], "global_top_band_prediction.tif")
+            self.assertEqual(
+                summary["prediction_tif_path"], "global_top_band_prediction.tif"
+            )
             self.assertEqual(
                 summary["depth_exports"][0]["prediction_tif_path"],
                 "global_top_band_prediction_100m.tif",

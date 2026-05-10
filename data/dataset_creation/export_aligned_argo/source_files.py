@@ -10,7 +10,6 @@ import xarray as xr
 import yaml
 from tqdm import tqdm
 
-
 SOURCE_VARIABLE_CONFIG_PATH = Path(__file__).with_name("source_variables.yaml")
 
 
@@ -41,7 +40,9 @@ def _string_value(section: dict[str, Any], key: str, path: str) -> str:
 def _string_tuple(section: dict[str, Any], key: str, path: str) -> tuple[str, ...]:
     value = section.get(key)
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise RuntimeError(f"source variable config value must be a string list: {path}")
+        raise RuntimeError(
+            f"source variable config value must be a string list: {path}"
+        )
     return tuple(value)
 
 
@@ -51,7 +52,9 @@ def _string_mapping(section: dict[str, Any], key: str, path: str) -> dict[str, s
         isinstance(item_key, str) and isinstance(item_value, str)
         for item_key, item_value in value.items()
     ):
-        raise RuntimeError(f"source variable config value must be a string mapping: {path}")
+        raise RuntimeError(
+            f"source variable config value must be a string mapping: {path}"
+        )
     return dict(value)
 
 
@@ -97,9 +100,7 @@ def date_to_days_since_1950(date_yyyymmdd: int) -> float:
     text = str(int(date_yyyymmdd))
     day = np.datetime64(f"{text[:4]}-{text[4:6]}-{text[6:8]}", "D")
     return float(
-        (day - np.datetime64("1950-01-01", "D"))
-        .astype("timedelta64[D]")
-        .astype(int)
+        (day - np.datetime64("1950-01-01", "D")).astype("timedelta64[D]").astype(int)
     )
 
 

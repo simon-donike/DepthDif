@@ -109,7 +109,15 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
 
 def _resolve_run_artifacts(
     run_dir: Path,
-) -> tuple[Path, Path | None, Path | None, Path | None, Path | None, Path | None, dict[str, Any]]:
+) -> tuple[
+    Path,
+    Path | None,
+    Path | None,
+    Path | None,
+    Path | None,
+    Path | None,
+    dict[str, Any],
+]:
     run_summary_path = run_dir / "run_summary.yaml"
     run_summary = _load_yaml(run_summary_path) if run_summary_path.exists() else {}
 
@@ -366,9 +374,7 @@ def _resolve_rclone_sync_source(
 
 def _round_geojson_coordinates(value: Any, *, decimals: int) -> Any:
     if isinstance(value, list):
-        return [
-            _round_geojson_coordinates(item, decimals=decimals) for item in value
-        ]
+        return [_round_geojson_coordinates(item, decimals=decimals) for item in value]
     if isinstance(value, float):
         return round(value, decimals)
     return value
@@ -420,7 +426,9 @@ def _rewrite_geojson(
         f.write("\n")
 
 
-def _feature_identity(feature: dict[str, Any], *, coordinate_precision: int) -> tuple[Any, ...]:
+def _feature_identity(
+    feature: dict[str, Any], *, coordinate_precision: int
+) -> tuple[Any, ...]:
     properties = feature.get("properties", {})
     geometry = feature.get("geometry", {})
     coordinates = _freeze_geojson_coordinates(
@@ -712,7 +720,9 @@ def main() -> None:
                 ground_truth_colorized_path,
                 color_ramp_path=color_ramp_path,
             )
-            ground_truth_tiles_dir_for_depth = globe_dir / f"ground_truth_tiles_{suffix}"
+            ground_truth_tiles_dir_for_depth = (
+                globe_dir / f"ground_truth_tiles_{suffix}"
+            )
             _run_gdal2tiles(
                 ground_truth_colorized_path,
                 ground_truth_tiles_dir_for_depth,

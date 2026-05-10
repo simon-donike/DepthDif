@@ -58,6 +58,7 @@ from data.dataset_creation.export_aligned_argo.source_files import (
     _open_argo_dataset,
     scan_timed_files,
 )
+
 CATEGORICAL_VARS = {"mask", "flag_ice"}
 SOURCE_PRODUCTS = {
     "argo": {
@@ -176,7 +177,9 @@ def _normalize_lon(lon: float) -> float:
     return float(((float(lon) + 180.0) % 360.0) - 180.0)
 
 
-def bracket_timed_files(index: list[TimedFile], target_day: float) -> tuple[TimedFile | None, TimedFile | None, float, np.int8]:
+def bracket_timed_files(
+    index: list[TimedFile], target_day: float
+) -> tuple[TimedFile | None, TimedFile | None, float, np.int8]:
     if not index:
         return None, None, np.nan, MISSING_STATUS
     days = np.asarray([item.day for item in index], dtype=np.float64)
@@ -365,9 +368,8 @@ def _nearest_axis_indices(
     pos = np.searchsorted(search_values, samples, side="left")
     right = np.clip(pos, 0, search_values.size - 1)
     left = np.clip(pos - 1, 0, search_values.size - 1)
-    choose_right = (
-        np.abs(search_values[right] - samples)
-        < np.abs(samples - search_values[left])
+    choose_right = np.abs(search_values[right] - samples) < np.abs(
+        samples - search_values[left]
     )
     selected = np.where(choose_right, right, left)
     if ascending:
@@ -383,7 +385,12 @@ def _linear_axis_brackets(
     samples = np.asarray(samples, dtype=np.float64).reshape(-1)
     if values.size < 2 or not np.all(np.isfinite(values)):
         zeros = np.zeros(samples.shape, dtype=np.int64)
-        return zeros, zeros, np.zeros(samples.shape, dtype=np.float64), np.zeros(samples.shape, dtype=bool)
+        return (
+            zeros,
+            zeros,
+            np.zeros(samples.shape, dtype=np.float64),
+            np.zeros(samples.shape, dtype=bool),
+        )
 
     ascending = bool(values[-1] >= values[0])
     search_values = values if ascending else values[::-1]
@@ -410,9 +417,8 @@ def _linear_axis_brackets(
     weight = np.zeros(samples.shape, dtype=np.float64)
     can_weight = in_range & (span > 0.0) & ~exact
     weight[can_weight] = (
-        (samples[can_weight] - search_values[left_pos[can_weight]])
-        / span[can_weight]
-    )
+        samples[can_weight] - search_values[left_pos[can_weight]]
+    ) / span[can_weight]
     if ascending:
         left_idx = left_pos
         right_idx = right_pos
@@ -479,13 +485,17 @@ def _build_spatial_batch_selector(
     if lon_values.size > 0 and np.nanmin(lon_values) >= 0.0:
         sample_lon = sample_lon % 360.0
 
-    linear_lat0, linear_lat1, linear_lat_weight, linear_lat_valid = _linear_axis_brackets(
-        lat_values,
-        sample_lat,
+    linear_lat0, linear_lat1, linear_lat_weight, linear_lat_valid = (
+        _linear_axis_brackets(
+            lat_values,
+            sample_lat,
+        )
     )
-    linear_lon0, linear_lon1, linear_lon_weight, linear_lon_valid = _linear_axis_brackets(
-        lon_values,
-        sample_lon,
+    linear_lon0, linear_lon1, linear_lon_weight, linear_lon_valid = (
+        _linear_axis_brackets(
+            lon_values,
+            sample_lon,
+        )
     )
     return SpatialPointBatchSelector(
         lat_name=lat_name,
@@ -743,7 +753,9 @@ def sample_spatial_value(
     return values[var_name]
 
 
-def _nearest_time_item(before: TimedFile, after: TimedFile, target_day: float) -> TimedFile:
+def _nearest_time_item(
+    before: TimedFile, after: TimedFile, target_day: float
+) -> TimedFile:
     if abs(before.day - target_day) <= abs(after.day - target_day):
         return before
     return after
@@ -805,13 +817,16 @@ def sample_temporal_values(
         }, status
     # The enriched ARGO export collocates to the nearest available source time;
     # it must not blend weekly or daily source files across time.
-    return sample_spatial_values(
-        cache.get(item.path),
-        var_names,
-        lat=lat,
-        lon=lon,
-        categorical_vars=categorical_vars,
-    ), status
+    return (
+        sample_spatial_values(
+            cache.get(item.path),
+            var_names,
+            lat=lat,
+            lon=lon,
+            categorical_vars=categorical_vars,
+        ),
+        status,
+    )
 
 
 def sample_temporal_values_for_points(
@@ -833,13 +848,16 @@ def sample_temporal_values_for_points(
         }, status
     # Same-day ARGO profiles share source files; sample all their locations while
     # the nearest source dataset is already open in the cache.
-    return sample_spatial_values_for_points(
-        cache.get(item.path),
-        var_names,
-        lat=lat_values,
-        lon=np.asarray(lon, dtype=np.float64).reshape(-1),
-        categorical_vars=categorical_vars,
-    ), status
+    return (
+        sample_spatial_values_for_points(
+            cache.get(item.path),
+            var_names,
+            lat=lat_values,
+            lon=np.asarray(lon, dtype=np.float64).reshape(-1),
+            categorical_vars=categorical_vars,
+        ),
+        status,
+    )
 
 
 def _source_file_label(path: Path) -> str:
@@ -947,7 +965,9 @@ def _metadata_file_list(index: list[TimedFile]) -> list[Path]:
 
 
 def _argo_metadata_variables() -> tuple[str, ...]:
-    optional_qc = tuple(ARGO_LEVEL_QC_VARS.values()) + tuple(ARGO_PROFILE_QC_VARS.values())
+    optional_qc = tuple(ARGO_LEVEL_QC_VARS.values()) + tuple(
+        ARGO_PROFILE_QC_VARS.values()
+    )
     return SOURCE_VARIABLES["argo"] + tuple(
         name for name in optional_qc if name not in SOURCE_VARIABLES["argo"]
     )
@@ -1072,7 +1092,9 @@ def _timed_index_summary(index: list[TimedFile]) -> dict[str, Any]:
 
 def _load_glorys_depths(glorys_index: list[TimedFile]) -> np.ndarray:
     if not glorys_index:
-        raise RuntimeError("Cannot export enriched profiles without readable GLORYS files.")
+        raise RuntimeError(
+            "Cannot export enriched profiles without readable GLORYS files."
+        )
     with xr.open_dataset(
         glorys_index[0].path,
         engine="h5netcdf",
@@ -1081,7 +1103,9 @@ def _load_glorys_depths(glorys_index: list[TimedFile]) -> np.ndarray:
         cache=False,
     ) as ds:
         if "depth" not in ds:
-            raise RuntimeError(f"GLORYS file is missing depth coordinate: {glorys_index[0].path}")
+            raise RuntimeError(
+                f"GLORYS file is missing depth coordinate: {glorys_index[0].path}"
+            )
         return np.asarray(ds["depth"].values, dtype=np.float32)
 
 
@@ -1198,7 +1222,9 @@ def _append_profile_to_batch(
             )
         else:
             values_by_name = {
-                name: np.asarray(sampled_source_values[source_name][name][sampled_source_row])
+                name: np.asarray(
+                    sampled_source_values[source_name][name][sampled_source_row]
+                )
                 for name in names
             }
             status = sampled_source_status[source_name]
@@ -1292,9 +1318,11 @@ def _collocate_argo_date_group(payload: dict[str, Any]) -> dict[str, list[Any]]:
                 for name, values in level_qc_arrays.items()
             },
             argo_profile_qc={
-                name: _qc_scalar_to_int(values[source_row])
-                if values is not None
-                else MISSING_QC_FLAG
+                name: (
+                    _qc_scalar_to_int(values[source_row])
+                    if values is not None
+                    else MISSING_QC_FLAG
+                )
                 for name, values in profile_qc_arrays.items()
             },
             glorys_depths=_WORKER_GLORYS_DEPTHS,
@@ -1329,9 +1357,7 @@ def _batch_to_dataset(
         "argo_potm_valid_on_glorys_depth",
         "argo_psal_valid_on_glorys_depth",
     }
-    depth_int8_vars = {
-        f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS
-    }
+    depth_int8_vars = {f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS}
     scalar_int8_vars = {f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS}
     depth_vars.update(depth_int8_vars)
     for name in GLORYS_3D_VARS:
@@ -1358,7 +1384,10 @@ def _batch_to_dataset(
         elif key.endswith("_temporal_status"):
             data_vars[key] = (("profile",), np.asarray(values, dtype=np.int8))
         else:
-            data_vars[key] = (("profile",), np.asarray(values, dtype=np.float32).reshape(n))
+            data_vars[key] = (
+                ("profile",),
+                np.asarray(values, dtype=np.float32).reshape(n),
+            )
 
     return xr.Dataset(
         data_vars=data_vars,
@@ -1557,8 +1586,12 @@ def _apply_output_metadata(
                 "source_product": SOURCE_PRODUCTS["argo"]["product"],
                 "source_variable": source_var,
                 "source_depth_variable": ARGO_DEPTH_VAR,
-                "vertical_interpolation": export_metadata["processing"]["argo_depth_projection"],
-                "units": _source_units(export_metadata, kind="argo", var_name=source_var),
+                "vertical_interpolation": export_metadata["processing"][
+                    "argo_depth_projection"
+                ],
+                "units": _source_units(
+                    export_metadata, kind="argo", var_name=source_var
+                ),
                 "source_attrs": _source_variable_attrs(
                     export_metadata,
                     kind="argo",
@@ -1669,7 +1702,9 @@ def _zarr_encoding(ds: xr.Dataset, chunk_size: int) -> dict[str, dict[str, Any]]
     encoding: dict[str, dict[str, Any]] = {}
     for name, da in ds.data_vars.items():
         if da.dims == ("profile", "glorys_depth"):
-            encoding[name] = {"chunks": (min(int(chunk_size), da.shape[0]), da.shape[1])}
+            encoding[name] = {
+                "chunks": (min(int(chunk_size), da.shape[0]), da.shape[1])
+            }
         elif da.dims == ("profile",):
             encoding[name] = {"chunks": (min(int(chunk_size), da.shape[0]),)}
     return encoding
@@ -1732,11 +1767,9 @@ def _select_eligible_profile_positions(
         position = len(eligible_profile_indices)
         eligible_profile_indices.append(profile_idx)
         positions_by_date.setdefault(date, []).append(position)
-        if (
-            max_profiles is not None
-            and written + queued + len(eligible_profile_indices)
-            >= int(max_profiles)
-        ):
+        if max_profiles is not None and written + queued + len(
+            eligible_profile_indices
+        ) >= int(max_profiles):
             break
     return eligible_profile_indices, positions_by_date
 
@@ -1807,10 +1840,9 @@ def _append_collocated_batch_to_pending(
                 refresh=False,
             )
 
-        reached_profile_cap = (
-            max_profiles is not None
-            and written + len(pending_batch["profile_idx"]) >= int(max_profiles)
-        )
+        reached_profile_cap = max_profiles is not None and written + len(
+            pending_batch["profile_idx"]
+        ) >= int(max_profiles)
         if len(pending_batch["profile_idx"]) >= int(batch_size) or reached_profile_cap:
             count = _write_batch(
                 pending_batch,
@@ -1877,10 +1909,17 @@ def _export_enriched_argo_profiles_parallel(
             for argo_path in file_progress:
                 file_progress.set_postfix_str(argo_path.name, refresh=False)
                 with _open_argo_dataset(argo_path) as ds:
-                    required = ("JULD", "LATITUDE", "LONGITUDE", ARGO_DEPTH_VAR) + ARGO_PROFILE_VARS
+                    required = (
+                        "JULD",
+                        "LATITUDE",
+                        "LONGITUDE",
+                        ARGO_DEPTH_VAR,
+                    ) + ARGO_PROFILE_VARS
                     missing = [name for name in required if name not in ds]
                     if missing:
-                        raise RuntimeError(f"ARGO file {argo_path} is missing variables: {missing}")
+                        raise RuntimeError(
+                            f"ARGO file {argo_path} is missing variables: {missing}"
+                        )
 
                     juld = np.asarray(ds["JULD"].values, dtype=np.float64)
                     dates = _juld_to_yyyymmdd(juld)
@@ -1891,27 +1930,33 @@ def _export_enriched_argo_profiles_parallel(
                     potm = np.asarray(ds["POTM_CORRECTED"].values, dtype=np.float32)
                     psal = np.asarray(ds["PSAL_CORRECTED"].values, dtype=np.float32)
                     level_qc_arrays = {
-                        name: np.asarray(ds[source_name].values)
-                        if source_name in ds
-                        else None
+                        name: (
+                            np.asarray(ds[source_name].values)
+                            if source_name in ds
+                            else None
+                        )
                         for name, source_name in ARGO_LEVEL_QC_VARS.items()
                     }
                     profile_qc_arrays = {
-                        name: np.asarray(ds[source_name].values)
-                        if source_name in ds
-                        else None
+                        name: (
+                            np.asarray(ds[source_name].values)
+                            if source_name in ds
+                            else None
+                        )
                         for name, source_name in ARGO_PROFILE_QC_VARS.items()
                     }
 
-                eligible_profile_indices, positions_by_date = _select_eligible_profile_positions(
-                    dates=dates,
-                    lat=lat,
-                    lon=lon,
-                    start_date=start_date,
-                    end_date=end_date,
-                    written=written,
-                    queued=len(batch["profile_idx"]),
-                    max_profiles=max_profiles,
+                eligible_profile_indices, positions_by_date = (
+                    _select_eligible_profile_positions(
+                        dates=dates,
+                        lat=lat,
+                        lon=lon,
+                        start_date=start_date,
+                        end_date=end_date,
+                        written=written,
+                        queued=len(batch["profile_idx"]),
+                        max_profiles=max_profiles,
+                    )
                 )
                 futures = [
                     executor.submit(
@@ -2060,10 +2105,17 @@ def export_enriched_argo_profiles(
             for argo_path in file_progress:
                 file_progress.set_postfix_str(argo_path.name, refresh=False)
                 with _open_argo_dataset(argo_path) as ds:
-                    required = ("JULD", "LATITUDE", "LONGITUDE", ARGO_DEPTH_VAR) + ARGO_PROFILE_VARS
+                    required = (
+                        "JULD",
+                        "LATITUDE",
+                        "LONGITUDE",
+                        ARGO_DEPTH_VAR,
+                    ) + ARGO_PROFILE_VARS
                     missing = [name for name in required if name not in ds]
                     if missing:
-                        raise RuntimeError(f"ARGO file {argo_path} is missing variables: {missing}")
+                        raise RuntimeError(
+                            f"ARGO file {argo_path} is missing variables: {missing}"
+                        )
 
                     juld = np.asarray(ds["JULD"].values, dtype=np.float64)
                     dates = _juld_to_yyyymmdd(juld)
@@ -2074,15 +2126,19 @@ def export_enriched_argo_profiles(
                     potm = np.asarray(ds["POTM_CORRECTED"].values, dtype=np.float32)
                     psal = np.asarray(ds["PSAL_CORRECTED"].values, dtype=np.float32)
                     level_qc_arrays = {
-                        name: np.asarray(ds[source_name].values)
-                        if source_name in ds
-                        else None
+                        name: (
+                            np.asarray(ds[source_name].values)
+                            if source_name in ds
+                            else None
+                        )
                         for name, source_name in ARGO_LEVEL_QC_VARS.items()
                     }
                     profile_qc_arrays = {
-                        name: np.asarray(ds[source_name].values)
-                        if source_name in ds
-                        else None
+                        name: (
+                            np.asarray(ds[source_name].values)
+                            if source_name in ds
+                            else None
+                        )
                         for name, source_name in ARGO_PROFILE_QC_VARS.items()
                     }
 
@@ -2096,22 +2152,26 @@ def export_enriched_argo_profiles(
                             continue
                         if end_date is not None and date > int(end_date):
                             continue
-                        if not (np.isfinite(lat[profile_idx]) and np.isfinite(lon[profile_idx])):
+                        if not (
+                            np.isfinite(lat[profile_idx])
+                            and np.isfinite(lon[profile_idx])
+                        ):
                             continue
 
                         position = len(eligible_profile_indices)
                         eligible_profile_indices.append(profile_idx)
                         positions_by_date.setdefault(date, []).append(position)
-                        if (
-                            max_profiles is not None
-                            and written + len(batch["profile_idx"]) + len(eligible_profile_indices)
-                            >= int(max_profiles)
-                        ):
+                        if max_profiles is not None and written + len(
+                            batch["profile_idx"]
+                        ) + len(eligible_profile_indices) >= int(max_profiles):
                             break
 
                     for date, positions in positions_by_date.items():
                         source_profile_indices = np.asarray(
-                            [eligible_profile_indices[position] for position in positions],
+                            [
+                                eligible_profile_indices[position]
+                                for position in positions
+                            ],
                             dtype=np.int64,
                         )
                         source_values: dict[str, dict[str, np.ndarray]] = {}
@@ -2149,15 +2209,19 @@ def export_enriched_argo_profiles(
                                 potm=potm[profile_idx],
                                 psal=psal[profile_idx],
                                 argo_level_qc={
-                                    name: values[profile_idx]
-                                    if values is not None
-                                    else None
+                                    name: (
+                                        values[profile_idx]
+                                        if values is not None
+                                        else None
+                                    )
                                     for name, values in level_qc_arrays.items()
                                 },
                                 argo_profile_qc={
-                                    name: _qc_scalar_to_int(values[profile_idx])
-                                    if values is not None
-                                    else MISSING_QC_FLAG
+                                    name: (
+                                        _qc_scalar_to_int(values[profile_idx])
+                                        if values is not None
+                                        else MISSING_QC_FLAG
+                                    )
                                     for name, values in profile_qc_arrays.items()
                                 },
                                 glorys_depths=glorys_depths,
@@ -2179,9 +2243,13 @@ def export_enriched_argo_profiles(
 
                             reached_profile_cap = (
                                 max_profiles is not None
-                                and written + len(batch["profile_idx"]) >= int(max_profiles)
+                                and written + len(batch["profile_idx"])
+                                >= int(max_profiles)
                             )
-                            if len(batch["profile_idx"]) >= int(batch_size) or reached_profile_cap:
+                            if (
+                                len(batch["profile_idx"]) >= int(batch_size)
+                                or reached_profile_cap
+                            ):
                                 count = _write_batch(
                                     batch,
                                     output_zarr=output_zarr,
@@ -2229,17 +2297,52 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Export ARGO profiles enriched with collocated GLORYS, OSTIA, and sea-level fields."
     )
-    parser.add_argument("--argo-dir", type=Path, default=Path("/data1/datasets/depth_v2/en4_profiles"))
-    parser.add_argument("--glorys-dir", type=Path, default=Path("/data1/datasets/depth_v2/glorys_weekly"))
-    parser.add_argument("--ostia-dir", type=Path, default=Path("/data1/datasets/depth_v2/ostia"))
-    parser.add_argument("--sealevel-dir", type=Path, default=Path("/data1/datasets/depth_v2/sealevel_daily"))
-    parser.add_argument("--output-zarr", type=Path, default=Path("/data1/datasets/depth_v2/enriched_argo_profiles.zarr"))
-    parser.add_argument("--start-date", type=int, default=None, help="Optional YYYYMMDD inclusive start.")
-    parser.add_argument("--end-date", type=int, default=None, help="Optional YYYYMMDD inclusive end.")
+    parser.add_argument(
+        "--argo-dir", type=Path, default=Path("/data1/datasets/depth_v2/en4_profiles")
+    )
+    parser.add_argument(
+        "--glorys-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/glorys_weekly"),
+    )
+    parser.add_argument(
+        "--ostia-dir", type=Path, default=Path("/data1/datasets/depth_v2/ostia")
+    )
+    parser.add_argument(
+        "--sealevel-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/sealevel_daily"),
+    )
+    parser.add_argument(
+        "--output-zarr",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/enriched_argo_profiles.zarr"),
+    )
+    parser.add_argument(
+        "--start-date",
+        type=int,
+        default=None,
+        help="Optional YYYYMMDD inclusive start.",
+    )
+    parser.add_argument(
+        "--end-date", type=int, default=None, help="Optional YYYYMMDD inclusive end."
+    )
     parser.add_argument("--batch-size", type=int, default=2048)
-    parser.add_argument("--cache-size", type=int, default=8, help="Maximum open source datasets per process.")
-    parser.add_argument("--workers", type=int, default=1, help="Read-only collocation worker processes; cache-size applies per worker.")
-    parser.add_argument("--max-profiles", type=int, default=None, help="Optional smoke-test cap.")
+    parser.add_argument(
+        "--cache-size",
+        type=int,
+        default=8,
+        help="Maximum open source datasets per process.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Read-only collocation worker processes; cache-size applies per worker.",
+    )
+    parser.add_argument(
+        "--max-profiles", type=int, default=None, help="Optional smoke-test cap."
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser
 

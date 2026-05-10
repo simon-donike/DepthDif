@@ -54,11 +54,17 @@ class TestValidationErrorSummaryExport(unittest.TestCase):
         )
 
         self.assertEqual(
-            [len(bucket) for bucket in accumulator.abs_error_prediction_vs_glorys_values],
+            [
+                len(bucket)
+                for bucket in accumulator.abs_error_prediction_vs_glorys_values
+            ],
             [1, 0],
         )
         self.assertEqual(
-            [values.size for values in accumulator.abs_error_prediction_vs_glorys_values[0]],
+            [
+                values.size
+                for values in accumulator.abs_error_prediction_vs_glorys_values[0]
+            ],
             [2],
         )
         self.assertEqual(
@@ -153,7 +159,9 @@ class TestValidationErrorSummaryExport(unittest.TestCase):
             self.assertTrue(profile_error_plot_path.is_file())
             self.assertGreater(profile_error_plot_path.stat().st_size, 0)
 
-    def test_filter_validation_summary_dataset_by_iso_week_keeps_requested_week(self) -> None:
+    def test_filter_validation_summary_dataset_by_iso_week_keeps_requested_week(
+        self,
+    ) -> None:
         dataset = type(
             "DatasetStub",
             (),
@@ -176,9 +184,13 @@ class TestValidationErrorSummaryExport(unittest.TestCase):
 
         self.assertEqual((selected_iso_year, selected_iso_week), (2015, 25))
         self.assertEqual(len(dataset._rows), 2)
-        self.assertEqual([int(row["date"]) for row in dataset._rows], [20150615, 20150618])
+        self.assertEqual(
+            [int(row["date"]) for row in dataset._rows], [20150615, 20150618]
+        )
 
-    def test_filter_validation_summary_dataset_by_iso_week_requires_both_fields(self) -> None:
+    def test_filter_validation_summary_dataset_by_iso_week_requires_both_fields(
+        self,
+    ) -> None:
         dataset = type("DatasetStub", (), {"_rows": [], "split": "val"})()
         with self.assertRaisesRegex(ValueError, "--year and --iso-week"):
             filter_validation_summary_dataset_by_iso_week(

@@ -153,7 +153,9 @@ def _align_argo_profile_to_glorys_depths(
         return out
 
     if depth.size == 1:
-        exact = valid_targets & np.isclose(target_depths, depth[0], rtol=0.0, atol=1.0e-6)
+        exact = valid_targets & np.isclose(
+            target_depths, depth[0], rtol=0.0, atol=1.0e-6
+        )
         out[exact] = np.float32(temp[0])
         return out
 
@@ -229,7 +231,9 @@ class TimedNetCDFStore:
                 depth = depth[np.isfinite(depth)]
                 if depth.size > 0:
                     return depth.astype(np.float32, copy=False)
-        raise RuntimeError(f"No readable {coord_name!r} depth axis found in {self.root_dir}")
+        raise RuntimeError(
+            f"No readable {coord_name!r} depth axis found in {self.root_dir}"
+        )
 
     def bracket(self, target_date: int) -> tuple[TimedFile, TimedFile, float]:
         target_day = date_to_days_since_1950(int(target_date))
@@ -410,8 +414,12 @@ class ArgoNetCDFStore:
                 n_prof = min(int(juld.size), int(lat.size), int(lon.size))
                 if n_prof == 0:
                     continue
-                temp = self._read_profile_matrix(ds, self.temp_var_name, np.arange(n_prof))
-                depth = self._read_profile_matrix(ds, self.depth_var_name, np.arange(n_prof))
+                temp = self._read_profile_matrix(
+                    ds, self.temp_var_name, np.arange(n_prof)
+                )
+                depth = self._read_profile_matrix(
+                    ds, self.depth_var_name, np.arange(n_prof)
+                )
                 valid_level = np.isfinite(temp) & np.isfinite(depth) & (depth >= 0.0)
 
                 dates.append(_juld_to_yyyymmdd(juld[:n_prof]))
@@ -422,12 +430,16 @@ class ArgoNetCDFStore:
                 valid_temps.append(valid_level.any(axis=1))
 
         if not dates:
-            raise RuntimeError(f"No profiles found in ARGO NetCDF root: {self.root_dir}")
+            raise RuntimeError(
+                f"No profiles found in ARGO NetCDF root: {self.root_dir}"
+            )
         self.profile_date = np.concatenate(dates).astype(np.int64, copy=False)
         self.latitude = np.concatenate(latitudes).astype(np.float64, copy=False)
         self.longitude = np.concatenate(longitudes).astype(np.float64, copy=False)
         self.file_index = np.concatenate(file_indices).astype(np.int32, copy=False)
-        self.profile_index = np.concatenate(profile_indices).astype(np.int32, copy=False)
+        self.profile_index = np.concatenate(profile_indices).astype(
+            np.int32, copy=False
+        )
         self._has_valid_temp = np.concatenate(valid_temps).astype(bool, copy=False)
         self._indices_by_date = self._build_indices_by_date()
 
@@ -457,7 +469,9 @@ class ArgoNetCDFStore:
         if da.ndim < 2:
             raise RuntimeError(f"ARGO variable {var_name!r} must be at least 2D.")
         profile_dim = da.dims[0]
-        values = da.isel({profile_dim: np.asarray(profile_indices, dtype=np.int64)}).values
+        values = da.isel(
+            {profile_dim: np.asarray(profile_indices, dtype=np.int64)}
+        ).values
         values = np.asarray(values, dtype=np.float32)
         if values.ndim != 2:
             values = values.reshape((int(profile_indices.size), -1))
@@ -507,12 +521,16 @@ class ArgoNetCDFStore:
         indices = np.asarray(indices, dtype=np.int64).reshape(-1)
         if indices.size == 0:
             return np.zeros((0, int(self.depth_axis_m.size)), dtype=np.float32)
-        out = np.full((int(indices.size), int(self.depth_axis_m.size)), np.nan, dtype=np.float32)
+        out = np.full(
+            (int(indices.size), int(self.depth_axis_m.size)), np.nan, dtype=np.float32
+        )
         selected_files = self.file_index[indices]
         selected_profiles = self.profile_index[indices]
         for file_idx in np.unique(selected_files):
             local_positions = np.flatnonzero(selected_files == int(file_idx))
-            profile_rows = selected_profiles[local_positions].astype(np.int64, copy=False)
+            profile_rows = selected_profiles[local_positions].astype(
+                np.int64, copy=False
+            )
             ds = self._get_dataset(self.files[int(file_idx)])
             temp = self._read_profile_matrix(ds, self.temp_var_name, profile_rows)
             depth = self._read_profile_matrix(ds, self.depth_var_name, profile_rows)
@@ -627,7 +645,9 @@ class VirtualPatchIndex:
                 if day_lo <= date_to_days_since_1950(int(date_value)) <= day_hi
             ]
         if not candidate_dates:
-            raise RuntimeError("No overlapping source dates found for OSTIA/GLORYS NetCDF stores.")
+            raise RuntimeError(
+                "No overlapping source dates found for OSTIA/GLORYS NetCDF stores."
+            )
         return candidate_dates
 
     def _build_patch_table(self) -> pd.DataFrame:
@@ -667,10 +687,18 @@ class VirtualPatchIndex:
                     continue
                 lat_slice = lat_values[y0 : y0 + tile]
                 lon_slice = lon_values[x0 : x0 + tile]
-                lat0 = float(np.nanmin(lat_slice) - 0.5 * self.grid_params.resolution_deg)
-                lat1 = float(np.nanmax(lat_slice) + 0.5 * self.grid_params.resolution_deg)
-                lon0 = float(np.nanmin(lon_slice) - 0.5 * self.grid_params.resolution_deg)
-                lon1 = float(np.nanmax(lon_slice) + 0.5 * self.grid_params.resolution_deg)
+                lat0 = float(
+                    np.nanmin(lat_slice) - 0.5 * self.grid_params.resolution_deg
+                )
+                lat1 = float(
+                    np.nanmax(lat_slice) + 0.5 * self.grid_params.resolution_deg
+                )
+                lon0 = float(
+                    np.nanmin(lon_slice) - 0.5 * self.grid_params.resolution_deg
+                )
+                lon1 = float(
+                    np.nanmax(lon_slice) + 0.5 * self.grid_params.resolution_deg
+                )
                 records.append(
                     {
                         "patch_id": int(patch_id),
@@ -703,7 +731,9 @@ class VirtualPatchIndex:
             mask = mask.isel(time=0)
         values = np.asarray(mask.values)
         raw_meanings = str(mask.attrs.get("flag_meanings", "")).strip()
-        raw_masks = np.asarray(mask.attrs.get("flag_masks", ()), dtype=np.int64).reshape(-1)
+        raw_masks = np.asarray(
+            mask.attrs.get("flag_masks", ()), dtype=np.int64
+        ).reshape(-1)
         if raw_meanings != "" and raw_masks.size > 0:
             flag_names = [part.strip() for part in raw_meanings.split() if part.strip()]
             if len(flag_names) == int(raw_masks.size):
@@ -715,7 +745,9 @@ class VirtualPatchIndex:
                 if selected_masks:
                     invalid = np.zeros(values.shape, dtype=bool)
                     for flag_mask in selected_masks:
-                        invalid |= (values.astype(np.int64, copy=False) & flag_mask) != 0
+                        invalid |= (
+                            values.astype(np.int64, copy=False) & flag_mask
+                        ) != 0
                     return invalid
         return values != 0
 
@@ -764,7 +796,8 @@ class VirtualPatchIndex:
         # to at most temporal_window_days target dates instead of checking every
         # patch/date row independently.
         patch_lookup = {
-            int(patch["patch_id"]): patch for patch in patch_df.to_dict(orient="records")
+            int(patch["patch_id"]): patch
+            for patch in patch_df.to_dict(orient="records")
         }
         for profile_idx in range(int(self.argo_store.profile_date.size)):
             if not bool(self.argo_store._has_valid_temp[profile_idx]):
@@ -886,7 +919,8 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         )
         self.sealevel_store = (
             None
-            if sealevel_dir is None or str(sealevel_dir).strip().lower() in MISSING_TEXT_VALUES
+            if sealevel_dir is None
+            or str(sealevel_dir).strip().lower() in MISSING_TEXT_VALUES
             else TimedNetCDFStore(sealevel_dir, cache_size=cache_size)
         )
 
@@ -903,7 +937,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             ostia_store=self.ostia_store,
             glorys_store=self.glorys_store,
             argo_store=self.argo_store,
-            optional_time_stores=(() if self.sealevel_store is None else (self.sealevel_store,)),
+            optional_time_stores=(
+                () if self.sealevel_store is None else (self.sealevel_store,)
+            ),
             cache_dir=metadata_cache_dir,
             grid_params=grid_params,
             temporal_window_days=self.temporal_window_days,
@@ -967,9 +1003,13 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 default=cls.DEFAULT_METADATA_CACHE_DIR,
             ),
             split=split,
-            tile_size=int(cls._cfg_get(ds_cfg, "grid.tile_size", "tile_size", default=128)),
+            tile_size=int(
+                cls._cfg_get(ds_cfg, "grid.tile_size", "tile_size", default=128)
+            ),
             resolution_deg=float(
-                cls._cfg_get(ds_cfg, "grid.resolution_deg", "resolution_deg", default=0.1)
+                cls._cfg_get(
+                    ds_cfg, "grid.resolution_deg", "resolution_deg", default=0.1
+                )
             ),
             temporal_window_days=int(
                 cls._cfg_get(
@@ -980,13 +1020,28 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 )
             ),
             glorys_var_name=str(
-                cls._cfg_get(ds_cfg, "sampling.glorys_var_name", "glorys_var_name", default="thetao")
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.glorys_var_name",
+                    "glorys_var_name",
+                    default="thetao",
+                )
             ),
             ostia_var_name=str(
-                cls._cfg_get(ds_cfg, "sampling.ostia_var_name", "ostia_var_name", default="analysed_sst")
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.ostia_var_name",
+                    "ostia_var_name",
+                    default="analysed_sst",
+                )
             ),
             argo_temp_var_name=str(
-                cls._cfg_get(ds_cfg, "sampling.argo_temp_var_name", "argo_temp_var_name", default="TEMP")
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.argo_temp_var_name",
+                    "argo_temp_var_name",
+                    default="TEMP",
+                )
             ),
             argo_depth_var_name=str(
                 cls._cfg_get(
@@ -1039,7 +1094,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 )
             ),
             synthetic_mode=bool(
-                cls._cfg_get(ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False)
+                cls._cfg_get(
+                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
+                )
             ),
             synthetic_pixel_count=int(
                 cls._cfg_get(
@@ -1053,7 +1110,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=True)
             ),
             return_coords=bool(
-                cls._cfg_get(ds_cfg, "output.return_coords", "return_coords", default=True)
+                cls._cfg_get(
+                    ds_cfg, "output.return_coords", "return_coords", default=True
+                )
             ),
             random_seed=int(
                 cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
@@ -1119,8 +1178,16 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         top = max(float(row["lat0"]), float(row["lat1"]))
         left = min(float(row["lon0"]), float(row["lon1"]))
         half = 0.5 * float(self.resolution_deg)
-        lat_axis = top - half - (np.arange(self.tile_size, dtype=np.float64) * self.resolution_deg)
-        lon_axis = left + half + (np.arange(self.tile_size, dtype=np.float64) * self.resolution_deg)
+        lat_axis = (
+            top
+            - half
+            - (np.arange(self.tile_size, dtype=np.float64) * self.resolution_deg)
+        )
+        lon_axis = (
+            left
+            + half
+            + (np.arange(self.tile_size, dtype=np.float64) * self.resolution_deg)
+        )
         return PatchAxes(lat_axis=lat_axis, lon_axis=lon_axis)
 
     def _load_y_patch(self, row: dict[str, Any], axes: PatchAxes) -> np.ndarray:
@@ -1131,7 +1198,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             categorical=False,
         )
         if y_np.ndim != 3:
-            raise RuntimeError(f"Expected GLORYS patch shape (D,H,W), got {tuple(y_np.shape)}")
+            raise RuntimeError(
+                f"Expected GLORYS patch shape (D,H,W), got {tuple(y_np.shape)}"
+            )
         if int(y_np.shape[0]) != int(self._depth_axis_m.size):
             raise RuntimeError(
                 "GLORYS depth channel count does not match the configured GLORYS depth axis: "
@@ -1147,7 +1216,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             categorical=False,
         )
         if eo_np.ndim != 2:
-            raise RuntimeError(f"Expected OSTIA patch shape (H,W), got {tuple(eo_np.shape)}")
+            raise RuntimeError(
+                f"Expected OSTIA patch shape (H,W), got {tuple(eo_np.shape)}"
+            )
         eo_np = eo_np.astype(np.float32, copy=False)
         if self._ostia_values_look_kelvin(eo_np):
             eo_np = eo_np - np.float32(273.15)
@@ -1160,10 +1231,14 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             return False
         return float(np.nanmedian(finite)) > 100.0
 
-    def _rasterize_argo_patch(self, row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    def _rasterize_argo_patch(
+        self, row: dict[str, Any]
+    ) -> tuple[np.ndarray, np.ndarray]:
         depth_size = int(self.argo_store.depth_axis_m.size)
         x_sum = np.zeros((depth_size, self.tile_size, self.tile_size), dtype=np.float64)
-        x_count = np.zeros((depth_size, self.tile_size, self.tile_size), dtype=np.uint16)
+        x_count = np.zeros(
+            (depth_size, self.tile_size, self.tile_size), dtype=np.uint16
+        )
         indices = self.argo_store.query_indices(
             target_date=int(row["date"]),
             temporal_window_days=self.temporal_window_days,
@@ -1185,8 +1260,15 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             lat = float(self.argo_store.latitude[int(profile_idx)])
             lon = _normalize_lon(float(self.argo_store.longitude[int(profile_idx)]))
             row_idx = int(np.floor((top - lat) / float(self.resolution_deg)))
-            col_idx = int(np.floor((_normalize_lon(lon) - left) / float(self.resolution_deg)))
-            if row_idx < 0 or row_idx >= self.tile_size or col_idx < 0 or col_idx >= self.tile_size:
+            col_idx = int(
+                np.floor((_normalize_lon(lon) - left) / float(self.resolution_deg))
+            )
+            if (
+                row_idx < 0
+                or row_idx >= self.tile_size
+                or col_idx < 0
+                or col_idx >= self.tile_size
+            ):
                 continue
             profile = values[int(local_idx)]
             valid = np.isfinite(profile)
@@ -1237,7 +1319,9 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         if flat_valid_columns.size == 0:
             return x_np, x_valid
 
-        sample_count = min(int(self.synthetic_pixel_count), int(flat_valid_columns.size))
+        sample_count = min(
+            int(self.synthetic_pixel_count), int(flat_valid_columns.size)
+        )
         rng = self._synthetic_rng_for_row(row, idx=idx)
         selected = rng.choice(flat_valid_columns, size=sample_count, replace=False)
         row_indices, col_indices = np.unravel_index(

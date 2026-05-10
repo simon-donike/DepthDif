@@ -54,7 +54,6 @@ from data.dataset_creation.export_aligned_argo.source_files import (
     scan_timed_files,
 )
 
-
 SOURCE_KINDS = ("argo", "glorys", "ostia", "sealevel")
 ARGO_BASE_URL = "https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1"
 GLORYS_DATASET_CANDIDATES = (
@@ -269,7 +268,9 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=True, text=True)
 
 
-def _replace_checked_file(tmp_path: Path, target_path: Path, source: SourceFile) -> None:
+def _replace_checked_file(
+    tmp_path: Path, target_path: Path, source: SourceFile
+) -> None:
     tmp_source = SourceFile(source.kind, tmp_path, source.date)
     check_source_file(tmp_source)
     tmp_path.replace(target_path)

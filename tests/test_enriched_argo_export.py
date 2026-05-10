@@ -77,8 +77,14 @@ def _write_enriched_argo_source(root_dir: Path) -> None:
                     dtype=np.float64,
                 ),
             ),
-            "LATITUDE": (("N_PROF",), np.asarray([1.25, 1.75, 1.25, 1.75], dtype=np.float64)),
-            "LONGITUDE": (("N_PROF",), np.asarray([10.25, 10.75, 10.75, 10.25], dtype=np.float64)),
+            "LATITUDE": (
+                ("N_PROF",),
+                np.asarray([1.25, 1.75, 1.25, 1.75], dtype=np.float64),
+            ),
+            "LONGITUDE": (
+                ("N_PROF",),
+                np.asarray([10.25, 10.75, 10.75, 10.25], dtype=np.float64),
+            ),
             "TEMP": (
                 ("N_PROF", "N_LEVELS"),
                 np.asarray(
@@ -114,7 +120,9 @@ def _write_enriched_argo_source(root_dir: Path) -> None:
     ds.to_netcdf(root_dir / "EN.4.2.2.f.profiles.g10.202401.nc", engine="h5netcdf")
 
 
-def _write_enriched_glorys_source(root_dir: Path, *, date_value: int, base: float) -> None:
+def _write_enriched_glorys_source(
+    root_dir: Path, *, date_value: int, base: float
+) -> None:
     lat = np.asarray([1.0, 2.0], dtype=np.float32)
     lon = np.asarray([10.0, 11.0], dtype=np.float32)
     depth = np.asarray([0.0, 10.0], dtype=np.float32)
@@ -334,8 +342,8 @@ class TestEnrichedArgoExport(unittest.TestCase):
     def test_parallel_export_matches_serial_output_order_and_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            argo_dir, glorys_dir, ostia_dir, sealevel_dir = _make_enriched_export_sources(
-                tmp_path
+            argo_dir, glorys_dir, ostia_dir, sealevel_dir = (
+                _make_enriched_export_sources(tmp_path)
             )
             serial_path = export_enriched_argo_profiles(
                 argo_dir=argo_dir,
@@ -377,7 +385,9 @@ class TestEnrichedArgoExport(unittest.TestCase):
                     "ostia_temporal_status",
                     "sealevel_temporal_status",
                 ):
-                    np.testing.assert_array_equal(serial[name].values, parallel[name].values)
+                    np.testing.assert_array_equal(
+                        serial[name].values, parallel[name].values
+                    )
                 for name in (
                     "latitude",
                     "longitude",

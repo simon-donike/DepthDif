@@ -579,7 +579,9 @@ def _argo_point_features_for_patch(
 ) -> list[dict[str, Any]]:
     mask = np.asarray(observed_mask_2d, dtype=bool)
     if mask.ndim != 2:
-        raise RuntimeError(f"Expected a 2D observed-mask patch, got {tuple(mask.shape)}.")
+        raise RuntimeError(
+            f"Expected a 2D observed-mask patch, got {tuple(mask.shape)}."
+        )
 
     features: list[dict[str, Any]] = []
     point_rows, point_cols = np.nonzero(mask)
@@ -763,7 +765,9 @@ def _write_full_profile_sample_artifacts(
     )
     x_profile_plot = np.asarray(sample.x_profile_c, dtype=np.float64).copy()
     y_hat_profile_plot = np.asarray(sample.y_hat_profile_c, dtype=np.float64).copy()
-    y_target_profile_plot = np.asarray(sample.y_target_profile_c, dtype=np.float64).copy()
+    y_target_profile_plot = np.asarray(
+        sample.y_target_profile_c, dtype=np.float64
+    ).copy()
     x_profile_plot[~sample.observed_profile] = np.nan
     y_hat_profile_plot[~sample.target_valid_profile] = np.nan
     y_target_profile_plot[~sample.target_valid_profile] = np.nan
@@ -967,10 +971,9 @@ def _repair_small_nodata_gaps_2d(
     # pixels on either side.
     row_structure = np.ones((1, 2 * max_gap_width + 1), dtype=bool)
     col_structure = np.ones((2 * max_gap_width + 1, 1), dtype=bool)
-    closed_mask = (
-        ndi.binary_closing(valid_mask, structure=row_structure)
-        | ndi.binary_closing(valid_mask, structure=col_structure)
-    )
+    closed_mask = ndi.binary_closing(
+        valid_mask, structure=row_structure
+    ) | ndi.binary_closing(valid_mask, structure=col_structure)
     repair_mask = closed_mask & ~valid_mask
     if not np.any(repair_mask):
         return patch.copy(), np.zeros(patch.shape, dtype=bool)
@@ -1342,7 +1345,9 @@ def main() -> None:
 
     training_cfg = _load_yaml(args.train_config)
     data_cfg = load_yaml(args.data_config)
-    dataset = build_dataset(args.data_config, data_cfg.get("dataset", {}), split=args.split)
+    dataset = build_dataset(
+        args.data_config, data_cfg.get("dataset", {}), split=args.split
+    )
     if hasattr(dataset, "return_info"):
         dataset.return_info = False
     if hasattr(dataset, "return_coords"):
@@ -1648,7 +1653,9 @@ def main() -> None:
                         patch_width=int(patch_shape[1]),
                         lon=float(lon),
                         lat=float(lat),
-                        x_profile_c=x_denorm_batch[local_idx, :, point_row, point_col].copy(),
+                        x_profile_c=x_denorm_batch[
+                            local_idx, :, point_row, point_col
+                        ].copy(),
                         y_hat_profile_c=prediction_full_stack_batch[
                             local_idx, :, point_row, point_col
                         ].copy(),
@@ -1822,7 +1829,9 @@ def main() -> None:
     if ground_truth_tif_path is not None:
         print(f"Wrote Argo points GeoJSON: {argo_points_geojson_path}")
     if full_sample_locations_geojson_path is not None and graphs_dir_path is not None:
-        print(f"Wrote full-sample locations GeoJSON: {full_sample_locations_geojson_path}")
+        print(
+            f"Wrote full-sample locations GeoJSON: {full_sample_locations_geojson_path}"
+        )
         print(f"Wrote full-sample graphs directory: {graphs_dir_path}")
     print(f"Wrote patch split GeoJSON: {patch_splits_geojson_path}")
 

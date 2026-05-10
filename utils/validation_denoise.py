@@ -11,7 +11,6 @@ import torch.nn.functional as F
 
 from utils.normalizations import temperature_normalize, temperature_to_plot_unit
 
-
 PROFILE_GRAPH_LOGO_PATH = (
     Path(__file__).resolve().parents[1] / "docs/assets/branding/website_icon.png"
 )
@@ -1226,10 +1225,15 @@ def plot_glorys_profile_error_axis(
         y_target_profile=y_target_profile_np,
         observed_profile=observed_profile_np,
     )
-    pred_vs_glorys_mask = np.isfinite(y_hat_profile_np) & np.isfinite(y_target_profile_np)
+    pred_vs_glorys_mask = np.isfinite(y_hat_profile_np) & np.isfinite(
+        y_target_profile_np
+    )
     if bool(np.any(pred_vs_glorys_mask)):
         ax.plot(
-            np.abs(y_hat_profile_np[pred_vs_glorys_mask] - y_target_profile_np[pred_vs_glorys_mask]),
+            np.abs(
+                y_hat_profile_np[pred_vs_glorys_mask]
+                - y_target_profile_np[pred_vs_glorys_mask]
+            ),
             depth_values[pred_vs_glorys_mask],
             label="|Prediction - GLORYS|",
             color="black",
@@ -1243,7 +1247,9 @@ def plot_glorys_profile_error_axis(
     )
     if bool(np.any(pred_vs_argo_mask)):
         ax.plot(
-            np.abs(y_hat_profile_np[pred_vs_argo_mask] - x_profile_np[pred_vs_argo_mask]),
+            np.abs(
+                y_hat_profile_np[pred_vs_argo_mask] - x_profile_np[pred_vs_argo_mask]
+            ),
             depth_values[pred_vs_argo_mask],
             label="|Prediction - ARGO|",
             color="tab:blue",
@@ -1275,7 +1281,9 @@ def _depth_plot_limits_for_series(
     if bool(np.any(plotted_mask)):
         finite_series_mask = np.zeros(depth_values_np.shape, dtype=bool)
         for values in series:
-            finite_series_mask |= np.isfinite(np.asarray(values, dtype=np.float64).reshape(-1))
+            finite_series_mask |= np.isfinite(
+                np.asarray(values, dtype=np.float64).reshape(-1)
+            )
         plotted_mask &= finite_series_mask
     if bool(np.any(plotted_mask)):
         plotted_depth_max = float(np.nanmax(depth_values_np[plotted_mask]))
@@ -1460,7 +1468,9 @@ def save_average_glorys_profile_and_error_plot(
     mean_prediction_profile_np = np.asarray(
         mean_prediction_profile_c, dtype=np.float64
     ).reshape(-1)
-    mean_glorys_profile_np = np.asarray(mean_glorys_profile_c, dtype=np.float64).reshape(-1)
+    mean_glorys_profile_np = np.asarray(
+        mean_glorys_profile_c, dtype=np.float64
+    ).reshape(-1)
     observed_profile_np = np.isfinite(mean_argo_profile_np)
 
     fig = None

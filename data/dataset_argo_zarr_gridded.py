@@ -453,7 +453,10 @@ class ArgoZarrStore:
                 :n_prof
             ]
         values = self._read_profile_matrix(var_name, np.arange(n_prof, dtype=np.int64))
-        if self._is_projected_profile_var(var_name) or self.depth_var_name not in self.ds:
+        if (
+            self._is_projected_profile_var(var_name)
+            or self.depth_var_name not in self.ds
+        ):
             return np.isfinite(values).any(axis=1)
         depth = self._read_profile_matrix(
             self.depth_var_name, np.arange(n_prof, dtype=np.int64)
