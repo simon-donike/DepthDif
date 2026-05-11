@@ -58,26 +58,25 @@ class _IncrementingPredictModel(nn.Module):
 
 
 class TestGlobalInferenceExport(unittest.TestCase):
-    def test_export_inference_wrapper_averages_prediction_ensemble_runs(self) -> None:
+    def test_export_inference_wrapper_runs_one_prediction_per_batch(self) -> None:
         model = _IncrementingPredictModel()
         wrapper = ExportInferenceWrapper(
             model,
             export_ground_truth=False,
             export_full_prediction_stack=True,
             depth_channel_indices=(0, 2),
-            prediction_ensemble_runs=3,
         )
 
         outputs = wrapper({"y": torch.zeros((1, 3, 1, 1), dtype=torch.float32)})
 
-        self.assertEqual(model.call_count, 3)
+        self.assertEqual(model.call_count, 1)
         torch.testing.assert_close(
             outputs["prediction_depth_stack"],
-            torch.tensor([[[[2.0]], [[22.0]]]], dtype=torch.float32),
+            torch.tensor([[[[1.0]], [[21.0]]]], dtype=torch.float32),
         )
         torch.testing.assert_close(
             outputs["prediction_full_stack"],
-            torch.tensor([[[[2.0]], [[12.0]], [[22.0]]]], dtype=torch.float32),
+            torch.tensor([[[[1.0]], [[11.0]], [[21.0]]]], dtype=torch.float32),
         )
 
     def test_default_full_sample_count_exports_all_locations(self) -> None:

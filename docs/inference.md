@@ -35,7 +35,7 @@ Use `inference/export_global.py` when you want the standard production inference
 - forces the inference grid to `patch_grid_source=land_mask`, `require_argo_for_all=false`, and `patch_stride=tile_size/4` for 75% overlapping patches
 - keeps every tile with at least `--min-ocean-fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean
 - runs batched `predict_step(...)` over all global patches for that week-centered date
-- can average multiple stochastic predictions per patch via `--prediction-ensemble-runs`; the default `1` preserves single-run inference, while `--prediction-ensemble-runs 5` writes five-run averaged prediction GeoTIFFs for later XYZ tile/globe packaging
+- runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 75% spatial overlap and overlap-weighted stitching
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
 - stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, 1000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
@@ -60,7 +60,7 @@ Typical run:
   --rclone-remote r2:<bucket>/inference_production/globe \
   --rclone-sync-scope globe
 ```
-Add `--prediction-ensemble-runs 5` when you want five-run averaged predictions for the exported GeoTIFFs and the downstream globe tiles.
+Increase overlap or lower `--min-ocean-fraction` for coverage changes; per-tile multi-generation is intentionally disabled.
 
 Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_prediction_surface.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters
