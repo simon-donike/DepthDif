@@ -31,6 +31,11 @@ For public inference usage, the package can also be installed in editable mode:
 python -m pip install -e .
 ```
 
+PyPI releases are published by GitHub Actions when a version tag such as
+`v0.1.0` is pushed on `main`. The tag must match `project.version` in
+`pyproject.toml`, and the PyPI project must be configured for trusted publishing
+from the repository's `pypi` environment.
+
 ## Model Overview
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
