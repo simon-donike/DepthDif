@@ -21,25 +21,25 @@ run_dir = run_week_inference(
     rectangle=(-20.0, 30.0, 10.0, 50.0),
     device="cuda",
     config_repo="donike/depthdif",
-    argo_dir="/path/to/en4_profiles",
-    glorys_dir="/path/to/glorys_weekly",
-    ostia_dir="/path/to/ostia",
 )
 ```
 
 The return value is the run directory containing GeoTIFFs, GeoJSON metadata,
 `selected_patches.csv`, and `run_summary.yaml`. Rectangle filtering keeps every
 selected ISO-week patch that intersects `(lon_min, lat_min, lon_max, lat_max)`.
+When `glorys_dir` is omitted, this public path uses downloaded EN4/ARGO profiles
+plus downloaded OSTIA SST conditioning and skips GLORYS ground-truth exports.
+OSTIA downloads use configured Copernicus Marine CLI credentials, or credentials
+passed as `copernicus_username` plus `copernicus_token`. The Copernicus Marine
+toolbox accepts that token through its password field, so
+`copernicus_password` remains supported as a backwards-compatible alias.
 
-ARGO/EN4 files can be prepared separately:
+Source files can be prepared separately:
 
 ```bash
 depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
+depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
 ```
-
-The current public API does not make the model ARGO-only: OSTIA and GLORYS source
-directories are still required unless they are already encoded in the downloaded
-data config.
 
 ## Workflow 1: Use `inference/run_single.py`
 `inference/run_single.py` is a configurable script for quick prediction sanity checks.

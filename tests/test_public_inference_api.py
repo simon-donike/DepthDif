@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 from zipfile import ZipFile
 
 import yaml
@@ -11,9 +12,13 @@ from inference.api import (
     InferenceAssets,
     _en4_zip_url,
     _export_args_from_public_api,
+    _ostia_filter_for_day,
     _write_public_data_config,
     download_argo_for_week,
+    download_ostia_for_week,
     resolve_hf_assets,
+    resolve_hf_land_mask,
+    run_week_inference,
 )
 
 
@@ -45,6 +50,30 @@ class TestPublicInferenceApi(unittest.TestCase):
             "https://huggingface.co/owner/repo/resolve/rev/configs/model.yaml",
         )
         self.assertTrue(str(assets.checkpoint).endswith("checkpoints/model.ckpt"))
+
+    def test_resolve_hf_land_mask_downloads_expected_path(self) -> None:
+        calls: list[tuple[str, Path]] = []
+
+        def fake_download(url: str, output_path: Path) -> Path:
+            calls.append((url, output_path))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("mask", encoding="utf-8")
+            return output_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = resolve_hf_land_mask(
+                config_repo="owner/repo",
+                revision="rev",
+                cache_dir=tmpdir,
+                land_mask_path="masks/land.tif",
+                downloader=fake_download,
+            )
+
+        self.assertEqual(
+            calls[0][0],
+            "https://huggingface.co/owner/repo/resolve/rev/masks/land.tif",
+        )
+        self.assertTrue(str(path).endswith("masks/land.tif"))
 
     def test_export_args_from_public_api_keeps_cli_defaults(self) -> None:
         assets = InferenceAssets(
@@ -80,6 +109,29 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertEqual(args.full_sample_count, 0)
         self.assertEqual(args.min_ocean_fraction, 0.2)
         self.assertTrue(args.strict_load)
+
+    def test_run_week_inference_uses_public_argo_ostia_path_without_glorys(
+        self,
+    ) -> None:
+        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+            run_public.return_value = Path("outputs/public")
+
+            result = run_week_inference(
+                year=2024,
+                iso_week=2,
+                rectangle=(-20.0, 30.0, 10.0, 50.0),
+                output_root="outputs",
+                device="cpu",
+                cache_dir="cache",
+                copernicus_token="api-key",
+            )
+
+        self.assertEqual(result, Path("outputs/public"))
+        kwargs = run_public.call_args.kwargs
+        self.assertTrue(kwargs["auto_download_argo"])
+        self.assertTrue(kwargs["auto_download_ostia"])
+        self.assertEqual(kwargs["copernicus_token"], "api-key")
+        self.assertEqual(kwargs["config_repo"], "donike/depthdif")
 
     def test_en4_zip_url_matches_existing_download_script_pattern(self) -> None:
         self.assertEqual(
@@ -138,6 +190,69 @@ class TestPublicInferenceApi(unittest.TestCase):
             result = download_argo_for_week(2024, 2, output_dir)
 
         self.assertEqual(result, output_dir)
+
+    def test_ostia_filter_for_day_matches_existing_download_script_pattern(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _ostia_filter_for_day("20240110"),
+            "*/2024/01/*20240110120000-UKMO-L4_GHRSST-SSTfnd-"
+            "OSTIA-GLOB_REP-v02.0-fv02.0.nc",
+        )
+
+    def test_download_ostia_for_week_runs_copernicus_and_detects_file(self) -> None:
+        commands: list[list[str]] = []
+
+        def fake_runner(cmd: list[str]) -> None:
+            commands.append(list(cmd))
+            output_dir = Path(cmd[cmd.index("-o") + 1])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "20240110120000-UKMO-L4_GHRSST-SSTfnd-OSTIA.nc").write_text(
+                "ostia",
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = download_ostia_for_week(
+                2024,
+                2,
+                Path(tmpdir) / "ostia",
+                dataset_candidates=("dataset-a",),
+                username="user",
+                password="pass",
+                runner=fake_runner,
+            )
+
+        self.assertEqual(output_dir.name, "ostia")
+        self.assertEqual(commands[0][commands[0].index("-i") + 1], "dataset-a")
+        self.assertIn("--username", commands[0])
+        self.assertIn("--password", commands[0])
+
+    def test_download_ostia_for_week_accepts_token_alias(self) -> None:
+        commands: list[list[str]] = []
+
+        def fake_runner(cmd: list[str]) -> None:
+            commands.append(list(cmd))
+            output_dir = Path(cmd[cmd.index("-o") + 1])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "20240110120000-UKMO-L4_GHRSST-SSTfnd-OSTIA.nc").write_text(
+                "ostia",
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            download_ostia_for_week(
+                2024,
+                2,
+                Path(tmpdir) / "ostia",
+                dataset_candidates=("dataset-a",),
+                username="user",
+                token="api-key",
+                runner=fake_runner,
+            )
+
+        password_index = commands[0].index("--password")
+        self.assertEqual(commands[0][password_index + 1], "api-key")
 
     def test_write_public_data_config_applies_source_overrides(self) -> None:
         payload = {

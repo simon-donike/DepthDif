@@ -92,19 +92,24 @@ run_dir = run_week_inference(
     rectangle=(-20.0, 30.0, 10.0, 50.0),
     device="cuda",
     config_repo="donike/depthdif",
-    argo_dir="/path/to/en4_profiles",
-    glorys_dir="/path/to/glorys_weekly",
-    ostia_dir="/path/to/ostia",
 )
 ```
 
-The public API downloads configs/checkpoints from Hugging Face and returns the
-GeoTIFF run directory. The current model still requires OSTIA and GLORYS source
-directories in addition to ARGO/EN4 observations. To fetch EN4 files for one ISO
-week:
+The public API downloads configs/checkpoints and the land mask from Hugging Face,
+downloads EN4/ARGO and OSTIA for the selected ISO week, and returns the GeoTIFF
+run directory. GLORYS is not required for the standard public inference path; it
+is only needed for training or optional ground-truth comparison exports.
+OSTIA downloads use the Copernicus Marine CLI credentials configured in the
+environment, or credentials passed to `run_week_inference` via
+`copernicus_username` plus `copernicus_token`. The Copernicus Marine toolbox
+accepts that token through its password field, so `copernicus_password` remains
+supported as a backwards-compatible alias.
+
+To fetch source files separately:
 
 ```bash
 depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
+depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
 ```
 
 Use `inference/run_single.py`:
