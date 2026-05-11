@@ -640,7 +640,7 @@ def _load_public_eo_patch(
 def _build_public_argo_sample(
     *,
     argo_store: ArgoNetCDFStore,
-    ostia_store: TimedNetCDFStore,
+    ostia_store: TimedNetCDFStore | None,
     row: dict,
     tile_size: int,
     resolution_deg: float,
@@ -660,13 +660,18 @@ def _build_public_argo_sample(
         resolution_deg=float(resolution_deg),
         temporal_window_days=int(temporal_window_days),
     )
-    eo = _load_public_eo_patch(
-        ostia_store=ostia_store,
-        row=row,
-        axes=axes,
-        tile_size=int(tile_size),
-        ostia_var_name=ostia_var_name,
-    )
+    if ostia_store is None:
+        # The public checkpoint expects an EO channel; zeros remove spatial OSTIA
+        # signal while keeping the model input contract unchanged.
+        eo = torch.zeros((1, int(tile_size), int(tile_size)), dtype=torch.float32)
+    else:
+        eo = _load_public_eo_patch(
+            ostia_store=ostia_store,
+            row=row,
+            axes=axes,
+            tile_size=int(tile_size),
+            ostia_var_name=ostia_var_name,
+        )
     x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
     x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
     x_valid_mask = torch.from_numpy(x_valid_mask_np.astype(np.bool_, copy=False))
@@ -963,7 +968,7 @@ def run_argo_week_inference(
     force_download: bool = False,
     downloader: Downloader | None = None,
 ) -> Path:
-    """Run public ARGO+OSTIA inference for one ISO week and return the run directory."""
+    """Run public ARGO inference for one ISO week and return the run directory."""
     assets = resolve_hf_assets(
         config_repo=config_repo,
         revision=revision,
@@ -1014,8 +1019,7 @@ def run_argo_week_inference(
             password=copernicus_password,
             token=copernicus_token,
         )
-    if ostia_dir is None or str(ostia_dir).strip() == "":
-        raise ValueError("ostia_dir is required when auto_download_ostia=false.")
+    use_ostia_conditioning = ostia_dir is not None and str(ostia_dir).strip() != ""
 
     data_cfg = load_yaml(assets.data_config)
     training_cfg = load_yaml(assets.train_config)
@@ -1101,7 +1105,7 @@ def run_argo_week_inference(
         temp_var_name=argo_temp_var_name,
         depth_var_name=argo_depth_var_name,
     )
-    ostia_store = TimedNetCDFStore(ostia_dir)
+    ostia_store = TimedNetCDFStore(ostia_dir) if use_ostia_conditioning else None
 
     model = build_model(
         model_config_path=str(assets.model_config),
@@ -1125,12 +1129,12 @@ def run_argo_week_inference(
     model.eval()
 
     print(
-        "Preparing public ARGO+OSTIA inference: "
+        "Preparing public ARGO inference: "
         f"selected_date={selected_date}, "
         f"iso_week={int(year)}-W{int(iso_week):02d}, "
         f"selected_patches={len(rows)}, "
         f"batch_size={batch_size_value}, "
-        "ostia_conditioning=enabled, "
+        f"ostia_conditioning={'enabled' if use_ostia_conditioning else 'disabled'}, "
         f"rectangle={rectangle}"
     )
 
@@ -1219,7 +1223,10 @@ def run_argo_week_inference(
             band_description=f"predicted_{level.suffix}_celsius",
             tags={
                 **common_depth_tags,
-                "source": "DepthDif public ARGO+OSTIA weekly inference export",
+                "source": "DepthDif public ARGO weekly inference export",
+                "ostia_conditioning": (
+                    "enabled" if use_ostia_conditioning else "disabled"
+                ),
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
                 "prediction_runs_per_patch": "1",
@@ -1265,7 +1272,8 @@ def run_argo_week_inference(
         "argo_point_count": int(argo_points_writer.feature_count),
         "patch_splits_geojson_path": _summary_artifact_path(patch_splits_geojson_path),
         "patch_split_count": int(patch_splits_writer.feature_count),
-        "ostia_dir": str(ostia_dir),
+        "ostia_dir": None if ostia_dir is None else str(ostia_dir),
+        "ostia_conditioning": bool(use_ostia_conditioning),
         "argo_dir": str(argo_dir),
         "glorys_dir": None,
         "glorys_required": False,

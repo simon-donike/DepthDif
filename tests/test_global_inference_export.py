@@ -491,20 +491,43 @@ class TestGlobalInferenceExport(unittest.TestCase):
     def test_resolve_depth_export_levels_uses_nearest_glorys_depths(self) -> None:
         levels = resolve_depth_export_levels(
             np.asarray(
-                [0.5, 97.0, 247.0, 505.0, 980.0, 2502.0, 4997.0],
+                [
+                    0.5,
+                    9.8,
+                    52.0,
+                    97.0,
+                    247.0,
+                    505.0,
+                    980.0,
+                    1990.0,
+                    2502.0,
+                    4997.0,
+                ],
                 dtype=np.float64,
             )
         )
 
         self.assertEqual(
             [level.suffix for level in levels],
-            ["surface", "100m", "250m", "500m", "1000m", "2500m", "5000m"],
+            [
+                "surface",
+                "10m",
+                "50m",
+                "100m",
+                "250m",
+                "500m",
+                "1000m",
+                "2000m",
+                "2500m",
+                "5000m",
+            ],
         )
         self.assertEqual(
-            [level.channel_index for level in levels], [0, 1, 2, 3, 4, 5, 6]
+            [level.channel_index for level in levels],
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         )
-        self.assertAlmostEqual(levels[1].requested_depth_m, 100.0)
-        self.assertAlmostEqual(levels[1].actual_depth_m, 97.0)
+        self.assertAlmostEqual(levels[3].requested_depth_m, 100.0)
+        self.assertAlmostEqual(levels[3].actual_depth_m, 97.0)
 
     def test_depth_geotiff_metadata_records_requested_and_actual_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

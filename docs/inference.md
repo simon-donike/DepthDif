@@ -75,10 +75,10 @@ Use `inference/export_global.py` when you want the standard production inference
 - runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 75% spatial overlap and overlap-weighted stitching
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
-- stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, 1000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
+- stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
 - applies the configured land-mask GeoTIFF at the final write step so land pixels are `0.0` and uncovered water remains nodata
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
-- exports matching GLORYS rasters for the same seven depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`
+- exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
 - exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
@@ -100,8 +100,8 @@ Typical run:
 Increase overlap or lower `--min-ocean-fraction` for coverage changes; per-tile multi-generation is intentionally disabled.
 
 Outputs land under `inference/outputs/<run_name>/` and include:
-- `<run_name>_prediction_surface.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters
-- `<run_name>_glorys_surface.tif`, `<run_name>_glorys_100m.tif`, `<run_name>_glorys_250m.tif`, `<run_name>_glorys_500m.tif`, `<run_name>_glorys_1000m.tif`, `<run_name>_glorys_2500m.tif`, `<run_name>_glorys_5000m.tif`: stitched GLORYS truth rasters by default
+- `<run_name>_prediction_surface.tif`, `<run_name>_prediction_10m.tif`, `<run_name>_prediction_50m.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters
+- `<run_name>_glorys_surface.tif`, `<run_name>_glorys_10m.tif`, `<run_name>_glorys_50m.tif`, `<run_name>_glorys_100m.tif`, `<run_name>_glorys_250m.tif`, `<run_name>_glorys_500m.tif`, `<run_name>_glorys_1000m.tif`, `<run_name>_glorys_2000m.tif`, `<run_name>_glorys_2500m.tif`, `<run_name>_glorys_5000m.tif`: stitched GLORYS truth rasters by default
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only

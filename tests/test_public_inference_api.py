@@ -6,10 +6,13 @@ import unittest
 from unittest import mock
 from zipfile import ZipFile
 
+import numpy as np
+import torch
 import yaml
 
 from inference.api import (
     InferenceAssets,
+    _build_public_argo_sample,
     _en4_zip_url,
     _export_args_from_public_api,
     _ostia_filter_for_day,
@@ -154,6 +157,56 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertTrue(kwargs["auto_download_ostia"])
         self.assertEqual(kwargs["copernicus_token"], "api-key")
         self.assertEqual(kwargs["config_repo"], "simon-donike/DepthDif")
+
+    def test_run_week_inference_can_skip_ostia_download(self) -> None:
+        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+            run_public.return_value = Path("outputs/public")
+
+            run_week_inference(
+                year=2024,
+                iso_week=2,
+                rectangle=(-20.0, 30.0, 10.0, 50.0),
+                output_root="outputs",
+                device="cpu",
+                cache_dir="cache",
+                auto_download_ostia=False,
+            )
+
+        kwargs = run_public.call_args.kwargs
+        self.assertFalse(kwargs["auto_download_ostia"])
+        self.assertIsNone(kwargs["ostia_dir"])
+
+    def test_build_public_argo_sample_uses_zero_eo_when_ostia_skipped(
+        self,
+    ) -> None:
+        class EmptyArgoStore:
+            """Minimal ARGO store with no profiles for sample construction."""
+
+            depth_axis_m = np.asarray([0.0, 10.0], dtype=np.float32)
+
+            def query_indices(self, **_kwargs: object) -> np.ndarray:
+                """Return no matching ARGO profiles."""
+                return np.asarray([], dtype=np.int64)
+
+        row = {
+            "date": 20240110,
+            "lat0": 0.0,
+            "lat1": 1.0,
+            "lon0": 0.0,
+            "lon1": 1.0,
+        }
+
+        sample = _build_public_argo_sample(
+            argo_store=EmptyArgoStore(),
+            ostia_store=None,
+            row=row,
+            tile_size=4,
+            resolution_deg=0.25,
+            temporal_window_days=7,
+            ostia_var_name="analysed_sst",
+        )
+
+        self.assertTrue(torch.equal(sample["eo"], torch.zeros((1, 4, 4))))
 
     def test_en4_zip_url_matches_existing_download_script_pattern(self) -> None:
         self.assertEqual(

@@ -75,10 +75,13 @@ DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 1.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
+    ("10m", "10m", 10.0),
+    ("50m", "50m", 50.0),
     ("100m", "100m", 100.0),
     ("250m", "250m", 250.0),
     ("500m", "500m", 500.0),
     ("1000m", "1000m", 1000.0),
+    ("2000m", "2000m", 2000.0),
     ("2500m", "2500m", 2500.0),
     ("5000m", "5000m", 5000.0),
 )
