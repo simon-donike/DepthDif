@@ -1,5 +1,5 @@
 # Inference
-There are two practical inference workflows in this repository:
+There are three practical inference workflows in this repository:
 - call the public ISO-week API from `inference.api`
 - run the standalone script `inference/run_single.py`
 - call `PixelDiffusionConditional.predict_step(...)` directly
@@ -8,10 +8,12 @@ DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow
 For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
 
 ## Workflow 0: Public ISO-Week API
-Use this path for PyPI and Colab-style inference. It resolves model configs,
-checkpoint, and the land mask from Hugging Face, optionally downloads the
-relevant EN4/ARGO archive, then calls the same GeoTIFF exporter used by
-production runs.
+Use this path for PyPI and Colab-style inference. The public package is
+installed as `depth-recon` and imported as `depth_recon`.
+
+```bash
+python -m pip install depth-recon
+```
 
 ```python
 from depth_recon import run_week_inference
@@ -25,21 +27,31 @@ run_dir = run_week_inference(
 )
 ```
 
-The return value is the run directory containing GeoTIFFs, GeoJSON metadata,
-`selected_patches.csv`, and `run_summary.yaml`. Rectangle filtering keeps every
+When `glorys_dir` is omitted, this path uses the public ARGO/OSTIA workflow:
+
+- resolves configs, checkpoint, and land mask from Hugging Face
+- selects the ISO-week Wednesday as the target date
+- builds a land-mask-driven inference grid, filtered by `rectangle` when passed
+- downloads EN4/ARGO profile months touched by the selected week unless
+  `argo_dir` is supplied
+- downloads the OSTIA daily SST file unless `ostia_dir` is supplied or
+  `auto_download_ostia=False`
+- rasterizes sparse ARGO profiles into model input patches
+- runs `PixelDiffusionConditional.predict_step(...)`
+- stitches depth-level prediction GeoTIFFs and writes GeoJSON/CSV/YAML metadata
+
+The return value is the run directory, normally
+`inference/outputs/depthdif_argo_<YYYYMMDD>/`. Rectangle filtering keeps every
 selected ISO-week patch that intersects `(lon_min, lat_min, lon_max, lat_max)`.
-When `glorys_dir` is omitted, this public path uses downloaded EN4/ARGO profiles
-plus downloaded OSTIA SST conditioning and skips GLORYS ground-truth exports.
-Existing cached model, data, and mask files are reused automatically.
-EN4/ARGO downloads use the Met Office annual EN.4.2.2 profile archives for each
-calendar month touched by the selected ISO week.
-OSTIA downloads use configured Copernicus Marine CLI credentials, or credentials
-passed as `copernicus_username` plus `copernicus_token`. The Copernicus Marine
-toolbox accepts that token through its password field, so
-`copernicus_password` remains supported as a backwards-compatible alias.
-By default, the package uses `simon-donike/DepthDif` at revision `main`,
+GLORYS is not required for the standard public inference path; it is only needed
+for training, local comparison exports, or when intentionally using the
+GLORYS-backed branch described below.
+
+Existing cached model, data, and mask files are reused automatically. By
+default, the package uses `simon-donike/DepthDif` at revision `main`,
 `model_config.yaml`, `data_config.yaml`, `training_config.yaml`,
-`depthdif_v1.ckpt`, and `world_land_mask_glorys_0p1.tif`.
+`depthdif_v1.ckpt`, and `world_land_mask_glorys_0p1.tif`. The default cache is
+`~/.cache/depthdif`.
 
 To prepare the public model files and land mask before calling inference:
 
@@ -51,12 +63,40 @@ print(bundle.assets.checkpoint)
 print(bundle.land_mask_path)
 ```
 
+Pass `progress_callback=lambda event, name, path: ...` to report whether each
+artifact was `cached`, `downloading`, `downloaded`, `builtin`, or `packaged`.
+
 Source files can be prepared separately:
 
 ```bash
 depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
 depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
 ```
+
+The inference CLI wraps the same Python API:
+
+```bash
+depth-recon-infer-week \
+  --year 2015 \
+  --iso-week 25 \
+  --rectangle -20 30 10 50 \
+  --device cuda
+```
+
+OSTIA downloads use configured Copernicus Marine CLI credentials, or credentials
+passed as `copernicus_username` plus `copernicus_token`. The Copernicus Marine
+toolbox accepts that token through its password field, so
+`copernicus_password` remains supported as a backwards-compatible alias.
+
+Pass `auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
+The package fills the EO surface-conditioning channel with zeros in that mode so
+the checkpoint input contract remains unchanged.
+
+Supplying `glorys_dir` switches `run_week_inference(...)` to the repository's
+global exporter branch. That branch injects the provided source directories into
+a temporary data config, exports predictions, and can export matching GLORYS
+ground-truth rasters. For a deeper package walkthrough, see
+[Public Inference Package](public-inference-package.md).
 
 ## Workflow 1: Use `inference/run_single.py`
 `inference/run_single.py` is a configurable script for quick prediction sanity checks.
