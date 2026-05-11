@@ -20,6 +20,10 @@ administration/
 inference/outputs_v1_backup.zip
 tok.txt
 
+# Packages
+depth_recon.egg-info
+build
+
 # temp file types
 *.csv
 *.geojson

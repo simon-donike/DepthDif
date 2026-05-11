@@ -1,4 +1,0 @@
-[console_scripts]
-depth-recon-download-argo = inference.api:download_argo_cli
-depth-recon-download-ostia = inference.api:download_ostia_cli
-depth-recon-infer-week = inference.api:infer_week_cli

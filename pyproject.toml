@@ -9,6 +9,7 @@ description = "DepthDif public inference helpers for sparse ocean temperature di
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "click>=8.2.1",
     "copernicusmarine",
     "h5netcdf",
     "einops",
@@ -33,3 +34,18 @@ depth-recon-download-ostia = "inference.api:download_ostia_cli"
 where = ["."]
 include = ["depth_recon*", "inference*", "data*", "models*", "utils*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+data = [
+    "**/*.json",
+    "**/*.sh",
+    "**/*.tif",
+    "**/*.tiff",
+    "**/*.txt",
+    "**/*.yaml",
+    "**/*.yml",
+]
+inference = [
+    "transforms/*.json",
+    "transforms/*.txt",
+]

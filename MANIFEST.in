@@ -1,0 +1,4 @@
+recursive-include configs *.yaml *.yml
+recursive-include data *.json *.sh *.tif *.tiff *.txt *.yaml *.yml
+recursive-include inference *.txt
+prune inference/outputs
