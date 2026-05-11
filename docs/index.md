@@ -8,6 +8,7 @@ DepthDif explores conditional diffusion for reconstructing dense subsurface ocea
 The repository currently supports:
 - EO-conditioned multi-band reconstruction (surface condition + deeper target bands)
 - cross-source conditioning where EO surface SST can come from OSTIA while deeper targets remain Copernicus reanalysis
+- public PyPI inference through the `depth-recon` package, including no-GLORYS ARGO/OSTIA week exports
 - latent diffusion workflow with autoencoder-based depth compression (see [Autoencoder](autoencoder.md))
 
 ## Project Links
@@ -49,11 +50,11 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 - [Autoencoder + Latent Diffusion](autoencoder.md): AE architecture, latent task setup, launch commands, and constraints
 - [Data + Coordinate Injection](data-coordinate-injection.md): coordinate/date FiLM conditioning details
 - [Training](training.md): CLI usage, run outputs, logging, checkpoints
-- [Inference](inference.md): script and direct `predict_step` workflows
+- [Inference](inference.md): public API, global export, script, and direct `predict_step` workflows
+- [Public Inference Package](public-inference-package.md): `depth-recon` install, API, CLI, asset resolution, and outputs
 - [FUll settings documentation](settings.md#full-settings-documentation): per-file config keys, defaults, and explanations
 - [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling
 - [Experiments](experiments.md): qualitative test results
 - [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference
 - [Development](development.md): known issues, TODOs, and roadmap
 - [API Reference](api.md): auto-generated module reference via `mkdocstrings`
-

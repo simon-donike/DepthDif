@@ -40,7 +40,31 @@ Equivalent script wrappers:
 See [Autoencoder + Latent Diffusion](autoencoder.md) for architecture, goals, limitations, and workflow details.
 
 ## Quick Inference
-Set config/checkpoint constants at the top of `inference/run_single.py`, then run:
+For public inference from PyPI, install the package and run one ISO week:
+
+```bash
+python -m pip install depth-recon
+```
+
+```python
+from depth_recon import run_week_inference
+
+run_dir = run_week_inference(
+    year=2015,
+    iso_week=25,
+    rectangle=(-20.0, 30.0, 10.0, 50.0),
+    device="cuda",
+)
+print(run_dir)
+```
+
+The package downloads the public model artifacts from Hugging Face, downloads
+EN4/ARGO and OSTIA source files when needed, and writes prediction GeoTIFFs under
+`inference/outputs/depthdif_argo_<YYYYMMDD>/`. See
+[Public Inference Package](public-inference-package.md) for the full API and CLI.
+
+For repository-local smoke checks, set config/checkpoint constants at the top of
+`inference/run_single.py`, then run:
 
 ```bash
 /work/envs/depth/bin/python inference/run_single.py
@@ -62,4 +86,3 @@ To export one stitched world raster and prepare the hosted Cesium assets afterwa
   --rclone-remote r2:<bucket>/inference_production/globe \
   --rclone-sync-scope globe
 ```
-

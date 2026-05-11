@@ -25,7 +25,14 @@ This project uses Python 3.12.3.
 python -m pip install -r requirements.txt
 ```
 
-For public inference usage, the package can also be installed in editable mode:
+For public inference only, install the published PyPI package:
+
+```bash
+python -m pip install depth-recon
+```
+
+When developing from this repository, the same package can be installed in
+editable mode:
 
 ```bash
 python -m pip install -e .
@@ -81,7 +88,10 @@ Notes:
 
 ## Inference
 
-Public ISO-week inference API:
+Public ISO-week inference is available from the `depth-recon` PyPI package. It
+downloads the public model/config artifacts from Hugging Face, downloads EN4/ARGO
+and optionally OSTIA source files, and writes stitched prediction GeoTIFFs plus
+metadata for one ISO-week Wednesday.
 
 ```python
 from depth_recon import run_week_inference
@@ -130,6 +140,16 @@ depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
 depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
 ```
 
+The same inference call is also exposed as a console script:
+
+```bash
+depth-recon-infer-week \
+  --year 2015 \
+  --iso-week 25 \
+  --rectangle -20 30 10 50 \
+  --device cuda
+```
+
 Use `inference/run_single.py`:
 
 1. Set config/checkpoint constants at the top of `inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).
@@ -142,7 +162,7 @@ Use `inference/run_single.py`:
 /work/envs/depth/bin/python inference/run_single.py
 ```
 
-For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the configured patch dataset (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. Pass `--prediction-ensemble-runs 5` to average five stochastic predictions per patch before writing the GeoTIFFs consumed by the globe packager; the default `1` keeps the existing single-run behavior.
+For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the configured patch dataset (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. The exporter runs one stochastic prediction per patch; spatial smoothing comes from 75% patch overlap, overlap-weighted stitching, and the configurable export-time `--sigma` blur.
 
 For a pooled validation-set depth summary, use `inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
 

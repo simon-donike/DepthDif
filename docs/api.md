@@ -3,6 +3,12 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 
 ## Training & Inference Entry Points
 
+### `depth_recon`
+::: depth_recon
+
+### `inference.api`
+::: inference.api
+
 ### `train`
 ::: train
 
@@ -54,4 +60,3 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 
 ### `utils.validation_denoise`
 ::: utils.validation_denoise
-
