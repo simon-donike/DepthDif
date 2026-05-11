@@ -1,8 +1,19 @@
+# Example:
+# /work/envs/depth/bin/python experiments.py \
+#   --model-config configs/px_space/model_config.yaml \
+#   --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
+#   --train-config configs/px_space/training_config.yaml \
+#   --checkpoint logs/2026-02-25_12-32-00/last.ckpt \
+#   --output-dir temp/experiments/conditioning_ablations \
+#   --loader-split val \
+#   --device auto \
+#   --seed 7 \
+#   --strict-load
 """Run manual qualitative conditioning ablations on one sample.
 
 This script loads the configured model and checkpoint, creates a few fixed
 conditioning cases, runs `predict_step` on each one, and saves comparison plots
-plus compact tensor summaries for quick debugging.
+plus compact metrics and tensor summaries for quick debugging.
 
 Typical CLI:
     /work/envs/depth/bin/python experiments.py
@@ -10,8 +21,15 @@ Typical CLI:
 
 from __future__ import annotations
 
+import argparse
+import csv
+import json
 from pathlib import Path
 from typing import Any
+
+import matplotlib
+
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,7 +49,7 @@ from utils.normalizations import PLOT_CMAP, temperature_normalize
 from utils.stretching import minmax_stretch
 
 MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
-DATA_CONFIG_PATH = "configs/px_space/data_ostia.yaml"
+DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"
 TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
 
 LOADER_SPLIT = "val"
@@ -40,9 +58,30 @@ SEED = 7
 CHECKPOINT_PATH: str | None = None
 # Optional explicit checkpoint override loaded right after model instantiation.
 # Set to None to fall back to model.load_checkpoint then model.resume_checkpoint from model config.
-CHECKPOINT_OVERRIDE_PATH: str | None = "logs/2026-02-25_12-32-00/last.ckpt"
+CHECKPOINT_OVERRIDE_PATH: str | None = None
 STRICT_LOAD = False
-OUTPUT_DIR = Path("temp/images")
+OUTPUT_DIR = Path("temp/experiments/conditioning_ablations")
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI overrides while keeping constants editable for quick runs."""
+    parser = argparse.ArgumentParser(
+        description="Run conditioning ablation experiments on one dataloader sample."
+    )
+    parser.add_argument("--model-config", default=MODEL_CONFIG_PATH)
+    parser.add_argument("--data-config", default=DATA_CONFIG_PATH)
+    parser.add_argument("--train-config", default=TRAIN_CONFIG_PATH)
+    parser.add_argument(
+        "--checkpoint", default=CHECKPOINT_OVERRIDE_PATH or CHECKPOINT_PATH
+    )
+    parser.add_argument("--output-dir", default=str(OUTPUT_DIR))
+    parser.add_argument(
+        "--loader-split", choices=["train", "val"], default=LOADER_SPLIT
+    )
+    parser.add_argument("--device", default=DEVICE)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--strict-load", action="store_true", default=STRICT_LOAD)
+    return parser.parse_args()
 
 
 def _clone_batch(batch: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +145,141 @@ def _summarize_tensor(name: str, tensor: torch.Tensor) -> str:
     )
 
 
+def _metric_support(
+    predicted: torch.Tensor,
+    reference: torch.Tensor,
+    valid_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    """Build the finite, valid support mask for image-space metric calculation."""
+    support = torch.isfinite(predicted) & torch.isfinite(reference)
+    if valid_mask is not None:
+        # Masks in this codebase are float tensors where values above 0.5 are valid.
+        support = support & (valid_mask > 0.5)
+    return support
+
+
+def _error_metrics(
+    *,
+    predicted: torch.Tensor,
+    reference: torch.Tensor,
+    valid_mask: torch.Tensor | None,
+) -> dict[str, float | int]:
+    """Return MAE, RMSE, and bias over finite valid pixels."""
+    support = _metric_support(predicted, reference, valid_mask)
+    count = int(support.sum().item())
+    if count <= 0:
+        return {
+            "count": 0,
+            "mae_c": float("nan"),
+            "rmse_c": float("nan"),
+            "bias_c": float("nan"),
+        }
+
+    diff = (predicted - reference)[support].detach().float()
+    return {
+        "count": count,
+        "mae_c": float(torch.mean(torch.abs(diff)).item()),
+        "rmse_c": float(torch.sqrt(torch.mean(diff**2)).item()),
+        "bias_c": float(torch.mean(diff).item()),
+    }
+
+
+def _case_metrics(
+    *,
+    case_name: str,
+    source_batch: dict[str, Any],
+    case_batch: dict[str, Any],
+    pred: dict[str, Any],
+    baseline_pred: torch.Tensor | None,
+) -> dict[str, float | int | str]:
+    """Compute target, observed-input, and baseline-delta metrics for one case."""
+    y_hat_denorm = pred["y_hat_denorm"].detach().float()
+    y_target_denorm = temperature_normalize(
+        mode="denorm", tensor=source_batch["y"].detach().float()
+    )
+    x_denorm = temperature_normalize(
+        mode="denorm", tensor=source_batch["x"].detach().float()
+    )
+
+    target_metrics = _error_metrics(
+        predicted=y_hat_denorm,
+        reference=y_target_denorm,
+        valid_mask=source_batch.get("y_valid_mask"),
+    )
+    observed_metrics = _error_metrics(
+        predicted=y_hat_denorm,
+        reference=x_denorm,
+        valid_mask=source_batch.get("x_valid_mask"),
+    )
+    row: dict[str, float | int | str] = {
+        "case": case_name,
+        "target_valid_count": target_metrics["count"],
+        "target_mae_c": target_metrics["mae_c"],
+        "target_rmse_c": target_metrics["rmse_c"],
+        "target_bias_c": target_metrics["bias_c"],
+        "observed_argo_count": observed_metrics["count"],
+        "observed_argo_mae_c": observed_metrics["mae_c"],
+        "observed_argo_rmse_c": observed_metrics["rmse_c"],
+        "observed_argo_bias_c": observed_metrics["bias_c"],
+        "input_x_valid_fraction": _mask_fraction(case_batch.get("x_valid_mask")),
+        "input_eo_abs_mean": _abs_mean(case_batch.get("eo")),
+    }
+
+    if baseline_pred is not None:
+        delta_metrics = _error_metrics(
+            predicted=y_hat_denorm,
+            reference=baseline_pred,
+            valid_mask=source_batch.get("y_valid_mask"),
+        )
+        row["baseline_delta_mae_c"] = delta_metrics["mae_c"]
+        row["baseline_delta_rmse_c"] = delta_metrics["rmse_c"]
+    else:
+        row["baseline_delta_mae_c"] = 0.0
+        row["baseline_delta_rmse_c"] = 0.0
+    return row
+
+
+def _mask_fraction(mask: torch.Tensor | None) -> float:
+    """Return the fraction of mask elements marked valid."""
+    if mask is None:
+        return float("nan")
+    return float((mask.detach().float() > 0.5).float().mean().item())
+
+
+def _abs_mean(tensor: torch.Tensor | None) -> float:
+    """Return mean absolute value for a tensor, preserving missing tensors as NaN."""
+    if tensor is None:
+        return float("nan")
+    return float(tensor.detach().float().abs().mean().item())
+
+
+def _write_metrics_csv(
+    *,
+    output_path: Path,
+    rows: list[dict[str, float | int | str]],
+) -> None:
+    """Write experiment metrics to a stable CSV schema."""
+    fieldnames = [
+        "case",
+        "target_valid_count",
+        "target_mae_c",
+        "target_rmse_c",
+        "target_bias_c",
+        "observed_argo_count",
+        "observed_argo_mae_c",
+        "observed_argo_rmse_c",
+        "observed_argo_bias_c",
+        "baseline_delta_mae_c",
+        "baseline_delta_rmse_c",
+        "input_x_valid_fraction",
+        "input_eo_abs_mean",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _mask_for_sample(mask: torch.Tensor | None) -> torch.Tensor | None:
     """Return the first sample mask while preserving per-band masks when present."""
     if mask is None:
@@ -166,6 +340,7 @@ def _save_case_plot(
     case_name: str,
     case_batch: dict[str, Any],
     pred: dict[str, Any],
+    output_dir: Path,
 ) -> None:
     """Save one reconstruction grid image inspired by validation reconstruction logging."""
     x_denorm = temperature_normalize(
@@ -298,7 +473,7 @@ def _save_case_plot(
             axes[band_idx, 0].set_ylabel(f"b{band_idx}", rotation=90)
 
         fig.tight_layout()
-        output_path = OUTPUT_DIR / f"{case_name}.png"
+        output_path = output_dir / f"{case_name}.png"
         fig.savefig(output_path, dpi=160)
         print(f"Saved plot: {output_path}")
     finally:
@@ -307,40 +482,40 @@ def _save_case_plot(
 
 def main() -> None:
     """Run EO/X ablation experiments on one config-loaded dataloader sample."""
-    torch.manual_seed(int(SEED))
+    args = _parse_args()
+    output_dir = Path(args.output_dir)
+    torch.manual_seed(int(args.seed))
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_cfg = load_yaml(MODEL_CONFIG_PATH)
-    data_cfg = load_yaml(DATA_CONFIG_PATH)
-    training_cfg = load_yaml(TRAIN_CONFIG_PATH)
+    model_cfg = load_yaml(args.model_config)
+    data_cfg = load_yaml(args.data_config)
+    training_cfg = load_yaml(args.train_config)
     resolve_model_type(model_cfg)
 
-    device = choose_device(DEVICE)
+    device = choose_device(args.device)
 
-    dataset = build_dataset(DATA_CONFIG_PATH, data_cfg.get("dataset", {}))
+    dataset = build_dataset(args.data_config, data_cfg.get("dataset", {}))
     datamodule = build_datamodule(
         dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
     )
     datamodule.setup("fit")
 
     model = build_model(
-        model_config_path=MODEL_CONFIG_PATH,
-        data_config_path=DATA_CONFIG_PATH,
-        training_config_path=TRAIN_CONFIG_PATH,
+        model_config_path=args.model_config,
+        data_config_path=args.data_config,
+        training_config_path=args.train_config,
         model_cfg=model_cfg,
         datamodule=datamodule,
     )
 
-    ckpt_path = resolve_checkpoint_path(
-        CHECKPOINT_OVERRIDE_PATH or CHECKPOINT_PATH, model_cfg
-    )
+    ckpt_path = resolve_checkpoint_path(args.checkpoint, model_cfg)
     if ckpt_path is not None:
         checkpoint = torch.load(ckpt_path, map_location="cpu")
         state_dict = (
             checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
         )
-        model.load_state_dict(state_dict, strict=bool(STRICT_LOAD))
+        model.load_state_dict(state_dict, strict=bool(args.strict_load))
         print(f"Loaded checkpoint: {ckpt_path}")
     else:
         print("No checkpoint provided/found. Running with current model weights.")
@@ -350,7 +525,7 @@ def main() -> None:
 
     loader = (
         datamodule.train_dataloader()
-        if LOADER_SPLIT == "train"
+        if args.loader_split == "train"
         else datamodule.val_dataloader()
     )
     batch = _first_item_batch(to_device(next(iter(loader)), device))
@@ -372,6 +547,15 @@ def main() -> None:
                 disable_eo=True,
                 disable_x=False,
                 force_all_invalid=False,
+            ),
+        ),
+        (
+            "eo_only_no_x",
+            _build_case_batch(
+                batch,
+                disable_eo=False,
+                disable_x=True,
+                force_all_invalid=True,
             ),
         ),
         (
@@ -418,25 +602,76 @@ def main() -> None:
             "Model has date conditioning enabled, but batch has no 'date'."
         )
 
+    run_manifest = {
+        "model_config": str(args.model_config),
+        "data_config": str(args.data_config),
+        "train_config": str(args.train_config),
+        "checkpoint": str(ckpt_path) if ckpt_path is not None else None,
+        "loader_split": str(args.loader_split),
+        "device": str(device),
+        "seed": int(args.seed),
+        "cases": [case_name for case_name, _case_batch in cases],
+    }
+    manifest_path = output_dir / "run_manifest.json"
+    manifest_path.write_text(
+        json.dumps(run_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    metrics_rows: list[dict[str, float | int | str]] = []
+    summary_lines: list[str] = []
+    baseline_pred: torch.Tensor | None = None
     for case_name, case_batch in cases:
         with torch.no_grad():
             pred = model.predict_step(case_batch, batch_idx=0)
 
-        _save_case_plot(case_name=case_name, case_batch=case_batch, pred=pred)
+        if baseline_pred is None:
+            baseline_pred = pred["y_hat_denorm"].detach().float()
 
-        print(f"\n=== {case_name} ===")
-        print(_summarize_tensor("input_x", case_batch["x"]))
+        _save_case_plot(
+            case_name=case_name,
+            case_batch=case_batch,
+            pred=pred,
+            output_dir=output_dir,
+        )
+        metrics_rows.append(
+            _case_metrics(
+                case_name=case_name,
+                source_batch=batch,
+                case_batch=case_batch,
+                pred=pred,
+                baseline_pred=baseline_pred,
+            )
+        )
+
+        summary_lines.append(f"=== {case_name} ===")
+        summary_lines.append(_summarize_tensor("input_x", case_batch["x"]))
         if "eo" in case_batch:
-            print(_summarize_tensor("input_eo", case_batch["eo"]))
+            summary_lines.append(_summarize_tensor("input_eo", case_batch["eo"]))
         if "x_valid_mask" in case_batch:
-            print(_summarize_tensor("input_x_valid_mask", case_batch["x_valid_mask"]))
+            summary_lines.append(
+                _summarize_tensor("input_x_valid_mask", case_batch["x_valid_mask"])
+            )
         if "coords" in case_batch:
-            print(f"coords: {case_batch['coords'].detach().cpu().numpy().tolist()}")
+            summary_lines.append(
+                f"coords: {case_batch['coords'].detach().cpu().numpy().tolist()}"
+            )
         if "date" in case_batch:
-            print(f"date: {case_batch['date'].detach().cpu().numpy().tolist()}")
+            summary_lines.append(
+                f"date: {case_batch['date'].detach().cpu().numpy().tolist()}"
+            )
 
-        print(_summarize_tensor("y_hat", pred["y_hat"]))
-        print(_summarize_tensor("y_hat_denorm", pred["y_hat_denorm"]))
+        summary_lines.append(_summarize_tensor("y_hat", pred["y_hat"]))
+        summary_lines.append(_summarize_tensor("y_hat_denorm", pred["y_hat_denorm"]))
+        summary_lines.append("")
+
+    metrics_path = output_dir / "metrics.csv"
+    summary_path = output_dir / "tensor_summary.txt"
+    _write_metrics_csv(output_path=metrics_path, rows=metrics_rows)
+    summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
+    print(f"Wrote metrics: {metrics_path}")
+    print(f"Wrote tensor summary: {summary_path}")
+    print(f"Wrote run manifest: {manifest_path}")
 
 
 if __name__ == "__main__":

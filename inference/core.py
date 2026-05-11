@@ -53,7 +53,11 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
 
 
 def build_dataset(
-    data_config_path: str, ds_cfg: dict[str, Any], *, split: str = "all"
+    data_config_path: str,
+    ds_cfg: dict[str, Any],
+    *,
+    split: str = "all",
+    dataset_overrides: dict[str, Any] | None = None,
 ) -> torch.utils.data.Dataset:
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
@@ -61,6 +65,7 @@ def build_dataset(
         return ArgoNetCDFGriddedPatchDataset.from_config(
             data_config_path,
             split=split,
+            dataset_overrides=dataset_overrides,
         )
     raise ValueError(
         "Unsupported dataset variant "

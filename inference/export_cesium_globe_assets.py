@@ -653,11 +653,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args()
-
-    run_dir = Path(args.run_dir).resolve()
+def export_cesium_globe_assets(
+    *,
+    run_dir: Path,
+    public_base_url: str | None = None,
+    globe_dir_name: str = "globe",
+    template_path: Path = DEFAULT_TEMPLATE_PATH,
+    color_ramp_path: Path = DEFAULT_COLOR_RAMP_PATH,
+    rclone_remote: str | None = None,
+    rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
+    extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+) -> dict[str, Any]:
+    """Build Cesium globe assets for one global inference run and optionally upload."""
+    run_dir = Path(run_dir).resolve()
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
 
@@ -671,11 +679,11 @@ def main() -> None:
         run_summary,
     ) = _resolve_run_artifacts(run_dir)
 
-    globe_dir = run_dir / str(args.globe_dir_name)
+    globe_dir = run_dir / str(globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = globe_dir / ".tmp_colorized_rasters"
     _ensure_clean_directory(temp_dir)
-    color_ramp_path = Path(args.color_ramp_path)
+    color_ramp_path = Path(color_ramp_path)
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
 
@@ -703,7 +711,7 @@ def main() -> None:
         _run_gdal2tiles(
             prediction_colorized_path,
             prediction_tiles_dir_for_depth,
-            extra_zoom_levels=args.extra_zoom_levels,
+            extra_zoom_levels=extra_zoom_levels,
         )
         if prediction_tiles_dir is None:
             prediction_tiles_dir = prediction_tiles_dir_for_depth
@@ -726,7 +734,7 @@ def main() -> None:
             _run_gdal2tiles(
                 ground_truth_colorized_path,
                 ground_truth_tiles_dir_for_depth,
-                extra_zoom_levels=args.extra_zoom_levels,
+                extra_zoom_levels=extra_zoom_levels,
             )
             if ground_truth_tiles_dir is None:
                 ground_truth_tiles_dir = ground_truth_tiles_dir_for_depth
@@ -740,14 +748,14 @@ def main() -> None:
                 "channel_index": int(depth_export["channel_index"]),
                 "prediction_tiles_url": _resolve_layer_url(
                     prediction_tiles_dir_for_depth.name,
-                    public_base_url=args.public_base_url,
+                    public_base_url=public_base_url,
                 ),
                 "ground_truth_tiles_url": (
                     None
                     if ground_truth_tiles_dir_for_depth is None
                     else _resolve_layer_url(
                         ground_truth_tiles_dir_for_depth.name,
-                        public_base_url=args.public_base_url,
+                        public_base_url=public_base_url,
                     )
                 ),
             }
@@ -804,7 +812,7 @@ def main() -> None:
         if ground_truth_path is not None
         else None
     )
-    template = _load_template(Path(args.template_path))
+    template = _load_template(Path(template_path))
     config = build_globe_config(
         selected_date=run_summary.get("selected_date"),
         prediction_tiles_url=str(config_depth_levels[0]["prediction_tiles_url"]),
@@ -819,7 +827,7 @@ def main() -> None:
             if copied_argo_sample_locations_path is None
             else _resolve_layer_url(
                 copied_argo_sample_locations_path.name,
-                public_base_url=args.public_base_url,
+                public_base_url=public_base_url,
             )
         ),
         argo_points_url=(
@@ -827,7 +835,7 @@ def main() -> None:
             if copied_points_path is None
             else _resolve_layer_url(
                 copied_points_path.name,
-                public_base_url=args.public_base_url,
+                public_base_url=public_base_url,
             )
         ),
         patch_splits_url=(
@@ -835,7 +843,7 @@ def main() -> None:
             if copied_patch_splits_path is None
             else _resolve_layer_url(
                 copied_patch_splits_path.name,
-                public_base_url=args.public_base_url,
+                public_base_url=public_base_url,
             )
         ),
         full_sample_points_url=(
@@ -843,7 +851,7 @@ def main() -> None:
             if copied_full_sample_points_path is None
             else _resolve_layer_url(
                 copied_full_sample_points_path.name,
-                public_base_url=args.public_base_url,
+                public_base_url=public_base_url,
             )
         ),
         bounds=prediction_meta,
@@ -896,17 +904,23 @@ def main() -> None:
         f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
     )
     print(f"- color ramp: {color_ramp_path}")
-    print(f"- extra zoom levels: {max(0, int(args.extra_zoom_levels))}")
+    print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
     print("- tile resampling: nearest-neighbor")
-    if args.rclone_remote is not None:
+    upload_ok: bool | None = None
+    upload_message: str | None = None
+    upload_source: Path | None = None
+    if rclone_remote is not None:
         sync_source, sync_scope_label = _resolve_rclone_sync_source(
             run_dir=run_dir,
             globe_dir=globe_dir,
-            sync_scope=str(args.rclone_sync_scope),
+            sync_scope=str(rclone_sync_scope),
         )
-        ok, message = _sync_with_rclone(sync_source, args.rclone_remote)
+        upload_source = sync_source
+        ok, message = _sync_with_rclone(sync_source, rclone_remote)
+        upload_ok = bool(ok)
+        upload_message = str(message)
         if ok:
-            print(f"- rclone upload ({sync_scope_label}): {args.rclone_remote}")
+            print(f"- rclone upload ({sync_scope_label}): {rclone_remote}")
             print(f"  source: {sync_source}")
             print(f"  {message}")
         else:
@@ -914,7 +928,33 @@ def main() -> None:
             print(
                 "WARNING: Globe assets were still created locally and can be uploaded later with:"
             )
-            print(f"  rclone sync {sync_source} {args.rclone_remote}")
+            print(f"  rclone sync {sync_source} {rclone_remote}")
+
+    return {
+        "globe_dir": str(globe_dir),
+        "config_path": str(config_path),
+        "depth_tile_set_count": int(len(config_depth_levels)),
+        "upload_requested": rclone_remote is not None,
+        "upload_ok": upload_ok,
+        "upload_message": upload_message,
+        "upload_remote": rclone_remote,
+        "upload_source": None if upload_source is None else str(upload_source),
+    }
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    export_cesium_globe_assets(
+        run_dir=args.run_dir,
+        public_base_url=args.public_base_url,
+        globe_dir_name=args.globe_dir_name,
+        template_path=args.template_path,
+        color_ramp_path=args.color_ramp_path,
+        rclone_remote=args.rclone_remote,
+        rclone_sync_scope=args.rclone_sync_scope,
+        extra_zoom_levels=args.extra_zoom_levels,
+    )
 
 
 if __name__ == "__main__":

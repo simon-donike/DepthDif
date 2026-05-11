@@ -604,6 +604,17 @@ def _path_cache_hash(path: str | Path | None) -> str:
     return hashlib.sha1(raw).hexdigest()[:8]
 
 
+def _deep_update_config(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of a config mapping with nested override values applied."""
+    out = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_update_config(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
 def _force_include_cache_hash(regions: Sequence[_ForceIncludeRegion]) -> str:
     if not regions:
         return "none"
@@ -1340,6 +1351,7 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         config_path: str | Path | None = None,
         *,
         split: str = "all",
+        dataset_overrides: dict[str, Any] | None = None,
     ) -> "ArgoNetCDFGriddedPatchDataset":
         if config_path is None:
             config_path = cls.DEFAULT_CONFIG_PATH
@@ -1347,6 +1359,8 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             cfg = yaml.safe_load(f)
 
         ds_cfg = cfg.get("dataset", {})
+        if dataset_overrides:
+            ds_cfg = _deep_update_config(ds_cfg, dataset_overrides)
         return cls(
             argo_dir=cls._cfg_get(
                 ds_cfg,
