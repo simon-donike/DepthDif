@@ -488,6 +488,7 @@ def download_argo_for_week(
     cache_dir: str | Path | None = None,
     force_download: bool = False,
     downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Download and extract EN4/ARGO profile files needed for one ISO week."""
     output_path = Path(output_dir)
@@ -499,6 +500,10 @@ def download_argo_for_week(
         if not list(output_path.glob(f"*{month_year:04d}{month:02d}*.nc"))
     }
     if not missing_months:
+        if progress_callback is not None:
+            progress_callback(
+                "argo_cached", "EN4/ARGO monthly profile files", output_path
+            )
         return output_path
 
     archive_cache = (
@@ -511,7 +516,17 @@ def download_argo_for_week(
         zip_path = archive_cache / f"EN.4.2.2.profiles.g10.{archive_year}.zip"
         archive_months = {item for item in missing_months if item[0] == archive_year}
         if force_download or not zip_path.exists():
+            if progress_callback is not None:
+                progress_callback("argo_download_start", zip_path.name, zip_path)
             fetch(_en4_zip_url(base_url, archive_year), zip_path)
+            if progress_callback is not None:
+                progress_callback("argo_download_done", zip_path.name, zip_path)
+        elif progress_callback is not None:
+            progress_callback("argo_archive_cached", zip_path.name, zip_path)
+        if progress_callback is not None:
+            progress_callback(
+                "argo_unzip_start", f"{archive_year} monthly profile files", output_path
+            )
         extracted = _extract_matching_en4_months(
             zip_path=zip_path,
             output_dir=output_path,
@@ -522,6 +537,14 @@ def download_argo_for_week(
                 "Downloaded EN4 archive did not contain the requested month(s): "
                 f"{sorted(archive_months)}"
             )
+        if progress_callback is not None:
+            progress_callback(
+                "argo_unzip_done",
+                f"{len(extracted)} monthly profile file(s)",
+                output_path,
+            )
+    if progress_callback is not None:
+        progress_callback("argo_ready", "EN4/ARGO monthly profile files", output_path)
     return output_path
 
 
@@ -1081,6 +1104,7 @@ def run_week_inference(
             cache_dir=None if cache_dir is None else Path(cache_dir) / "en4",
             force_download=force_download,
             downloader=downloader,
+            progress_callback=progress_callback,
         )
     if auto_download_ostia:
         target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
@@ -1192,6 +1216,10 @@ def run_argo_week_inference(
         argo_target = (
             target_cache / "en4_profiles" if argo_dir is None else Path(argo_dir)
         )
+        if progress_callback is not None:
+            progress_callback(
+                "argo_prepare_start", "EN4/ARGO monthly profile files", argo_target
+            )
         argo_dir = download_argo_for_week(
             year,
             iso_week,
@@ -1199,11 +1227,16 @@ def run_argo_week_inference(
             cache_dir=target_cache / "en4",
             force_download=force_download,
             downloader=downloader,
+            progress_callback=progress_callback,
         )
     if argo_dir is None:
         raise ValueError("argo_dir is required when auto_download_argo=false.")
     if auto_download_ostia:
         ostia_target = target_cache / "ostia" if ostia_dir is None else Path(ostia_dir)
+        if progress_callback is not None:
+            progress_callback(
+                "ostia_download_start", "OSTIA sea-surface temperature", ostia_target
+            )
         ostia_dir = download_ostia_for_week(
             year,
             iso_week,
@@ -1213,11 +1246,19 @@ def run_argo_week_inference(
             password=copernicus_password,
             token=copernicus_token,
         )
+        if progress_callback is not None:
+            progress_callback(
+                "ostia_ready", "OSTIA sea-surface temperature", Path(ostia_dir)
+            )
     use_ostia_conditioning = ostia_dir is not None and str(ostia_dir).strip() != ""
 
     data_cfg = load_yaml(assets.data_config)
     training_cfg = load_yaml(assets.train_config)
     model_cfg = load_yaml(assets.model_config)
+    if progress_callback is not None:
+        progress_callback(
+            "patch_grid_start", "Selecting inference patches", Path(land_mask_path)
+        )
     rows, inference_grid_metadata = _build_public_argo_rows(
         data_cfg=data_cfg,
         year=year,
@@ -1228,6 +1269,10 @@ def run_argo_week_inference(
     )
     if not rows:
         raise RuntimeError("No public inference patches were selected.")
+    if progress_callback is not None:
+        progress_callback(
+            "patch_grid_done", f"{len(rows)} selected patch(es)", Path(output_root)
+        )
 
     tile_size = int(inference_grid_metadata["tile_size"])
     resolution_deg = float(inference_grid_metadata["resolution_deg"])
@@ -1321,6 +1366,17 @@ def run_argo_week_inference(
     target_device = choose_device(device)
     model = model.to(target_device)
     model.eval()
+    if progress_callback is not None:
+        progress_callback(
+            "profile_alignment_start",
+            "Building aligned ARGO profile tensors",
+            Path(argo_dir),
+        )
+        progress_callback(
+            "inference_start",
+            f"{len(rows)} patch(es) on {target_device}",
+            run_dir,
+        )
 
     print(
         "Preparing public ARGO inference: "
@@ -1387,7 +1443,17 @@ def run_argo_week_inference(
                     patch_values=prediction_depth_batch[local_idx, depth_idx],
                     layout=layout,
                 )
+        if progress_callback is not None:
+            progress_callback(
+                "inference_batch",
+                f"{min(start + len(batch_rows), len(rows))}/{len(rows)} patch(es)",
+                run_dir,
+            )
 
+    if progress_callback is not None:
+        progress_callback(
+            "export_start", "Writing GeoTIFF and GeoJSON outputs", run_dir
+        )
     for accumulator in pred_accumulators.values():
         _flush_accumulator(accumulator)
     argo_points_writer.close()
@@ -1474,6 +1540,8 @@ def run_argo_week_inference(
     }
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
+    if progress_callback is not None:
+        progress_callback("export_done", "Inference outputs", run_dir)
 
     for accumulator in pred_accumulators.values():
         _cleanup_accumulator(accumulator)
