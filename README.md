@@ -97,10 +97,12 @@ run_dir = run_week_inference(
 
 The public API downloads configs/checkpoints and the land mask from Hugging Face,
 downloads EN4/ARGO and, by default, OSTIA for the selected ISO week, and returns
-the GeoTIFF run directory. Pass `auto_download_ostia=False` without `ostia_dir`
-to run ARGO-only inference. GLORYS is not required for the standard public
-inference path; it is only needed for training or optional ground-truth
-comparison exports.
+the GeoTIFF run directory. Existing cached files are reused automatically. Pass
+`auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
+GLORYS is not required for the standard public inference path; it is only needed
+for training or optional ground-truth comparison exports.
+EN4/ARGO downloads use the Met Office annual EN.4.2.2 profile archives for each
+calendar month touched by the selected ISO week.
 OSTIA downloads use the Copernicus Marine CLI credentials configured in the
 environment, or credentials passed to `run_week_inference` via
 `copernicus_username` plus `copernicus_token`. The Copernicus Marine toolbox
@@ -108,7 +110,18 @@ accepts that token through its password field, so `copernicus_password` remains
 supported as a backwards-compatible alias.
 
 By default, the package uses `simon-donike/DepthDif` at revision `main`,
-`model_config.yaml`, and `depthdif_v1.ckpt`.
+`model_config.yaml`, `data_config.yaml`, `training_config.yaml`,
+`depthdif_v1.ckpt`, and `world_land_mask_glorys_0p1.tif`.
+
+To prepare the public model files and land mask before a run:
+
+```python
+from depth_recon import resolve_public_inference_assets
+
+bundle = resolve_public_inference_assets()
+print(bundle.assets.checkpoint)
+print(bundle.land_mask_path)
+```
 
 To fetch source files separately:
 

@@ -17,13 +17,16 @@ from .core import (
 )
 from .api import (
     InferenceAssets,
+    PublicInferenceAssets,
     download_argo_for_week,
     resolve_hf_assets,
+    resolve_public_inference_assets,
     run_week_inference,
 )
 
 __all__ = [
     "InferenceAssets",
+    "PublicInferenceAssets",
     "build_datamodule",
     "build_dataset",
     "build_model",
@@ -34,6 +37,7 @@ __all__ = [
     "load_yaml",
     "pretty_shape",
     "resolve_hf_assets",
+    "resolve_public_inference_assets",
     "resolve_checkpoint_path",
     "resolve_dataset_variant",
     "resolve_model_type",

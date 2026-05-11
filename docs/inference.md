@@ -8,9 +8,10 @@ DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow
 For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
 
 ## Workflow 0: Public ISO-Week API
-Use this path for PyPI and Colab-style inference. It resolves model configs and
-checkpoints from Hugging Face, optionally downloads the relevant EN4/ARGO archive,
-then calls the same GeoTIFF exporter used by production runs.
+Use this path for PyPI and Colab-style inference. It resolves model configs,
+checkpoint, and the land mask from Hugging Face, optionally downloads the
+relevant EN4/ARGO archive, then calls the same GeoTIFF exporter used by
+production runs.
 
 ```python
 from depth_recon import run_week_inference
@@ -29,12 +30,26 @@ The return value is the run directory containing GeoTIFFs, GeoJSON metadata,
 selected ISO-week patch that intersects `(lon_min, lat_min, lon_max, lat_max)`.
 When `glorys_dir` is omitted, this public path uses downloaded EN4/ARGO profiles
 plus downloaded OSTIA SST conditioning and skips GLORYS ground-truth exports.
+Existing cached model, data, and mask files are reused automatically.
+EN4/ARGO downloads use the Met Office annual EN.4.2.2 profile archives for each
+calendar month touched by the selected ISO week.
 OSTIA downloads use configured Copernicus Marine CLI credentials, or credentials
 passed as `copernicus_username` plus `copernicus_token`. The Copernicus Marine
 toolbox accepts that token through its password field, so
 `copernicus_password` remains supported as a backwards-compatible alias.
 By default, the package uses `simon-donike/DepthDif` at revision `main`,
-`model_config.yaml`, and `depthdif_v1.ckpt`.
+`model_config.yaml`, `data_config.yaml`, `training_config.yaml`,
+`depthdif_v1.ckpt`, and `world_land_mask_glorys_0p1.tif`.
+
+To prepare the public model files and land mask before calling inference:
+
+```python
+from depth_recon import resolve_public_inference_assets
+
+bundle = resolve_public_inference_assets()
+print(bundle.assets.checkpoint)
+print(bundle.land_mask_path)
+```
 
 Source files can be prepared separately:
 

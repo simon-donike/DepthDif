@@ -132,6 +132,7 @@ DEFAULT_GLORYS_DEPTH_AXIS_M = (
 
 Downloader = Callable[[str, Path], Path]
 CommandRunner = Callable[[Sequence[str]], None]
+ResolveProgressCallback = Callable[[str, str, Path], None]
 
 
 PUBLIC_DATA_CONFIG: dict[str, object] = {
@@ -209,6 +210,14 @@ class InferenceAssets:
     checkpoint: Path
 
 
+@dataclass(frozen=True)
+class PublicInferenceAssets:
+    """Local public inference artifacts, including the model assets and land mask."""
+
+    assets: InferenceAssets
+    land_mask_path: Path
+
+
 def _default_cache_dir() -> Path:
     """Return the default DepthDif artifact cache directory."""
     return Path.home() / ".cache" / "depthdif"
@@ -235,12 +244,20 @@ def _resolve_hf_file(
     cache_dir: Path,
     downloader: Downloader,
     force_download: bool,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Resolve one Hugging Face artifact into the local cache."""
     local_path = cache_dir / repo_id.replace("/", "--") / revision / repo_path
     if local_path.exists() and not force_download:
+        if progress_callback is not None:
+            progress_callback("cached", repo_path, local_path)
         return local_path
-    return downloader(_hf_url(repo_id, revision, repo_path), local_path)
+    if progress_callback is not None:
+        progress_callback("downloading", repo_path, local_path)
+    resolved_path = downloader(_hf_url(repo_id, revision, repo_path), local_path)
+    if progress_callback is not None:
+        progress_callback("downloaded", repo_path, resolved_path)
+    return resolved_path
 
 
 def _write_builtin_yaml(output_path: Path, payload: dict[str, object]) -> Path:
@@ -260,6 +277,7 @@ def _resolve_hf_or_builtin_yaml(
     downloader: Downloader,
     force_download: bool,
     builtin_payload: dict[str, object],
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Resolve one Hugging Face YAML file, falling back to built-in config on 404."""
     try:
@@ -270,11 +288,14 @@ def _resolve_hf_or_builtin_yaml(
             cache_dir=cache_dir,
             downloader=downloader,
             force_download=force_download,
+            progress_callback=progress_callback,
         )
     except urllib.error.HTTPError as exc:
         if int(exc.code) != 404:
             raise
         fallback_path = cache_dir / repo_id.replace("/", "--") / revision / repo_path
+        if progress_callback is not None:
+            progress_callback("builtin", repo_path, fallback_path)
         return _write_builtin_yaml(fallback_path, builtin_payload)
 
 
@@ -289,6 +310,7 @@ def resolve_hf_assets(
     checkpoint_path: str = DEFAULT_HF_CHECKPOINT,
     force_download: bool = False,
     downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> InferenceAssets:
     """Download or reuse configs and checkpoint from Hugging Face."""
     target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
@@ -301,6 +323,7 @@ def resolve_hf_assets(
             cache_dir=target_cache,
             downloader=fetch,
             force_download=force_download,
+            progress_callback=progress_callback,
         ),
         data_config=_resolve_hf_or_builtin_yaml(
             repo_id=config_repo,
@@ -310,6 +333,7 @@ def resolve_hf_assets(
             downloader=fetch,
             force_download=force_download,
             builtin_payload=PUBLIC_DATA_CONFIG,
+            progress_callback=progress_callback,
         ),
         train_config=_resolve_hf_or_builtin_yaml(
             repo_id=config_repo,
@@ -319,6 +343,7 @@ def resolve_hf_assets(
             downloader=fetch,
             force_download=force_download,
             builtin_payload=PUBLIC_TRAIN_CONFIG,
+            progress_callback=progress_callback,
         ),
         checkpoint=_resolve_hf_file(
             repo_id=config_repo,
@@ -327,6 +352,7 @@ def resolve_hf_assets(
             cache_dir=target_cache,
             downloader=fetch,
             force_download=force_download,
+            progress_callback=progress_callback,
         ),
     )
 
@@ -339,6 +365,7 @@ def resolve_hf_land_mask(
     land_mask_path: str = DEFAULT_HF_LAND_MASK,
     force_download: bool = False,
     downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Download or reuse the public land-mask GeoTIFF from Hugging Face."""
     target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
@@ -351,6 +378,7 @@ def resolve_hf_land_mask(
             cache_dir=target_cache,
             downloader=fetch,
             force_download=force_download,
+            progress_callback=progress_callback,
         )
     except urllib.error.HTTPError as exc:
         if int(exc.code) != 404:
@@ -358,8 +386,53 @@ def resolve_hf_land_mask(
         package_root = Path(__file__).resolve().parents[1]
         packaged_land_mask = package_root / str(land_mask_path)
         if packaged_land_mask.exists():
+            if progress_callback is not None:
+                progress_callback("packaged", land_mask_path, packaged_land_mask)
             return packaged_land_mask
         raise
+
+
+def resolve_public_inference_assets(
+    *,
+    config_repo: str = DEFAULT_HF_REPO_ID,
+    revision: str = DEFAULT_HF_REVISION,
+    cache_dir: str | Path | None = None,
+    model_config_path: str = DEFAULT_HF_MODEL_CONFIG,
+    data_config_path: str = DEFAULT_HF_DATA_CONFIG,
+    train_config_path: str = DEFAULT_HF_TRAIN_CONFIG,
+    checkpoint_path: str = DEFAULT_HF_CHECKPOINT,
+    land_mask_path: str = DEFAULT_HF_LAND_MASK,
+    force_download: bool = False,
+    downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
+) -> PublicInferenceAssets:
+    """Resolve all public artifacts needed before ARGO/OSTIA inference."""
+    target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
+    assets = resolve_hf_assets(
+        config_repo=config_repo,
+        revision=revision,
+        cache_dir=target_cache,
+        model_config_path=model_config_path,
+        data_config_path=data_config_path,
+        train_config_path=train_config_path,
+        checkpoint_path=checkpoint_path,
+        force_download=force_download,
+        downloader=downloader,
+        progress_callback=progress_callback,
+    )
+    resolved_land_mask_path = resolve_hf_land_mask(
+        config_repo=config_repo,
+        revision=revision,
+        cache_dir=target_cache,
+        land_mask_path=land_mask_path,
+        force_download=force_download,
+        downloader=downloader,
+        progress_callback=progress_callback,
+    )
+    return PublicInferenceAssets(
+        assets=assets,
+        land_mask_path=resolved_land_mask_path,
+    )
 
 
 def _week_months(
@@ -378,7 +451,7 @@ def _week_months(
 
 def _en4_zip_url(base_url: str, year: int) -> str:
     """Return the EN4 yearly profile ZIP URL for one calendar year."""
-    return f"{base_url.rstrip('/')}/EN.4.2.2.profiles.g10.{int(year)}.zip"
+    return f"{base_url.rstrip('/')}/EN.4.2.2/EN.4.2.2.profiles.g10.{int(year)}.zip"
 
 
 def _extract_matching_en4_months(
@@ -436,17 +509,18 @@ def download_argo_for_week(
 
     for archive_year in sorted({year_value for year_value, _ in missing_months}):
         zip_path = archive_cache / f"EN.4.2.2.profiles.g10.{archive_year}.zip"
+        archive_months = {item for item in missing_months if item[0] == archive_year}
         if force_download or not zip_path.exists():
             fetch(_en4_zip_url(base_url, archive_year), zip_path)
         extracted = _extract_matching_en4_months(
             zip_path=zip_path,
             output_dir=output_path,
-            months={item for item in missing_months if item[0] == archive_year},
+            months=archive_months,
         )
         if not extracted:
             raise RuntimeError(
                 "Downloaded EN4 archive did not contain the requested month(s): "
-                f"{sorted(missing_months)}"
+                f"{sorted(archive_months)}"
             )
     return output_path
 
@@ -942,6 +1016,7 @@ def run_week_inference(
     strict_load: bool = False,
     force_download: bool = False,
     downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Run DepthDif inference for one ISO week and return the run directory."""
     if glorys_dir is None:
@@ -975,6 +1050,7 @@ def run_week_inference(
             strict_load=strict_load,
             force_download=force_download,
             downloader=downloader,
+            progress_callback=progress_callback,
         )
 
     assets = resolve_hf_assets(
@@ -983,6 +1059,7 @@ def run_week_inference(
         cache_dir=cache_dir,
         force_download=force_download,
         downloader=downloader,
+        progress_callback=progress_callback,
     )
     if checkpoint is not None:
         assets = InferenceAssets(
@@ -1079,31 +1156,36 @@ def run_argo_week_inference(
     strict_load: bool = False,
     force_download: bool = False,
     downloader: Downloader | None = None,
+    progress_callback: ResolveProgressCallback | None = None,
 ) -> Path:
     """Run public ARGO inference for one ISO week and return the run directory."""
-    assets = resolve_hf_assets(
-        config_repo=config_repo,
-        revision=revision,
-        cache_dir=cache_dir,
-        force_download=force_download,
-        downloader=downloader,
-    )
+    target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
+    if land_mask_path is None:
+        public_assets = resolve_public_inference_assets(
+            config_repo=config_repo,
+            revision=revision,
+            cache_dir=target_cache,
+            force_download=force_download,
+            downloader=downloader,
+            progress_callback=progress_callback,
+        )
+        assets = public_assets.assets
+        land_mask_path = public_assets.land_mask_path
+    else:
+        assets = resolve_hf_assets(
+            config_repo=config_repo,
+            revision=revision,
+            cache_dir=target_cache,
+            force_download=force_download,
+            downloader=downloader,
+            progress_callback=progress_callback,
+        )
     if checkpoint is not None:
         assets = InferenceAssets(
             model_config=assets.model_config,
             data_config=assets.data_config,
             train_config=assets.train_config,
             checkpoint=Path(checkpoint),
-        )
-
-    target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
-    if land_mask_path is None:
-        land_mask_path = resolve_hf_land_mask(
-            config_repo=config_repo,
-            revision=revision,
-            cache_dir=target_cache,
-            force_download=force_download,
-            downloader=downloader,
         )
 
     if auto_download_argo:

@@ -7,16 +7,30 @@ try:
 except PackageNotFoundError:
     __version__ = "0+unknown"
 
-__all__ = ["__version__", "resolve_hf_assets", "run_week_inference"]
+__all__ = [
+    "__version__",
+    "resolve_hf_assets",
+    "resolve_public_inference_assets",
+    "run_week_inference",
+]
 
 
 def __getattr__(name: str):
     """Lazily expose public inference helpers without importing the full stack."""
-    if name in {"resolve_hf_assets", "run_week_inference"}:
-        from inference.api import resolve_hf_assets, run_week_inference
+    if name in {
+        "resolve_hf_assets",
+        "resolve_public_inference_assets",
+        "run_week_inference",
+    }:
+        from inference.api import (
+            resolve_hf_assets,
+            resolve_public_inference_assets,
+            run_week_inference,
+        )
 
         exports = {
             "resolve_hf_assets": resolve_hf_assets,
+            "resolve_public_inference_assets": resolve_public_inference_assets,
             "run_week_inference": run_week_inference,
         }
         return exports[name]

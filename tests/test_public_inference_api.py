@@ -22,6 +22,7 @@ from inference.api import (
     download_ostia_for_week,
     resolve_hf_assets,
     resolve_hf_land_mask,
+    resolve_public_inference_assets,
     run_week_inference,
 )
 
@@ -134,6 +135,89 @@ class TestPublicInferenceApi(unittest.TestCase):
         )
         self.assertTrue(str(path).endswith("masks/land.tif"))
 
+    def test_resolve_public_inference_assets_resolves_model_and_land_mask(
+        self,
+    ) -> None:
+        calls: list[tuple[str, Path]] = []
+        events: list[tuple[str, str, Path]] = []
+
+        def fake_download(url: str, output_path: Path) -> Path:
+            calls.append((url, output_path))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("artifact", encoding="utf-8")
+            return output_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle = resolve_public_inference_assets(
+                config_repo="owner/repo",
+                revision="rev",
+                cache_dir=tmpdir,
+                downloader=fake_download,
+                progress_callback=lambda event, name, path: events.append(
+                    (event, name, path)
+                ),
+            )
+
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(str(bundle.assets.checkpoint).endswith("depthdif_v1.ckpt"))
+        self.assertTrue(
+            str(bundle.land_mask_path).endswith("world_land_mask_glorys_0p1.tif")
+        )
+        self.assertIn(
+            ("downloaded", "world_land_mask_glorys_0p1.tif", bundle.land_mask_path),
+            events,
+        )
+
+    def test_resolve_hf_assets_reports_cached_files(self) -> None:
+        events: list[tuple[str, str, Path]] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_root = Path(tmpdir) / "owner--repo" / "rev"
+            for name in (
+                "model_config.yaml",
+                "data_config.yaml",
+                "training_config.yaml",
+                "depthdif_v1.ckpt",
+            ):
+                path = cache_root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("artifact", encoding="utf-8")
+
+            resolve_hf_assets(
+                config_repo="owner/repo",
+                revision="rev",
+                cache_dir=tmpdir,
+                downloader=mock.Mock(),
+                progress_callback=lambda event, name, path: events.append(
+                    (event, name, path)
+                ),
+            )
+
+        self.assertEqual([event for event, _name, _path in events], ["cached"] * 4)
+
+    def test_run_week_inference_forwards_public_asset_progress(self) -> None:
+        events: list[tuple[str, str, Path]] = []
+
+        def record_progress(event: str, name: str, path: Path) -> None:
+            events.append((event, name, path))
+
+        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+            run_public.return_value = Path("outputs/public")
+
+            run_week_inference(
+                year=2024,
+                iso_week=2,
+                rectangle=(-20.0, 30.0, 10.0, 50.0),
+                output_root="outputs",
+                device="cpu",
+                cache_dir="cache",
+                auto_download_ostia=False,
+                progress_callback=record_progress,
+            )
+
+        kwargs = run_public.call_args.kwargs
+        self.assertIs(kwargs["progress_callback"], record_progress)
+
     def test_export_args_from_public_api_keeps_cli_defaults(self) -> None:
         assets = InferenceAssets(
             model_config=Path("model.yaml"),
@@ -144,7 +228,7 @@ class TestPublicInferenceApi(unittest.TestCase):
 
         args = _export_args_from_public_api(
             assets=assets,
-            year=2026,
+            year=2025,
             iso_week=2,
             rectangle=(-20.0, 30.0, 10.0, 50.0),
             output_root="outputs",
@@ -158,7 +242,7 @@ class TestPublicInferenceApi(unittest.TestCase):
             strict_load=True,
         )
 
-        self.assertEqual(args.year, 2026)
+        self.assertEqual(args.year, 2025)
         self.assertEqual(args.iso_week, 2)
         self.assertEqual(args.split, "all")
         self.assertEqual(args.rectangle, [-20.0, 30.0, 10.0, 50.0])
@@ -245,7 +329,7 @@ class TestPublicInferenceApi(unittest.TestCase):
     def test_en4_zip_url_matches_existing_download_script_pattern(self) -> None:
         self.assertEqual(
             _en4_zip_url("https://example.test/base/", 2024),
-            "https://example.test/base/EN.4.2.2.profiles.g10.2024.zip",
+            "https://example.test/base/EN.4.2.2/EN.4.2.2.profiles.g10.2024.zip",
         )
 
     def test_download_argo_for_week_extracts_requested_month_without_network(
@@ -282,7 +366,7 @@ class TestPublicInferenceApi(unittest.TestCase):
 
         self.assertEqual(
             calls,
-            ["https://example.test/en4/EN.4.2.2.profiles.g10.2024.zip"],
+            ["https://example.test/en4/EN.4.2.2/" "EN.4.2.2.profiles.g10.2024.zip"],
         )
         self.assertEqual(extracted, ["EN.4.2.2.f.profiles.g10.202401.nc"])
 
