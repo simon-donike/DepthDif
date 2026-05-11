@@ -30,19 +30,22 @@ The script constants should be set explicitly. In this repository, the actively 
 - OSTIA + Argo NetCDF setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_netcdf.yaml`, `configs/px_space/training_config.yaml`
 
 ## Workflow 1b: Export Global Depth Rasters
-Use `inference/export_global.py` when you want one spatially complete raster from the configured patch dataset rather than a single sampled batch. The script:
-- loads the configured checkpoint and patch dataset
-- selects one exact daily snapshot either from `--date YYYYMMDD` or from the earliest available day inside `--year ... --iso-week ...`
-- runs batched `predict_step(...)` over all spatial patches for that day
+Use `inference/export_global.py` when you want the standard production inference path: one spatially complete ISO-week globe from raw ARGO/GLORYS/OSTIA/sea-surface products or an equivalent patch dataset. The script:
+- requires `--year ... --iso-week ...` and uses the ISO-week Wednesday as the single target date
+- forces the inference grid to `patch_grid_source=land_mask`, `require_argo_for_all=false`, and `patch_stride=tile_size/4` for 75% overlapping patches
+- keeps every tile with at least `--min-ocean-fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean
+- runs batched `predict_step(...)` over all global patches for that week-centered date
 - can average multiple stochastic predictions per patch via `--prediction-ensemble-runs`; the default `1` preserves single-run inference, while `--prediction-ensemble-runs 5` writes five-run averaged prediction GeoTIFFs for later XYZ tile/globe packaging
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
-- stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, 1000m, 2500m, and 5000m, then conservatively fills 1-2 pixel nodata seams in each written TIFF before finalizing it
+- stitches prediction GeoTIFFs for Surface, 100m, 250m, 500m, 1000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
+- applies the configured land-mask GeoTIFF at the final write step so land pixels are `0.0` and uncovered water remains nodata
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
 - exports matching GLORYS rasters for the same seven depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
 - exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
+- optionally packages Cesium globe assets and uploads them with `rclone` in the same command
 
 Typical run:
 ```bash
@@ -51,7 +54,11 @@ Typical run:
   --checkpoint logs/<run>/best.ckpt \
   --year 2010 \
   --iso-week 1 \
-  --device cuda
+  --device cuda \
+  --min-ocean-fraction 0.05 \
+  --public-base-url https://<bucket-or-site>/inference_production/globe/ \
+  --rclone-remote r2:<bucket>/inference_production/globe \
+  --rclone-sync-scope globe
 ```
 Add `--prediction-ensemble-runs 5` when you want five-run averaged predictions for the exported GeoTIFFs and the downstream globe tiles.
 
@@ -62,8 +69,9 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only
 - `graphs/`: one large PNG per sampled full-profile location with side-by-side temperature-vs-depth and absolute-error-vs-depth panels
+- `globe/`: Cesium tiles, hosted GeoJSON, copied graphs, and `globe-config.json` when `--public-base-url` or `--rclone-remote` is supplied
 - `selected_patches.csv`: the dataset rows used for the run
-- `run_summary.yaml`: checkpoint/config/date metadata for traceability
+- `run_summary.yaml`: checkpoint/config/date, forced inference-grid, land-mask, packaging, and upload metadata for traceability
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
@@ -95,7 +103,7 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 - `run_summary.yaml`: checkpoint/config/split metadata plus artifact filenames
 
 ## Workflow 1d: Package One Run for the Cesium Globe
-Use `inference/export_cesium_globe_assets.py` after the global export when you want one hosted asset bundle for the docs globe viewer. The script:
+The standard path is to let `inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
 - tiles every stitched prediction and ground-truth depth GeoTIFF with `gdal2tiles.py`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
@@ -111,16 +119,7 @@ Typical run:
   --public-base-url https://<bucket-or-site>/inference_production/globe/
 ```
 
-To upload one selected run into the hosted production area in the same step, provide an `rclone` destination:
-```bash
-/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
-  --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
-  --public-base-url https://<bucket-or-site>/inference_production/globe/ \
-  --rclone-remote r2:<bucket>/inference_production/globe \
-  --rclone-sync-scope globe
-```
-
-The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced with the example above. It includes:
+The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced. It includes:
 - `prediction_tiles_surface/`, `prediction_tiles_100m/`, etc.: TMS imagery tiles for each prediction depth raster
 - `ground_truth_tiles_surface/`, `ground_truth_tiles_100m/`, etc.: TMS imagery tiles for each GLORYS depth raster when present
 - `argo_sample_locations.geojson`: hosted combined ARGO point overlay used by the single ARGO globe layer, with per-feature marker metadata for ordinary points versus full-depth profiles
@@ -208,4 +207,3 @@ Validation/inference sampler can be switched via training config:
   - `ddim_temperature`
 
 The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.
-

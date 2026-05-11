@@ -19,6 +19,7 @@ from inference.export_global import (
     MosaicLayout,
     _cleanup_accumulator,
     _argo_point_features_for_patch,
+    _build_parser,
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _default_run_stem,
@@ -29,6 +30,7 @@ from inference.export_global import (
     _repair_small_nodata_gaps_2d,
     create_raster_accumulator,
     build_global_mosaic,
+    global_inference_dataset_overrides,
     resolve_depth_export_levels,
     select_export_indices,
     write_global_top_band_geotiff,
@@ -90,20 +92,87 @@ class TestGlobalInferenceExport(unittest.TestCase):
             ["--device", "cpu", "--sigma", "0"],
         )
 
-    def test_select_export_indices_picks_earliest_date_in_iso_week(self) -> None:
+    def test_select_export_indices_picks_iso_week_wednesday(self) -> None:
         rows = [
             {"date": 20260105, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
-            {"date": 20260105, "lat0": 0.0, "lat1": 1.0, "lon0": 1.0, "lon1": 2.0},
+            {"date": 20260107, "lat0": 0.0, "lat1": 1.0, "lon0": 1.0, "lon1": 2.0},
             {"date": 20260108, "lat0": 1.0, "lat1": 2.0, "lon0": 0.0, "lon1": 1.0},
             {"date": 20260112, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
         ]
 
         selection = select_export_indices(rows, iso_year=2026, iso_week=2)
 
-        self.assertEqual(selection.selected_date, 20260105)
+        self.assertEqual(selection.selected_date, 20260107)
         self.assertEqual(selection.iso_year, 2026)
         self.assertEqual(selection.iso_week, 2)
-        self.assertEqual(selection.indices, [0, 1])
+        self.assertEqual(selection.indices, [1])
+
+    def test_select_export_indices_handles_iso_year_boundary_wednesday(self) -> None:
+        rows = [
+            {"date": 20241231, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
+            {"date": 20250101, "lat0": 0.0, "lat1": 1.0, "lon0": 1.0, "lon1": 2.0},
+            {"date": 20250102, "lat0": 1.0, "lat1": 2.0, "lon0": 0.0, "lon1": 1.0},
+        ]
+
+        selection = select_export_indices(rows, iso_year=2025, iso_week=1)
+
+        self.assertEqual(selection.selected_date, 20250101)
+        self.assertEqual(selection.iso_year, 2025)
+        self.assertEqual(selection.iso_week, 1)
+        self.assertEqual(selection.indices, [1])
+
+    def test_global_inference_dataset_overrides_force_full_overlap_grid(self) -> None:
+        overrides, metadata = global_inference_dataset_overrides(
+            {"dataset": {"grid": {"tile_size": 128}}},
+            land_mask_path="mask.tif",
+        )
+
+        self.assertEqual(overrides["grid"]["patch_grid_source"], "land_mask")
+        self.assertEqual(overrides["grid"]["patch_stride"], 32)
+        self.assertEqual(overrides["grid"]["max_land_fraction"], 0.95)
+        self.assertFalse(overrides["selection"]["require_argo_for_all"])
+        self.assertAlmostEqual(metadata["patch_overlap_fraction"], 0.75)
+        self.assertAlmostEqual(metadata["min_ocean_fraction"], 0.05)
+
+    def test_global_inference_dataset_overrides_accept_custom_min_ocean_fraction(
+        self,
+    ) -> None:
+        overrides, metadata = global_inference_dataset_overrides(
+            {"dataset": {"grid": {"tile_size": 100}}},
+            land_mask_path="mask.tif",
+            min_ocean_fraction=0.20,
+        )
+
+        self.assertEqual(overrides["grid"]["patch_stride"], 25)
+        self.assertAlmostEqual(overrides["grid"]["max_land_fraction"], 0.80)
+        self.assertAlmostEqual(metadata["min_ocean_fraction"], 0.20)
+
+    def test_parser_accepts_one_command_upload_args(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "--year",
+                "2026",
+                "--iso-week",
+                "2",
+                "--public-base-url",
+                "https://example.test/globe",
+                "--rclone-remote",
+                "r2:bucket/globe",
+                "--rclone-sync-scope",
+                "globe",
+                "--extra-zoom-levels",
+                "1",
+                "--min-ocean-fraction",
+                "0.10",
+            ]
+        )
+
+        self.assertEqual(args.year, 2026)
+        self.assertEqual(args.iso_week, 2)
+        self.assertEqual(args.public_base_url, "https://example.test/globe")
+        self.assertEqual(args.rclone_remote, "r2:bucket/globe")
+        self.assertEqual(args.extra_zoom_levels, 1)
+        self.assertEqual(args.min_ocean_fraction, 0.10)
 
     def test_build_global_mosaic_places_adjacent_tiles_in_expected_grid(self) -> None:
         rows = [
@@ -129,6 +198,27 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertAlmostEqual(transform.e, -1.0, places=6)
         self.assertAlmostEqual(transform.c, 0.0, places=6)
         self.assertAlmostEqual(transform.f, 2.0, places=6)
+
+    def test_build_global_mosaic_averages_overlapping_tiles(self) -> None:
+        rows = [
+            {"date": 20260105, "lat0": 0.0, "lat1": 2.0, "lon0": 0.0, "lon1": 2.0},
+            {"date": 20260105, "lat0": 0.0, "lat1": 2.0, "lon0": 1.0, "lon1": 3.0},
+        ]
+        patches = [
+            np.full((2, 2), 2.0, dtype=np.float32),
+            np.full((2, 2), 6.0, dtype=np.float32),
+        ]
+
+        mosaic, _ = build_global_mosaic(
+            rows=rows,
+            top_band_predictions=patches,
+            nodata=-9999.0,
+        )
+
+        np.testing.assert_allclose(
+            mosaic,
+            np.asarray([[2.0, 4.0, 6.0], [2.0, 4.0, 6.0]], dtype=np.float32),
+        )
 
     def test_repair_small_nodata_gaps_fills_only_tiny_internal_seams(self) -> None:
         raster = np.asarray(
@@ -289,6 +379,59 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
                 self.assertEqual(band[8, 8], 9.0)
                 self.assertEqual(band[8, 7], 0.0)
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_zeroes_land_after_stitching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=4.0,
+                top=4.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=4,
+                height=4,
+                patch_width=4,
+                patch_height=4,
+                transform=from_origin(0.0, 4.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_land",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 0.0
+                accumulator.count_array[:] = 0
+                accumulator.sum_array[0, 0] = 8.0
+                accumulator.count_array[0, 0] = 2
+                accumulator.sum_array[0, 1] = 9.0
+                accumulator.count_array[0, 1] = 1
+                land_mask = np.zeros((4, 4), dtype=bool)
+                land_mask[0, 1] = True
+                land_mask[1, 1] = True
+
+                tif_path = tmp_path / "prediction_land.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={"kind": "prediction"},
+                    land_mask=land_mask,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+
+                self.assertEqual(band[0, 0], 4.0)
+                self.assertEqual(band[0, 1], 0.0)
+                self.assertEqual(band[1, 1], 0.0)
+                self.assertEqual(band[3, 3], -9999.0)
             finally:
                 _cleanup_accumulator(accumulator)
 

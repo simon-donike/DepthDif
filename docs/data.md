@@ -88,6 +88,13 @@ The GeoTIFF is on the global 0.1 degree GLORYS-style grid with `1=land` and
 and `dataset.grid.max_land_fraction` drops land-heavy candidates before dates
 are expanded.
 
+Global ISO-week inference overrides these training/data defaults at runtime:
+it uses the same land-mask grid, sets `patch_stride` to one quarter of
+`tile_size` for 75% overlap, keeps every patch with at least 5% ocean cover by
+default, and disables the ARGO requirement for the `all` split so the stitched
+raster covers the globe. The ocean threshold is configurable with
+`--min-ocean-fraction`.
+
 `dataset.grid.force_include_regions` can preserve named ocean regions with
 coast-heavy geometry. The active configs force-include Mediterranean-centered
 patches up to `0.60` land fraction while keeping the global `0.30` cap

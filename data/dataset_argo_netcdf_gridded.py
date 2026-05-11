@@ -604,7 +604,9 @@ def _path_cache_hash(path: str | Path | None) -> str:
     return hashlib.sha1(raw).hexdigest()[:8]
 
 
-def _deep_update_config(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+def _deep_update_config(
+    base: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
     """Return a copy of a config mapping with nested override values applied."""
     out = dict(base)
     for key, value in overrides.items():

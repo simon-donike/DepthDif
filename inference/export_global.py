@@ -1,8 +1,8 @@
-"""Run one global inference export for one selected daily snapshot.
+"""Run one global ISO-week inference export.
 
-This exporter selects every spatial patch for one exact date. When users
-provide an ISO week/year, the exporter picks the earliest available date in
-that week so the output stays one spatially complete raster rather than seven.
+This exporter treats an ISO week as one globally complete Wednesday snapshot,
+forces 75% overlapping land-mask-grid patches at inference time, stitches
+overlaps by averaging, zeroes land pixels, and can package/upload Cesium assets.
 
 Typical CLI:
 /work/envs/depth/bin/python inference/export_global.py \
@@ -12,25 +12,10 @@ Typical CLI:
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
   --export-ground-truth \
-  --sigma 1.0
-  
-  
-Run full including push:
-/work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --year 2015 \
-  --iso-week 25 \
-  --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
-  --device cuda \
-  --export-ground-truth \
-  --sigma 1.5;
-/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
-  --run-dir inference/outputs/global_top_band_20150615 \
+  --sigma 1.0 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
   --rclone-remote r2:depth-data/inference_production/globe \
   --rclone-sync-scope globe
-
-
 """
 
 from __future__ import annotations
@@ -47,6 +32,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 import rasterio
+import rasterio.warp
 from rasterio.enums import Resampling
 from rasterio.transform import Affine, from_origin
 from rasterio.windows import Window
@@ -60,6 +46,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_argo_netcdf_gridded import DEFAULT_LAND_MASK_PATH
+from inference.export_cesium_globe_assets import (
+    DEFAULT_EXTRA_ZOOM_LEVELS,
+    DEFAULT_RCLONE_SYNC_SCOPE,
+    export_cesium_globe_assets,
+)
 from inference.core import (
     build_dataset,
     build_model,
@@ -407,6 +399,11 @@ def _parse_yyyymmdd(value: Any) -> date:
     return datetime.strptime(str(int(value)), "%Y%m%d").date()
 
 
+def _iso_week_wednesday(iso_year: int, iso_week: int) -> date:
+    """Return the Wednesday date for an ISO year/week pair."""
+    return date.fromisocalendar(int(iso_year), int(iso_week), 3)
+
+
 def _iso_week_label_for_date(parsed_date: date) -> str:
     iso_year, iso_week, _iso_day = parsed_date.isocalendar()
     week_start = parsed_date - timedelta(days=parsed_date.isoweekday() - 1)
@@ -462,21 +459,16 @@ def select_export_indices(
         if not matching_indices:
             raise RuntimeError(f"No dataset rows matched exact date {int(exact_date)}.")
     elif iso_year is not None and iso_week is not None:
-        matching_dates = [
-            sample_date
-            for sample_date, _ in parsed_dates
-            if sample_date.isocalendar()[:2] == (int(iso_year), int(iso_week))
-        ]
-        if not matching_dates:
-            raise RuntimeError(
-                f"No dataset rows matched ISO week {int(iso_year)}-W{int(iso_week):02d}."
-            )
-        # One ISO week can contain several daily snapshots. Keep the export
-        # single-raster by choosing the earliest date that week.
-        selected = min(matching_dates)
+        selected = _iso_week_wednesday(int(iso_year), int(iso_week))
         matching_indices = [
             idx for sample_date, idx in parsed_dates if sample_date == selected
         ]
+        if not matching_indices:
+            raise RuntimeError(
+                "No dataset rows matched the ISO-week Wednesday target date "
+                f"{int(selected.strftime('%Y%m%d'))} for "
+                f"{int(iso_year)}-W{int(iso_week):02d}."
+            )
     else:
         selected = min(sample_date for sample_date, _ in parsed_dates)
         matching_indices = [
@@ -645,6 +637,79 @@ def _dataset_rows(dataset: Any) -> list[dict[str, Any]]:
     if hasattr(dataset, "_rows"):
         return list(getattr(dataset, "_rows"))
     raise RuntimeError("Dataset does not expose rows metadata for global export.")
+
+
+def _nested_cfg_value(mapping: dict[str, Any], path: str, *, default: Any) -> Any:
+    """Read a nested config value from a mapping."""
+    node: Any = mapping
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return default
+        node = node[part]
+    return node
+
+
+def global_inference_dataset_overrides(
+    data_cfg: dict[str, Any],
+    *,
+    land_mask_path: str | Path,
+    min_ocean_fraction: float = 0.05,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build forced dataset overrides and metadata for global inference."""
+    tile_size = int(_nested_cfg_value(data_cfg, "dataset.grid.tile_size", default=128))
+    patch_stride = max(1, tile_size // 4)
+    min_ocean_fraction = float(min_ocean_fraction)
+    if not (0.0 <= min_ocean_fraction <= 1.0):
+        raise ValueError("--min-ocean-fraction must be in [0, 1].")
+    max_land_fraction = 1.0 - min_ocean_fraction
+    overrides = {
+        "grid": {
+            "patch_grid_source": "land_mask",
+            "land_mask_path": str(land_mask_path),
+            "patch_stride": int(patch_stride),
+            "max_land_fraction": float(max_land_fraction),
+        },
+        "selection": {"require_argo_for_all": False},
+    }
+    metadata = {
+        "tile_size": int(tile_size),
+        "patch_stride": int(patch_stride),
+        "patch_overlap_fraction": 1.0 - (float(patch_stride) / float(tile_size)),
+        "min_ocean_fraction": float(min_ocean_fraction),
+        "max_land_fraction": float(max_land_fraction),
+        "patch_grid_source": "land_mask",
+        "land_mask_path": str(land_mask_path),
+        "require_argo_for_all": False,
+    }
+    return overrides, metadata
+
+
+def resolve_global_inference_dataset(
+    source: Any,
+    *,
+    data_config_path: str,
+    data_cfg: dict[str, Any],
+    split: str,
+    land_mask_path: str | Path,
+    min_ocean_fraction: float = 0.05,
+) -> tuple[Any, dict[str, Any]]:
+    """Resolve an existing dataset/dataloader or build the raw-product dataset."""
+    overrides, metadata = global_inference_dataset_overrides(
+        data_cfg,
+        land_mask_path=land_mask_path,
+        min_ocean_fraction=min_ocean_fraction,
+    )
+    if source is None:
+        dataset = build_dataset(
+            data_config_path,
+            data_cfg.get("dataset", {}),
+            split=split,
+            dataset_overrides=overrides,
+        )
+        return dataset, metadata
+    if hasattr(source, "dataset"):
+        return source.dataset, metadata
+    return source, metadata
 
 
 def _load_glorys_depth_axis_m(
@@ -1095,6 +1160,26 @@ def create_raster_accumulator(
     )
 
 
+def load_land_mask_for_layout(
+    *, land_mask_path: Path, layout: MosaicLayout
+) -> np.ndarray:
+    """Load and resample a land-mask GeoTIFF to a mosaic layout."""
+    if not land_mask_path.exists():
+        raise FileNotFoundError(f"Land-mask GeoTIFF does not exist: {land_mask_path}")
+    land_mask = np.zeros((int(layout.height), int(layout.width)), dtype=np.uint8)
+    with rasterio.open(land_mask_path) as src:
+        rasterio.warp.reproject(
+            source=rasterio.band(src, 1),
+            destination=land_mask,
+            src_transform=src.transform,
+            src_crs=src.crs,
+            dst_transform=layout.transform,
+            dst_crs="EPSG:4326",
+            resampling=Resampling.nearest,
+        )
+    return land_mask > 0
+
+
 def _flush_accumulator(accumulator: RasterAccumulator) -> None:
     accumulator.sum_array.flush()
     accumulator.count_array.flush()
@@ -1116,8 +1201,17 @@ def write_global_top_band_geotiff(
     band_description: str,
     tags: dict[str, str],
     extra_gaussian_blur_sigma: float = 0.0,
+    land_mask: np.ndarray | None = None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    land_mask_bool: np.ndarray | None = None
+    if land_mask is not None:
+        land_mask_bool = np.asarray(land_mask, dtype=bool)
+        if land_mask_bool.shape != (int(layout.height), int(layout.width)):
+            raise RuntimeError(
+                "Land mask shape does not match mosaic layout: "
+                f"{tuple(land_mask_bool.shape)} != {(int(layout.height), int(layout.width))}."
+            )
     profile = {
         "driver": "GTiff",
         "height": int(layout.height),
@@ -1184,7 +1278,11 @@ def write_global_top_band_geotiff(
             if float(extra_gaussian_blur_sigma) > 0.0
             else repaired_band
         )
-        if np.any(repaired_mask):
+        if land_mask_bool is not None:
+            # Land is zeroed after all averaging/repair/blur steps so it does not
+            # affect neighboring ocean pixels during post-processing.
+            final_band[land_mask_bool] = 0.0
+        if np.any(repaired_mask) or land_mask_bool is not None:
             ds.write(final_band, 1)
         elif float(extra_gaussian_blur_sigma) > 0.0:
             ds.write(final_band, 1)
@@ -1222,10 +1320,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--date",
         type=int,
         default=None,
-        help="Exact daily snapshot to export as YYYYMMDD.",
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--year", type=int, default=None, help="ISO year filter.")
-    parser.add_argument("--iso-week", type=int, default=None, help="ISO week filter.")
+    parser.add_argument("--year", type=int, required=True, help="ISO year filter.")
+    parser.add_argument("--iso-week", type=int, required=True, help="ISO week filter.")
     parser.add_argument(
         "--split",
         type=str,
@@ -1306,6 +1404,46 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--land-mask-path",
+        type=Path,
+        default=Path(DEFAULT_LAND_MASK_PATH),
+        help="GLORYS-aligned GeoTIFF with 1=land and 0=water for final zeroing.",
+    )
+    parser.add_argument(
+        "--min-ocean-fraction",
+        type=float,
+        default=0.05,
+        help=(
+            "Minimum ocean fraction required for an inference patch. "
+            "Defaults to 0.05, keeping every tile with at least 5%% ocean cover."
+        ),
+    )
+    parser.add_argument(
+        "--public-base-url",
+        type=str,
+        default=None,
+        help="Optional public base URL for generated Cesium globe assets.",
+    )
+    parser.add_argument(
+        "--rclone-remote",
+        type=str,
+        default=None,
+        help="Optional rclone destination for uploading generated globe assets.",
+    )
+    parser.add_argument(
+        "--rclone-sync-scope",
+        type=str,
+        choices=("globe", "run"),
+        default=DEFAULT_RCLONE_SYNC_SCOPE,
+        help="Choose whether rclone sync uploads generated globe assets or the full run.",
+    )
+    parser.add_argument(
+        "--extra-zoom-levels",
+        type=int,
+        default=DEFAULT_EXTRA_ZOOM_LEVELS,
+        help="Extra Cesium tile zoom levels beyond the raster native estimate.",
+    )
+    parser.add_argument(
         "--strict-load",
         action="store_true",
         help="Load checkpoint weights with strict=True instead of the repo default strict=False.",
@@ -1345,8 +1483,13 @@ def main() -> None:
 
     training_cfg = _load_yaml(args.train_config)
     data_cfg = load_yaml(args.data_config)
-    dataset = build_dataset(
-        args.data_config, data_cfg.get("dataset", {}), split=args.split
+    dataset, inference_grid_metadata = resolve_global_inference_dataset(
+        None,
+        data_config_path=args.data_config,
+        data_cfg=data_cfg,
+        split=args.split,
+        land_mask_path=args.land_mask_path,
+        min_ocean_fraction=args.min_ocean_fraction,
     )
     if hasattr(dataset, "return_info"):
         dataset.return_info = False
@@ -1403,6 +1546,10 @@ def main() -> None:
         int(level.channel_index) for level in depth_export_levels
     )
     layout = build_mosaic_layout(selected_rows, patch_shape=patch_shape)
+    land_mask = load_land_mask_for_layout(
+        land_mask_path=Path(args.land_mask_path),
+        layout=layout,
+    )
     scratch_dir = run_dir / ".scratch"
     pred_accumulators = {
         level.suffix: create_raster_accumulator(
@@ -1468,6 +1615,10 @@ def main() -> None:
         f"{'all' if export_all_full_samples else full_sample_count}, "
         f"prediction_ensemble_runs={prediction_ensemble_runs}, "
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
+        f"patch_stride={inference_grid_metadata['patch_stride']}, "
+        f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
+        f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
+        f"land_mask_path={args.land_mask_path}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
@@ -1761,6 +1912,8 @@ def main() -> None:
             "requested_depth_m": f"{float(level.requested_depth_m):.3f}",
             "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
             "channel_index": str(int(level.channel_index)),
+            "land_mask_path": str(args.land_mask_path),
+            "land_zeroed": "true",
         }
         write_global_top_band_geotiff(
             output_path=prediction_tif_path_for_level,
@@ -1780,6 +1933,7 @@ def main() -> None:
                 ),
             },
             extra_gaussian_blur_sigma=float(args.sigma),
+            land_mask=land_mask,
         )
         print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
 
@@ -1799,6 +1953,7 @@ def main() -> None:
                     "source": "DepthDif global weekly ground-truth export",
                     "kind": "ground_truth",
                 },
+                land_mask=land_mask,
             )
             print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
 
@@ -1837,9 +1992,13 @@ def main() -> None:
 
     run_summary = {
         "selected_date": int(selection.selected_date),
+        "target_date": int(selection.selected_date),
         "iso_year": int(selection.iso_year),
         "iso_week": int(selection.iso_week),
         "selected_patch_count": int(len(selection.indices)),
+        "inference_grid": inference_grid_metadata,
+        "land_mask_path": str(args.land_mask_path),
+        "land_zeroed": True,
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
         "data_config": str(args.data_config),
@@ -1888,6 +2047,7 @@ def main() -> None:
         ),
         "patch_splits_geojson_path": _summary_artifact_path(patch_splits_geojson_path),
         "patch_split_count": int(patch_splits_writer.feature_count),
+        "globe_packaging": None,
     }
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
@@ -1920,6 +2080,22 @@ def main() -> None:
             graphs_dir_path = run_dir / graphs_dir_path.name
         patch_splits_geojson_path = run_dir / patch_splits_geojson_path.name
 
+    packaging_result: dict[str, Any] | None = None
+    if args.public_base_url is not None or args.rclone_remote is not None:
+        packaging_result = export_cesium_globe_assets(
+            run_dir=run_dir,
+            public_base_url=args.public_base_url,
+            rclone_remote=args.rclone_remote,
+            rclone_sync_scope=args.rclone_sync_scope,
+            extra_zoom_levels=args.extra_zoom_levels,
+        )
+        summary_path = run_dir / "run_summary.yaml"
+        with summary_path.open("r", encoding="utf-8") as f:
+            packaged_summary = yaml.safe_load(f) or {}
+        packaged_summary["globe_packaging"] = packaging_result
+        with summary_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(packaged_summary, f, sort_keys=False)
+
     print(
         "Export complete: "
         f"date={selection.selected_date}, "
@@ -1930,7 +2106,8 @@ def main() -> None:
         f"argo_points={argo_points_geojson_path}, "
         f"full_sample_locations={full_sample_locations_geojson_path}, "
         f"graphs={graphs_dir_path}, "
-        f"patch_splits={patch_splits_geojson_path}"
+        f"patch_splits={patch_splits_geojson_path}, "
+        f"globe_packaging={packaging_result}"
     )
 
 
