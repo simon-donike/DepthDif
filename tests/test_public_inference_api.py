@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.error import HTTPError
 import tempfile
 import unittest
 from unittest import mock
@@ -72,9 +73,42 @@ class TestPublicInferenceApi(unittest.TestCase):
             urls,
         )
         self.assertIn(
+            "https://huggingface.co/simon-donike/DepthDif/resolve/main/data_config.yaml",
+            urls,
+        )
+        self.assertIn(
+            "https://huggingface.co/simon-donike/DepthDif/resolve/main/training_config.yaml",
+            urls,
+        )
+        self.assertIn(
             "https://huggingface.co/simon-donike/DepthDif/resolve/main/depthdif_v1.ckpt",
             urls,
         )
+
+    def test_resolve_hf_assets_uses_builtin_public_configs_when_missing(
+        self,
+    ) -> None:
+        def fake_download(url: str, output_path: Path) -> Path:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if url.endswith("model_config.yaml"):
+                output_path.write_text("model: {}\n", encoding="utf-8")
+                return output_path
+            if url.endswith("depthdif_v1.ckpt"):
+                output_path.write_text("checkpoint", encoding="utf-8")
+                return output_path
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            assets = resolve_hf_assets(cache_dir=tmpdir, downloader=fake_download)
+            with assets.data_config.open("r", encoding="utf-8") as f:
+                data_cfg = yaml.safe_load(f)
+            with assets.train_config.open("r", encoding="utf-8") as f:
+                train_cfg = yaml.safe_load(f)
+
+        self.assertEqual(
+            data_cfg["dataset"]["sampling"]["ostia_var_name"], "analysed_sst"
+        )
+        self.assertEqual(train_cfg["training"]["noise"]["schedule"], "cosine")
 
     def test_resolve_hf_land_mask_downloads_expected_path(self) -> None:
         calls: list[tuple[str, Path]] = []

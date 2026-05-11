@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from typing import Callable, Sequence
 from zipfile import ZipFile
@@ -66,10 +67,10 @@ from utils.normalizations import temperature_normalize
 DEFAULT_HF_REPO_ID = "simon-donike/DepthDif"
 DEFAULT_HF_REVISION = "main"
 DEFAULT_HF_MODEL_CONFIG = "model_config.yaml"
-DEFAULT_HF_DATA_CONFIG = DEFAULT_DATA_CONFIG
-DEFAULT_HF_TRAIN_CONFIG = DEFAULT_TRAIN_CONFIG
+DEFAULT_HF_DATA_CONFIG = "data_config.yaml"
+DEFAULT_HF_TRAIN_CONFIG = "training_config.yaml"
 DEFAULT_HF_CHECKPOINT = "depthdif_v1.ckpt"
-DEFAULT_HF_LAND_MASK = DEFAULT_LAND_MASK_PATH
+DEFAULT_HF_LAND_MASK = "world_land_mask_glorys_0p1.tif"
 DEFAULT_EN4_BASE_URL = "https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1"
 DEFAULT_OSTIA_DATASET_CANDIDATES = (
     "METOFFICE-GLO-SST-L4-REP-OBS-SST",
@@ -133,6 +134,71 @@ Downloader = Callable[[str, Path], Path]
 CommandRunner = Callable[[Sequence[str]], None]
 
 
+PUBLIC_DATA_CONFIG: dict[str, object] = {
+    "dataset": {
+        "core": {
+            "dataset_variant": "argo_netcdf_gridded",
+            "dataloader_type": "light",
+        },
+        "grid": {
+            "tile_size": 128,
+            "resolution_deg": 0.1,
+            "patch_grid_source": "land_mask",
+            "land_mask_path": DEFAULT_LAND_MASK_PATH,
+            "patch_stride": 64,
+            "max_land_fraction": 0.30,
+            "force_include_regions": [
+                {
+                    "name": "mediterranean",
+                    "lon_min": -6.0,
+                    "lon_max": 37.0,
+                    "lat_min": 30.0,
+                    "lat_max": 46.0,
+                    "max_land_fraction": 0.60,
+                }
+            ],
+            "invalid_threshold": 0.5,
+            "invalid_mask_flags": ["land"],
+        },
+        "sampling": {
+            "temporal_window_days": 7,
+            "ostia_var_name": "analysed_sst",
+            "argo_temp_var_name": "TEMP",
+            "argo_depth_var_name": "DEPH_CORRECTED",
+        },
+        "selection": {"require_argo_for_all": False},
+        "output": {"return_coords": True},
+        "runtime": {"random_seed": 7, "cache_size": 8},
+    },
+    "split": {"val_fraction": 0.2},
+    "dataloader": {"val_batch_size": 4},
+}
+
+PUBLIC_TRAIN_CONFIG: dict[str, object] = {
+    "training": {
+        "noise": {
+            "num_timesteps": 1000,
+            "schedule": "cosine",
+            "beta_start": 1.0e-4,
+            "beta_end": 2.0e-2,
+        },
+        "validation_sampling": {
+            "sampler": "ddpm",
+            "ddim_num_timesteps": 100,
+            "ddim_eta": 0.0,
+            "ddim_temperature": 1.0,
+            "log_intermediates": False,
+        },
+    },
+    "dataloader": {"val_batch_size": 4},
+    "scheduler": {
+        "warmup": {"enabled": False},
+        "reduce_on_plateau": {"enabled": False},
+    },
+    "wandb": {"project": "DepthDif", "log_model": "false"},
+}
+
+
 @dataclass(frozen=True)
 class InferenceAssets:
     """Local paths to model/config artifacts used by public inference."""
@@ -177,6 +243,41 @@ def _resolve_hf_file(
     return downloader(_hf_url(repo_id, revision, repo_path), local_path)
 
 
+def _write_builtin_yaml(output_path: Path, payload: dict[str, object]) -> Path:
+    """Write a built-in public inference YAML artifact."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(payload, f, sort_keys=False)
+    return output_path
+
+
+def _resolve_hf_or_builtin_yaml(
+    *,
+    repo_id: str,
+    revision: str,
+    repo_path: str,
+    cache_dir: Path,
+    downloader: Downloader,
+    force_download: bool,
+    builtin_payload: dict[str, object],
+) -> Path:
+    """Resolve one Hugging Face YAML file, falling back to built-in config on 404."""
+    try:
+        return _resolve_hf_file(
+            repo_id=repo_id,
+            revision=revision,
+            repo_path=repo_path,
+            cache_dir=cache_dir,
+            downloader=downloader,
+            force_download=force_download,
+        )
+    except urllib.error.HTTPError as exc:
+        if int(exc.code) != 404:
+            raise
+        fallback_path = cache_dir / repo_id.replace("/", "--") / revision / repo_path
+        return _write_builtin_yaml(fallback_path, builtin_payload)
+
+
 def resolve_hf_assets(
     *,
     config_repo: str = DEFAULT_HF_REPO_ID,
@@ -201,21 +302,23 @@ def resolve_hf_assets(
             downloader=fetch,
             force_download=force_download,
         ),
-        data_config=_resolve_hf_file(
+        data_config=_resolve_hf_or_builtin_yaml(
             repo_id=config_repo,
             revision=revision,
             repo_path=data_config_path,
             cache_dir=target_cache,
             downloader=fetch,
             force_download=force_download,
+            builtin_payload=PUBLIC_DATA_CONFIG,
         ),
-        train_config=_resolve_hf_file(
+        train_config=_resolve_hf_or_builtin_yaml(
             repo_id=config_repo,
             revision=revision,
             repo_path=train_config_path,
             cache_dir=target_cache,
             downloader=fetch,
             force_download=force_download,
+            builtin_payload=PUBLIC_TRAIN_CONFIG,
         ),
         checkpoint=_resolve_hf_file(
             repo_id=config_repo,
@@ -240,14 +343,23 @@ def resolve_hf_land_mask(
     """Download or reuse the public land-mask GeoTIFF from Hugging Face."""
     target_cache = _default_cache_dir() if cache_dir is None else Path(cache_dir)
     fetch = _download_url if downloader is None else downloader
-    return _resolve_hf_file(
-        repo_id=config_repo,
-        revision=revision,
-        repo_path=land_mask_path,
-        cache_dir=target_cache,
-        downloader=fetch,
-        force_download=force_download,
-    )
+    try:
+        return _resolve_hf_file(
+            repo_id=config_repo,
+            revision=revision,
+            repo_path=land_mask_path,
+            cache_dir=target_cache,
+            downloader=fetch,
+            force_download=force_download,
+        )
+    except urllib.error.HTTPError as exc:
+        if int(exc.code) != 404:
+            raise
+        package_root = Path(__file__).resolve().parents[1]
+        packaged_land_mask = package_root / str(land_mask_path)
+        if packaged_land_mask.exists():
+            return packaged_land_mask
+        raise
 
 
 def _week_months(
