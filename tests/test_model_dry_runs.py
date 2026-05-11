@@ -289,8 +289,9 @@ class TestModelDryRuns(unittest.TestCase):
             captured["kwargs"] = kwargs
             return torch.tensor(1.25, requires_grad=True)
 
-        with patch.object(model.model, "p_loss", fake_p_loss), patch.object(
-            model, "log", lambda *args, **kwargs: None
+        with (
+            patch.object(model.model, "p_loss", fake_p_loss),
+            patch.object(model, "log", lambda *args, **kwargs: None),
         ):
             loss = model.training_step(batch, batch_idx=0)
 
@@ -333,11 +334,15 @@ class TestModelDryRuns(unittest.TestCase):
             captured["kwargs"] = kwargs
             return torch.tensor(0.75)
 
-        with patch.object(model.model, "p_loss", fake_p_loss), patch.object(
-            model,
-            "_build_ambient_further_valid_mask",
-            lambda valid_mask, reference: further_mask,
-        ), patch.object(model, "log", lambda *args, **kwargs: None):
+        with (
+            patch.object(model.model, "p_loss", fake_p_loss),
+            patch.object(
+                model,
+                "_build_ambient_further_valid_mask",
+                lambda valid_mask, reference: further_mask,
+            ),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+        ):
             loss = model.validation_step(batch, batch_idx=0)
 
         expected_condition = model._prepare_condition_for_model(

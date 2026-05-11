@@ -212,12 +212,15 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("rclone was not found", message)
 
     def test_sync_with_rclone_streams_progress(self) -> None:
-        with mock.patch(
-            "inference.export_cesium_globe_assets.shutil.which",
-            return_value="/usr/bin/rclone",
-        ), mock.patch(
-            "inference.export_cesium_globe_assets.subprocess.run"
-        ) as run_mock:
+        with (
+            mock.patch(
+                "inference.export_cesium_globe_assets.shutil.which",
+                return_value="/usr/bin/rclone",
+            ),
+            mock.patch(
+                "inference.export_cesium_globe_assets.subprocess.run"
+            ) as run_mock,
+        ):
             ok, message = _sync_with_rclone(
                 Path("inference/outputs/example/globe"), "r2:bucket/path"
             )

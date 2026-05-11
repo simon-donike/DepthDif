@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "depth-recon"
+version = "0.1.0"
+description = "DepthDif public inference helpers for sparse ocean temperature diffusion."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "h5netcdf",
+    "einops",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pytorch-lightning",
+    "PyYAML",
+    "rasterio",
+    "scipy",
+    "torch",
+    "tqdm",
+    "xarray",
+]
+
+[project.scripts]
+depth-recon-infer-week = "inference.api:infer_week_cli"
+depth-recon-download-argo = "inference.api:download_argo_cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["inference*", "data*", "models*", "utils*"]
+namespaces = true

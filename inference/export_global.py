@@ -108,6 +108,20 @@ class ExportSelection:
 
 
 @dataclass(frozen=True)
+class ExportRunResult:
+    """Paths and metadata returned by the callable global inference exporter."""
+
+    run_dir: Path
+    summary_path: Path
+    prediction_tif_path: Path
+    ground_truth_tif_path: Path | None
+    selected_date: int
+    iso_year: int
+    iso_week: int
+    selected_patch_count: int
+
+
+@dataclass(frozen=True)
 class MosaicLayout:
     left: float
     bottom: float
@@ -451,6 +465,77 @@ def select_export_indices(
         iso_year=int(iso_info[0]),
         iso_week=int(iso_info[1]),
         indices=sorted_indices,
+    )
+
+
+def _lon_intervals(lon0: float, lon1: float) -> list[tuple[float, float]]:
+    """Return normalized lon intervals, splitting antimeridian crossings."""
+    raw_width = abs(float(lon1) - float(lon0))
+    if raw_width >= 360.0:
+        return [(-180.0, 180.0)]
+    left = float(((float(lon0) + 180.0) % 360.0) - 180.0)
+    right = float(((float(lon1) + 180.0) % 360.0) - 180.0)
+    if left <= right:
+        return [(left, right)]
+    return [(left, 180.0), (-180.0, right)]
+
+
+def _lon_intervals_intersect(
+    first: Sequence[tuple[float, float]],
+    second: Sequence[tuple[float, float]],
+) -> bool:
+    """Return True when two normalized longitude interval groups overlap."""
+    for first_left, first_right in first:
+        for second_left, second_right in second:
+            if max(float(first_left), float(second_left)) <= min(
+                float(first_right), float(second_right)
+            ):
+                return True
+    return False
+
+
+def _row_intersects_rectangle(
+    row: dict[str, Any],
+    rectangle: Sequence[float],
+) -> bool:
+    """Return True when a patch row intersects a lon/lat rectangle."""
+    if len(rectangle) != 4:
+        raise ValueError("rectangle must contain lon_min, lat_min, lon_max, lat_max.")
+    lon_min, lat_min, lon_max, lat_max = [float(value) for value in rectangle]
+    row_left, row_bottom, row_right, row_top = _row_bounds(row)
+    rect_bottom = min(lat_min, lat_max)
+    rect_top = max(lat_min, lat_max)
+    if max(float(row_bottom), rect_bottom) > min(float(row_top), rect_top):
+        return False
+    return _lon_intervals_intersect(
+        _lon_intervals(row_left, row_right),
+        _lon_intervals(lon_min, lon_max),
+    )
+
+
+def filter_selection_by_rectangle(
+    rows: Sequence[dict[str, Any]],
+    selection: ExportSelection,
+    rectangle: Sequence[float] | None,
+) -> ExportSelection:
+    """Filter selected patch indices to those intersecting a rectangle."""
+    if rectangle is None:
+        return selection
+    indices = [
+        int(idx)
+        for idx in selection.indices
+        if _row_intersects_rectangle(rows[int(idx)], rectangle)
+    ]
+    if not indices:
+        raise RuntimeError(
+            "No selected inference patches intersected rectangle "
+            f"{tuple(float(value) for value in rectangle)}."
+        )
+    return ExportSelection(
+        selected_date=selection.selected_date,
+        iso_year=selection.iso_year,
+        iso_week=selection.iso_week,
+        indices=indices,
     )
 
 
@@ -1378,6 +1463,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rectangle",
+        type=float,
+        nargs=4,
+        metavar=("LON_MIN", "LAT_MIN", "LON_MAX", "LAT_MAX"),
+        default=None,
+        help=(
+            "Optional lon/lat rectangle. Runs only selected ISO-week patches "
+            "that intersect these bounds."
+        ),
+    )
+    parser.add_argument(
         "--public-base-url",
         type=str,
         default=None,
@@ -1430,9 +1526,8 @@ def _normalize_cli_args(argv: Sequence[str]) -> list[str]:
     return normalized
 
 
-def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args(_normalize_cli_args(sys.argv[1:]))
+def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
+    """Run global inference from parsed/exporter-style arguments."""
     torch.manual_seed(int(args.seed))
     if args.split != "all":
         raise ValueError(
@@ -1461,6 +1556,7 @@ def main() -> None:
         iso_year=args.year,
         iso_week=args.iso_week,
     )
+    selection = filter_selection_by_rectangle(rows, selection, args.rectangle)
 
     run_stem = (
         args.output_name
@@ -1575,6 +1671,7 @@ def main() -> None:
         f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
         f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
         f"land_mask_path={args.land_mask_path}, "
+        f"rectangle={args.rectangle}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
@@ -1951,6 +2048,11 @@ def main() -> None:
         "iso_year": int(selection.iso_year),
         "iso_week": int(selection.iso_week),
         "selected_patch_count": int(len(selection.indices)),
+        "rectangle": (
+            None
+            if args.rectangle is None
+            else [float(value) for value in args.rectangle]
+        ),
         "inference_grid": inference_grid_metadata,
         "land_mask_path": str(args.land_mask_path),
         "land_zeroed": True,
@@ -2064,6 +2166,23 @@ def main() -> None:
         f"patch_splits={patch_splits_geojson_path}, "
         f"globe_packaging={packaging_result}"
     )
+    return ExportRunResult(
+        run_dir=run_dir,
+        summary_path=run_dir / "run_summary.yaml",
+        prediction_tif_path=prediction_tif_path,
+        ground_truth_tif_path=ground_truth_tif_path,
+        selected_date=int(selection.selected_date),
+        iso_year=int(selection.iso_year),
+        iso_week=int(selection.iso_week),
+        selected_patch_count=int(len(selection.indices)),
+    )
+
+
+def main() -> None:
+    """Run the CLI entry point."""
+    parser = _build_parser()
+    args = parser.parse_args(_normalize_cli_args(sys.argv[1:]))
+    run_global_inference(args)
 
 
 if __name__ == "__main__":

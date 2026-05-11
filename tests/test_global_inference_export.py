@@ -23,6 +23,7 @@ from inference.export_global import (
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _default_run_stem,
+    filter_selection_by_rectangle,
     _normalize_cli_args,
     _profile_graph_figure_title,
     _prepare_run_directory,
@@ -119,6 +120,59 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(selection.iso_year, 2025)
         self.assertEqual(selection.iso_week, 1)
         self.assertEqual(selection.indices, [1])
+
+    def test_filter_selection_by_rectangle_keeps_intersecting_patches(self) -> None:
+        rows = [
+            {"date": 20260107, "lat0": 0.0, "lat1": 10.0, "lon0": 0.0, "lon1": 10.0},
+            {"date": 20260107, "lat0": 0.0, "lat1": 10.0, "lon0": 10.0, "lon1": 20.0},
+            {"date": 20260107, "lat0": 20.0, "lat1": 30.0, "lon0": 0.0, "lon1": 10.0},
+        ]
+        selection = select_export_indices(rows, iso_year=2026, iso_week=2)
+
+        filtered = filter_selection_by_rectangle(
+            rows,
+            selection,
+            rectangle=(9.0, 1.0, 12.0, 9.0),
+        )
+
+        self.assertEqual(filtered.indices, [0, 1])
+
+    def test_filter_selection_by_rectangle_counts_touching_edges(self) -> None:
+        rows = [
+            {"date": 20260107, "lat0": 0.0, "lat1": 10.0, "lon0": 0.0, "lon1": 10.0},
+            {"date": 20260107, "lat0": 0.0, "lat1": 10.0, "lon0": 20.0, "lon1": 30.0},
+        ]
+        selection = select_export_indices(rows, iso_year=2026, iso_week=2)
+
+        filtered = filter_selection_by_rectangle(
+            rows,
+            selection,
+            rectangle=(10.0, 2.0, 15.0, 8.0),
+        )
+
+        self.assertEqual(filtered.indices, [0])
+
+    def test_filter_selection_by_rectangle_supports_antimeridian(self) -> None:
+        rows = [
+            {"date": 20260107, "lat0": -5.0, "lat1": 5.0, "lon0": 170.0, "lon1": 179.0},
+            {
+                "date": 20260107,
+                "lat0": -5.0,
+                "lat1": 5.0,
+                "lon0": -179.0,
+                "lon1": -170.0,
+            },
+            {"date": 20260107, "lat0": -5.0, "lat1": 5.0, "lon0": -20.0, "lon1": -10.0},
+        ]
+        selection = select_export_indices(rows, iso_year=2026, iso_week=2)
+
+        filtered = filter_selection_by_rectangle(
+            rows,
+            selection,
+            rectangle=(175.0, -2.0, -175.0, 2.0),
+        )
+
+        self.assertEqual(filtered.indices, [1, 0])
 
     def test_global_inference_dataset_overrides_force_full_overlap_grid(self) -> None:
         overrides, metadata = global_inference_dataset_overrides(

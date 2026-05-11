@@ -25,6 +25,12 @@ This project uses Python 3.12.3.
 python -m pip install -r requirements.txt
 ```
 
+For public inference usage, the package can also be installed in editable mode:
+
+```bash
+python -m pip install -e .
+```
+
 ## Model Overview
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
@@ -69,6 +75,32 @@ Notes:
 - Latent launcher scripts: `scripts/train_autoencoder.sh`, `scripts/train_latent_diffusion.sh`.
 
 ## Inference
+
+Public ISO-week inference API:
+
+```python
+from inference.api import run_week_inference
+
+run_dir = run_week_inference(
+    year=2015,
+    iso_week=25,
+    rectangle=(-20.0, 30.0, 10.0, 50.0),
+    device="cuda",
+    config_repo="donike/depthdif",
+    argo_dir="/path/to/en4_profiles",
+    glorys_dir="/path/to/glorys_weekly",
+    ostia_dir="/path/to/ostia",
+)
+```
+
+The public API downloads configs/checkpoints from Hugging Face and returns the
+GeoTIFF run directory. The current model still requires OSTIA and GLORYS source
+directories in addition to ARGO/EN4 observations. To fetch EN4 files for one ISO
+week:
+
+```bash
+depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
+```
 
 Use `inference/run_single.py`:
 

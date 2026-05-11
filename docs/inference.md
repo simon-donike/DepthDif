@@ -1,10 +1,45 @@
 # Inference
 There are two practical inference workflows in this repository:
+- call the public ISO-week API from `inference.api`
 - run the standalone script `inference/run_single.py`
 - call `PixelDiffusionConditional.predict_step(...)` directly
 
 DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow configs (`configs/lat_space/*`).
 For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
+
+## Workflow 0: Public ISO-Week API
+Use this path for PyPI and Colab-style inference. It resolves model configs and
+checkpoints from Hugging Face, optionally downloads the relevant EN4/ARGO archive,
+then calls the same GeoTIFF exporter used by production runs.
+
+```python
+from inference.api import run_week_inference
+
+run_dir = run_week_inference(
+    year=2015,
+    iso_week=25,
+    rectangle=(-20.0, 30.0, 10.0, 50.0),
+    device="cuda",
+    config_repo="donike/depthdif",
+    argo_dir="/path/to/en4_profiles",
+    glorys_dir="/path/to/glorys_weekly",
+    ostia_dir="/path/to/ostia",
+)
+```
+
+The return value is the run directory containing GeoTIFFs, GeoJSON metadata,
+`selected_patches.csv`, and `run_summary.yaml`. Rectangle filtering keeps every
+selected ISO-week patch that intersects `(lon_min, lat_min, lon_max, lat_max)`.
+
+ARGO/EN4 files can be prepared separately:
+
+```bash
+depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
+```
+
+The current public API does not make the model ARGO-only: OSTIA and GLORYS source
+directories are still required unless they are already encoded in the downloaded
+data config.
 
 ## Workflow 1: Use `inference/run_single.py`
 `inference/run_single.py` is a configurable script for quick prediction sanity checks.
