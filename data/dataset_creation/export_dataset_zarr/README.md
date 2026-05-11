@@ -24,11 +24,13 @@ Run from the repository root:
   --start-date 20100101 \
   --end-date 20240731 \
   --target-resolution-deg 0.1 \
+  --raster-interp-method nearest \
   --surface-aggregate-days 7 \
   --chunk-time 1 \
   --chunk-profile 20000 \
   --chunk-lat 256 \
   --chunk-lon 256 \
+  --compressor-clevel 1 \
   --dask-scheduler threads \
   --dask-num-workers 8 \
   --overwrite
@@ -51,13 +53,16 @@ share the weekly GLORYS cadence and grid. ARGO profile variables are projected
 from `DEPH_CORRECTED` onto the 50-level GLORYS depth coordinate. Continuous
 variables are packed to int16 with variable-specific scale factors, and the
 OSTIA mask is stored as int8. Set `--target-resolution-deg none` to keep the
-native GLORYS raster grid as the shared output grid.
+native GLORYS raster grid as the shared output grid. Use
+`--raster-interp-method nearest` for faster grid conversion when exact bilinear
+values are less important than throughput. Use `--compressor-clevel` to trade
+write speed against compressed size.
 The CLI `--surface-aggregate-days`, `--ostia-vars`, `--argo-vars`,
 `--argo-depth-var`, `--glorys-vars`, and `--sealevel-vars` flags still override
 those defaults for one-off exports.
 The exporter prints elapsed wall time for each major source scan/open/write
 phase. Use `--dask-scheduler` and `--dask-num-workers` to control dask execution
-while writing the zarr stores; leave them unset to keep dask's default scheduler.
+while writing the zarr stores; threaded execution is the default.
 
 Training can use `configs/px_space/data_ostia_argo_zarr.yaml` with
 `dataset.core.dataset_variant: argo_zarr_gridded`.

@@ -45,6 +45,17 @@ to int16, masks are stored as int8, and ARGO profile variables are pre-projected
 onto the GLORYS depth axis so the loader does not interpolate profiles at
 training time.
 
+An experimental raster export path is available in
+`data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py`. It
+writes dense GLORYS temperature/salinity, OSTIA SST, and sea-level `adt` as
+aligned uint8 GeoTIFFs on the land-mask grid, plus
+`argo/argo_profiles_on_grid.zarr` with precomputed ARGO target dates and grid
+row/column indices. The default output root is `/work/data/depthdif`, and the
+default aligned ARGO input is
+`/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`. Temperature
+rasters and ARGO temperature are stretched in Kelvin, so decoding the uint8
+values returns Kelvin.
+
 Only compact cache files are allowed under `metadata_cache_dir`. These caches
 store patch rows, split labels, land fractions, and ARGO support flags. They do
 not store model-ready patch tensors.

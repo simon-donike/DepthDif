@@ -14,6 +14,9 @@ Folder layout:
 - `export_dataset_zarr/`: compact zarr export workflow for ML-friendly
   training sources containing only OSTIA SST, ARGO
   temperature/salinity, GLORYS temperature/salinity/SSH, and altimetry SSH.
+- `export_dataset_geotiff/`: aligned uint8 GeoTIFF export workflow for dense
+  GLORYS, OSTIA, and sea-level rasters plus a compact grid-indexed ARGO profile
+  zarr.
 
 The current default source root is:
 
@@ -91,3 +94,27 @@ projected onto the GLORYS depth axis before writing:
 
 Then train with `configs/px_space/data_ostia_argo_zarr.yaml`, which selects
 `dataset.core.dataset_variant: argo_zarr_gridded`.
+
+## Export GeoTIFF Raster Training Stores
+
+The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
+variable/date on the land-mask grid, and writes ARGO profiles as a compact
+profile-indexed zarr with precomputed target date, grid row/column, temperature,
+salinity, and validity masks. Temperature stretches decode to Kelvin.
+
+By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
+is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
+
+```bash
+/work/envs/depth/bin/python data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py \
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+  --ostia-dir /data1/datasets/depth_v2/ostia \
+  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
+  --land-mask-path data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --output-dir /work/data/depthdif \
+  --start-date 20100101 \
+  --end-date 20240731 \
+  --surface-aggregate-days 7 \
+  --overwrite
+```

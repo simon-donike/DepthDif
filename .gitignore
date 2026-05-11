@@ -23,6 +23,7 @@ tok.txt
 # Packages
 depth_recon.egg-info
 build
+dist
 
 # temp file types
 *.csv

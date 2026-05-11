@@ -1,6 +1,54 @@
 # Example:
-# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py --argo-dir /data1/datasets/depth_v2/en4_profiles --glorys-dir /data1/datasets/depth_v2/glorys --ostia-dir /data1/datasets/depth_v2/ostia --sealevel-dir /data1/datasets/depth_v2/sealevel_daily --output-dir /data1/datasets/depth_v2/zarr_training --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml --start-date 20100101 --end-date 20240731 --target-resolution-deg 0.1 --surface-aggregate-days 7 --ostia-vars analysed_sst mask --argo-vars TEMP PSAL_CORRECTED --argo-depth-var DEPH_CORRECTED --glorys-vars thetao so zos --sealevel-vars adt --chunk-time 1 --chunk-profile 20000 --chunk-lat 256 --chunk-lon 256 --dask-scheduler threads --dask-num-workers 8 --overwrite
-"""Export a compact ML-facing zarr dataset from the raw NetCDF source folders."""
+# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py \
+#   --argo-dir /data1/datasets/depth_v2/en4_profiles \
+#   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+#   --ostia-dir /data1/datasets/depth_v2/ostia \
+#   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+#   --output-dir /data1/datasets/depth_v2/zarr_training \
+#   --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml \
+#   --start-date 20100101 \
+#   --end-date 20240731 \
+#   --target-resolution-deg 0.1 \
+#   --raster-interp-method nearest \
+#   --surface-aggregate-days 7 \
+#   --ostia-vars analysed_sst mask \
+#   --argo-vars TEMP PSAL_CORRECTED \
+#   --argo-depth-var DEPH_CORRECTED \
+#   --glorys-vars thetao so zos \
+#   --sealevel-vars adt \
+#   --chunk-time 1 \
+#   --chunk-profile 20000 \
+#   --chunk-lat 256 \
+#   --chunk-lon 256 \
+#   --compressor-clevel 1 \
+#   --dask-scheduler threads \
+#   --dask-num-workers 8 \
+#   --overwrite
+"""Export a compact ML-facing zarr dataset from the raw NetCDF source folders.
+
+/work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py \
+  --argo-dir /data1/datasets/depth_v2/en4_profiles \
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+  --ostia-dir /data1/datasets/depth_v2/ostia \
+  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --output-dir /work/data/depthdif \
+  --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml \
+  --start-date 20150101 \
+  --end-date 20231231 \
+  --target-resolution-deg 0.1 \
+  --raster-interp-method nearest \
+  --surface-aggregate-days 7 \
+  --chunk-time 1 \
+  --chunk-profile 20000 \
+  --chunk-lat 256 \
+  --chunk-lon 256 \
+  --compressor-clevel 1 \
+  --dask-scheduler threads \
+  --dask-num-workers 8 \
+  --overwrite
+
+
+"""
 
 from __future__ import annotations
 
@@ -8,14 +56,23 @@ import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 import time
+import threading
 from typing import Any, Sequence
 
 import dask
+from dask.callbacks import Callback
 import numpy as np
 from numcodecs import Blosc
+from tqdm import tqdm
 import xarray as xr
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Keep direct script execution working with repository-root imports.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from data.dataset_argo_netcdf_gridded import _align_argo_profile_to_glorys_depths
 from data.dataset_creation.export_aligned_argo.source_files import (
@@ -27,10 +84,11 @@ from data.dataset_creation.export_aligned_argo.source_files import (
 SOURCE_VARIABLE_CONFIG_PATH = Path(__file__).with_name("source_variables.yaml")
 DEFAULT_TARGET_RESOLUTION_DEG = 0.1
 DEFAULT_SURFACE_AGGREGATE_DAYS = 7
-DEFAULT_DASK_SCHEDULER = None
+DEFAULT_DASK_SCHEDULER = "threads"
+DEFAULT_RASTER_INTERP_METHOD = "linear"
+DEFAULT_COMPRESSOR_CLEVEL = 7
 PACKED_FILL_VALUE = -32768
 MASK_FILL_VALUE = -128
-ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=7, shuffle=Blosc.BITSHUFFLE)
 PACKED_SCALE_FACTORS = {
     "analysed_sst": 0.01,
     "thetao": 0.01,
@@ -57,6 +115,64 @@ class ZarrSourceVariables:
 class RasterTargetGrid:
     latitude: np.ndarray
     longitude: np.ndarray
+
+
+class TqdmDaskProgress(Callback):
+    """Render local Dask scheduler task progress through tqdm."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = str(label)
+        self._progress: tqdm | None = None
+        self._lock = threading.Lock()
+
+    def _start_state(self, dsk: dict[Any, Any], state: dict[str, Any]) -> None:
+        total = self._task_total(state)
+        self._progress = tqdm(
+            total=total,
+            desc=self.label,
+            unit="task",
+            dynamic_ncols=True,
+        )
+
+    def _posttask(
+        self,
+        key: Any,
+        result: Any,
+        dsk: dict[Any, Any],
+        state: dict[str, Any],
+        worker_id: Any,
+    ) -> None:
+        _ = key, result, dsk, worker_id
+        if self._progress is None:
+            return
+        with self._lock:
+            # Dask can discover the final task count after the progress bar starts.
+            self._progress.total = max(
+                int(self._progress.total or 0), self._task_total(state)
+            )
+            self._progress.update(1)
+            self._progress.refresh()
+
+    def _finish(
+        self,
+        dsk: dict[Any, Any],
+        state: dict[str, Any],
+        failed: bool,
+    ) -> None:
+        _ = dsk, state
+        if self._progress is None:
+            return
+        if not failed:
+            self._progress.n = int(self._progress.total or self._progress.n)
+        self._progress.close()
+
+    @staticmethod
+    def _task_total(state: dict[str, Any]) -> int:
+        return sum(
+            len(state.get(name, ()))
+            for name in ("ready", "waiting", "running", "finished")
+        )
 
 
 def _section(config: dict[str, Any], name: str) -> dict[str, Any]:
@@ -128,6 +244,14 @@ def _positive_int(text: str) -> int:
     value = int(text)
     if value < 1:
         raise argparse.ArgumentTypeError("value must be >= 1")
+    return value
+
+
+def _compressor_clevel(text: str) -> int:
+    """Parse a zstd compression level accepted by numcodecs.Blosc."""
+    value = int(text)
+    if not 0 <= value <= 9:
+        raise argparse.ArgumentTypeError("value must be in [0, 9]")
     return value
 
 
@@ -226,6 +350,7 @@ def _resample_horizontal_grid(
     *,
     target_resolution_deg: float | None,
     target_grid: RasterTargetGrid | None,
+    raster_interp_method: str,
 ) -> xr.Dataset:
     if target_resolution_deg is None and target_grid is None:
         return ds
@@ -251,7 +376,11 @@ def _resample_horizontal_grid(
         if lat_name not in da.dims or lon_name not in da.dims:
             data_vars[name] = da
             continue
-        method = "nearest" if _is_categorical_raster(str(name), da) else "linear"
+        method = (
+            "nearest"
+            if _is_categorical_raster(str(name), da)
+            else str(raster_interp_method)
+        )
         resampled = da.interp(
             target_coords,
             method=method,
@@ -270,6 +399,7 @@ def _resample_horizontal_grid(
         out.attrs["target_resolution_deg"] = float(target_resolution_deg)
     if target_grid is not None:
         out.attrs["horizontal_grid_source"] = "glorys"
+    out.attrs["raster_interp_method"] = str(raster_interp_method)
     return out
 
 
@@ -448,6 +578,7 @@ def _open_time_series_dataset(
     variable_names: Sequence[str],
     target_resolution_deg: float | None,
     target_grid: RasterTargetGrid | None,
+    raster_interp_method: str,
     target_timed_files: Sequence[TimedFile] | None,
     aggregate_days: int,
     chunk_time: int,
@@ -479,14 +610,9 @@ def _open_time_series_dataset(
         preprocess=preprocess,
         decode_times=False,
         mask_and_scale=True,
-        chunks={
-            "time": int(chunk_time),
-            "lat": int(chunk_lat),
-            "latitude": int(chunk_lat),
-            "lon": int(chunk_lon),
-            "longitude": int(chunk_lon),
-            "depth": -1,
-        },
+        # Preserve source horizontal chunks while opening, then apply the export
+        # chunk shape after temporal aggregation and grid resampling below.
+        chunks={"time": int(chunk_time), "depth": -1},
         parallel=False,
     )
     ds = ds.assign_coords(time=np.asarray(dates, dtype=np.int32))
@@ -501,6 +627,7 @@ def _open_time_series_dataset(
         ds,
         target_resolution_deg=target_resolution_deg,
         target_grid=target_grid,
+        raster_interp_method=raster_interp_method,
     )
     chunk_map = {"time": int(chunk_time)}
     for lat_name in ("lat", "latitude"):
@@ -674,23 +801,46 @@ def _add_argo_profile_helpers(
     return ds
 
 
-def _write_dataset(ds: xr.Dataset, path: Path, *, overwrite: bool) -> None:
+def _write_dataset(
+    ds: xr.Dataset,
+    path: Path,
+    *,
+    overwrite: bool,
+    compressor_clevel: int,
+) -> None:
     if path.exists() and not overwrite:
         raise FileExistsError(f"Output zarr already exists: {path}")
-    ds.to_zarr(
-        path,
-        mode="w",
-        consolidated=True,
-        encoding=_zarr_encoding(ds),
-        zarr_format=2,
+    try:
+        delayed_write = ds.to_zarr(
+            path,
+            mode="w",
+            consolidated=True,
+            encoding=_zarr_encoding(ds, compressor_clevel=compressor_clevel),
+            zarr_format=2,
+            compute=False,
+        )
+        with TqdmDaskProgress(f"Writing {path.name}"):
+            dask.compute(delayed_write)
+    finally:
+        ds.close()
+
+
+def _zarr_compressor(clevel: int) -> Blosc:
+    """Build the compressor used for all exported Zarr arrays."""
+    return Blosc(
+        cname="zstd",
+        clevel=int(clevel),
+        shuffle=Blosc.BITSHUFFLE,
     )
-    ds.close()
 
 
-def _zarr_encoding(ds: xr.Dataset) -> dict[str, dict[str, Any]]:
+def _zarr_encoding(
+    ds: xr.Dataset, *, compressor_clevel: int
+) -> dict[str, dict[str, Any]]:
     encoding: dict[str, dict[str, Any]] = {}
+    compressor = _zarr_compressor(compressor_clevel)
     for name, variable in ds.variables.items():
-        item: dict[str, Any] = {"compressor": ZARR_COMPRESSOR}
+        item: dict[str, Any] = {"compressor": compressor}
         if name in PACKED_SCALE_FACTORS:
             item.update(
                 {
@@ -737,11 +887,13 @@ def export_training_zarr_dataset(
     glorys_vars: Sequence[str] = DEFAULT_GLORYS_VARS,
     sealevel_vars: Sequence[str] = DEFAULT_SEALEVEL_VARS,
     target_resolution_deg: float | None = DEFAULT_TARGET_RESOLUTION_DEG,
+    raster_interp_method: str = DEFAULT_RASTER_INTERP_METHOD,
     surface_aggregate_days: int = DEFAULT_SURFACE_AGGREGATE_DAYS,
     chunk_time: int = 1,
     chunk_profile: int = 20000,
     chunk_lat: int = 256,
     chunk_lon: int = 256,
+    compressor_clevel: int = DEFAULT_COMPRESSOR_CLEVEL,
     dask_scheduler: str | None = DEFAULT_DASK_SCHEDULER,
     dask_num_workers: int | None = None,
     overwrite: bool = False,
@@ -773,6 +925,7 @@ def export_training_zarr_dataset(
                 variable_names=glorys_vars,
                 target_resolution_deg=target_resolution_deg,
                 target_grid=None,
+                raster_interp_method=raster_interp_method,
                 target_timed_files=None,
                 aggregate_days=1,
                 chunk_time=chunk_time,
@@ -785,6 +938,7 @@ def export_training_zarr_dataset(
                 glorys_ds,
                 output_root / "glorys.zarr",
                 overwrite=overwrite,
+                compressor_clevel=compressor_clevel,
             )
 
         with _timed_step("OSTIA open, aggregate, resample, and write"):
@@ -793,6 +947,7 @@ def export_training_zarr_dataset(
                 variable_names=ostia_vars,
                 target_resolution_deg=target_resolution_deg,
                 target_grid=raster_target_grid,
+                raster_interp_method=raster_interp_method,
                 target_timed_files=glorys_files,
                 aggregate_days=surface_aggregate_days,
                 chunk_time=chunk_time,
@@ -803,6 +958,7 @@ def export_training_zarr_dataset(
                 ostia_ds,
                 output_root / "ostia.zarr",
                 overwrite=overwrite,
+                compressor_clevel=compressor_clevel,
             )
 
         with _timed_step("ARGO open, project, and write"):
@@ -816,6 +972,7 @@ def export_training_zarr_dataset(
                 ),
                 output_root / "argo.zarr",
                 overwrite=overwrite,
+                compressor_clevel=compressor_clevel,
             )
 
         wrote_sealevel = False
@@ -834,6 +991,7 @@ def export_training_zarr_dataset(
                             variable_names=sealevel_vars,
                             target_resolution_deg=target_resolution_deg,
                             target_grid=raster_target_grid,
+                            raster_interp_method=raster_interp_method,
                             target_timed_files=glorys_files,
                             aggregate_days=surface_aggregate_days,
                             chunk_time=chunk_time,
@@ -842,6 +1000,7 @@ def export_training_zarr_dataset(
                         ),
                         output_root / "sealevel.zarr",
                         overwrite=overwrite,
+                        compressor_clevel=compressor_clevel,
                     )
                 wrote_sealevel = True
 
@@ -851,6 +1010,12 @@ def export_training_zarr_dataset(
             "date_range": {"start_date": start_date, "end_date": end_date},
             "raster_target_resolution_deg": target_resolution_deg,
             "raster_target_grid": "glorys",
+            "raster_interp_method": str(raster_interp_method),
+            "compressor": {
+                "name": "zstd",
+                "clevel": int(compressor_clevel),
+                "shuffle": "bitshuffle",
+            },
             "surface_temporal_aggregation": {
                 "target": "glorys",
                 "window_days": int(surface_aggregate_days),
@@ -903,6 +1068,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_TARGET_RESOLUTION_DEG,
     )
     parser.add_argument(
+        "--raster-interp-method",
+        choices=("linear", "nearest"),
+        default=DEFAULT_RASTER_INTERP_METHOD,
+    )
+    parser.add_argument(
         "--surface-aggregate-days",
         type=_positive_int,
         default=DEFAULT_SURFACE_AGGREGATE_DAYS,
@@ -916,6 +1086,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-profile", type=int, default=20000)
     parser.add_argument("--chunk-lat", type=int, default=256)
     parser.add_argument("--chunk-lon", type=int, default=256)
+    parser.add_argument(
+        "--compressor-clevel",
+        type=_compressor_clevel,
+        default=DEFAULT_COMPRESSOR_CLEVEL,
+    )
     parser.add_argument(
         "--dask-scheduler",
         choices=("threads", "processes", "single-threaded", "synchronous"),
@@ -943,11 +1118,13 @@ def main() -> None:
         glorys_vars=args.glorys_vars or source_variables.glorys_vars,
         sealevel_vars=args.sealevel_vars or source_variables.sealevel_vars,
         target_resolution_deg=args.target_resolution_deg,
+        raster_interp_method=args.raster_interp_method,
         surface_aggregate_days=args.surface_aggregate_days,
         chunk_time=args.chunk_time,
         chunk_profile=args.chunk_profile,
         chunk_lat=args.chunk_lat,
         chunk_lon=args.chunk_lon,
+        compressor_clevel=args.compressor_clevel,
         dask_scheduler=args.dask_scheduler,
         dask_num_workers=args.dask_num_workers,
         overwrite=args.overwrite,
