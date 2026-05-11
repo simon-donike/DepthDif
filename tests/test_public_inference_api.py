@@ -51,6 +51,28 @@ class TestPublicInferenceApi(unittest.TestCase):
         )
         self.assertTrue(str(assets.checkpoint).endswith("checkpoints/model.ckpt"))
 
+    def test_resolve_hf_assets_uses_depthdif_release_defaults(self) -> None:
+        calls: list[tuple[str, Path]] = []
+
+        def fake_download(url: str, output_path: Path) -> Path:
+            calls.append((url, output_path))
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("artifact", encoding="utf-8")
+            return output_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resolve_hf_assets(cache_dir=tmpdir, downloader=fake_download)
+
+        urls = [url for url, _path in calls]
+        self.assertIn(
+            "https://huggingface.co/simon-donike/DepthDif/resolve/main/model_config.yaml",
+            urls,
+        )
+        self.assertIn(
+            "https://huggingface.co/simon-donike/DepthDif/resolve/main/depthdif_v1.ckpt",
+            urls,
+        )
+
     def test_resolve_hf_land_mask_downloads_expected_path(self) -> None:
         calls: list[tuple[str, Path]] = []
 
@@ -131,7 +153,7 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertTrue(kwargs["auto_download_argo"])
         self.assertTrue(kwargs["auto_download_ostia"])
         self.assertEqual(kwargs["copernicus_token"], "api-key")
-        self.assertEqual(kwargs["config_repo"], "donike/depthdif")
+        self.assertEqual(kwargs["config_repo"], "simon-donike/DepthDif")
 
     def test_en4_zip_url_matches_existing_download_script_pattern(self) -> None:
         self.assertEqual(

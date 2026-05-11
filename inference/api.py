@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python -m inference.api infer-week --year 2015 --iso-week 25 --rectangle -20 30 10 50 --device cuda --config-repo donike/depthdif
+# /work/envs/depth/bin/python -m inference.api infer-week --year 2015 --iso-week 25 --rectangle -20 30 10 50 --device cuda --config-repo simon-donike/DepthDif
 """Public inference API for PyPI and notebook usage."""
 
 from __future__ import annotations
@@ -63,12 +63,12 @@ from inference.export_global import (
 )
 from utils.normalizations import temperature_normalize
 
-DEFAULT_HF_REPO_ID = "donike/depthdif"
+DEFAULT_HF_REPO_ID = "simon-donike/DepthDif"
 DEFAULT_HF_REVISION = "main"
-DEFAULT_HF_MODEL_CONFIG = DEFAULT_MODEL_CONFIG
+DEFAULT_HF_MODEL_CONFIG = "model_config.yaml"
 DEFAULT_HF_DATA_CONFIG = DEFAULT_DATA_CONFIG
 DEFAULT_HF_TRAIN_CONFIG = DEFAULT_TRAIN_CONFIG
-DEFAULT_HF_CHECKPOINT = "checkpoints/depthdif.ckpt"
+DEFAULT_HF_CHECKPOINT = "depthdif_v1.ckpt"
 DEFAULT_HF_LAND_MASK = DEFAULT_LAND_MASK_PATH
 DEFAULT_EN4_BASE_URL = "https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1"
 DEFAULT_OSTIA_DATASET_CANDIDATES = (

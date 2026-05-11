@@ -91,7 +91,7 @@ run_dir = run_week_inference(
     iso_week=25,
     rectangle=(-20.0, 30.0, 10.0, 50.0),
     device="cuda",
-    config_repo="donike/depthdif",
+    config_repo="simon-donike/DepthDif",
 )
 ```
 
@@ -104,6 +104,9 @@ environment, or credentials passed to `run_week_inference` via
 `copernicus_username` plus `copernicus_token`. The Copernicus Marine toolbox
 accepts that token through its password field, so `copernicus_password` remains
 supported as a backwards-compatible alias.
+
+By default, the package uses `simon-donike/DepthDif` at revision `main`,
+`model_config.yaml`, and `depthdif_v1.ckpt`.
 
 To fetch source files separately:
 
