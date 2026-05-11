@@ -92,6 +92,14 @@ Pass `auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
 The package fills the EO surface-conditioning channel with zeros in that mode so
 the checkpoint input contract remains unchanged.
 
+The public no-GLORYS branch writes prediction artifacts only:
+
+- `depthdif_argo_<YYYYMMDD>_prediction_<depth>.tif`: stitched prediction rasters
+- `depthdif_argo_<YYYYMMDD>_argo_points.geojson`: observed ARGO point locations
+- `depthdif_argo_<YYYYMMDD>_patch_splits.geojson`: selected inference patch polygons
+- `selected_patches.csv`: selected patch metadata
+- `run_summary.yaml`: model/config/checkpoint paths, selected date, grid settings, and artifact paths
+
 Supplying `glorys_dir` switches `run_week_inference(...)` to the repository's
 global exporter branch. That branch injects the provided source directories into
 a temporary data config, exports predictions, and can export matching GLORYS

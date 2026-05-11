@@ -16,6 +16,14 @@ The distribution exposes:
 - asset resolver: `resolve_public_inference_assets(...)`
 - console scripts: `depth-recon-infer-week`, `depth-recon-download-argo`, and `depth-recon-download-ostia`
 
+Check the installed package version with:
+
+```python
+import depth_recon
+
+print(depth_recon.__version__)
+```
+
 The package still depends on the same model code used in this repository. The
 wrapper solves the public-runtime problem: it resolves model artifacts, builds
 one ISO-week inference grid, downloads or accepts public source files, and
@@ -66,6 +74,11 @@ The default public workflow is:
 The public path never requires GLORYS. That matters because GLORYS is the
 training target and optional comparison product, but it is not needed to predict
 from ARGO and OSTIA inputs.
+
+The exported public depth levels follow the same nearest-channel mapping as the
+repository exporter: Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m,
+and 5000m. Each GeoTIFF records the requested depth, actual model/source depth,
+and channel index in metadata.
 
 ## Artifact Resolution
 By default, package inference resolves these files from
@@ -162,6 +175,11 @@ The equivalent module command is:
 ```bash
 python -m inference.api infer-week --year 2015 --iso-week 25 --device cuda
 ```
+
+The console scripts are thin wrappers around `python -m inference.api`:
+`depth-recon-infer-week` inserts the `infer-week` subcommand, while
+`depth-recon-download-argo` and `depth-recon-download-ostia` insert their
+matching download subcommands.
 
 ## Outputs
 The default public run directory is:
