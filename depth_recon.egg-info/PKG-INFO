@@ -1,3 +1,23 @@
+Metadata-Version: 2.4
+Name: depth-recon
+Version: 0.0.1a2
+Summary: DepthDif public inference helpers for sparse ocean temperature diffusion.
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: copernicusmarine
+Requires-Dist: h5netcdf
+Requires-Dist: einops
+Requires-Dist: matplotlib
+Requires-Dist: numpy<2.1,>=1.26
+Requires-Dist: pandas
+Requires-Dist: pytorch-lightning
+Requires-Dist: PyYAML
+Requires-Dist: rasterio
+Requires-Dist: scipy
+Requires-Dist: torch
+Requires-Dist: tqdm
+Requires-Dist: xarray
+
 <p align="center">
   <img src="docs/assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
 </p>

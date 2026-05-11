@@ -18,6 +18,7 @@ inference/outputs/*
 TODO
 administration/
 inference/outputs_v1_backup.zip
+tok.txt
 
 # temp file types
 *.csv

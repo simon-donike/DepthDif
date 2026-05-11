@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "depth-recon"
-version = "0.0.1a1"
+version = "0.0.1a2"
 description = "DepthDif public inference helpers for sparse ocean temperature diffusion."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,7 +13,7 @@ dependencies = [
     "h5netcdf",
     "einops",
     "matplotlib",
-    "numpy",
+    "numpy>=1.26,<2.1",
     "pandas",
     "pytorch-lightning",
     "PyYAML",
@@ -31,5 +31,5 @@ depth-recon-download-ostia = "inference.api:download_ostia_cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["inference*", "data*", "models*", "utils*"]
+include = ["depth_recon*", "inference*", "data*", "models*", "utils*"]
 namespaces = true

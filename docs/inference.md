@@ -13,7 +13,7 @@ checkpoints from Hugging Face, optionally downloads the relevant EN4/ARGO archiv
 then calls the same GeoTIFF exporter used by production runs.
 
 ```python
-from inference.api import run_week_inference
+from depth_recon import run_week_inference
 
 run_dir = run_week_inference(
     year=2015,
