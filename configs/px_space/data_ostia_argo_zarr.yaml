@@ -11,6 +11,17 @@ dataset:
   grid:
     tile_size: 128
     resolution_deg: 0.1
+    patch_grid_source: "land_mask"
+    land_mask_path: "data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
+    patch_stride: 64
+    max_land_fraction: 0.30
+    force_include_regions:
+      - name: "mediterranean"
+        lon_min: -6.0
+        lon_max: 37.0
+        lat_min: 30.0
+        lat_max: 46.0
+        max_land_fraction: 0.60
     invalid_threshold: 0.5
     invalid_mask_flags: ["land"]
   sampling:

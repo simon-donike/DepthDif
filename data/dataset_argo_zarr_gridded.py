@@ -12,16 +12,26 @@ import xarray as xr
 import yaml
 
 from data.dataset_argo_netcdf_gridded import (
+    DEFAULT_LAND_MASK_PATH,
     MISSING_TEXT_VALUES,
     PatchAxes,
     _GridParams,
     _align_argo_profile_to_glorys_depths,
+    _build_land_mask_patch_table,
+    _build_patch_lookup,
     _center_lon_deg,
     _date_range_yyyymmdd,
     _first_present_name,
+    _force_include_cache_hash,
+    _grid_starts,
     _juld_to_yyyymmdd,
     _normalize_lon,
+    _patch_ids_for_profile,
+    _path_cache_hash,
+    _parse_force_include_regions,
     _parse_date_int,
+    _sanitize_cache_text,
+    _validate_grid_params,
 )
 from data.dataset_creation.export_aligned_argo.source_files import (
     ARGO_DEPTH_VAR,
@@ -574,7 +584,7 @@ class ArgoZarrStore:
 class ZarrPatchIndex:
     """Build compact patch/date metadata rows from zarr stores."""
 
-    CACHE_VERSION = 1
+    CACHE_VERSION = 2
 
     def __init__(
         self,
@@ -596,6 +606,7 @@ class ZarrPatchIndex:
         self.grid_params = grid_params
         self.temporal_window_days = int(temporal_window_days)
         self.ostia_var_name = str(ostia_var_name)
+        _validate_grid_params(self.grid_params)
 
     def load_rows(self) -> list[dict[str, Any]]:
         cache_path = self._cache_path()
@@ -632,6 +643,10 @@ class ZarrPatchIndex:
         if self.cache_dir is None:
             return None
         res_text = str(float(self.grid_params.resolution_deg)).replace(".", "p")
+        land_text = str(float(self.grid_params.max_land_fraction)).replace(".", "p")
+        grid_source = _sanitize_cache_text(self.grid_params.patch_grid_source)
+        mask_hash = _path_cache_hash(self.grid_params.land_mask_path)
+        force_hash = _force_include_cache_hash(self.grid_params.force_include_regions)
         split_text = (
             f"valyear{int(self.grid_params.val_year)}"
             if self.grid_params.val_year is not None
@@ -640,6 +655,9 @@ class ZarrPatchIndex:
         name = (
             f"argo_zarr_gridded_v{self.CACHE_VERSION}_"
             f"tile{int(self.grid_params.tile_size)}_res{res_text}_"
+            f"stride{int(self.grid_params.effective_patch_stride)}_"
+            f"grid{grid_source}_land{land_text}_mask{mask_hash}_"
+            f"force{force_hash}_"
             f"days{int(self.temporal_window_days)}_{split_text}.csv"
         )
         return self.cache_dir / name
@@ -667,6 +685,15 @@ class ZarrPatchIndex:
         return candidate_dates
 
     def _build_patch_table(self) -> pd.DataFrame:
+        if str(self.grid_params.patch_grid_source).strip().lower() == "land_mask":
+            patch_df = _build_land_mask_patch_table(self.grid_params)
+            phases = self._split_phases(len(patch_df))
+            records = patch_df.to_dict(orient="records")
+            for rec, phase in zip(records, phases, strict=False):
+                rec["split"] = phase
+                rec["phase"] = phase
+            return pd.DataFrame.from_records(records)
+
         lat_values, lon_values = self.ostia_store.horizontal_grid(self.ostia_var_name)
         invalid_mask = self.ostia_store.invalid_mask(
             invalid_mask_flags=self.grid_params.invalid_mask_flags
@@ -682,8 +709,9 @@ class ZarrPatchIndex:
 
         records: list[dict[str, Any]] = []
         patch_id = 0
-        for y0 in range(0, int(lat_values.size) - tile + 1, tile):
-            for x0 in range(0, int(lon_values.size) - tile + 1, tile):
+        stride = int(self.grid_params.effective_patch_stride)
+        for y0 in _grid_starts(int(lat_values.size), tile, stride):
+            for x0 in _grid_starts(int(lon_values.size), tile, stride):
                 invalid_fraction = self._invalid_fraction(
                     invalid_mask,
                     y0=y0,
@@ -717,6 +745,8 @@ class ZarrPatchIndex:
                         "lon1": lon1,
                         "lat_center": 0.5 * (lat0 + lat1),
                         "lon_center": _center_lon_deg(lon0, lon1),
+                        "land_fraction": float(invalid_fraction),
+                        "ocean_fraction": float(1.0 - invalid_fraction),
                         "invalid_fraction": float(invalid_fraction),
                     }
                 )
@@ -771,20 +801,17 @@ class ZarrPatchIndex:
             return support_counts
 
         date_set = set(int(v) for v in dates)
-        patch_lookup = {
-            int(patch["patch_id"]): patch
-            for patch in patch_df.to_dict(orient="records")
-        }
+        patch_lookup = _build_patch_lookup(patch_df, self.grid_params)
         for profile_idx in range(int(self.argo_store.profile_date.size)):
             if not bool(self.argo_store._has_valid_temp[profile_idx]):
                 continue
             profile_date = int(self.argo_store.profile_date[profile_idx])
-            patch_id = self._patch_id_for_profile(
+            patch_ids = _patch_ids_for_profile(
                 patch_lookup,
                 lat=float(self.argo_store.latitude[profile_idx]),
                 lon=float(self.argo_store.longitude[profile_idx]),
             )
-            if patch_id is None:
+            if not patch_ids:
                 continue
             for date_value in _date_range_yyyymmdd(
                 profile_date,
@@ -792,8 +819,9 @@ class ZarrPatchIndex:
             ):
                 if int(date_value) not in date_set:
                     continue
-                key = (int(patch_id), int(date_value))
-                support_counts[key] = support_counts.get(key, 0) + 1
+                for patch_id in patch_ids:
+                    key = (int(patch_id), int(date_value))
+                    support_counts[key] = support_counts.get(key, 0) + 1
         return support_counts
 
     @staticmethod
@@ -841,6 +869,11 @@ class ArgoZarrGriddedPatchDataset(Dataset):
         split: str = "all",
         tile_size: int = 128,
         resolution_deg: float = 0.1,
+        patch_grid_source: str = "land_mask",
+        land_mask_path: str | Path | None = DEFAULT_LAND_MASK_PATH,
+        patch_stride: int | None = None,
+        max_land_fraction: float = 0.30,
+        force_include_regions: Sequence[dict[str, Any]] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
         glorys_salinity_var_name: str = "so",
@@ -869,6 +902,11 @@ class ArgoZarrGriddedPatchDataset(Dataset):
             raise ValueError("split must be one of: 'all', 'train', 'val'")
         self.tile_size = int(tile_size)
         self.resolution_deg = float(resolution_deg)
+        self.patch_grid_source = str(patch_grid_source)
+        self.land_mask_path = None if land_mask_path is None else Path(land_mask_path)
+        self.patch_stride = None if patch_stride is None else int(patch_stride)
+        self.max_land_fraction = float(max_land_fraction)
+        self.force_include_regions = _parse_force_include_regions(force_include_regions)
         self.temporal_window_days = int(temporal_window_days)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
@@ -970,6 +1008,11 @@ class ArgoZarrGriddedPatchDataset(Dataset):
             val_fraction=float(val_fraction),
             val_year=None if val_year is None else int(val_year),
             split_seed=self.random_seed,
+            patch_grid_source=self.patch_grid_source,
+            land_mask_path=self.land_mask_path,
+            patch_stride=self.patch_stride,
+            max_land_fraction=self.max_land_fraction,
+            force_include_regions=self.force_include_regions,
         )
         index = ZarrPatchIndex(
             ostia_store=self.ostia_store,
@@ -1114,6 +1157,42 @@ class ArgoZarrGriddedPatchDataset(Dataset):
                 cls._cfg_get(
                     ds_cfg, "grid.resolution_deg", "resolution_deg", default=0.1
                 )
+            ),
+            patch_grid_source=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.patch_grid_source",
+                    "patch_grid_source",
+                    default="land_mask",
+                )
+            ),
+            land_mask_path=cls._cfg_get(
+                ds_cfg,
+                "grid.land_mask_path",
+                "land_mask_path",
+                default=DEFAULT_LAND_MASK_PATH,
+            ),
+            patch_stride=cls._optional_int(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.patch_stride",
+                    "patch_stride",
+                    default=None,
+                )
+            ),
+            max_land_fraction=float(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.max_land_fraction",
+                    "max_land_fraction",
+                    default=0.30,
+                )
+            ),
+            force_include_regions=cls._cfg_get(
+                ds_cfg,
+                "grid.force_include_regions",
+                "force_include_regions",
+                default=None,
             ),
             temporal_window_days=int(
                 cls._cfg_get(

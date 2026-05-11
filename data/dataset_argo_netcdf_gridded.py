@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,6 +9,7 @@ from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
+import rasterio
 import torch
 from torch.utils.data import Dataset
 import xarray as xr
@@ -25,6 +27,9 @@ from utils.normalizations import temperature_normalize
 MISSING_TEXT_VALUES = frozenset({"", "__missing__", "nan", "none", "null"})
 GLORYS_RELATIVE_DEPTH_CUTOFF = 0.10
 GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M = 10.0
+DEFAULT_LAND_MASK_PATH = (
+    "data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
+)
 
 
 def _parse_date_int(value: Any) -> int:
@@ -545,6 +550,16 @@ class ArgoNetCDFStore:
 
 
 @dataclass(frozen=True)
+class _ForceIncludeRegion:
+    name: str
+    lon_min: float
+    lon_max: float
+    lat_min: float
+    lat_max: float
+    max_land_fraction: float
+
+
+@dataclass(frozen=True)
 class _GridParams:
     tile_size: int
     resolution_deg: float
@@ -553,12 +568,340 @@ class _GridParams:
     val_fraction: float
     val_year: int | None
     split_seed: int
+    patch_grid_source: str = "land_mask"
+    land_mask_path: str | Path | None = DEFAULT_LAND_MASK_PATH
+    patch_stride: int | None = None
+    max_land_fraction: float = 0.30
+    force_include_regions: tuple[_ForceIncludeRegion, ...] = ()
+
+    @property
+    def effective_patch_stride(self) -> int:
+        return int(self.tile_size if self.patch_stride is None else self.patch_stride)
+
+
+@dataclass(frozen=True)
+class _PatchGridLookup:
+    patch_by_start: dict[tuple[int, int], int]
+    y_starts: np.ndarray
+    x_starts: np.ndarray
+    grid_top: float
+    grid_left: float
+    tile_size: int
+    resolution_deg: float
+
+
+def _sanitize_cache_text(value: Any) -> str:
+    text = str(value).strip().lower().replace("\\", "/")
+    for old, new in (("/", "-"), (".", "p"), (" ", ""), (":", "-")):
+        text = text.replace(old, new)
+    return text
+
+
+def _path_cache_hash(path: str | Path | None) -> str:
+    if path is None:
+        return "none"
+    raw = str(Path(path)).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:8]
+
+
+def _force_include_cache_hash(regions: Sequence[_ForceIncludeRegion]) -> str:
+    if not regions:
+        return "none"
+    parts = [
+        (
+            region.name,
+            f"{region.lon_min:.6f}",
+            f"{region.lon_max:.6f}",
+            f"{region.lat_min:.6f}",
+            f"{region.lat_max:.6f}",
+            f"{region.max_land_fraction:.6f}",
+        )
+        for region in regions
+    ]
+    raw = repr(parts).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:8]
+
+
+def _parse_force_include_regions(value: Any) -> tuple[_ForceIncludeRegion, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str) and value.strip().lower() in MISSING_TEXT_VALUES:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("grid.force_include_regions must be a list of mappings.")
+
+    regions: list[_ForceIncludeRegion] = []
+    for idx, raw_region in enumerate(value):
+        if not isinstance(raw_region, dict):
+            raise ValueError("Each grid.force_include_regions item must be a mapping.")
+        name = str(raw_region.get("name", f"region_{idx}"))
+        lon_min = float(raw_region["lon_min"])
+        lon_max = float(raw_region["lon_max"])
+        lat_min = float(raw_region["lat_min"])
+        lat_max = float(raw_region["lat_max"])
+        max_land_fraction = float(raw_region.get("max_land_fraction", 1.0))
+        regions.append(
+            _ForceIncludeRegion(
+                name=name,
+                lon_min=min(lon_min, lon_max),
+                lon_max=max(lon_min, lon_max),
+                lat_min=min(lat_min, lat_max),
+                lat_max=max(lat_min, lat_max),
+                max_land_fraction=max_land_fraction,
+            )
+        )
+    return tuple(regions)
+
+
+def _grid_starts(size: int, tile: int, stride: int) -> list[int]:
+    if tile < 1:
+        raise ValueError("grid.tile_size must be >= 1.")
+    if stride < 1:
+        raise ValueError("grid.patch_stride must be >= 1.")
+    if int(size) < int(tile):
+        raise RuntimeError("Source grid is smaller than the requested tile size.")
+
+    last_start = int(size) - int(tile)
+    starts = list(range(0, last_start + 1, int(stride)))
+    if not starts or starts[-1] != last_start:
+        starts.append(last_start)
+    return starts
+
+
+def _summed_area_table(mask: np.ndarray) -> np.ndarray:
+    values = np.asarray(mask, dtype=np.float64)
+    table = np.zeros((values.shape[0] + 1, values.shape[1] + 1), dtype=np.float64)
+    table[1:, 1:] = values.cumsum(axis=0).cumsum(axis=1)
+    return table
+
+
+def _window_sum(table: np.ndarray, *, y0: int, x0: int, tile: int) -> float:
+    y1 = int(y0) + int(tile)
+    x1 = int(x0) + int(tile)
+    return float(
+        table[y1, x1]
+        - table[int(y0), x1]
+        - table[y1, int(x0)]
+        + table[int(y0), int(x0)]
+    )
+
+
+def _validate_grid_params(grid_params: _GridParams) -> None:
+    tile = int(grid_params.tile_size)
+    stride = int(grid_params.effective_patch_stride)
+    if tile < 1:
+        raise ValueError("grid.tile_size must be >= 1.")
+    if stride < 1:
+        raise ValueError("grid.patch_stride must be >= 1.")
+    if stride < tile and grid_params.val_year is None:
+        raise ValueError(
+            "Overlapping patch grids require split.val_year to avoid spatial "
+            "train/val leakage. Set split.val_year or use patch_stride >= tile_size."
+        )
+    if not (0.0 <= float(grid_params.max_land_fraction) <= 1.0):
+        raise ValueError("grid.max_land_fraction must be in [0, 1].")
+    for region in grid_params.force_include_regions:
+        if not (0.0 <= float(region.max_land_fraction) <= 1.0):
+            raise ValueError(
+                "grid.force_include_regions[].max_land_fraction must be in [0, 1]."
+            )
+    source = str(grid_params.patch_grid_source).strip().lower()
+    if source not in {"land_mask", "ostia_mask"}:
+        raise ValueError("grid.patch_grid_source must be 'land_mask' or 'ostia_mask'.")
+
+
+def _force_include_region_for_patch(
+    *,
+    lat_center: float,
+    lon_center: float,
+    land_fraction: float,
+    regions: Sequence[_ForceIncludeRegion],
+) -> _ForceIncludeRegion | None:
+    for region in regions:
+        lon_value = _normalize_lon(float(lon_center))
+        if (
+            region.lat_min <= float(lat_center) <= region.lat_max
+            and region.lon_min <= lon_value <= region.lon_max
+            and float(land_fraction) <= float(region.max_land_fraction)
+        ):
+            return region
+    return None
+
+
+def _build_patch_lookup(
+    patch_df: pd.DataFrame, grid_params: _GridParams
+) -> _PatchGridLookup:
+    if patch_df.empty:
+        raise RuntimeError("Cannot build patch lookup from an empty patch table.")
+
+    records = patch_df.to_dict(orient="records")
+    first = records[0]
+    resolution = float(grid_params.resolution_deg)
+    grid_top = max(float(first["lat0"]), float(first["lat1"])) + (
+        int(first["grid_y0"]) * resolution
+    )
+    grid_left = min(float(first["lon0"]), float(first["lon1"])) - (
+        int(first["grid_x0"]) * resolution
+    )
+    patch_by_start = {
+        (int(row["grid_y0"]), int(row["grid_x0"])): int(row["patch_id"])
+        for row in records
+    }
+    y_starts = np.asarray(
+        sorted({int(row["grid_y0"]) for row in records}), dtype=np.int64
+    )
+    x_starts = np.asarray(
+        sorted({int(row["grid_x0"]) for row in records}), dtype=np.int64
+    )
+    return _PatchGridLookup(
+        patch_by_start=patch_by_start,
+        y_starts=y_starts,
+        x_starts=x_starts,
+        grid_top=float(grid_top),
+        grid_left=float(grid_left),
+        tile_size=int(grid_params.tile_size),
+        resolution_deg=resolution,
+    )
+
+
+def _candidate_starts_for_pixel(
+    starts: np.ndarray, pixel_idx: int, tile: int
+) -> np.ndarray:
+    starts = np.asarray(starts, dtype=np.int64)
+    if starts.size == 0:
+        return starts
+    mask = (starts <= int(pixel_idx)) & (int(pixel_idx) < (starts + int(tile)))
+    return starts[mask]
+
+
+def _patch_ids_for_profile(
+    lookup: _PatchGridLookup,
+    *,
+    lat: float,
+    lon: float,
+) -> list[int]:
+    if not np.isfinite(lat) or not np.isfinite(lon):
+        return []
+
+    row_idx = int(
+        np.floor((float(lookup.grid_top) - float(lat)) / lookup.resolution_deg)
+    )
+    lon_value = _normalize_lon(float(lon))
+    if float(lookup.grid_left) >= 0.0 and lon_value < float(lookup.grid_left):
+        # Some legacy OSTIA grids use 0..360 longitude coordinates while ARGO
+        # profile longitudes are normalized to -180..180.
+        lon_value += 360.0
+    col_idx = int(
+        np.floor((lon_value - float(lookup.grid_left)) / lookup.resolution_deg)
+    )
+    y_candidates = _candidate_starts_for_pixel(
+        lookup.y_starts,
+        row_idx,
+        lookup.tile_size,
+    )
+    x_candidates = _candidate_starts_for_pixel(
+        lookup.x_starts,
+        col_idx,
+        lookup.tile_size,
+    )
+    patch_ids: list[int] = []
+    for y0 in y_candidates.tolist():
+        for x0 in x_candidates.tolist():
+            patch_id = lookup.patch_by_start.get((int(y0), int(x0)))
+            if patch_id is not None:
+                patch_ids.append(int(patch_id))
+    return patch_ids
+
+
+def _build_land_mask_patch_table(grid_params: _GridParams) -> pd.DataFrame:
+    land_mask_path = Path(
+        DEFAULT_LAND_MASK_PATH
+        if grid_params.land_mask_path is None
+        else grid_params.land_mask_path
+    )
+    if not land_mask_path.exists():
+        raise FileNotFoundError(f"Land-mask GeoTIFF does not exist: {land_mask_path}")
+
+    with rasterio.open(land_mask_path) as src:
+        land_mask = src.read(1)
+        transform = src.transform
+        width = int(src.width)
+        height = int(src.height)
+
+    tile = int(grid_params.tile_size)
+    stride = int(grid_params.effective_patch_stride)
+    resolution = float(grid_params.resolution_deg)
+    if not np.isclose(
+        float(transform.a), resolution, rtol=0.0, atol=1.0e-8
+    ) or not np.isclose(
+        abs(float(transform.e)),
+        resolution,
+        rtol=0.0,
+        atol=1.0e-8,
+    ):
+        raise RuntimeError(
+            "Land-mask GeoTIFF resolution does not match dataset.grid.resolution_deg: "
+            f"{float(transform.a)} x {abs(float(transform.e))} != {resolution}"
+        )
+
+    y_starts = _grid_starts(height, tile, stride)
+    x_starts = _grid_starts(width, tile, stride)
+    land_bool = np.asarray(land_mask, dtype=np.float32) > 0.5
+    table = _summed_area_table(land_bool)
+    max_land_fraction = float(grid_params.max_land_fraction)
+
+    records: list[dict[str, Any]] = []
+    patch_id = 0
+    for y0 in y_starts:
+        for x0 in x_starts:
+            land_fraction = _window_sum(table, y0=y0, x0=x0, tile=tile) / float(
+                tile * tile
+            )
+            left = float(transform.c) + (float(x0) * resolution)
+            right = left + (float(tile) * resolution)
+            top = float(transform.f) - (float(y0) * resolution)
+            bottom = top - (float(tile) * resolution)
+            lat_center = 0.5 * (float(bottom) + float(top))
+            lon_center = _center_lon_deg(float(left), float(right))
+            force_region = _force_include_region_for_patch(
+                lat_center=lat_center,
+                lon_center=lon_center,
+                land_fraction=land_fraction,
+                regions=grid_params.force_include_regions,
+            )
+            if land_fraction > max_land_fraction and force_region is None:
+                continue
+            records.append(
+                {
+                    "patch_id": int(patch_id),
+                    "grid_y0": int(y0),
+                    "grid_x0": int(x0),
+                    "lat0": float(bottom),
+                    "lat1": float(top),
+                    "lon0": float(left),
+                    "lon1": float(right),
+                    "lat_center": lat_center,
+                    "lon_center": lon_center,
+                    "land_fraction": float(land_fraction),
+                    "ocean_fraction": float(1.0 - land_fraction),
+                    "invalid_fraction": float(land_fraction),
+                    "force_included": bool(force_region is not None),
+                    "force_include_region": (
+                        "" if force_region is None else force_region.name
+                    ),
+                }
+            )
+            patch_id += 1
+
+    if not records:
+        raise RuntimeError("No valid patches were built from the land-mask grid.")
+    return pd.DataFrame.from_records(records)
 
 
 class VirtualPatchIndex:
     """Builds compact patch/date metadata rows without precomputing tensors."""
 
-    CACHE_VERSION = 2
+    CACHE_VERSION = 3
 
     def __init__(
         self,
@@ -578,6 +921,7 @@ class VirtualPatchIndex:
         self.cache_dir = None if cache_dir is None else Path(cache_dir)
         self.grid_params = grid_params
         self.temporal_window_days = int(temporal_window_days)
+        _validate_grid_params(self.grid_params)
 
     def load_rows(self) -> list[dict[str, Any]]:
         cache_path = self._cache_path()
@@ -614,6 +958,10 @@ class VirtualPatchIndex:
         if self.cache_dir is None:
             return None
         res_text = str(float(self.grid_params.resolution_deg)).replace(".", "p")
+        land_text = str(float(self.grid_params.max_land_fraction)).replace(".", "p")
+        grid_source = _sanitize_cache_text(self.grid_params.patch_grid_source)
+        mask_hash = _path_cache_hash(self.grid_params.land_mask_path)
+        force_hash = _force_include_cache_hash(self.grid_params.force_include_regions)
         split_text = (
             f"valyear{int(self.grid_params.val_year)}"
             if self.grid_params.val_year is not None
@@ -622,6 +970,9 @@ class VirtualPatchIndex:
         name = (
             f"argo_netcdf_gridded_v{self.CACHE_VERSION}_"
             f"tile{int(self.grid_params.tile_size)}_res{res_text}_"
+            f"stride{int(self.grid_params.effective_patch_stride)}_"
+            f"grid{grid_source}_land{land_text}_mask{mask_hash}_"
+            f"force{force_hash}_"
             f"days{int(self.temporal_window_days)}_{split_text}.csv"
         )
         return self.cache_dir / name
@@ -651,6 +1002,15 @@ class VirtualPatchIndex:
         return candidate_dates
 
     def _build_patch_table(self) -> pd.DataFrame:
+        if str(self.grid_params.patch_grid_source).strip().lower() == "land_mask":
+            patch_df = _build_land_mask_patch_table(self.grid_params)
+            phases = self._split_phases(len(patch_df))
+            records = patch_df.to_dict(orient="records")
+            for rec, phase in zip(records, phases, strict=False):
+                rec["split"] = phase
+                rec["phase"] = phase
+            return pd.DataFrame.from_records(records)
+
         path = self.ostia_store.index[0].path
         with xr.open_dataset(
             path,
@@ -675,8 +1035,9 @@ class VirtualPatchIndex:
 
         records: list[dict[str, Any]] = []
         patch_id = 0
-        for y0 in range(0, int(lat_values.size) - tile + 1, tile):
-            for x0 in range(0, int(lon_values.size) - tile + 1, tile):
+        stride = int(self.grid_params.effective_patch_stride)
+        for y0 in _grid_starts(int(lat_values.size), tile, stride):
+            for x0 in _grid_starts(int(lon_values.size), tile, stride):
                 invalid_fraction = self._invalid_fraction(
                     invalid_mask,
                     y0=y0,
@@ -710,6 +1071,8 @@ class VirtualPatchIndex:
                         "lon1": lon1,
                         "lat_center": 0.5 * (lat0 + lat1),
                         "lon_center": _center_lon_deg(lon0, lon1),
+                        "land_fraction": float(invalid_fraction),
+                        "ocean_fraction": float(1.0 - invalid_fraction),
                         "invalid_fraction": float(invalid_fraction),
                     }
                 )
@@ -795,20 +1158,17 @@ class VirtualPatchIndex:
         # The support cache is built profile-first so each ARGO profile contributes
         # to at most temporal_window_days target dates instead of checking every
         # patch/date row independently.
-        patch_lookup = {
-            int(patch["patch_id"]): patch
-            for patch in patch_df.to_dict(orient="records")
-        }
+        patch_lookup = _build_patch_lookup(patch_df, self.grid_params)
         for profile_idx in range(int(self.argo_store.profile_date.size)):
             if not bool(self.argo_store._has_valid_temp[profile_idx]):
                 continue
             profile_date = int(self.argo_store.profile_date[profile_idx])
-            patch_id = self._patch_id_for_profile(
+            patch_ids = _patch_ids_for_profile(
                 patch_lookup,
                 lat=float(self.argo_store.latitude[profile_idx]),
                 lon=float(self.argo_store.longitude[profile_idx]),
             )
-            if patch_id is None:
+            if not patch_ids:
                 continue
             for date_value in _date_range_yyyymmdd(
                 profile_date,
@@ -816,8 +1176,9 @@ class VirtualPatchIndex:
             ):
                 if int(date_value) not in date_set:
                     continue
-                key = (int(patch_id), int(date_value))
-                support_counts[key] = support_counts.get(key, 0) + 1
+                for patch_id in patch_ids:
+                    key = (int(patch_id), int(date_value))
+                    support_counts[key] = support_counts.get(key, 0) + 1
         return support_counts
 
     @staticmethod
@@ -867,6 +1228,11 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
         split: str = "all",
         tile_size: int = 128,
         resolution_deg: float = 0.1,
+        patch_grid_source: str = "land_mask",
+        land_mask_path: str | Path | None = DEFAULT_LAND_MASK_PATH,
+        patch_stride: int | None = None,
+        max_land_fraction: float = 0.30,
+        force_include_regions: Sequence[dict[str, Any]] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
         ostia_var_name: str = "analysed_sst",
@@ -891,6 +1257,11 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             raise ValueError("split must be one of: 'all', 'train', 'val'")
         self.tile_size = int(tile_size)
         self.resolution_deg = float(resolution_deg)
+        self.patch_grid_source = str(patch_grid_source)
+        self.land_mask_path = None if land_mask_path is None else Path(land_mask_path)
+        self.patch_stride = None if patch_stride is None else int(patch_stride)
+        self.max_land_fraction = float(max_land_fraction)
+        self.force_include_regions = _parse_force_include_regions(force_include_regions)
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
         self.ostia_var_name = str(ostia_var_name)
@@ -932,6 +1303,11 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
             val_fraction=float(val_fraction),
             val_year=None if val_year is None else int(val_year),
             split_seed=self.random_seed,
+            patch_grid_source=self.patch_grid_source,
+            land_mask_path=self.land_mask_path,
+            patch_stride=self.patch_stride,
+            max_land_fraction=self.max_land_fraction,
+            force_include_regions=self.force_include_regions,
         )
         index = VirtualPatchIndex(
             ostia_store=self.ostia_store,
@@ -1010,6 +1386,42 @@ class ArgoNetCDFGriddedPatchDataset(Dataset):
                 cls._cfg_get(
                     ds_cfg, "grid.resolution_deg", "resolution_deg", default=0.1
                 )
+            ),
+            patch_grid_source=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.patch_grid_source",
+                    "patch_grid_source",
+                    default="land_mask",
+                )
+            ),
+            land_mask_path=cls._cfg_get(
+                ds_cfg,
+                "grid.land_mask_path",
+                "land_mask_path",
+                default=DEFAULT_LAND_MASK_PATH,
+            ),
+            patch_stride=cls._optional_int(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.patch_stride",
+                    "patch_stride",
+                    default=None,
+                )
+            ),
+            max_land_fraction=float(
+                cls._cfg_get(
+                    ds_cfg,
+                    "grid.max_land_fraction",
+                    "max_land_fraction",
+                    default=0.30,
+                )
+            ),
+            force_include_regions=cls._cfg_get(
+                ds_cfg,
+                "grid.force_include_regions",
+                "force_include_regions",
+                default=None,
             ),
             temporal_window_days=int(
                 cls._cfg_get(

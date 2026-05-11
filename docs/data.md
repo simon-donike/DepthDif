@@ -77,7 +77,26 @@ Public dataset metadata used by inference:
 - `ArgoZarrGriddedPatchDataset.from_config(...)`
 
 Rows expose stable fields: `patch_id`, `date`, `lat0`, `lat1`, `lon0`, `lon1`,
-and `split`.
+`land_fraction`, `ocean_fraction`, `invalid_fraction`, and `split`.
+
+## Patch Grid
+
+By default, both dataset variants build spatial patch candidates from
+`data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif`.
+The GeoTIFF is on the global 0.1 degree GLORYS-style grid with `1=land` and
+`0=water`. `dataset.grid.patch_stride` controls overlap between patch origins,
+and `dataset.grid.max_land_fraction` drops land-heavy candidates before dates
+are expanded.
+
+`dataset.grid.force_include_regions` can preserve named ocean regions with
+coast-heavy geometry. The active configs force-include Mediterranean-centered
+patches up to `0.60` land fraction while keeping the global `0.30` cap
+elsewhere.
+
+Set `dataset.grid.patch_grid_source: "ostia_mask"` to use the previous
+OSTIA-mask-derived non-overlapping behavior. Metadata cache filenames include
+the grid source, stride, land threshold, force-include regions, resolution, tile
+size, temporal window, and split policy.
 
 ## Patch Assembly
 

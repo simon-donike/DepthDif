@@ -5,6 +5,8 @@ import tempfile
 import unittest
 
 import numpy as np
+import rasterio
+from rasterio.transform import from_origin
 import torch
 import xarray as xr
 import yaml
@@ -21,30 +23,55 @@ def _days_since_1950(date_value: int) -> float:
     return float((day - np.datetime64("1950-01-01", "D")).astype(int))
 
 
-def _write_argo_netcdf(root_dir: Path) -> None:
+def _write_argo_netcdf(
+    root_dir: Path,
+    *,
+    latitudes: np.ndarray | None = None,
+    longitudes: np.ndarray | None = None,
+    temperatures: np.ndarray | None = None,
+    depths: np.ndarray | None = None,
+    dates: np.ndarray | None = None,
+) -> None:
+    lat = (
+        np.asarray([1.5, 1.6], dtype=np.float64)
+        if latitudes is None
+        else np.asarray(latitudes, dtype=np.float64)
+    )
+    lon = (
+        np.asarray([10.5, 10.6], dtype=np.float64)
+        if longitudes is None
+        else np.asarray(longitudes, dtype=np.float64)
+    )
+    temp = (
+        np.asarray([[10.0, 20.0], [14.0, 24.0]], dtype=np.float32)
+        if temperatures is None
+        else np.asarray(temperatures, dtype=np.float32)
+    )
+    depth_values = (
+        np.asarray([[0.0, 10.0], [0.0, 10.0]], dtype=np.float32)
+        if depths is None
+        else np.asarray(depths, dtype=np.float32)
+    )
+    date_values = (
+        np.asarray([20240102, 20240102], dtype=np.int64)
+        if dates is None
+        else np.asarray(dates, dtype=np.int64)
+    )
+    n_prof = int(lat.size)
     ds = xr.Dataset(
         data_vars={
             "JULD": (
                 ("N_PROF",),
-                np.asarray(
-                    [_days_since_1950(20240102), _days_since_1950(20240102)],
-                    dtype=np.float64,
-                ),
+                np.asarray([_days_since_1950(int(v)) for v in date_values[:n_prof]]),
             ),
-            "LATITUDE": (("N_PROF",), np.asarray([1.5, 1.6], dtype=np.float64)),
-            "LONGITUDE": (("N_PROF",), np.asarray([10.5, 10.6], dtype=np.float64)),
-            "TEMP": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[10.0, 20.0], [14.0, 24.0]], dtype=np.float32),
-            ),
-            "DEPH_CORRECTED": (
-                ("N_PROF", "N_LEVELS"),
-                np.asarray([[0.0, 10.0], [0.0, 10.0]], dtype=np.float32),
-            ),
+            "LATITUDE": (("N_PROF",), lat[:n_prof]),
+            "LONGITUDE": (("N_PROF",), lon[:n_prof]),
+            "TEMP": (("N_PROF", "N_LEVELS"), temp[:n_prof]),
+            "DEPH_CORRECTED": (("N_PROF", "N_LEVELS"), depth_values[:n_prof]),
         },
         coords={
-            "N_PROF": np.asarray([0, 1], dtype=np.int64),
-            "N_LEVELS": np.asarray([0, 1], dtype=np.int64),
+            "N_PROF": np.arange(n_prof, dtype=np.int64),
+            "N_LEVELS": np.arange(int(temp.shape[1]), dtype=np.int64),
         },
     )
     root_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +141,24 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
         yaml.safe_dump(payload, f, sort_keys=False)
 
 
+def _write_land_mask_geotiff(path: Path, values: np.ndarray) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mask = np.asarray(values, dtype=np.uint8)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=int(mask.shape[0]),
+        width=int(mask.shape[1]),
+        count=1,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 2.0, 1.0, 1.0),
+    ) as dst:
+        dst.write(mask, 1)
+    return path
+
+
 def _make_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     argo_dir = tmp_path / "en4_profiles"
     glorys_dir = tmp_path / "glorys"
@@ -137,6 +182,7 @@ def _dataset_kwargs(tmp_path: Path) -> dict[str, object]:
         "metadata_cache_dir": cache_dir,
         "tile_size": 2,
         "resolution_deg": 1.0,
+        "patch_grid_source": "ostia_mask",
         "temporal_window_days": 1,
         "invalid_threshold": 0.5,
         "val_fraction": 0.0,
@@ -239,6 +285,169 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(all(row["split"] == "train" for row in train_dataset.rows))
             self.assertTrue(all(row["split"] == "val" for row in val_dataset.rows))
 
+    def test_land_mask_grid_stride_filter_and_overlapping_argo_support(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, cache_dir = _make_sources(tmp_path)
+            _write_argo_netcdf(
+                argo_dir,
+                latitudes=np.asarray([1.5], dtype=np.float64),
+                longitudes=np.asarray([11.5], dtype=np.float64),
+                temperatures=np.asarray([[10.0, 20.0]], dtype=np.float32),
+                depths=np.asarray([[0.0, 10.0]], dtype=np.float32),
+                dates=np.asarray([20240102], dtype=np.int64),
+            )
+            land_mask_path = _write_land_mask_geotiff(
+                tmp_path / "land_mask.tif",
+                np.asarray([[0, 0, 1], [0, 0, 1]], dtype=np.uint8),
+            )
+
+            dataset = ArgoNetCDFGriddedPatchDataset(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=None,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                patch_grid_source="land_mask",
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=1.0,
+                temporal_window_days=1,
+                val_year=2018,
+                require_argo_for_train=True,
+                return_info=True,
+            )
+
+            self.assertEqual([int(row["grid_x0"]) for row in dataset.rows], [0, 1])
+            self.assertEqual(
+                [int(row["argo_profile_count"]) for row in dataset.rows],
+                [1, 1],
+            )
+            self.assertEqual(
+                [float(row["land_fraction"]) for row in dataset.rows],
+                [0.0, 0.5],
+            )
+
+            filtered = ArgoNetCDFGriddedPatchDataset(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=None,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                patch_grid_source="land_mask",
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=0.30,
+                temporal_window_days=1,
+                val_year=2018,
+                require_argo_for_train=False,
+                return_info=True,
+            )
+
+            self.assertEqual({int(row["grid_x0"]) for row in filtered.rows}, {0})
+            self.assertTrue(
+                all(float(row["land_fraction"]) <= 0.30 for row in filtered.rows)
+            )
+
+    def test_overlapping_land_mask_grid_requires_val_year(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, cache_dir = _make_sources(tmp_path)
+            land_mask_path = _write_land_mask_geotiff(
+                tmp_path / "land_mask.tif",
+                np.zeros((2, 3), dtype=np.uint8),
+            )
+
+            with self.assertRaisesRegex(ValueError, "Overlapping patch grids"):
+                ArgoNetCDFGriddedPatchDataset(
+                    argo_dir=argo_dir,
+                    glorys_dir=glorys_dir,
+                    ostia_dir=ostia_dir,
+                    sealevel_dir=None,
+                    metadata_cache_dir=cache_dir,
+                    split="train",
+                    tile_size=2,
+                    resolution_deg=1.0,
+                    patch_grid_source="land_mask",
+                    land_mask_path=land_mask_path,
+                    patch_stride=1,
+                    max_land_fraction=1.0,
+                    temporal_window_days=1,
+                    val_year=None,
+                    require_argo_for_train=False,
+                )
+
+    def test_force_include_region_keeps_relaxed_land_fraction_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, cache_dir = _make_sources(tmp_path)
+            land_mask_path = _write_land_mask_geotiff(
+                tmp_path / "land_mask.tif",
+                np.asarray([[0, 0, 1], [0, 0, 1]], dtype=np.uint8),
+            )
+
+            dataset = ArgoNetCDFGriddedPatchDataset(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=None,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                patch_grid_source="land_mask",
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=0.30,
+                force_include_regions=[
+                    {
+                        "name": "test_region",
+                        "lon_min": 11.5,
+                        "lon_max": 12.5,
+                        "lat_min": 0.5,
+                        "lat_max": 1.5,
+                        "max_land_fraction": 0.60,
+                    }
+                ],
+                temporal_window_days=1,
+                val_year=2018,
+                require_argo_for_train=False,
+                return_info=True,
+            )
+
+            forced_rows = [
+                row for row in dataset.rows if bool(row.get("force_included", False))
+            ]
+            self.assertEqual({int(row["grid_x0"]) for row in forced_rows}, {1})
+            self.assertEqual(
+                {row["force_include_region"] for row in forced_rows},
+                {"test_region"},
+            )
+            self.assertEqual(
+                {float(row["land_fraction"]) for row in forced_rows},
+                {0.5},
+            )
+
+    def test_active_netcdf_config_uses_land_mask_grid_defaults(self) -> None:
+        with Path("configs/px_space/data_ostia_argo_netcdf.yaml").open(
+            "r",
+            encoding="utf-8",
+        ) as f:
+            payload = yaml.safe_load(f)
+
+        grid = payload["dataset"]["grid"]
+        self.assertEqual(grid["patch_grid_source"], "land_mask")
+        self.assertEqual(grid["patch_stride"], 64)
+        self.assertEqual(float(grid["max_land_fraction"]), 0.30)
+        self.assertTrue(Path(grid["land_mask_path"]).exists())
+        self.assertEqual(grid["force_include_regions"][0]["name"], "mediterranean")
+
     def test_synthetic_mode_samples_sparse_x_from_glorys_y(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset = ArgoNetCDFGriddedPatchDataset(
@@ -281,6 +490,7 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                     "grid": {
                         "tile_size": 2,
                         "resolution_deg": 1.0,
+                        "patch_grid_source": "ostia_mask",
                         "invalid_threshold": 0.5,
                         "invalid_mask_flags": ["land"],
                     },

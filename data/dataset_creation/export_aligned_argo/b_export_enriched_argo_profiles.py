@@ -6,6 +6,8 @@ Production-range enriched ARGO export:
   --workers 4 \
   --output-zarr /data1/datasets/depth_v2/enriched_argo_profiles.zarr
 
+Set multiple workers with --workers N, for example --workers 8.
+
 Small smoke export:
 /work/envs/depth/bin/python data/dataset_creation/export_aligned_argo/b_export_enriched_argo_profiles.py \
   --start-date 20100101 \

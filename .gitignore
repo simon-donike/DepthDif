@@ -18,7 +18,6 @@ inference/outputs/*
 TODO
 administration/
 inference/outputs_v1_backup.zip
-!data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 
 # temp file types
 *.csv
@@ -27,6 +26,7 @@ inference/outputs_v1_backup.zip
 *.tif
 *.tiff
 *.geotiff
+!data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 
 # Ckpts
 *.ckpt

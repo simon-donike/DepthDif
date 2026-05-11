@@ -29,6 +29,8 @@ Run from the repository root:
   --chunk-profile 20000 \
   --chunk-lat 256 \
   --chunk-lon 256 \
+  --dask-scheduler threads \
+  --dask-num-workers 8 \
   --overwrite
 ```
 
@@ -53,6 +55,9 @@ native GLORYS raster grid as the shared output grid.
 The CLI `--surface-aggregate-days`, `--ostia-vars`, `--argo-vars`,
 `--argo-depth-var`, `--glorys-vars`, and `--sealevel-vars` flags still override
 those defaults for one-off exports.
+The exporter prints elapsed wall time for each major source scan/open/write
+phase. Use `--dask-scheduler` and `--dask-num-workers` to control dask execution
+while writing the zarr stores; leave them unset to keep dask's default scheduler.
 
 Training can use `configs/px_space/data_ostia_argo_zarr.yaml` with
 `dataset.core.dataset_variant: argo_zarr_gridded`.

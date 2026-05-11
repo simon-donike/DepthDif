@@ -1,14 +1,17 @@
 # Example:
-# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py --argo-dir /data1/datasets/depth_v2/en4_profiles --glorys-dir /data1/datasets/depth_v2/glorys --ostia-dir /data1/datasets/depth_v2/ostia --sealevel-dir /data1/datasets/depth_v2/sealevel_daily --output-dir /data1/datasets/depth_v2/zarr_training --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml --start-date 20100101 --end-date 20240731 --target-resolution-deg 0.1 --surface-aggregate-days 7 --ostia-vars analysed_sst mask --argo-vars TEMP PSAL_CORRECTED --argo-depth-var DEPH_CORRECTED --glorys-vars thetao so zos --sealevel-vars adt --chunk-time 1 --chunk-profile 20000 --chunk-lat 256 --chunk-lon 256 --overwrite
+# /work/envs/depth/bin/python data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py --argo-dir /data1/datasets/depth_v2/en4_profiles --glorys-dir /data1/datasets/depth_v2/glorys --ostia-dir /data1/datasets/depth_v2/ostia --sealevel-dir /data1/datasets/depth_v2/sealevel_daily --output-dir /data1/datasets/depth_v2/zarr_training --source-variable-config data/dataset_creation/export_dataset_zarr/source_variables.yaml --start-date 20100101 --end-date 20240731 --target-resolution-deg 0.1 --surface-aggregate-days 7 --ostia-vars analysed_sst mask --argo-vars TEMP PSAL_CORRECTED --argo-depth-var DEPH_CORRECTED --glorys-vars thetao so zos --sealevel-vars adt --chunk-time 1 --chunk-profile 20000 --chunk-lat 256 --chunk-lon 256 --dask-scheduler threads --dask-num-workers 8 --overwrite
 """Export a compact ML-facing zarr dataset from the raw NetCDF source folders."""
 
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Any, Sequence
 
+import dask
 import numpy as np
 from numcodecs import Blosc
 import xarray as xr
@@ -24,6 +27,7 @@ from data.dataset_creation.export_aligned_argo.source_files import (
 SOURCE_VARIABLE_CONFIG_PATH = Path(__file__).with_name("source_variables.yaml")
 DEFAULT_TARGET_RESOLUTION_DEG = 0.1
 DEFAULT_SURFACE_AGGREGATE_DAYS = 7
+DEFAULT_DASK_SCHEDULER = None
 PACKED_FILL_VALUE = -32768
 MASK_FILL_VALUE = -128
 ZARR_COMPRESSOR = Blosc(cname="zstd", clevel=7, shuffle=Blosc.BITSHUFFLE)
@@ -125,6 +129,33 @@ def _positive_int(text: str) -> int:
     if value < 1:
         raise argparse.ArgumentTypeError("value must be >= 1")
     return value
+
+
+@contextmanager
+def _timed_step(label: str):
+    """Print elapsed wall time for one export phase."""
+    start = time.perf_counter()
+    print(f"[zarr export] {label} started", flush=True)
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        print(f"[zarr export] {label} finished in {elapsed:.1f}s", flush=True)
+
+
+@contextmanager
+def _dask_settings(scheduler: str | None, num_workers: int | None):
+    """Temporarily apply dask scheduler settings for this export."""
+    config: dict[str, Any] = {}
+    if scheduler is not None:
+        config["scheduler"] = scheduler
+    if num_workers is not None:
+        config["num_workers"] = int(num_workers)
+    if not config:
+        yield
+        return
+    with dask.config.set(config):
+        yield
 
 
 def _date_int_from_days_since_1950(day_value: float) -> int:
@@ -448,6 +479,14 @@ def _open_time_series_dataset(
         preprocess=preprocess,
         decode_times=False,
         mask_and_scale=True,
+        chunks={
+            "time": int(chunk_time),
+            "lat": int(chunk_lat),
+            "latitude": int(chunk_lat),
+            "lon": int(chunk_lon),
+            "longitude": int(chunk_lon),
+            "depth": -1,
+        },
         parallel=False,
     )
     ds = ds.assign_coords(time=np.asarray(dates, dtype=np.int32))
@@ -507,6 +546,7 @@ def _open_argo_dataset(
         preprocess=preprocess,
         decode_times=False,
         mask_and_scale=True,
+        chunks={"N_PROF": int(chunk_profile), "N_LEVELS": -1},
         parallel=False,
     )
     chunk_map = {"N_PROF": int(chunk_profile)}
@@ -702,128 +742,143 @@ def export_training_zarr_dataset(
     chunk_profile: int = 20000,
     chunk_lat: int = 256,
     chunk_lon: int = 256,
+    dask_scheduler: str | None = DEFAULT_DASK_SCHEDULER,
+    dask_num_workers: int | None = None,
     overwrite: bool = False,
 ) -> Path:
-    output_root = Path(output_dir)
-    output_root.mkdir(parents=True, exist_ok=True)
+    with _dask_settings(dask_scheduler, dask_num_workers):
+        output_root = Path(output_dir)
+        output_root.mkdir(parents=True, exist_ok=True)
 
-    ostia_files = _filter_timed_files(
-        scan_timed_files(Path(ostia_dir), show_progress=True),
-        start_date=start_date,
-        end_date=end_date,
-    )
-    glorys_files = _filter_timed_files(
-        scan_timed_files(Path(glorys_dir), show_progress=True),
-        start_date=start_date,
-        end_date=end_date,
-    )
-    argo_files = filter_argo_files_by_date_range(
-        sorted(Path(argo_dir).glob("*.nc")),
-        start_date=start_date,
-        end_date=end_date,
-    )
+        with _timed_step("source file scan"):
+            ostia_files = _filter_timed_files(
+                scan_timed_files(Path(ostia_dir), show_progress=True),
+                start_date=start_date,
+                end_date=end_date,
+            )
+            glorys_files = _filter_timed_files(
+                scan_timed_files(Path(glorys_dir), show_progress=True),
+                start_date=start_date,
+                end_date=end_date,
+            )
+            argo_files = filter_argo_files_by_date_range(
+                sorted(Path(argo_dir).glob("*.nc")),
+                start_date=start_date,
+                end_date=end_date,
+            )
 
-    glorys_ds = _open_time_series_dataset(
-        glorys_files,
-        variable_names=glorys_vars,
-        target_resolution_deg=target_resolution_deg,
-        target_grid=None,
-        target_timed_files=None,
-        aggregate_days=1,
-        chunk_time=chunk_time,
-        chunk_lat=chunk_lat,
-        chunk_lon=chunk_lon,
-    )
-    raster_target_grid = _raster_target_grid_from_dataset(glorys_ds)
-    glorys_depth_axis = _depth_axis_from_dataset(glorys_ds)
-    _write_dataset(
-        glorys_ds,
-        output_root / "glorys.zarr",
-        overwrite=overwrite,
-    )
-    ostia_ds = _open_time_series_dataset(
-        ostia_files,
-        variable_names=ostia_vars,
-        target_resolution_deg=target_resolution_deg,
-        target_grid=raster_target_grid,
-        target_timed_files=glorys_files,
-        aggregate_days=surface_aggregate_days,
-        chunk_time=chunk_time,
-        chunk_lat=chunk_lat,
-        chunk_lon=chunk_lon,
-    )
-    _write_dataset(
-        ostia_ds,
-        output_root / "ostia.zarr",
-        overwrite=overwrite,
-    )
-    _write_dataset(
-        _open_argo_dataset(
-            argo_files,
-            variable_names=argo_vars,
-            depth_var_name=argo_depth_var,
-            target_depths=glorys_depth_axis,
-            chunk_profile=chunk_profile,
-        ),
-        output_root / "argo.zarr",
-        overwrite=overwrite,
-    )
-
-    wrote_sealevel = False
-    if sealevel_dir is not None and str(sealevel_dir).strip() != "":
-        sealevel_files = _filter_timed_files(
-            scan_timed_files(Path(sealevel_dir), show_progress=True),
-            start_date=start_date,
-            end_date=end_date,
-        )
-        if sealevel_files:
+        with _timed_step("GLORYS open, resample, and write"):
+            glorys_ds = _open_time_series_dataset(
+                glorys_files,
+                variable_names=glorys_vars,
+                target_resolution_deg=target_resolution_deg,
+                target_grid=None,
+                target_timed_files=None,
+                aggregate_days=1,
+                chunk_time=chunk_time,
+                chunk_lat=chunk_lat,
+                chunk_lon=chunk_lon,
+            )
+            raster_target_grid = _raster_target_grid_from_dataset(glorys_ds)
+            glorys_depth_axis = _depth_axis_from_dataset(glorys_ds)
             _write_dataset(
-                _open_time_series_dataset(
-                    sealevel_files,
-                    variable_names=sealevel_vars,
-                    target_resolution_deg=target_resolution_deg,
-                    target_grid=raster_target_grid,
-                    target_timed_files=glorys_files,
-                    aggregate_days=surface_aggregate_days,
-                    chunk_time=chunk_time,
-                    chunk_lat=chunk_lat,
-                    chunk_lon=chunk_lon,
-                ),
-                output_root / "sealevel.zarr",
+                glorys_ds,
+                output_root / "glorys.zarr",
                 overwrite=overwrite,
             )
-            wrote_sealevel = True
 
-    manifest = {
-        "format": "depthdif_training_zarr",
-        "version": 1,
-        "date_range": {"start_date": start_date, "end_date": end_date},
-        "raster_target_resolution_deg": target_resolution_deg,
-        "raster_target_grid": "glorys",
-        "surface_temporal_aggregation": {
-            "target": "glorys",
-            "window_days": int(surface_aggregate_days),
-        },
-        "groups": {
-            "ostia": {"path": "ostia.zarr", "variables": list(ostia_vars)},
-            "glorys": {"path": "glorys.zarr", "variables": list(glorys_vars)},
-            "argo": {
-                "path": "argo.zarr",
-                "variables": list(argo_vars),
-                "source_depth_var": str(argo_depth_var),
-                "depth_axis": "depth",
-                "projected_to_glorys_depth": True,
+        with _timed_step("OSTIA open, aggregate, resample, and write"):
+            ostia_ds = _open_time_series_dataset(
+                ostia_files,
+                variable_names=ostia_vars,
+                target_resolution_deg=target_resolution_deg,
+                target_grid=raster_target_grid,
+                target_timed_files=glorys_files,
+                aggregate_days=surface_aggregate_days,
+                chunk_time=chunk_time,
+                chunk_lat=chunk_lat,
+                chunk_lon=chunk_lon,
+            )
+            _write_dataset(
+                ostia_ds,
+                output_root / "ostia.zarr",
+                overwrite=overwrite,
+            )
+
+        with _timed_step("ARGO open, project, and write"):
+            _write_dataset(
+                _open_argo_dataset(
+                    argo_files,
+                    variable_names=argo_vars,
+                    depth_var_name=argo_depth_var,
+                    target_depths=glorys_depth_axis,
+                    chunk_profile=chunk_profile,
+                ),
+                output_root / "argo.zarr",
+                overwrite=overwrite,
+            )
+
+        wrote_sealevel = False
+        if sealevel_dir is not None and str(sealevel_dir).strip() != "":
+            with _timed_step("sea-level file scan"):
+                sealevel_files = _filter_timed_files(
+                    scan_timed_files(Path(sealevel_dir), show_progress=True),
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            if sealevel_files:
+                with _timed_step("sea-level open, aggregate, resample, and write"):
+                    _write_dataset(
+                        _open_time_series_dataset(
+                            sealevel_files,
+                            variable_names=sealevel_vars,
+                            target_resolution_deg=target_resolution_deg,
+                            target_grid=raster_target_grid,
+                            target_timed_files=glorys_files,
+                            aggregate_days=surface_aggregate_days,
+                            chunk_time=chunk_time,
+                            chunk_lat=chunk_lat,
+                            chunk_lon=chunk_lon,
+                        ),
+                        output_root / "sealevel.zarr",
+                        overwrite=overwrite,
+                    )
+                wrote_sealevel = True
+
+        manifest = {
+            "format": "depthdif_training_zarr",
+            "version": 1,
+            "date_range": {"start_date": start_date, "end_date": end_date},
+            "raster_target_resolution_deg": target_resolution_deg,
+            "raster_target_grid": "glorys",
+            "surface_temporal_aggregation": {
+                "target": "glorys",
+                "window_days": int(surface_aggregate_days),
             },
-        },
-    }
-    if wrote_sealevel:
-        manifest["groups"]["sealevel"] = {
-            "path": "sealevel.zarr",
-            "variables": list(sealevel_vars),
+            "dask": {
+                "scheduler": dask_scheduler,
+                "num_workers": dask_num_workers,
+            },
+            "groups": {
+                "ostia": {"path": "ostia.zarr", "variables": list(ostia_vars)},
+                "glorys": {"path": "glorys.zarr", "variables": list(glorys_vars)},
+                "argo": {
+                    "path": "argo.zarr",
+                    "variables": list(argo_vars),
+                    "source_depth_var": str(argo_depth_var),
+                    "depth_axis": "depth",
+                    "projected_to_glorys_depth": True,
+                },
+            },
         }
-    with (output_root / "manifest.yaml").open("w", encoding="utf-8") as f:
-        yaml.safe_dump(manifest, f, sort_keys=False)
-    return output_root
+        if wrote_sealevel:
+            manifest["groups"]["sealevel"] = {
+                "path": "sealevel.zarr",
+                "variables": list(sealevel_vars),
+            }
+        with (output_root / "manifest.yaml").open("w", encoding="utf-8") as f:
+            yaml.safe_dump(manifest, f, sort_keys=False)
+        return output_root
 
 
 def parse_args() -> argparse.Namespace:
@@ -861,6 +916,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-profile", type=int, default=20000)
     parser.add_argument("--chunk-lat", type=int, default=256)
     parser.add_argument("--chunk-lon", type=int, default=256)
+    parser.add_argument(
+        "--dask-scheduler",
+        choices=("threads", "processes", "single-threaded", "synchronous"),
+        default=DEFAULT_DASK_SCHEDULER,
+    )
+    parser.add_argument("--dask-num-workers", type=_positive_int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -887,6 +948,8 @@ def main() -> None:
         chunk_profile=args.chunk_profile,
         chunk_lat=args.chunk_lat,
         chunk_lon=args.chunk_lon,
+        dask_scheduler=args.dask_scheduler,
+        dask_num_workers=args.dask_num_workers,
         overwrite=args.overwrite,
     )
 
