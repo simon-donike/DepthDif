@@ -146,7 +146,7 @@ PUBLIC_DATA_CONFIG: dict[str, object] = {
             "resolution_deg": 0.1,
             "patch_grid_source": "land_mask",
             "land_mask_path": DEFAULT_LAND_MASK_PATH,
-            "patch_stride": 64,
+            "patch_stride": 128,
             "max_land_fraction": 0.30,
             "force_include_regions": [
                 {
@@ -663,6 +663,95 @@ def _selected_iso_week_date(year: int, iso_week: int) -> int:
     return int(selected.strftime("%Y%m%d"))
 
 
+def _longitude_in_rectangle(lon: float, lon_min: float, lon_max: float) -> bool:
+    """Return whether one longitude falls inside a possibly wrapped interval."""
+    width = abs(float(lon_max) - float(lon_min))
+    if width >= 360.0:
+        return True
+    lon_value = _normalize_lon(float(lon))
+    left = _normalize_lon(float(lon_min))
+    right = _normalize_lon(float(lon_max))
+    if left <= right:
+        return left <= lon_value <= right
+    return lon_value >= left or lon_value <= right
+
+
+def _rectangle_center(rectangle: Sequence[float]) -> tuple[float, float]:
+    """Return approximate lon/lat center for one rectangle."""
+    lon_min, lat_min, lon_max, lat_max = [float(value) for value in rectangle]
+    return _center_lon_deg(lon_min, lon_max), 0.5 * (lat_min + lat_max)
+
+
+def _row_center(row: dict) -> tuple[float, float]:
+    """Return lon/lat center for one patch row."""
+    lon = (
+        float(row["lon_center"])
+        if "lon_center" in row
+        else _center_lon_deg(float(row["lon0"]), float(row["lon1"]))
+    )
+    lat = (
+        float(row["lat_center"])
+        if "lat_center" in row
+        else 0.5 * (float(row["lat0"]) + float(row["lat1"]))
+    )
+    return lon, lat
+
+
+def _row_center_in_rectangle(row: dict, rectangle: Sequence[float]) -> bool:
+    """Return whether a patch center is inside a lon/lat rectangle."""
+    lon_min, lat_min, lon_max, lat_max = [float(value) for value in rectangle]
+    lon, lat = _row_center(row)
+    return min(lat_min, lat_max) <= lat <= max(
+        lat_min, lat_max
+    ) and _longitude_in_rectangle(
+        lon,
+        lon_min,
+        lon_max,
+    )
+
+
+def _compact_rectangle_selection(
+    rows: Sequence[dict],
+    selection: ExportSelection,
+    rectangle: Sequence[float] | None,
+) -> ExportSelection:
+    """Prefer patch centers inside the rectangle, with nearest fallback."""
+    if rectangle is None:
+        return selection
+    center_indices = [
+        int(idx)
+        for idx in selection.indices
+        if _row_center_in_rectangle(rows[int(idx)], rectangle)
+    ]
+    if center_indices:
+        return ExportSelection(
+            selected_date=selection.selected_date,
+            iso_year=selection.iso_year,
+            iso_week=selection.iso_week,
+            indices=center_indices,
+        )
+
+    target_lon, target_lat = _rectangle_center(rectangle)
+    target_lon = _normalize_lon(target_lon)
+    lon_scale = max(0.1, float(np.cos(np.radians(target_lat))))
+
+    def center_distance(idx: int) -> float:
+        """Return approximate scaled distance from row center to rectangle center."""
+        row_lon, row_lat = _row_center(rows[int(idx)])
+        lon_delta = abs(_normalize_lon(row_lon) - target_lon)
+        lon_delta = min(lon_delta, 360.0 - lon_delta)
+        lat_delta = float(row_lat) - target_lat
+        return (lon_delta * lon_scale) ** 2 + lat_delta**2
+
+    nearest_idx = min((int(idx) for idx in selection.indices), key=center_distance)
+    return ExportSelection(
+        selected_date=selection.selected_date,
+        iso_year=selection.iso_year,
+        iso_week=selection.iso_week,
+        indices=[nearest_idx],
+    )
+
+
 def _patch_axes_for_row(
     row: dict,
     *,
@@ -705,7 +794,7 @@ def _build_public_argo_rows(
     force_regions = _parse_force_include_regions(
         _cfg_path_value(data_cfg, "dataset.grid.force_include_regions", default=None)
     )
-    patch_stride = max(1, int(tile_size) // 4)
+    patch_stride = max(1, int(tile_size))
     max_land_fraction = 1.0 - float(min_ocean_fraction)
     if not 0.0 <= max_land_fraction <= 1.0:
         raise ValueError("min_ocean_fraction must be in [0, 1].")
@@ -741,12 +830,16 @@ def _build_public_argo_rows(
         indices=list(range(len(rows))),
     )
     selection = filter_selection_by_rectangle(rows, selection, rectangle)
+    intersecting_patch_count = len(selection.indices)
+    selection = _compact_rectangle_selection(rows, selection, rectangle)
     selected_rows = [rows[int(idx)] for idx in selection.indices]
     metadata = {
         "tile_size": int(tile_size),
         "resolution_deg": float(resolution_deg),
         "patch_stride": int(patch_stride),
         "patch_overlap_fraction": 1.0 - (float(patch_stride) / float(tile_size)),
+        "intersecting_patch_count": int(intersecting_patch_count),
+        "compact_patch_count": int(len(selected_rows)),
         "min_ocean_fraction": float(min_ocean_fraction),
         "max_land_fraction": float(max_land_fraction),
         "patch_grid_source": "land_mask",
@@ -1390,6 +1483,9 @@ def run_argo_week_inference(
 
     for start in range(0, len(rows), batch_size_value):
         batch_rows = rows[start : start + batch_size_value]
+        batch_label = f"{start + 1}-{min(start + len(batch_rows), len(rows))}/{len(rows)} patch(es)"
+        if progress_callback is not None:
+            progress_callback("profile_batch_start", batch_label, run_dir)
         samples = [
             _build_public_argo_sample(
                 argo_store=argo_store,
@@ -1402,6 +1498,8 @@ def run_argo_week_inference(
             )
             for row in batch_rows
         ]
+        if progress_callback is not None:
+            progress_callback("profile_batch_done", batch_label, run_dir)
         batch = {
             key: (
                 torch.stack([sample[key] for sample in samples], dim=0)
@@ -1410,6 +1508,8 @@ def run_argo_week_inference(
             )
             for key in samples[0]
         }
+        if progress_callback is not None:
+            progress_callback("inference_batch_start", batch_label, run_dir)
         with torch.no_grad():
             outputs = model.predict_step(_to_device(batch, target_device), batch_idx=0)
 

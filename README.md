@@ -109,6 +109,9 @@ The public API downloads configs/checkpoints and the land mask from Hugging Face
 downloads EN4/ARGO and, by default, OSTIA for the selected ISO week, and returns
 the GeoTIFF run directory. Existing cached files are reused automatically. Pass
 `auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
+The package API uses non-overlapping public inference patches by default
+(`patch_stride=tile_size`, normally 128), so small rectangles select compact
+patch sets.
 GLORYS is not required for the standard public inference path; it is only needed
 for training or optional ground-truth comparison exports.
 EN4/ARGO downloads use the Met Office annual EN.4.2.2 profile archives for each

@@ -41,8 +41,10 @@ When `glorys_dir` is omitted, this path uses the public ARGO/OSTIA workflow:
 - stitches depth-level prediction GeoTIFFs and writes GeoJSON/CSV/YAML metadata
 
 The return value is the run directory, normally
-`inference/outputs/depthdif_argo_<YYYYMMDD>/`. Rectangle filtering keeps every
-selected ISO-week patch that intersects `(lon_min, lat_min, lon_max, lat_max)`.
+`inference/outputs/depthdif_argo_<YYYYMMDD>/`. The public package path uses
+non-overlapping patches by default (`patch_stride=tile_size`, normally 128).
+Rectangle filtering keeps patch centers inside `(lon_min, lat_min, lon_max,
+lat_max)`, with a nearest-patch fallback for very small boxes.
 GLORYS is not required for the standard public inference path; it is only needed
 for training, local comparison exports, or when intentionally using the
 GLORYS-backed branch described below.

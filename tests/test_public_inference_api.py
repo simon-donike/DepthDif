@@ -14,6 +14,7 @@ import yaml
 from inference.api import (
     InferenceAssets,
     _build_public_argo_sample,
+    _build_public_argo_rows,
     _en4_zip_url,
     _export_args_from_public_api,
     _ostia_filter_for_day,
@@ -325,6 +326,41 @@ class TestPublicInferenceApi(unittest.TestCase):
         )
 
         self.assertTrue(torch.equal(sample["eo"], torch.zeros((1, 4, 4))))
+
+    def test_public_argo_rows_default_to_non_overlapping_stride(self) -> None:
+        patch_rows = [
+            {
+                "lat0": 0.0,
+                "lat1": 12.8,
+                "lon0": 0.0,
+                "lon1": 12.8,
+                "lat_center": 6.4,
+                "lon_center": 6.4,
+            }
+        ]
+
+        with mock.patch(
+            "inference.api._build_land_mask_patch_table",
+            return_value=mock.Mock(to_dict=mock.Mock(return_value=patch_rows)),
+        ):
+            _rows, metadata = _build_public_argo_rows(
+                data_cfg={
+                    "dataset": {
+                        "grid": {
+                            "tile_size": 128,
+                            "resolution_deg": 0.1,
+                        }
+                    }
+                },
+                year=2024,
+                iso_week=2,
+                rectangle=None,
+                land_mask_path="mask.tif",
+                min_ocean_fraction=0.05,
+            )
+
+        self.assertEqual(metadata["patch_stride"], 128)
+        self.assertEqual(metadata["patch_overlap_fraction"], 0.0)
 
     def test_en4_zip_url_matches_existing_download_script_pattern(self) -> None:
         self.assertEqual(
