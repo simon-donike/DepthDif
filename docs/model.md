@@ -1,5 +1,5 @@
 # Model  
-DepthDif uses a conditional pixel-space diffusion model implemented in `models/difFF/PixelDiffusion.py`.  
+DepthDif uses a conditional pixel-space diffusion model implemented in `models/diffusion/PixelDiffusion.py`.  
   
 Model schema:  
 ![depthdif_schema](assets/figures/depthdif_schema.png)  

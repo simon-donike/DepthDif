@@ -33,7 +33,7 @@ from inference.core import (
     resolve_model_type,
     to_device,
 )
-from models.difFF.DenoisingDiffusionProcess.samplers import DDIM_Sampler
+from models.diffusion.DenoisingDiffusionProcess.samplers import DDIM_Sampler
 from utils.normalizations import (
     PLOT_CMAP,
     PLOT_TEMP_MAX,

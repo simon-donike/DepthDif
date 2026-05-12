@@ -11,7 +11,7 @@ import yaml
 from data.datamodule import DepthTileDataModule
 from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from models.difFF import PixelDiffusionConditional
+from models.diffusion import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
 
 

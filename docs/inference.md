@@ -269,7 +269,7 @@ import torch
 
 from data.datamodule import DepthTileDataModule
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from models.difFF import PixelDiffusionConditional
+from models.diffusion import PixelDiffusionConditional
 
 model_config = "configs/px_space/model_config.yaml"
 data_config = "configs/px_space/data_ostia_argo_netcdf.yaml"

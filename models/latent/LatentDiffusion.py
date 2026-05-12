@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
-from models.difFF.PixelDiffusion import PixelDiffusionConditional
+from models.diffusion.PixelDiffusion import PixelDiffusionConditional
 
 from .Autoencoder import DepthBandAutoencoder
 

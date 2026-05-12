@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 import yaml
 
 from data.datamodule import DepthTileDataModule
-from models.difFF.PixelDiffusion import PixelDiffusionConditional
+from models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from models.latent.Autoencoder import (
     DepthBandAutoencoder,
     DepthBandAutoencoderLightning,

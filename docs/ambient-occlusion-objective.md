@@ -167,7 +167,7 @@ up to the repository’s existing normalization/parameterization conventions and
 - Ambient config surface:
   - `configs/px_space/model_config.yaml` (`model.ambient_occlusion.*`)
 - Runtime config wiring and safety:
-  - `models/difFF/PixelDiffusion.py`
+  - `models/diffusion/PixelDiffusion.py`
     - `PixelDiffusionConditional.from_config(...)`
     - `PixelDiffusionConditional.__init__(...)`
 - \(\tilde{A}\) construction:
@@ -175,7 +175,7 @@ up to the repository’s existing normalization/parameterization conventions and
 - Condition path replacement \((x,A)\to(\tilde{x},\tilde{A})\) :
   - `training_step(...)`, `validation_step(...)`
 - Ambient loss execution:
-  - `models/difFF/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`
+  - `models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`
     - `DenoisingDiffusionConditionalProcess.p_loss(...)`
     - ambient loss mask = `x_valid_mask` intersected with `y_valid_mask`
     - optional `apply_further_corruption_to_noisy_branch`
@@ -185,5 +185,4 @@ up to the repository’s existing normalization/parameterization conventions and
 The old setup primarily asked the model to reconstruct hidden regions given fixed observed context.
 
 The new setup introduces random context removal during training while preserving supervision on the original observed support. This makes the learning problem closer to the ambient objective: robustly estimate clean content under stochastic measurement degradation, not only under one fixed missingness pattern per sample.
-
 
