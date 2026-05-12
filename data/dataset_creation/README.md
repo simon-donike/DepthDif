@@ -101,6 +101,25 @@ The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
 variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
 salinity, and validity masks. Temperature stretches decode to Kelvin.
+Dense raster dates are exported with process workers by default; use `--workers`
+to tune CPU and RAM use for the machine.
+
+Raster values use the full unsigned byte range for accuracy: valid codes are
+`0..254`, `255` is nodata, and decoding is
+`minimum + code / 254 * (maximum - minimum)`. The same transform metadata is
+stored in GeoTIFF tags and `manifest.yaml`, including quantization step and
+worst-case rounding error.
+
+| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
+| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
+| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
+
+The int8 comparison assumes a signed-byte layout that only uses nonnegative
+codes `0..126` plus nodata `127`. A signed int8 remapped across all 255
+non-nodata codes would have the same precision as uint8, but the unsigned layout
+keeps the transform simpler and interoperates better with raster tooling.
 
 By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
 is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
@@ -116,5 +135,6 @@ is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
+  --workers 4 \
   --overwrite
 ```

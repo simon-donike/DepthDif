@@ -182,6 +182,7 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 start_date=20240105,
                 end_date=20240111,
                 surface_aggregate_days=7,
+                workers=2,
                 overwrite=True,
             )
 
@@ -214,6 +215,13 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 self.assertAlmostEqual(float(thetao_k[0, 0]), 285.15, delta=0.2)
                 self.assertEqual(int(thetao.read(1)[1, 1]), 255)
                 self.assertEqual(thetao.tags(1)["units"], "K")
+                self.assertEqual(thetao.tags()["storage_dtype"], "uint8")
+                self.assertEqual(thetao.tags()["valid_code_max"], "254")
+                self.assertAlmostEqual(
+                    float(thetao.tags()["max_abs_quantization_error"]),
+                    0.0748,
+                    delta=0.001,
+                )
 
                 salinity_psu = decode_stretched_uint8(
                     salinity.read(1),
@@ -257,6 +265,16 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
             manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
             self.assertEqual(manifest["output_dir"], str(output_dir))
             self.assertEqual(manifest["stretch"]["temperature_kelvin"]["units"], "K")
+            self.assertEqual(
+                manifest["stretch"]["temperature_kelvin"]["storage_dtype"],
+                "uint8",
+            )
+            self.assertAlmostEqual(
+                manifest["stretch"]["salinity"]["max_abs_quantization_error"],
+                0.0197,
+                delta=0.001,
+            )
+            self.assertEqual(manifest["parallelism"]["raster_workers"], 2)
             self.assertEqual(manifest["argo"]["profile_count"], 1)
 
     def test_ostia_celsius_values_are_saved_as_kelvin(self) -> None:
@@ -285,6 +303,7 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 start_date=20240108,
                 end_date=20240108,
                 argo_source="none",
+                workers=1,
                 overwrite=True,
             )
 

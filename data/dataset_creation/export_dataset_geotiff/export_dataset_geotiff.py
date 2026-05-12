@@ -1,26 +1,32 @@
-# Example:
-# /work/envs/depth/bin/python data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py \
-#   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
-#   --ostia-dir /data1/datasets/depth_v2/ostia \
-#   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-#   --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
-#   --argo-dir /data1/datasets/depth_v2/en4_profiles \
-#   --land-mask-path data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
-#   --output-dir /work/data/depthdif \
-#   --start-date 20100101 \
-#   --end-date 20240731 \
-#   --surface-aggregate-days 7 \
-#   --argo-source enriched \
-#   --chunk-profile 50000 \
-#   --overwrite
-"""Export aligned uint8 GeoTIFF rasters and preprocessed ARGO profile inputs."""
+"""
+Example:
+ /work/envs/depth/bin/python data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py \
+   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+   --ostia-dir /data1/datasets/depth_v2/ostia \
+   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+   --enriched-argo-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+   --argo-dir /data1/datasets/depth_v2/en4_profiles \
+   --land-mask-path data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+   --output-dir /work/data/depthdif \
+   --start-date 20100101 \
+   --end-date 20240731 \
+   --surface-aggregate-days 7 \
+   --argo-source enriched \
+   --chunk-profile 50000 \
+   --workers 12 \
+   --overwrite
+
+Export aligned uint8 GeoTIFF rasters and preprocessed ARGO profile inputs.
+"""
 
 from __future__ import annotations
 
 import argparse
 from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -62,7 +68,10 @@ DEFAULT_START_DATE = 20100101
 DEFAULT_END_DATE = 20240731
 DEFAULT_SURFACE_AGGREGATE_DAYS = 7
 DEFAULT_CHUNK_PROFILE = 50000
+DEFAULT_RASTER_WORKERS = max(1, min(4, os.cpu_count() or 1))
 
+RASTER_DTYPE = "uint8"
+VALID_CODE_MIN = 0
 NODATA_CODE = np.uint8(255)
 VALID_CODE_MAX = np.float32(254.0)
 TEMPERATURE_KELVIN_STRETCH = "temperature_kelvin"
@@ -259,16 +268,30 @@ def _merge_stats(stats: Iterable[EncodeStats]) -> dict[str, int]:
     }
 
 
+def _quantization_step(stretch: StretchSpec) -> float:
+    """Return the physical-unit distance between adjacent valid uint8 codes."""
+    return float(stretch.maximum - stretch.minimum) / float(VALID_CODE_MAX)
+
+
+def _max_quantization_error(stretch: StretchSpec) -> float:
+    """Return the worst-case rounding error introduced by uint8 encoding."""
+    return _quantization_step(stretch) / 2.0
+
+
 def _stretch_manifest(stretch: StretchSpec) -> dict[str, Any]:
     """Return a YAML-safe representation of a stretch specification."""
     return {
         "name": stretch.name,
+        "storage_dtype": RASTER_DTYPE,
         "minimum": float(stretch.minimum),
         "maximum": float(stretch.maximum),
         "units": stretch.units,
         "nodata": int(stretch.nodata),
-        "valid_code_min": 0,
+        "valid_code_min": int(VALID_CODE_MIN),
         "valid_code_max": int(VALID_CODE_MAX),
+        "valid_code_count": int(VALID_CODE_MAX) + 1,
+        "quantization_step": _quantization_step(stretch),
+        "max_abs_quantization_error": _max_quantization_error(stretch),
         "decode": "minimum + code / 254 * (maximum - minimum)",
     }
 
@@ -421,7 +444,7 @@ def _geotiff_profile(
         "height": int(grid.height),
         "width": int(grid.width),
         "count": int(count),
-        "dtype": "uint8",
+        "dtype": RASTER_DTYPE,
         "crs": grid.crs,
         "transform": grid.transform,
         "nodata": int(NODATA_CODE),
@@ -479,10 +502,16 @@ def _set_common_tags(
         source_product=source_product,
         variable=variable,
         stretch_name=stretch.name,
+        storage_dtype=RASTER_DTYPE,
         stretch_min=float(stretch.minimum),
         stretch_max=float(stretch.maximum),
         stretch_units=stretch.units,
         nodata=int(stretch.nodata),
+        valid_code_min=int(VALID_CODE_MIN),
+        valid_code_max=int(VALID_CODE_MAX),
+        valid_code_count=int(VALID_CODE_MAX) + 1,
+        quantization_step=_quantization_step(stretch),
+        max_abs_quantization_error=_max_quantization_error(stretch),
         decode_formula="minimum + code / 254 * (maximum - minimum)",
     )
 
@@ -713,6 +742,77 @@ def _export_surface_variable(
         "compression": compression,
         "stats": _merge_stats([stats]),
     }
+
+
+def _export_weekly_raster_date_worker(task: dict[str, Any]) -> dict[str, Any]:
+    """Export all dense raster variables for one GLORYS weekly target date."""
+    item = task["item"]
+    output_root = Path(task["output_dir"])
+    grid = _load_target_grid(Path(task["land_mask_path"]))
+    cache = DatasetCache(max_open=8)
+    try:
+        date_value = _date_int_from_days_since_1950(float(item.day))
+        result: dict[str, Any] = {"date": int(date_value)}
+        result["thetao"] = _export_glorys_variable(
+            item=item,
+            cache=cache,
+            output_dir=output_root,
+            grid=grid,
+            var_name="thetao",
+            stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
+            source_is_temperature_celsius=True,
+            show_progress=False,
+        )
+        result["so"] = _export_glorys_variable(
+            item=item,
+            cache=cache,
+            output_dir=output_root,
+            grid=grid,
+            var_name="so",
+            stretch=STRETCH_SPECS[SALINITY_STRETCH],
+            source_is_temperature_celsius=False,
+            show_progress=False,
+        )
+        result["analysed_sst"] = _export_surface_variable(
+            source_name="ostia",
+            source_items=task["ostia_items"],
+            target_item=item,
+            cache=cache,
+            output_dir=output_root,
+            grid=grid,
+            var_name="analysed_sst",
+            stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
+            aggregate_days=int(task["surface_aggregate_days"]),
+            source_is_temperature=True,
+            show_progress=False,
+        )
+        result["adt"] = _export_surface_variable(
+            source_name="sealevel",
+            source_items=task["sealevel_items"],
+            target_item=item,
+            cache=cache,
+            output_dir=output_root,
+            grid=grid,
+            var_name="adt",
+            stretch=STRETCH_SPECS[SEA_HEIGHT_STRETCH],
+            aggregate_days=int(task["surface_aggregate_days"]),
+            source_is_temperature=False,
+            show_progress=False,
+        )
+        return result
+    finally:
+        cache.close()
+
+
+def _record_weekly_raster_result(
+    manifest: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Append one weekly raster export result to the output manifest."""
+    manifest["rasters"]["glorys"]["thetao"].append(result["thetao"])
+    manifest["rasters"]["glorys"]["so"].append(result["so"])
+    manifest["rasters"]["ostia"]["analysed_sst"].append(result["analysed_sst"])
+    manifest["rasters"]["sealevel"]["adt"].append(result["adt"])
 
 
 def _nearest_target_dates(
@@ -1156,12 +1256,14 @@ def export_training_geotiff_dataset(
     surface_aggregate_days: int = DEFAULT_SURFACE_AGGREGATE_DAYS,
     argo_source: str = "enriched",
     chunk_profile: int = DEFAULT_CHUNK_PROFILE,
+    workers: int = DEFAULT_RASTER_WORKERS,
     overwrite: bool = False,
     show_progress: bool = True,
 ) -> Path:
     """Export aligned uint8 raster training sources and preprocessed ARGO profiles."""
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
+    raster_workers = max(1, int(workers))
     with tqdm(
         total=1,
         desc="Loading target grid",
@@ -1207,6 +1309,9 @@ def export_training_geotiff_dataset(
             cache=False,
         ) as first_glorys:
             depth_axis = _glorys_depth_axis(first_glorys)
+        target_date_values = [
+            _date_int_from_days_since_1950(float(item.day)) for item in glorys_items
+        ]
 
         manifest: dict[str, Any] = {
             "created_by": "data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py",
@@ -1236,10 +1341,9 @@ def export_training_geotiff_dataset(
                 "target": "glorys",
                 "window_days": int(surface_aggregate_days),
             },
+            "parallelism": {"raster_workers": int(raster_workers)},
             "depth_axis_m": [float(value) for value in depth_axis.tolist()],
-            "target_dates": [
-                _date_int_from_days_since_1950(float(item.day)) for item in glorys_items
-            ],
+            "target_dates": target_date_values,
             "rasters": {
                 "glorys": {"thetao": [], "so": []},
                 "ostia": {"analysed_sst": []},
@@ -1257,17 +1361,18 @@ def export_training_geotiff_dataset(
             dynamic_ncols=True,
             disable=not show_progress,
         ) as export_progress:
-            for item in tqdm(
-                glorys_items,
-                desc="Exporting weekly raster dates",
-                unit="date",
-                dynamic_ncols=True,
-                disable=not show_progress,
-            ):
-                date_value = _date_int_from_days_since_1950(float(item.day))
-                export_progress.set_postfix(date=str(date_value), variable="thetao")
-                manifest["rasters"]["glorys"]["thetao"].append(
-                    _export_glorys_variable(
+            if raster_workers == 1:
+                for item in tqdm(
+                    glorys_items,
+                    desc="Exporting weekly raster dates",
+                    unit="date",
+                    dynamic_ncols=True,
+                    disable=not show_progress,
+                ):
+                    date_value = _date_int_from_days_since_1950(float(item.day))
+                    result: dict[str, Any] = {"date": int(date_value)}
+                    export_progress.set_postfix(date=str(date_value), variable="thetao")
+                    result["thetao"] = _export_glorys_variable(
                         item=item,
                         cache=cache,
                         output_dir=output_root,
@@ -1277,12 +1382,10 @@ def export_training_geotiff_dataset(
                         source_is_temperature_celsius=True,
                         show_progress=show_progress,
                     )
-                )
-                export_progress.update(1)
+                    export_progress.update(1)
 
-                export_progress.set_postfix(date=str(date_value), variable="so")
-                manifest["rasters"]["glorys"]["so"].append(
-                    _export_glorys_variable(
+                    export_progress.set_postfix(date=str(date_value), variable="so")
+                    result["so"] = _export_glorys_variable(
                         item=item,
                         cache=cache,
                         output_dir=output_root,
@@ -1292,15 +1395,13 @@ def export_training_geotiff_dataset(
                         source_is_temperature_celsius=False,
                         show_progress=show_progress,
                     )
-                )
-                export_progress.update(1)
+                    export_progress.update(1)
 
-                export_progress.set_postfix(
-                    date=str(date_value),
-                    variable="analysed_sst",
-                )
-                manifest["rasters"]["ostia"]["analysed_sst"].append(
-                    _export_surface_variable(
+                    export_progress.set_postfix(
+                        date=str(date_value),
+                        variable="analysed_sst",
+                    )
+                    result["analysed_sst"] = _export_surface_variable(
                         source_name="ostia",
                         source_items=ostia_items,
                         target_item=item,
@@ -1313,12 +1414,10 @@ def export_training_geotiff_dataset(
                         source_is_temperature=True,
                         show_progress=show_progress,
                     )
-                )
-                export_progress.update(1)
+                    export_progress.update(1)
 
-                export_progress.set_postfix(date=str(date_value), variable="adt")
-                manifest["rasters"]["sealevel"]["adt"].append(
-                    _export_surface_variable(
+                    export_progress.set_postfix(date=str(date_value), variable="adt")
+                    result["adt"] = _export_surface_variable(
                         source_name="sealevel",
                         source_items=sealevel_items,
                         target_item=item,
@@ -1331,8 +1430,48 @@ def export_training_geotiff_dataset(
                         source_is_temperature=False,
                         show_progress=show_progress,
                     )
-                )
-                export_progress.update(1)
+                    export_progress.update(1)
+                    _record_weekly_raster_result(manifest, result)
+            else:
+                results_by_date: dict[int, dict[str, Any]] = {}
+                # Use processes instead of threads so Python-side encoding and
+                # HDF5/xarray reads can actually occupy multiple CPU cores.
+                with ProcessPoolExecutor(max_workers=raster_workers) as executor:
+                    future_to_date = {
+                        executor.submit(
+                            _export_weekly_raster_date_worker,
+                            {
+                                "item": item,
+                                "ostia_items": ostia_items,
+                                "sealevel_items": sealevel_items,
+                                "land_mask_path": str(land_mask_path),
+                                "output_dir": str(output_root),
+                                "surface_aggregate_days": int(surface_aggregate_days),
+                            },
+                        ): int(date_value)
+                        for item, date_value in zip(glorys_items, target_date_values)
+                    }
+                    for future in tqdm(
+                        as_completed(future_to_date),
+                        total=len(future_to_date),
+                        desc=f"Exporting weekly raster dates ({raster_workers} workers)",
+                        unit="date",
+                        dynamic_ncols=True,
+                        disable=not show_progress,
+                    ):
+                        date_value = future_to_date[future]
+                        export_progress.set_postfix(
+                            date=str(date_value),
+                            variable="rasters",
+                        )
+                        result = future.result()
+                        results_by_date[int(result["date"])] = result
+                        export_progress.update(4)
+                for date_value in target_date_values:
+                    _record_weekly_raster_result(
+                        manifest,
+                        results_by_date[int(date_value)],
+                    )
 
             argo_input = _open_argo_input_dataset(
                 argo_source=str(argo_source),
@@ -1416,6 +1555,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use the enriched ARGO zarr, project raw EN4 files, or skip ARGO.",
     )
     parser.add_argument("--chunk-profile", type=int, default=DEFAULT_CHUNK_PROFILE)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_RASTER_WORKERS,
+        help="Parallel worker processes for dense raster exports.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser
 
@@ -1436,6 +1581,7 @@ def main() -> None:
         surface_aggregate_days=args.surface_aggregate_days,
         argo_source=args.argo_source,
         chunk_profile=args.chunk_profile,
+        workers=args.workers,
         overwrite=args.overwrite,
     )
     print(f"Wrote GeoTIFF training dataset: {output}")

@@ -54,7 +54,24 @@ row/column indices. The default output root is `/work/data/depthdif`, and the
 default aligned ARGO input is
 `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`. Temperature
 rasters and ARGO temperature are stretched in Kelvin, so decoding the uint8
-values returns Kelvin.
+values returns Kelvin. Dense raster exports use process workers by default; tune
+`--workers` downward if RAM or source-disk contention becomes the bottleneck.
+
+The GeoTIFF and compact ARGO byte fields use valid `uint8` codes `0..254` and
+reserve `255` for nodata. Decoding uses
+`minimum + code / 254 * (maximum - minimum)`, with the quantization step and
+worst-case rounding error recorded in raster tags and `manifest.yaml`.
+
+| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
+| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
+| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
+
+Here, "int8 nonnegative" means a signed-byte encoding that uses only `0..126`
+as valid values and `127` as nodata. A signed int8 layout remapped across all
+255 non-nodata codes would have the same quantization error as `uint8`, but
+`uint8` keeps byte values and nodata handling explicit for raster readers.
 
 Only compact cache files are allowed under `metadata_cache_dir`. These caches
 store patch rows, split labels, land fractions, and ARGO support flags. They do
