@@ -537,11 +537,12 @@ def main(
     # Build EO-conditioned multiband dataset from config.
     ds_cfg = data_cfg.get("dataset", {})
     split_cfg = data_cfg.get("split", {})
-    # Training config owns dataloader behavior; selected data config can still override val shuffle.
+    # Training config provides defaults; selected data configs can override
+    # loader behavior because NetCDF and GeoTIFF backends have different I/O costs.
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
     data_dataloader_cfg = data_cfg.get("dataloader", {})
-    if "val_shuffle" in data_dataloader_cfg:
-        dataloader_cfg["val_shuffle"] = bool(data_dataloader_cfg["val_shuffle"])
+    if isinstance(data_dataloader_cfg, dict):
+        dataloader_cfg.update(data_dataloader_cfg)
     dataloader_type = (
         str(
             ds_cfg_value(

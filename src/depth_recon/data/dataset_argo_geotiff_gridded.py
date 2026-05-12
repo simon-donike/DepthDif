@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Sequence
@@ -13,6 +14,7 @@ import torch
 from torch.utils.data import Dataset
 import xarray as xr
 import yaml
+import zarr
 
 from depth_recon.data.dataset_grid_utils import (
     DEFAULT_LAND_MASK_PATH,
@@ -92,10 +94,20 @@ class RasterDatasetCache:
     def __init__(self, max_open: int = 8) -> None:
         """Initialize a bounded raster path cache."""
         self.max_open = int(max_open)
+        self._pid = os.getpid()
         self._items: OrderedDict[Path, rasterio.io.DatasetReader] = OrderedDict()
+
+    def _ensure_current_process(self) -> None:
+        """Drop inherited file handles after DataLoader worker forks."""
+        pid = os.getpid()
+        if pid == self._pid:
+            return
+        self.close()
+        self._pid = pid
 
     def get(self, path: Path) -> rasterio.io.DatasetReader:
         """Return an opened raster dataset for ``path``."""
+        self._ensure_current_process()
         path = Path(path)
         if path in self._items:
             src = self._items.pop(path)
@@ -169,7 +181,10 @@ class ArgoGeoTIFFProfileStore:
         self.path = Path(path)
         if not self.path.exists():
             raise FileNotFoundError(f"ARGO profile zarr does not exist: {self.path}")
-        self.ds = xr.open_zarr(self.path, consolidated=None)
+        self._pid = os.getpid()
+        self.ds = self._open_dataset()
+        self._zarr_pid = os.getpid()
+        self._zarr_group = self._open_zarr_group()
         required = {
             "target_date",
             "grid_row",
@@ -192,12 +207,40 @@ class ArgoGeoTIFFProfileStore:
         self._has_valid_temp = temp_valid.any(axis=1)
         self.temperature_stretch = self._temperature_stretch()
 
+    def _open_dataset(self) -> xr.Dataset:
+        """Open the zarr dataset in the current process."""
+        return xr.open_zarr(self.path, consolidated=None)
+
+    def _open_zarr_group(self) -> zarr.Group:
+        """Open the zarr group used for direct array reads."""
+        return zarr.open_group(self.path, mode="r")
+
+    def _ensure_current_process(self) -> xr.Dataset:
+        """Reopen zarr handles after DataLoader worker forks."""
+        pid = os.getpid()
+        if pid == self._pid:
+            return self.ds
+        # Do not close inherited xarray/zarr handles in a forked worker; closing
+        # those locks after fork can block before the worker reads its first batch.
+        self.ds = self._open_dataset()
+        self._pid = pid
+        return self.ds
+
+    def _ensure_zarr_group(self) -> zarr.Group:
+        """Return a direct zarr group opened in the current process."""
+        pid = os.getpid()
+        if pid != self._zarr_pid:
+            self._zarr_group = self._open_zarr_group()
+            self._zarr_pid = pid
+        return self._zarr_group
+
     def _temperature_stretch(self) -> dict[str, Any]:
         """Read temperature stretch metadata from variable or dataset attributes."""
-        attrs = dict(self.ds["argo_temp_kelvin_uint8"].attrs)
+        ds = self._ensure_current_process()
+        attrs = dict(ds["argo_temp_kelvin_uint8"].attrs)
         if "minimum" in attrs and "maximum" in attrs:
             return attrs
-        ds_attrs = dict(self.ds.attrs)
+        ds_attrs = dict(ds.attrs)
         stretch = ds_attrs.get("temperature_stretch")
         if isinstance(stretch, dict):
             return stretch
@@ -233,12 +276,15 @@ class ArgoGeoTIFFProfileStore:
         depth_size = int(self.depth_axis_m.size)
         if indices.size == 0:
             return np.zeros((0, depth_size), dtype=np.float32)
+        group = self._ensure_zarr_group()
         encoded = np.asarray(
-            self.ds["argo_temp_kelvin_uint8"].isel(profile=indices).values,
+            group["argo_temp_kelvin_uint8"].get_orthogonal_selection(
+                (indices, slice(None))
+            ),
             dtype=np.uint8,
         )
         valid = np.asarray(
-            self.ds["argo_temp_valid"].isel(profile=indices).values,
+            group["argo_temp_valid"].get_orthogonal_selection((indices, slice(None))),
             dtype=bool,
         )
         kelvin = _decode_stretched_uint8(encoded, self.temperature_stretch)

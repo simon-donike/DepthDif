@@ -104,8 +104,8 @@ def build_datamodule(
     split_cfg = data_cfg.get("split", {})
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
     data_dataloader_cfg = data_cfg.get("dataloader", {})
-    if "val_shuffle" in data_dataloader_cfg:
-        dataloader_cfg["val_shuffle"] = bool(data_dataloader_cfg["val_shuffle"])
+    if isinstance(data_dataloader_cfg, dict):
+        dataloader_cfg.update(data_dataloader_cfg)
 
     return DepthTileDataModule(
         dataset=dataset,
