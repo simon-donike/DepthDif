@@ -102,10 +102,6 @@ selected by the patch bounds and the configured temporal window, projected onto
 the GLORYS depth axis, then rasterized into the sample tensors and validity
 masks.
 
-The Zarr dataset uses the same patch-grid and registry rules. Its source reads
-come from Zarr stores instead of NetCDF files, but the conceptual registry is the
-same: deterministic patch windows crossed with valid timesteps.
-
 ## Spatial And Temporal Semantics
 
 - `dataset.grid.tile_size` controls patch height/width.

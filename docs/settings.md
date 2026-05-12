@@ -141,12 +141,13 @@ Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless no
 
 | Config key | Default value | Explanation |
 |---|---|---|
-| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects the only active dataset implementation in `train.py`. |
+| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects the dataset implementation in `train.py`; use `"argo_geotiff_gridded"` with `configs/px_space/data_ostia_argo_geotiff.yaml` for exported GeoTIFF stores. |
 | `dataset.core.dataloader_type` | `"light"` | The current training runner supports only `"light"` loading. |
 | `dataset.core.argo_dir` | `"/data1/datasets/depth_v2/en4_profiles"` | Root directory scanned for raw ARGO/EN4 monthly NetCDF files. |
 | `dataset.core.glorys_dir` | `"/data1/datasets/depth_v2/glorys_weekly"` | Root directory scanned for GLORYS NetCDF target files. |
 | `dataset.core.ostia_dir` | `"/data1/datasets/depth_v2/ostia"` | Root directory scanned for OSTIA NetCDF EO files. |
 | `dataset.core.sealevel_dir` | `"/data1/datasets/depth_v2/sealevel_daily"` | Root directory scanned for sea-level NetCDF files used for optional metadata/diagnostics. |
+| `dataset.core.geotiff_root_dir` | `"/work/data/depthdif"` | Export root containing `manifest.yaml`, dense GeoTIFF rasters, and `argo/argo_profiles_on_grid.zarr` for the GeoTIFF dataset variant. |
 | `dataset.core.metadata_cache_dir` | `"/data1/datasets/depth_v2/depthdif_cache"` | Directory for compact patch/date metadata caches only. |
 | `dataset.grid.tile_size` | `128` | Patch height and width in pixels. |
 | `dataset.grid.resolution_deg` | `0.1` | Patch grid resolution in geographic degrees. |

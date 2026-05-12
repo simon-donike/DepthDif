@@ -49,9 +49,7 @@ from data.dataset_creation.export_aligned_argo.source_files import (
     filter_argo_files_by_date_range,
     scan_timed_files,
 )
-from data.dataset_creation.export_dataset_zarr.export_dataset_zarr import (
-    _open_argo_dataset as _open_projected_raw_argo_dataset,
-)
+from data.dataset_argo_netcdf_gridded import _align_argo_profile_to_glorys_depths
 
 DEFAULT_OUTPUT_DIR = Path("/work/data/depthdif")
 DEFAULT_ENRICHED_ARGO_ZARR = (
@@ -923,6 +921,173 @@ def _read_argo_chunk(
         for key, var_name in names.items()
         if var_name in chunk
     }
+
+
+def _align_profile_values_to_depths(
+    values: np.ndarray,
+    depths: np.ndarray,
+    target_depths: np.ndarray,
+) -> np.ndarray:
+    """Align one raw ARGO profile variable onto the target depth axis."""
+    return _align_argo_profile_to_glorys_depths(
+        temperature=values,
+        depth=depths,
+        glorys_depths=target_depths,
+    )
+
+
+def _project_raw_argo_dataset_to_depths(
+    ds: xr.Dataset,
+    *,
+    variable_names: Sequence[str],
+    depth_var_name: str,
+    target_depths: np.ndarray,
+) -> xr.Dataset:
+    """Project raw ARGO variables onto the target GLORYS depth axis."""
+    target_depths = np.asarray(target_depths, dtype=np.float32).reshape(-1)
+    if target_depths.size == 0:
+        raise RuntimeError(
+            "Cannot project ARGO profiles to an empty GLORYS depth axis."
+        )
+
+    coords: dict[str, Any] = {"depth": target_depths}
+    if "N_PROF" in ds.coords:
+        coords["N_PROF"] = ds["N_PROF"]
+    out = xr.Dataset(coords=coords, attrs=dict(ds.attrs))
+    for name in ("JULD", "LATITUDE", "LONGITUDE"):
+        if name in ds:
+            out[name] = ds[name]
+
+    target_depth_da = xr.DataArray(
+        target_depths,
+        dims=("depth",),
+        coords={"depth": target_depths},
+    )
+    for name in variable_names:
+        if name not in ds:
+            continue
+        valid = (
+            np.isfinite(ds[name])
+            & np.isfinite(ds[str(depth_var_name)])
+            & (ds[str(depth_var_name)] >= 0.0)
+        ).any(dim="N_LEVELS")
+        out[f"HAS_VALID_{name}"] = valid.astype(bool)
+        # Keep projection lazy across profile chunks instead of materializing
+        # all source profiles before writing the compact ARGO store.
+        projected = xr.apply_ufunc(
+            _align_profile_values_to_depths,
+            ds[name],
+            ds[str(depth_var_name)],
+            target_depth_da,
+            input_core_dims=[["N_LEVELS"], ["N_LEVELS"], ["depth"]],
+            output_core_dims=[["depth"]],
+            vectorize=True,
+            dask="parallelized",
+            output_dtypes=[np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"depth": int(target_depths.size)}},
+        )
+        projected.attrs.update(ds[name].attrs)
+        projected.attrs["source_depth_var"] = str(depth_var_name)
+        projected.attrs["description"] = (
+            f"{name} projected onto the GLORYS depth coordinate."
+        )
+        out[name] = projected
+    return out
+
+
+def _add_raw_argo_profile_helpers(
+    ds: xr.Dataset,
+    *,
+    variable_names: Sequence[str],
+) -> xr.Dataset:
+    """Add profile date and validity helpers to a projected ARGO dataset."""
+    if "JULD" in ds:
+        juld = np.asarray(ds["JULD"].values, dtype=np.float64).reshape(-1)
+        dates = np.zeros(juld.shape, dtype=np.int32)
+        valid = np.isfinite(juld) & (juld < 90000.0) & (juld > -20000.0)
+        if np.any(valid):
+            days = np.datetime64("1950-01-01", "D") + np.floor(juld[valid]).astype(
+                "timedelta64[D]"
+            )
+            # Encode dates as YYYYMMDD integers so the writer can assign profile
+            # windows without reopening the original EN4 files.
+            dates[valid] = np.char.replace(
+                np.datetime_as_string(days, unit="D"),
+                "-",
+                "",
+            ).astype(np.int32)
+        ds["DATE"] = (("N_PROF",), dates)
+
+    for name in variable_names:
+        if name not in ds:
+            continue
+        if f"HAS_VALID_{name}" in ds:
+            continue
+        da = ds[name]
+        depth_dim = "depth" if "depth" in da.dims else da.dims[-1]
+        ds[f"HAS_VALID_{name}"] = np.isfinite(da).any(dim=depth_dim).astype(bool)
+    return ds
+
+
+def _open_projected_raw_argo_dataset(
+    paths: Sequence[Path],
+    *,
+    variable_names: Sequence[str],
+    depth_var_name: str,
+    target_depths: np.ndarray,
+    chunk_profile: int,
+) -> xr.Dataset:
+    """Open raw EN4/ARGO NetCDF files and project profile variables."""
+    if not paths:
+        raise RuntimeError("No ARGO NetCDF files were selected for GeoTIFF export.")
+
+    selected = ("JULD", "LATITUDE", "LONGITUDE", str(depth_var_name)) + tuple(
+        str(name) for name in variable_names
+    )
+
+    def preprocess(ds: xr.Dataset) -> xr.Dataset:
+        """Keep only fields needed for raw ARGO projection."""
+        present = [name for name in selected if name in ds]
+        required = ("JULD", "LATITUDE", "LONGITUDE", str(depth_var_name))
+        missing = [name for name in required if name not in ds]
+        if missing:
+            source = ds.encoding.get("source", "<unknown>")
+            raise RuntimeError(
+                f"ARGO source is missing required variables {missing}: {source}"
+            )
+        return ds[present]
+
+    ds = xr.open_mfdataset(
+        list(paths),
+        combine="nested",
+        concat_dim="N_PROF",
+        preprocess=preprocess,
+        decode_times=False,
+        mask_and_scale=True,
+        chunks={"N_PROF": int(chunk_profile), "N_LEVELS": -1},
+        parallel=False,
+    )
+    chunk_map = {"N_PROF": int(chunk_profile)}
+    if "N_LEVELS" in ds.dims:
+        chunk_map["N_LEVELS"] = -1
+    ds = ds.chunk({name: size for name, size in chunk_map.items() if name in ds.dims})
+    projected = _project_raw_argo_dataset_to_depths(
+        ds,
+        variable_names=variable_names,
+        depth_var_name=depth_var_name,
+        target_depths=target_depths,
+    )
+    projected = projected.chunk(
+        {
+            name: size
+            for name, size in {"N_PROF": int(chunk_profile), "depth": -1}.items()
+            if name in projected.dims
+        }
+    )
+    return _add_raw_argo_profile_helpers(
+        projected,
+        variable_names=variable_names,
+    )
 
 
 def _open_raw_argo_as_projected_dataset(

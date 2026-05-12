@@ -25,8 +25,8 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from data.dataset_argo_zarr_gridded import ArgoZarrGriddedPatchDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
 
@@ -348,15 +348,15 @@ def build_dataset(
             data_config_path,
             split=split,
         )
-    if dataset_variant == "argo_zarr_gridded":
-        return ArgoZarrGriddedPatchDataset.from_config(
+    if dataset_variant == "argo_geotiff_gridded":
+        return ArgoGeoTIFFGriddedPatchDataset.from_config(
             data_config_path,
             split=split,
         )
     raise ValueError(
         "Unsupported dataset variant in data config. "
         f"Got '{dataset_variant}', expected one of "
-        "{'argo_netcdf_gridded', 'argo_zarr_gridded'}."
+        "{'argo_netcdf_gridded', 'argo_geotiff_gridded'}."
     )
 
 

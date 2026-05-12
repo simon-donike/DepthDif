@@ -9,6 +9,7 @@ import torch
 import yaml
 
 from data.datamodule import DepthTileDataModule
+from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from models.difFF import PixelDiffusionConditional
 from models.latent import LatentDiffusionConditional
@@ -67,10 +68,16 @@ def build_dataset(
             split=split,
             dataset_overrides=dataset_overrides,
         )
+    if dataset_variant == "argo_geotiff_gridded":
+        return ArgoGeoTIFFGriddedPatchDataset.from_config(
+            data_config_path,
+            split=split,
+            dataset_overrides=dataset_overrides,
+        )
     raise ValueError(
         "Unsupported dataset variant "
         f"'{dataset_variant}'. Expected one of "
-        "['argo_netcdf_gridded']."
+        "['argo_netcdf_gridded', 'argo_geotiff_gridded']."
     )
 
 

@@ -8,6 +8,9 @@ projection.
 The export goal is a directory that can be shared or copied as one training
 dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO
 profiles are stored in a compact grid-indexed profile store.
+Training can select this exported dataset with
+`configs/px_space/data_ostia_argo_geotiff.yaml`, which sets
+`dataset.core.dataset_variant: argo_geotiff_gridded`.
 
 ## Output Layout
 
