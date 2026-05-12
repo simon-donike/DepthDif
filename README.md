@@ -31,6 +31,12 @@ For public inference only, install the published PyPI package:
 python -m pip install depth-recon
 ```
 
+To install a branch or tag directly from GitHub, use the same package metadata:
+
+```bash
+python -m pip install "depth-recon @ git+https://github.com/simon-donike/DepthDif.git@main"
+```
+
 When developing from this repository, the same package can be installed in
 editable mode:
 
@@ -40,17 +46,17 @@ python -m pip install -e .
 
 PyPI releases are published by GitHub Actions when a version tag such as
 `v0.1.0` is pushed on `main`. The tag must match `project.version` in
-`pyproject.toml`, and the PyPI project must be configured for trusted publishing
-from the repository's `pypi` environment.
+`pyproject.toml`, and the repository's `pypi` environment must provide PyPI
+publishing credentials.
 
 ## Model Overview
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
-- Active dataset: `data/dataset_argo_netcdf_gridded.py` (`ArgoNetCDFGriddedPatchDataset`) lazily builds model-ready patches from ARGO/EN4, GLORYS, OSTIA, and sea-level NetCDF files without writing patch exports.
+- Active dataset: `src/depth_recon/data/dataset_argo_netcdf_gridded.py` (`ArgoNetCDFGriddedPatchDataset`) lazily builds model-ready patches from ARGO/EN4, GLORYS, OSTIA, and sea-level NetCDF files without writing patch exports.
 - Optional dataset ablation: `dataset.synthetic.enabled=true` builds sparse `x` from random GLORYS `y` pixels, controlled by `dataset.synthetic.pixel_count`.
 - Config layout:
-  - `configs/px_space/`: active pixel-space diffusion configs
-  - `configs/lat_space/`: latent-space model/training/autoencoder configs
+  - `src/depth_recon/configs/px_space/`: active pixel-space diffusion configs
+  - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
 DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST plus coordinate/date context.
 
@@ -64,18 +70,18 @@ OSTIA + Argo NetCDF training:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/px_space/training_config.yaml \
-  --model-config configs/px_space/model_config.yaml
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config.yaml
 ```
 
 Ambient-occlusion objective example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/px_space/training_config.yaml \
-  --model-config configs/px_space/model_config_ambient.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config_ambient.yaml \
   --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
 ```
 
@@ -83,8 +89,8 @@ Notes:
 - `--train-config` and `--training-config` are equivalent.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.
 - `model.resume_checkpoint` resumes full Lightning state; `model.load_checkpoint` warm-starts by loading only model weights.
-- Latent diffusion workflow configs live in `configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
-- Latent launcher scripts: `scripts/train_autoencoder.sh`, `scripts/train_latent_diffusion.sh`.
+- Latent diffusion workflow configs live in `src/depth_recon/configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
+- Latent launcher scripts: `src/depth_recon/scripts/train_autoencoder.sh`, `src/depth_recon/scripts/train_latent_diffusion.sh`.
 
 ## Inference
 
@@ -153,25 +159,25 @@ depth-recon-infer-week \
   --device cuda
 ```
 
-Use `inference/run_single.py`:
+Use `src/depth_recon/inference/run_single.py`:
 
-1. Set config/checkpoint constants at the top of `inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).
+1. Set config/checkpoint constants at the top of `src/depth_recon/inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).
    For the active EO setup in this repository, use:
-   `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_netcdf.yaml`, `configs/px_space/training_config.yaml`
+   `src/depth_recon/configs/px_space/model_config.yaml`, `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`, `src/depth_recon/configs/px_space/training_config.yaml`
 2. Choose `MODE` (`"dataloader"` or `"random"`).
 3. Run:
 
 ```bash
-/work/envs/depth/bin/python inference/run_single.py
+/work/envs/depth/bin/python -m depth_recon.inference.run_single
 ```
 
-For a full spatial export, use `inference/export_global.py`. It selects one exact daily snapshot from the configured patch dataset (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. The exporter runs one stochastic prediction per patch; spatial smoothing comes from 75% patch overlap, overlap-weighted stitching, and the configurable export-time `--sigma` blur.
+For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects one exact daily snapshot from the configured patch dataset (directly or via ISO week/year), runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction and GLORYS GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and train/val patch squares. The exporter runs one stochastic prediction per patch; spatial smoothing comes from 75% patch overlap, overlap-weighted stitching, and the configurable export-time `--sigma` blur.
 
-For a pooled validation-set depth summary, use `inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
+For a pooled validation-set depth summary, use `src/depth_recon/inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
 
 ```bash
-/work/envs/depth/bin/python inference/export_validation_error_summary.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
+/work/envs/depth/bin/python -m depth_recon.inference.export_validation_error_summary \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --split val \
   --year 2015 \
@@ -182,7 +188,7 @@ For a pooled validation-set depth summary, use `inference/export_validation_erro
 To package one exported run for the Cesium globe viewer in the docs, use:
 
 ```bash
-/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+/work/envs/depth/bin/python -m depth_recon.inference.export_cesium_globe_assets \
   --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
   --public-base-url https://<bucket-or-site>/inference_production/globe/ \
   --rclone-remote r2:<bucket>/inference_production/globe \

@@ -6,24 +6,24 @@ Use explicit config paths to avoid ambiguity:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/px_space/training_config.yaml \
-  --model-config configs/px_space/model_config.yaml
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config.yaml
 ```
 
 CLI aliases:
 - `--train-config` and `--training-config` are equivalent
 - `--model-config` also accepts the typo alias `--mdoel-config`
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`)
-- because `configs/px_space/model_config.yaml` itself is nested under top-level `model:`, model overrides must use `model.model.*` (example below)
+- because `src/depth_recon/configs/px_space/model_config.yaml` itself is nested under top-level `model:`, model overrides must use `model.model.*` (example below)
 
 Override example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/px_space/training_config.yaml \
-  --model-config configs/px_space/model_config.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config.yaml \
   --set data.dataset.output.return_info=true \
   --set training.trainer.max_epochs=100 \
   --set training.wandb.run_name=null
@@ -33,9 +33,9 @@ Ambient-occlusion objective example (self-supervised on `x`):
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/px_space/training_config.yaml \
-  --model-config configs/px_space/model_config_ambient.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config_ambient.yaml \
   --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
 ```
 
@@ -55,32 +55,32 @@ For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enab
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion.
 - `model.model_type="latent_cond_dif"` runs latent diffusion with the autoencoder bridge.
 - dataset variant is selected by `dataset.core.dataset_variant`; the active value is `"argo_netcdf_gridded"`.
-- parser defaults in `train.py` now point to `configs/px_space/*.yaml`; explicit CLI paths are still recommended for reproducibility
+- parser defaults in `train.py` now point to `src/depth_recon/configs/px_space/*.yaml`; explicit CLI paths are still recommended for reproducibility
 
 ## Autoencoder and Latent Workflow
-For latent diffusion training, use the latent config domain under `configs/lat_space/`.
+For latent diffusion training, use the latent config domain under `src/depth_recon/configs/lat_space/`.
 
 Autoencoder pretraining command:
 
 ```bash
 /work/envs/depth/bin/python train_autoencoder.py \
-  --ae-config configs/lat_space/ae_config.yaml \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml
+  --ae-config src/depth_recon/configs/lat_space/ae_config.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml
 ```
 
 Latent diffusion command:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml \
-  --model-config configs/lat_space/model_config.yaml
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml \
+  --model-config src/depth_recon/configs/lat_space/model_config.yaml
 ```
 
 Repo launcher scripts:
-- `./scripts/train_autoencoder.sh`
-- `./scripts/train_latent_diffusion.sh`
+- `./src/depth_recon/scripts/train_autoencoder.sh`
+- `./src/depth_recon/scripts/train_latent_diffusion.sh`
 
 Design details, model goals, and limitations are documented in [Autoencoder + Latent Diffusion](autoencoder.md).
 
@@ -137,13 +137,13 @@ Notable behavior:
 Launch:
 
 ```bash
-./scripts/start_occlusion_sweep.sh
+./src/depth_recon/scripts/start_occlusion_sweep.sh
 ```
 
 Equivalent manual steps:
 
 ```bash
-/work/envs/depth/bin/wandb sweep configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml
+/work/envs/depth/bin/wandb sweep src/depth_recon/configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml
 /work/envs/depth/bin/wandb agent <entity/project/sweep_id>
 ```
 

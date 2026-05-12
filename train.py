@@ -5,7 +5,7 @@ or latent diffusion model, restores checkpoints when requested, and launches the
 PyTorch Lightning training run.
 
 Typical CLI:
-    /work/envs/depth/bin/python train.py --data-config configs/px_space/data_ostia_argo_netcdf.yaml --train-config configs/px_space/training_config.yaml --model-config configs/px_space/model_config.yaml
+    /work/envs/depth/bin/python train.py --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml --train-config src/depth_recon/configs/px_space/training_config.yaml --model-config src/depth_recon/configs/px_space/model_config.yaml
 """
 
 from __future__ import annotations
@@ -14,8 +14,9 @@ import argparse
 from datetime import datetime
 import os
 from pathlib import Path
-from typing import Any
 import shutil
+import sys
+from typing import Any
 import warnings
 
 import pytorch_lightning as pl
@@ -24,11 +25,20 @@ import yaml
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from data.datamodule import DepthTileDataModule
-from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from models.diffusion import PixelDiffusionConditional
-from models.latent import LatentDiffusionConditional
+if __package__ in {None, ""}:
+    # Keep the root-level training script runnable from a fresh src-layout checkout.
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from depth_recon.data.datamodule import DepthTileDataModule
+from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.models.diffusion import PixelDiffusionConditional
+from depth_recon.models.latent import LatentDiffusionConditional
+from depth_recon.paths import config_path, resolve_config_path
+
+PX_MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
+PX_DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+PX_TRAINING_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
 
 
 # Centralized YAML loader for config files.
@@ -41,7 +51,7 @@ def load_yaml(path: str) -> dict[str, Any]:
     Returns:
         dict[str, Any]: Dictionary containing computed outputs.
     """
-    with Path(path).open("r", encoding="utf-8") as f:
+    with resolve_config_path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -381,13 +391,12 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
 
 
 def main(
-    model_config_path: str = "configs/px_space/model_config.yaml",
-    data_config_path: str = "configs/px_space/data_ostia_argo_netcdf.yaml",
-    training_config_path: str = "configs/px_space/training_config.yaml",
+    model_config_path: str = PX_MODEL_CONFIG_PATH,
+    data_config_path: str = PX_DATA_CONFIG_PATH,
+    training_config_path: str = PX_TRAINING_CONFIG_PATH,
     overrides: list[str] | None = None,
     fast_dev_run: int = 0,
 ) -> None:
-    # Determine rank before creating any run-scoped folders/files.
     """Run the script entry point.
 
     Args:
@@ -399,6 +408,11 @@ def main(
     Returns:
         None: No value is returned.
     """
+    model_config_path = str(resolve_config_path(model_config_path))
+    data_config_path = str(resolve_config_path(data_config_path))
+    training_config_path = str(resolve_config_path(training_config_path))
+
+    # Determine rank before creating any run-scoped folders/files.
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
@@ -443,7 +457,7 @@ def main(
             raise ValueError(
                 "model.latent.ae_config_path is required for model.model_type='latent_cond_dif'."
             )
-        ae_cfg_path = Path(str(ae_cfg_value)).expanduser()
+        ae_cfg_path = resolve_config_path(str(ae_cfg_value))
         if not ae_cfg_path.is_file():
             raise FileNotFoundError(f"AE config not found: {ae_cfg_path}")
         latent_ae_config_path = str(ae_cfg_path)
@@ -689,20 +703,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--data-config",
-        default="configs/px_space/data_ostia_argo_netcdf.yaml",
+        default=PX_DATA_CONFIG_PATH,
         help="Path to data config yaml.",
     )
     parser.add_argument(
         "--train-config",
         "--training-config",
-        default="configs/px_space/training_config.yaml",
+        default=PX_TRAINING_CONFIG_PATH,
         dest="training_config",
         help="Path to training config yaml.",
     )
     parser.add_argument(
         "--model-config",
         "--mdoel-config",
-        default="configs/px_space/model_config.yaml",
+        default=PX_MODEL_CONFIG_PATH,
         dest="model_config",
         help="Path to model config yaml.",
     )
@@ -741,10 +755,10 @@ if __name__ == "__main__":
 
 """
 # Training quick start (single command):
-python train.py --model-config configs/px_space/model_config.yaml \
-    --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-    --training-config configs/px_space/training_config.yaml
+python train.py --model-config src/depth_recon/configs/px_space/model_config.yaml \
+    --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+    --training-config src/depth_recon/configs/px_space/training_config.yaml
 
 # Sweep quick start (single command):
-./scripts/start_occlusion_sweep.sh
+./src/depth_recon/scripts/start_occlusion_sweep.sh
 """

@@ -1,0 +1,30 @@
+{
+  "selected_date": null,
+  "prediction_tiles_url": null,
+  "ground_truth_tiles_url": null,
+  "depth_levels": [],
+  "argo_sample_locations_url": null,
+  "argo_points_url": null,
+  "patch_splits_url": null,
+  "full_sample_points_url": null,
+  "west": -180.0,
+  "south": -90.0,
+  "east": 180.0,
+  "north": 90.0,
+  "default_camera_destination": {
+    "lon": -38.56452881619089,
+    "lat": 34.53988238358822,
+    "height": 8500000.0
+  },
+  "color_scale_min_c": 0.0,
+  "color_scale_max_c": 30.0,
+  "color_palette": "temperature_blue_red",
+  "credits": {
+    "prediction": "DepthDif prediction overlay",
+    "ground_truth": "GLORYS top-band overlay",
+    "points": "Observed Argo points",
+    "patch_splits": "Train/val patch split grid",
+    "full_sample_points": "Dull-depth Profiles"
+  },
+  "description": "Fill this template with hosted asset URLs to drive the Cesium globe page."
+}

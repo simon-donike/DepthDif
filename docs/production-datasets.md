@@ -16,7 +16,7 @@ Expected source trees:
 - `/data1/datasets/depth_v2/glorys_weekly`
 - `/data1/datasets/depth_v2/sealevel_daily`
 
-The active config is `configs/px_space/data_ostia_argo_netcdf.yaml`.
+The active config is `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`.
 
 ## Dataset Assembly
 
@@ -56,7 +56,7 @@ used for training or validation rows.
 ## Patch Filtering
 
 The grid is built from the committed GLORYS-aligned land-mask GeoTIFF:
-`data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif`.
+`src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif`.
 In that mask, `1` means land and `0` means ocean. For each candidate patch, the
 dataset computes the fraction of land pixels and keeps the patch when
 `land_fraction <= dataset.grid.max_land_fraction`.

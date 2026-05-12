@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import yaml
 
-from inference.api import (
+from depth_recon.inference.api import (
     InferenceAssets,
     _build_public_argo_sample,
     _build_public_argo_rows,
@@ -202,7 +202,9 @@ class TestPublicInferenceApi(unittest.TestCase):
         def record_progress(event: str, name: str, path: Path) -> None:
             events.append((event, name, path))
 
-        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+        with mock.patch(
+            "depth_recon.inference.api.run_argo_week_inference"
+        ) as run_public:
             run_public.return_value = Path("outputs/public")
 
             run_week_inference(
@@ -257,7 +259,9 @@ class TestPublicInferenceApi(unittest.TestCase):
     def test_run_week_inference_uses_public_argo_ostia_path_without_glorys(
         self,
     ) -> None:
-        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+        with mock.patch(
+            "depth_recon.inference.api.run_argo_week_inference"
+        ) as run_public:
             run_public.return_value = Path("outputs/public")
 
             result = run_week_inference(
@@ -278,7 +282,9 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertEqual(kwargs["config_repo"], "simon-donike/DepthDif")
 
     def test_run_week_inference_can_skip_ostia_download(self) -> None:
-        with mock.patch("inference.api.run_argo_week_inference") as run_public:
+        with mock.patch(
+            "depth_recon.inference.api.run_argo_week_inference"
+        ) as run_public:
             run_public.return_value = Path("outputs/public")
 
             run_week_inference(
@@ -340,7 +346,7 @@ class TestPublicInferenceApi(unittest.TestCase):
         ]
 
         with mock.patch(
-            "inference.api._build_land_mask_patch_table",
+            "depth_recon.inference.api._build_land_mask_patch_table",
             return_value=mock.Mock(to_dict=mock.Mock(return_value=patch_rows)),
         ):
             _rows, metadata = _build_public_argo_rows(

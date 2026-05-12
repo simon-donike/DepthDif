@@ -1,0 +1,109 @@
+# Dataset Creation
+
+This folder contains source-data download helpers and shared NetCDF source
+metadata used by the active patch dataset.
+
+Folder layout:
+
+- `data_download_raw/`: source-specific scripts for downloading upstream
+  EN4/ARGO, GLORYS, OSTIA, and sea-level NetCDF files.
+- `data_download_packaged/`: placeholder for future packaged dataset downloads.
+- `export_aligned_argo/`: aligned ARGO export workflow scripts, source variable
+  names, and NetCDF source-file utilities used by
+  `ArgoNetCDFGriddedPatchDataset`.
+- `export_dataset_geotiff/`: aligned uint8 GeoTIFF export workflow for dense
+  GLORYS, OSTIA, and sea-level rasters plus a compact grid-indexed ARGO profile
+  zarr.
+
+The current default source root is:
+
+```bash
+/data1/datasets/depth_v2
+```
+
+Use the project Python environment explicitly:
+
+```bash
+/work/envs/depth/bin/python
+```
+
+## Download Source Data
+
+Download OSTIA daily surface fields:
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_ostia/download_ostia.sh \
+  /data1/datasets/depth_v2/ostia
+```
+
+Download EN4 / ARGO profile archives:
+
+```bash
+START_YEAR=2010 END_YEAR=2025 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh \
+  /data1/datasets/depth_v2/en4_profiles
+```
+
+Download GLORYS files:
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 STEP_DAYS=7 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh \
+  /data1/datasets/depth_v2/glorys
+```
+
+Download daily sea-level files:
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh \
+  /data1/datasets/depth_v2/sealevel_daily
+```
+
+The active dataset reads these NetCDF files directly and creates only compact
+metadata caches under `dataset.core.metadata_cache_dir`.
+
+## Export GeoTIFF Raster Training Stores
+
+The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
+variable/date on the land-mask grid, and writes ARGO profiles as a compact
+profile-indexed zarr with precomputed target date, grid row/column, temperature,
+salinity, and validity masks. Temperature stretches decode to Kelvin.
+Dense raster dates are exported with process workers by default; use `--workers`
+to tune CPU and RAM use for the machine.
+
+Raster values use the full unsigned byte range for accuracy: valid codes are
+`0..254`, `255` is nodata, and decoding is
+`minimum + code / 254 * (maximum - minimum)`. The same transform metadata is
+stored in GeoTIFF tags and `manifest.yaml`, including quantization step and
+worst-case rounding error.
+
+| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
+| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
+| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
+
+The int8 comparison assumes a signed-byte layout that only uses nonnegative
+codes `0..126` plus nodata `127`. A signed int8 remapped across all 255
+non-nodata codes would have the same precision as uint8, but the unsigned layout
+keeps the transform simpler and interoperates better with raster tooling.
+
+By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
+is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+  --ostia-dir /data1/datasets/depth_v2/ostia \
+  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
+  --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --output-dir /work/data/depthdif \
+  --start-date 20100101 \
+  --end-date 20240731 \
+  --surface-aggregate-days 7 \
+  --workers 4 \
+  --overwrite
+```

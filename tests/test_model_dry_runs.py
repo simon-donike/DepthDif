@@ -14,13 +14,13 @@ import torch
 from torch.utils.data import Dataset
 import yaml
 
-from data.datamodule import DepthTileDataModule
-from models.diffusion.PixelDiffusion import PixelDiffusionConditional
-from models.latent.Autoencoder import (
+from depth_recon.data.datamodule import DepthTileDataModule
+from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
+from depth_recon.models.latent.Autoencoder import (
     DepthBandAutoencoder,
     DepthBandAutoencoderLightning,
 )
-from models.latent.LatentDiffusion import LatentDiffusionConditional
+from depth_recon.models.latent.LatentDiffusion import LatentDiffusionConditional
 
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")

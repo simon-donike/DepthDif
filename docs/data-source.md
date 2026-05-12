@@ -23,8 +23,8 @@ GLORYS is a global ocean reanalysis product that provides physically consistent 
 - Vertical coordinate: 50 fixed depth levels from roughly `0.494 m` to `5727.917 m`
 
 Relevant helper scripts:
-- `data/dataset_creation/data_download_raw/get_glorys/download_glorys_monthly.sh`
-- `data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_monthly.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh`
 
 GLORYS depth distribution:  
 ![img](assets/data/depth_levels.png)
@@ -56,7 +56,7 @@ EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected 
 - Vertical sampling: corrected depths vary profile-by-profile and are irregular in physical depth
 
 Relevant helper script:
-- `data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh`
 
 Archive-wide corrected-depth histogram with GLORYS reference levels:  
 ![img](assets/data/argo_corrected_depth_histogram.png)
@@ -82,7 +82,7 @@ The Copernicus reprocessed global sea-level product provides daily gridded sea-s
 - Native variables include sea-surface-height fields and geostrophic currents.
 
 Relevant helper script:
-- `data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh`
 
 ## Raw Product Notes
 Representative raw GLORYS variables:  

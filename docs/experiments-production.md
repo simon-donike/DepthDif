@@ -2,8 +2,8 @@
 
 This page tracks runs on the maintained NetCDF dataset path:
 
-- `configs/px_space/data_ostia_argo_netcdf.yaml`
-- `data/dataset_argo_netcdf_gridded.py`
+- `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`
+- `src/depth_recon/data/dataset_argo_netcdf_gridded.py`
 
 ## Scope
 

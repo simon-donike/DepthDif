@@ -10,13 +10,14 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from inference.export_cesium_globe_assets import (
+from depth_recon.inference.export_cesium_globe_assets import (
     ARGO_SAMPLE_LOCATION_PROPERTY_KEYS,
     ARGO_POINT_PROPERTY_KEYS,
     DEFAULT_CAMERA_HEIGHT,
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
     DEFAULT_RCLONE_SYNC_SCOPE,
+    DEFAULT_TEMPLATE_PATH,
     FULL_SAMPLE_PROPERTY_KEYS,
     _build_parser,
     _build_gdal2tiles_command,
@@ -160,7 +161,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
 
     def test_template_is_valid_json(self) -> None:
-        template_path = Path("inference/transforms/globe-config.template.json")
+        template_path = DEFAULT_TEMPLATE_PATH
         with template_path.open("r", encoding="utf-8") as f:
             template = json.load(f)
 
@@ -202,7 +203,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch(
-            "inference.export_cesium_globe_assets.shutil.which", return_value=None
+            "depth_recon.inference.export_cesium_globe_assets.shutil.which",
+            return_value=None,
         ):
             ok, message = _sync_with_rclone(
                 Path("inference/outputs/example/globe"), "r2:bucket/path"
@@ -214,11 +216,11 @@ class TestCesiumGlobeAssets(unittest.TestCase):
     def test_sync_with_rclone_streams_progress(self) -> None:
         with (
             mock.patch(
-                "inference.export_cesium_globe_assets.shutil.which",
+                "depth_recon.inference.export_cesium_globe_assets.shutil.which",
                 return_value="/usr/bin/rclone",
             ),
             mock.patch(
-                "inference.export_cesium_globe_assets.subprocess.run"
+                "depth_recon.inference.export_cesium_globe_assets.subprocess.run"
             ) as run_mock,
         ):
             ok, message = _sync_with_rclone(
@@ -285,7 +287,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 ds.write(np.ones((1, 128, 256), dtype=np.float32))
 
             with mock.patch(
-                "inference.export_cesium_globe_assets.shutil.which",
+                "depth_recon.inference.export_cesium_globe_assets.shutil.which",
                 return_value="/usr/bin/gdal2tiles.py",
             ):
                 command = _build_gdal2tiles_command(

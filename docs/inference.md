@@ -1,10 +1,10 @@
 # Inference
 There are three practical inference workflows in this repository:
-- call the public ISO-week API from `inference.api`
-- run the standalone script `inference/run_single.py`
+- call the public ISO-week API from `depth_recon.inference.api`
+- run the standalone script `src/depth_recon/inference/run_single.py`
 - call `PixelDiffusionConditional.predict_step(...)` directly
 
-DepthDif supports pixel-space configs (`configs/px_space/*`) and latent-workflow configs (`configs/lat_space/*`).
+DepthDif supports pixel-space configs (`src/depth_recon/configs/px_space/*`) and latent-workflow configs (`src/depth_recon/configs/lat_space/*`).
 For latent workflow setup and command flow, see [Autoencoder + Latent Diffusion](autoencoder.md).
 
 ## Workflow 0: Public ISO-Week API
@@ -108,8 +108,8 @@ a temporary data config, exports predictions, and can export matching GLORYS
 ground-truth rasters. For a deeper package walkthrough, see
 [Public Inference Package](public-inference-package.md).
 
-## Workflow 1: Use `inference/run_single.py`
-`inference/run_single.py` is a configurable script for quick prediction sanity checks.
+## Workflow 1: Use `src/depth_recon/inference/run_single.py`
+`src/depth_recon/inference/run_single.py` is a configurable script for quick prediction sanity checks.
 
 ### What it supports
 - load config files and instantiate model/datamodule
@@ -120,7 +120,7 @@ ground-truth rasters. For a deeper package walkthrough, see
 - optional intermediate sample capture
 
 ### Important script settings
-At the top of `inference/run_single.py`, set:
+At the top of `src/depth_recon/inference/run_single.py`, set:
 - `MODEL_CONFIG_PATH`
 - `DATA_CONFIG_PATH`
 - `TRAIN_CONFIG_PATH`
@@ -129,10 +129,10 @@ At the top of `inference/run_single.py`, set:
 
 ### Note on default paths
 The script constants should be set explicitly. In this repository, the actively used configs are:
-- OSTIA + Argo NetCDF setup: `configs/px_space/model_config.yaml`, `configs/px_space/data_ostia_argo_netcdf.yaml`, `configs/px_space/training_config.yaml`
+- OSTIA + Argo NetCDF setup: `src/depth_recon/configs/px_space/model_config.yaml`, `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`, `src/depth_recon/configs/px_space/training_config.yaml`
 
 ## Workflow 1b: Export Global Depth Rasters
-Use `inference/export_global.py` when you want the standard production inference path: one spatially complete ISO-week globe from raw ARGO/GLORYS/OSTIA/sea-surface products or an equivalent patch dataset. The script:
+Use `src/depth_recon/inference/export_global.py` when you want the standard production inference path: one spatially complete ISO-week globe from raw ARGO/GLORYS/OSTIA/sea-surface products or an equivalent patch dataset. The script:
 - requires `--year ... --iso-week ...` and uses the ISO-week Wednesday as the single target date
 - forces the inference grid to `patch_grid_source=land_mask`, `require_argo_for_all=false`, and `patch_stride=tile_size/4` for 75% overlapping patches
 - keeps every tile with at least `--min-ocean-fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean
@@ -151,8 +151,8 @@ Use `inference/export_global.py` when you want the standard production inference
 
 Typical run:
 ```bash
-/work/envs/depth/bin/python inference/export_global.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
+/work/envs/depth/bin/python -m depth_recon.inference.export_global \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --year 2010 \
   --iso-week 1 \
@@ -177,7 +177,7 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
-Use `inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
+Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
 - loads the configured checkpoint and the explicit dataset split selected by `--split` (`val` by default)
 - optionally narrows that split to one ISO week via `--year ... --iso-week ...`, matching the same week-style selection used by the global export workflow
 - forces real-observation semantics by evaluating `|Prediction - GLORYS|` only on valid `y` support and `|Prediction - ARGO|` only on observed `x` support
@@ -189,8 +189,8 @@ Use `inference/export_validation_error_summary.py` when you want one depth-vs-er
 
 Typical run:
 ```bash
-/work/envs/depth/bin/python inference/export_validation_error_summary.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
+/work/envs/depth/bin/python -m depth_recon.inference.export_validation_error_summary \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
   --checkpoint logs/<run>/best.ckpt \
   --split val \
   --year 2015 \
@@ -205,7 +205,7 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 - `run_summary.yaml`: checkpoint/config/split metadata plus artifact filenames
 
 ## Workflow 1d: Package One Run for the Cesium Globe
-The standard path is to let `inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
+The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
 - tiles every stitched prediction and ground-truth depth GeoTIFF with `gdal2tiles.py`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
@@ -216,7 +216,7 @@ The standard path is to let `inference/export_global.py` package and upload the 
 
 Typical run:
 ```bash
-/work/envs/depth/bin/python inference/export_cesium_globe_assets.py \
+/work/envs/depth/bin/python -m depth_recon.inference.export_cesium_globe_assets \
   --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
   --public-base-url https://<bucket-or-site>/inference_production/globe/
 ```
@@ -267,13 +267,13 @@ Common optional keys:
 ```python
 import torch
 
-from data.datamodule import DepthTileDataModule
-from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from models.diffusion import PixelDiffusionConditional
+from depth_recon.data.datamodule import DepthTileDataModule
+from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.models.diffusion import PixelDiffusionConditional
 
-model_config = "configs/px_space/model_config.yaml"
-data_config = "configs/px_space/data_ostia_argo_netcdf.yaml"
-train_config = "configs/px_space/training_config.yaml"
+model_config = "src/depth_recon/configs/px_space/model_config.yaml"
+data_config = "src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml"
+train_config = "src/depth_recon/configs/px_space/training_config.yaml"
 ckpt_path = "logs/<run>/best-epochXXX.ckpt"
 
 train_dataset = ArgoNetCDFGriddedPatchDataset.from_config(data_config, split="train")

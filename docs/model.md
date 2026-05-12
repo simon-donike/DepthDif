@@ -1,5 +1,5 @@
 # Model  
-DepthDif uses a conditional pixel-space diffusion model implemented in `models/diffusion/PixelDiffusion.py`.  
+DepthDif uses a conditional pixel-space diffusion model implemented in `src/depth_recon/models/diffusion/PixelDiffusion.py`.  
   
 Model schema:  
 ![depthdif_schema](assets/figures/depthdif_schema.png)  
@@ -32,7 +32,7 @@ With default `dim_mults=[1,2,4,8]`:
 - 3 upsampling stages with skip connections  
 - final ConvNeXt block + `1x1` output conv to `generated_channels`  
 
-For the ambient EO preset in `configs/px_space/model_config_ambient.yaml`, the U-Net base width is increased to `dim: 96`. This keeps the same depth (`dim_mults=[1,2,4,8]`) but gives the denoiser more capacity when moving from earlier low-channel setups to the current 50 generated channels + 52 condition channels.  
+For the ambient EO preset in `src/depth_recon/configs/px_space/model_config_ambient.yaml`, the U-Net base width is increased to `dim: 96`. This keeps the same depth (`dim_mults=[1,2,4,8]`) but gives the denoiser more capacity when moving from earlier low-channel setups to the current 50 generated channels + 52 condition channels.  
   
 Time conditioning:  
 - sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks  
@@ -66,11 +66,11 @@ Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):
 - compute masked MSE on the originally valid `x` support intersected with valid `y` support (`A ∩ Y`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
   
-Current EO config (`configs/px_space/model_config.yaml`) uses:  
+Current EO config (`src/depth_recon/configs/px_space/model_config.yaml`) uses:  
 - `parameterization: "x0"`  
 - `mask_loss_with_valid_pixels: true`  
   
-Latent model workflow is configured via `configs/lat_space/model_config.yaml` with AE controls in `configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
+Latent model workflow is configured via `src/depth_recon/configs/lat_space/model_config.yaml` with AE controls in `src/depth_recon/configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
   
 This means: if ambient mode is disabled, training loss is pulled over all valid `y` pixels via `y_valid_mask`.  
   

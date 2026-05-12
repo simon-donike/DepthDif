@@ -8,18 +8,18 @@ import numpy as np
 import torch
 from torch import nn
 
-from models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess import (
+from depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
 )
-from models.diffusion.DenoisingDiffusionProcess.samplers import DDIM_Sampler
-from models.diffusion.DenoisingDiffusionProcess.beta_schedules import (
+from depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers import DDIM_Sampler
+from depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules import (
     cosine_beta_schedule,
     get_beta_schedule,
     linear_beta_schedule,
     quadratic_beta_schedule,
     sigmoid_beta_schedule,
 )
-from models.diffusion.PixelDiffusion import PixelDiffusionConditional
+from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")

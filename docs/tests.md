@@ -13,6 +13,8 @@ bash tests/run_tests.sh
 ```
 
 The wrapper uses `unittest` discovery in the configured environment.
+It also prepends `src` to `PYTHONPATH` so tests exercise the src-layout package
+without requiring a prior editable install.
 
 ## Main Test Areas
 

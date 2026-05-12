@@ -39,14 +39,14 @@ Dataset candidates used by the script:
 
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 STEP_DAYS=7 \
-  data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh \
   /data1/datasets/depth_v2/glorys_weekly
 ```
 
 Daily and monthly helpers also exist for diagnostics or alternate exports:
 
-- `data/dataset_creation/data_download_raw/get_glorys/download_glorys_daily.sh`
-- `data/dataset_creation/data_download_raw/get_glorys/download_glorys_monthly.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_daily.sh`
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_monthly.sh`
 
 ### OSTIA
 
@@ -64,7 +64,7 @@ Dataset candidates used by the script:
 
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
-  data/dataset_creation/data_download_raw/get_ostia/download_ostia.sh \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_ostia/download_ostia.sh \
   /data1/datasets/depth_v2/ostia
 ```
 
@@ -81,7 +81,7 @@ Dataset ID:
 
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
-  data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh \
   /data1/datasets/depth_v2/sealevel_daily
 ```
 
@@ -105,7 +105,7 @@ EN.4.2.2.profiles.g10.YYYY.zip
 
 ```bash
 START_YEAR=2010 END_YEAR=2025 \
-  data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh \
   /data1/datasets/depth_v2/en4_profiles
 ```
 
@@ -114,7 +114,7 @@ START_YEAR=2010 END_YEAR=2025 \
 The patch grid and GeoTIFF raster export use a global 0.1 degree land mask:
 
 ```text
-data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
+src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 ```
 
 It is derived by downloading a world GeoJSON file and rasterizing it to the
@@ -122,7 +122,7 @@ GLORYS-style global grid where `1=land` and `0=water`:
 
 ```bash
 /work/envs/depth/bin/python \
-  data/dataset_creation/data_download_raw/get_world/download_manipulate_world_file.py \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_world/download_manipulate_world_file.py \
   --overwrite
 ```
 

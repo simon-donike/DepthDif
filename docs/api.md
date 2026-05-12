@@ -6,57 +6,54 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 ### `depth_recon`
 ::: depth_recon
 
-### `inference.api`
-::: inference.api
+### `depth_recon.inference.api`
+::: depth_recon.inference.api
 
-### `train`
-::: train
-
-### `inference`
-::: inference
+### `depth_recon.inference`
+::: depth_recon.inference
 
 ## Data
 
-### `data.datamodule`
-::: data.datamodule
+### `depth_recon.data.datamodule`
+::: depth_recon.data.datamodule
 
-### `data.dataset_argo_netcdf_gridded`
-::: data.dataset_argo_netcdf_gridded
+### `depth_recon.data.dataset_argo_netcdf_gridded`
+::: depth_recon.data.dataset_argo_netcdf_gridded
 
 ## Model Core
 
-### `models.diffusion.PixelDiffusion`
-::: models.diffusion.PixelDiffusion
+### `depth_recon.models.diffusion.PixelDiffusion`
+::: depth_recon.models.diffusion.PixelDiffusion
 
-### `models.diffusion.EMA`
-::: models.diffusion.EMA
+### `depth_recon.models.diffusion.EMA`
+::: depth_recon.models.diffusion.EMA
 
-### `models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess`
-::: models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess`
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess
 
-### `models.diffusion.DenoisingDiffusionProcess.forward`
-::: models.diffusion.DenoisingDiffusionProcess.forward
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.forward`
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.forward
 
-### `models.diffusion.DenoisingDiffusionProcess.beta_schedules`
-::: models.diffusion.DenoisingDiffusionProcess.beta_schedules
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules`
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules
 
-### `models.diffusion.DenoisingDiffusionProcess.samplers.DDPM`
-::: models.diffusion.DenoisingDiffusionProcess.samplers.DDPM
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDPM`
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDPM
 
-### `models.diffusion.DenoisingDiffusionProcess.samplers.DDIM`
-::: models.diffusion.DenoisingDiffusionProcess.samplers.DDIM
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDIM`
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDIM
 
-### `models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock`
+### `depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock`
 <!-- Use the class symbol path because mkdocstrings in CI fails to collect this submodule path directly. -->
-::: models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock
 
 ## Utilities
 
-### `utils.normalizations`
-::: utils.normalizations
+### `depth_recon.utils.normalizations`
+::: depth_recon.utils.normalizations
 
-### `utils.stretching`
-::: utils.stretching
+### `depth_recon.utils.stretching`
+::: depth_recon.utils.stretching
 
-### `utils.validation_denoise`
-::: utils.validation_denoise
+### `depth_recon.utils.validation_denoise`
+::: depth_recon.utils.validation_denoise

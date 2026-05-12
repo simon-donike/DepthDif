@@ -165,9 +165,9 @@ up to the repository’s existing normalization/parameterization conventions and
 ## 7. Code Mapping (Equation to Implementation)
 
 - Ambient config surface:
-  - `configs/px_space/model_config.yaml` (`model.ambient_occlusion.*`)
+  - `src/depth_recon/configs/px_space/model_config.yaml` (`model.ambient_occlusion.*`)
 - Runtime config wiring and safety:
-  - `models/diffusion/PixelDiffusion.py`
+  - `src/depth_recon/models/diffusion/PixelDiffusion.py`
     - `PixelDiffusionConditional.from_config(...)`
     - `PixelDiffusionConditional.__init__(...)`
 - \(\tilde{A}\) construction:
@@ -175,7 +175,7 @@ up to the repository’s existing normalization/parameterization conventions and
 - Condition path replacement \((x,A)\to(\tilde{x},\tilde{A})\) :
   - `training_step(...)`, `validation_step(...)`
 - Ambient loss execution:
-  - `models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`
+  - `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`
     - `DenoisingDiffusionConditionalProcess.p_loss(...)`
     - ambient loss mask = `x_valid_mask` intersected with `y_valid_mask`
     - optional `apply_further_corruption_to_noisy_branch`

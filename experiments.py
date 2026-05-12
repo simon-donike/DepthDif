@@ -1,8 +1,8 @@
 # Example:
 # /work/envs/depth/bin/python experiments.py \
-#   --model-config configs/px_space/model_config.yaml \
-#   --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-#   --train-config configs/px_space/training_config.yaml \
+#   --model-config src/depth_recon/configs/px_space/model_config.yaml \
+#   --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+#   --train-config src/depth_recon/configs/px_space/training_config.yaml \
 #   --checkpoint logs/2026-02-25_12-32-00/last.ckpt \
 #   --output-dir temp/experiments/conditioning_ablations \
 #   --loader-split val \
@@ -25,6 +25,7 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 import matplotlib
@@ -35,7 +36,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from inference.core import (
+if __package__ in {None, ""}:
+    # Keep the root-level experiment script runnable from a fresh src-layout checkout.
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from depth_recon.inference.core import (
     build_datamodule,
     build_dataset,
     build_model,
@@ -45,12 +50,13 @@ from inference.core import (
     resolve_model_type,
     to_device,
 )
-from utils.normalizations import PLOT_CMAP, temperature_normalize
-from utils.stretching import minmax_stretch
+from depth_recon.paths import config_path
+from depth_recon.utils.normalizations import PLOT_CMAP, temperature_normalize
+from depth_recon.utils.stretching import minmax_stretch
 
-MODEL_CONFIG_PATH = "configs/px_space/model_config.yaml"
-DATA_CONFIG_PATH = "configs/px_space/data_ostia_argo_netcdf.yaml"
-TRAIN_CONFIG_PATH = "configs/px_space/training_config.yaml"
+MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
+DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+TRAIN_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
 
 LOADER_SPLIT = "val"
 DEVICE = "auto"

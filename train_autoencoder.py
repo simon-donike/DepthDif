@@ -4,7 +4,7 @@ This script loads the configured dataset/datamodule, builds the autoencoder
 Lightning module, restores checkpoints if configured, and runs the training job.
 
 Typical CLI:
-    /work/envs/depth/bin/python train_autoencoder.py --data-config configs/px_space/data_ostia_argo_netcdf.yaml --train-config configs/lat_space/training_config.yaml --ae-config configs/lat_space/ae_config.yaml
+    /work/envs/depth/bin/python train_autoencoder.py --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --ae-config src/depth_recon/configs/lat_space/ae_config.yaml
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import shutil
+import sys
 from typing import Any
 
 import pytorch_lightning as pl
@@ -22,15 +23,24 @@ import yaml
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from data.datamodule import DepthTileDataModule
-from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from models.latent import DepthBandAutoencoderLightning
+if __package__ in {None, ""}:
+    # Keep the root-level training script runnable from a fresh src-layout checkout.
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from depth_recon.data.datamodule import DepthTileDataModule
+from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.models.latent import DepthBandAutoencoderLightning
+from depth_recon.paths import config_path, resolve_config_path
+
+LAT_AE_CONFIG_PATH = str(config_path("lat_space", "ae_config.yaml"))
+PX_DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+LAT_TRAINING_CONFIG_PATH = str(config_path("lat_space", "training_config.yaml"))
 
 
 def load_yaml(path: str) -> dict[str, Any]:
     """Load and return yaml data."""
-    with Path(path).open("r", encoding="utf-8") as f:
+    with resolve_config_path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -151,18 +161,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train depth-band autoencoder.")
     parser.add_argument(
         "--ae-config",
-        default="configs/lat_space/ae_config.yaml",
+        default=LAT_AE_CONFIG_PATH,
         help="Path to autoencoder config yaml.",
     )
     parser.add_argument(
         "--data-config",
-        default="configs/px_space/data_ostia_argo_netcdf.yaml",
+        default=PX_DATA_CONFIG_PATH,
         help="Path to data config yaml.",
     )
     parser.add_argument(
         "--train-config",
         "--training-config",
-        default="configs/lat_space/training_config.yaml",
+        default=LAT_TRAINING_CONFIG_PATH,
         dest="training_config",
         help="Path to training config yaml.",
     )
@@ -188,6 +198,10 @@ def main(
     load_checkpoint: str | None,
 ) -> None:
     """Run the script entry point."""
+    ae_config_path = str(resolve_config_path(ae_config_path))
+    data_config_path = str(resolve_config_path(data_config_path))
+    training_config_path = str(resolve_config_path(training_config_path))
+
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 

@@ -11,10 +11,13 @@ import torch
 import xarray as xr
 import yaml
 
-from data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from data.dataset_creation.export_dataset_geotiff import export_training_geotiff_dataset
+from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.data.dataset_creation.export_dataset_geotiff import (
+    export_training_geotiff_dataset,
+)
+from depth_recon.paths import config_path as packaged_config_path
 from train import build_dataset
-from utils.normalizations import temperature_normalize
+from depth_recon.utils.normalizations import temperature_normalize
 
 
 def _write_land_mask(path: Path) -> Path:
@@ -267,7 +270,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertFalse(dataset.synthetic_mode)
 
     def test_active_geotiff_config_uses_land_mask_grid_defaults(self) -> None:
-        with Path("configs/px_space/data_ostia_argo_geotiff.yaml").open(
+        with packaged_config_path("px_space", "data_ostia_argo_geotiff.yaml").open(
             "r",
             encoding="utf-8",
         ) as f:

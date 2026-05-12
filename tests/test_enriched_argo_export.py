@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import xarray as xr
 
-from data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles import (
+from depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles import (
     NEAREST_STATUS,
     NEAREST_EDGE_STATUS,
     DatasetCache,
@@ -17,7 +17,7 @@ from data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles i
     sample_temporal_values_for_points,
     sample_temporal_value,
 )
-from data.dataset_creation.export_aligned_argo.source_files import (
+from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     GLORYS_2D_VARS,
     GLORYS_3D_VARS,
     OSTIA_VARS,

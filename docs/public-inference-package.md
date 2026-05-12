@@ -10,6 +10,12 @@ Install it with:
 python -m pip install depth-recon
 ```
 
+For an unreleased branch or tag, install the same project directly from Git:
+
+```bash
+python -m pip install "depth-recon @ git+https://github.com/simon-donike/DepthDif.git@main"
+```
+
 The distribution exposes:
 - import package: `depth_recon`
 - main Python API: `run_week_inference(...)`
@@ -173,10 +179,10 @@ depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
 The equivalent module command is:
 
 ```bash
-python -m inference.api infer-week --year 2015 --iso-week 25 --device cuda
+python -m depth_recon.inference.api infer-week --year 2015 --iso-week 25 --device cuda
 ```
 
-The console scripts are thin wrappers around `python -m inference.api`:
+The console scripts are thin wrappers around `python -m depth_recon.inference.api`:
 `depth-recon-infer-week` inserts the `infer-week` subcommand, while
 `depth-recon-download-argo` and `depth-recon-download-ostia` insert their
 matching download subcommands.

@@ -33,7 +33,7 @@ converted or normalized by the loader as needed for model training.
 All dense exported rasters use the committed global 0.1 degree land-mask grid:
 
 ```text
-data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
+src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 ```
 
 This grid gives a single spatial reference for GLORYS, OSTIA, sea-level fields,

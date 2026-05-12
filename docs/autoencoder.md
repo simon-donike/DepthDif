@@ -9,11 +9,11 @@ The latent workflow solves this by:
 - decoding the generated latent back to full-band depth fields
 
 In this repository, the latent workflow config lives in:
-- `configs/lat_space/model_config.yaml`
-- `configs/lat_space/training_config.yaml`
-- `configs/lat_space/ae_config.yaml`
+- `src/depth_recon/configs/lat_space/model_config.yaml`
+- `src/depth_recon/configs/lat_space/training_config.yaml`
+- `src/depth_recon/configs/lat_space/ae_config.yaml`
 It uses the active NetCDF dataset config at
-`configs/px_space/data_ostia_argo_netcdf.yaml`.
+`src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`.
 
 ## Task
 Learn a compressed latent representation for multiband depth fields that preserves:
@@ -25,7 +25,7 @@ Learn a compressed latent representation for multiband depth fields that preserv
 Use the autoencoder as the representation bridge so latent diffusion can model fewer channels than the original depth stack while keeping reconstruction quality high.
 
 ## Architecture
-The autoencoder configuration is defined in `configs/lat_space/ae_config.yaml`.
+The autoencoder configuration is defined in `src/depth_recon/configs/lat_space/ae_config.yaml`.
 
 Current default design:
 - model type: `depth_band_ae`
@@ -63,39 +63,39 @@ Use `/work/envs/depth/bin/python` for all training commands.
 ### Command: Autoencoder Training
 ```bash
 /work/envs/depth/bin/python train_autoencoder.py \
-  --ae-config configs/lat_space/ae_config.yaml \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml
+  --ae-config src/depth_recon/configs/lat_space/ae_config.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml
 ```
 
 ### Command: Latent Diffusion Training
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml \
-  --model-config configs/lat_space/model_config.yaml
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml \
+  --model-config src/depth_recon/configs/lat_space/model_config.yaml
 ```
 
-### Script: `scripts/train_autoencoder.sh`
+### Script: `src/depth_recon/scripts/train_autoencoder.sh`
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 /work/envs/depth/bin/python train_autoencoder.py \
-  --ae-config configs/lat_space/ae_config.yaml \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml
+  --ae-config src/depth_recon/configs/lat_space/ae_config.yaml \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml
 ```
 
-### Script: `scripts/train_latent_diffusion.sh`
+### Script: `src/depth_recon/scripts/train_latent_diffusion.sh`
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 /work/envs/depth/bin/python train.py \
-  --data-config configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config configs/lat_space/training_config.yaml \
-  --model-config configs/lat_space/model_config.yaml
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --train-config src/depth_recon/configs/lat_space/training_config.yaml \
+  --model-config src/depth_recon/configs/lat_space/model_config.yaml
 ```
 
 ## Limitations

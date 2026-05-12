@@ -5,5 +5,5 @@ The maintained GLORYS/ARGO workflow now uses
 GLORYS `thetao` as `y`, ARGO `TEMP` projected onto the GLORYS depth axis as
 `x`, and OSTIA `analysed_sst` as `eo`.
 
-Use `configs/px_space/data_ostia_argo_netcdf.yaml` for new aligned runs.
+Use `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml` for new aligned runs.
 Depth-axis details are documented in [Depth Alignment](depth-alignment.md).

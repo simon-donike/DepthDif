@@ -11,10 +11,11 @@ import torch
 import xarray as xr
 import yaml
 
-from data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from inference.export_global import _load_glorys_depth_axis_m
+from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.inference.export_global import _load_glorys_depth_axis_m
+from depth_recon.paths import config_path
 from train import build_dataset
-from utils.normalizations import temperature_normalize
+from depth_recon.utils.normalizations import temperature_normalize
 
 
 def _days_since_1950(date_value: int) -> float:
@@ -435,7 +436,7 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
             )
 
     def test_active_netcdf_config_uses_land_mask_grid_defaults(self) -> None:
-        with Path("configs/px_space/data_ostia_argo_netcdf.yaml").open(
+        with config_path("px_space", "data_ostia_argo_netcdf.yaml").open(
             "r",
             encoding="utf-8",
         ) as f:

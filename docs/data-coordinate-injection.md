@@ -2,8 +2,8 @@
 This page explains how location and date features are fused and injected into the denoiser using one FiLM-style conditioning path.  
   
 ## Where This Happens in Code  
-- coordinate/date encoding logic: `models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
-- FiLM application in ConvNeXt block: `models/diffusion/DenoisingDiffusionProcess/backbones/unet_convnext.py`  
+- coordinate/date encoding logic: `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
+- FiLM application in ConvNeXt block: `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/backbones/unet_convnext.py`  
   
 ## Enabling It  
 Main config flags (model section):  
@@ -88,9 +88,9 @@ When `include_date=true`:
   
 ## FiLM Injection Mechanism  
 ### Exact Injection Path (Code)  
-- embedding creation: `DenoisingDiffusionConditionalProcess._maybe_embed_coords(...)` in `models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
+- embedding creation: `DenoisingDiffusionConditionalProcess._maybe_embed_coords(...)` in `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
 - U-Net call site: `DenoisingDiffusionConditionalProcess.forward(...)` and `p_loss(...)` pass `coord_emb` to `self.model(..., coord_emb=coord_emb)`  
-- injection site: `ConvNextBlock.forward(...)` in `models/diffusion/DenoisingDiffusionProcess/backbones/unet_convnext.py`  
+- injection site: `ConvNextBlock.forward(...)` in `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/backbones/unet_convnext.py`  
   
 ### End-to-End Pseudocode (What Happens, In Order)  
 ```python  

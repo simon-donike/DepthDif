@@ -9,7 +9,7 @@ The export goal is a directory that can be shared or copied as one training
 dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO
 profiles are stored in a compact grid-indexed profile store.
 Training can select this exported dataset with
-`configs/px_space/data_ostia_argo_geotiff.yaml`, which sets
+`src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml`, which sets
 `dataset.core.dataset_variant: argo_geotiff_gridded`.
 
 ## Output Layout
@@ -45,7 +45,7 @@ the same CRS, transform, width, height, pixel centers, and nodata convention.
 The land-mask GeoTIFF is the authoritative grid:
 
 ```text
-data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
+src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 ```
 
 The export uses that file for:
@@ -214,13 +214,12 @@ axes the exported arrays use.
 Run from the repository root:
 
 ```bash
-/work/envs/depth/bin/python \
-  data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py \
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
   --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
-  --land-mask-path data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \
   --end-date 20240731 \

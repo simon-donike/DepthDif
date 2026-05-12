@@ -11,7 +11,7 @@ import yaml
 from rasterio.transform import from_origin
 from torch import nn
 
-from inference.export_global import (
+from depth_recon.inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     ExportInferenceWrapper,

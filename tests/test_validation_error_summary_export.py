@@ -7,13 +7,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from inference.export_validation_error_summary import (
+from depth_recon.inference.export_validation_error_summary import (
     build_validation_error_summary_dataframe,
     create_validation_error_summary_accumulator,
     filter_validation_summary_dataset_by_iso_week,
     update_validation_error_summary_accumulator,
 )
-from utils.validation_denoise import (
+from depth_recon.utils.validation_denoise import (
     save_average_glorys_profile_and_error_plot,
     save_average_glorys_profile_error_plot,
 )

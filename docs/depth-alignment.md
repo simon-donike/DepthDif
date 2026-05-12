@@ -21,7 +21,7 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 5. Leave out-of-range or rejected targets invalid; no depth extrapolation is applied.
 
 ## Output Semantics
-- In `data/dataset_argo_netcdf_gridded.py`, ARGO is resampled onto the GLORYS depth axis before patch rasterization.
+- In `src/depth_recon/data/dataset_argo_netcdf_gridded.py`, ARGO is resampled onto the GLORYS depth axis before patch rasterization.
 - `x_valid_mask` marks aligned Argo depths that passed the profile-range and nearest-depth checks.
 - The model-facing `x`, `y`, `x_valid_mask`, and `y_valid_mask` tensors share this GLORYS depth axis.
 

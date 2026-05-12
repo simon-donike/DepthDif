@@ -10,8 +10,10 @@ from rasterio.transform import from_origin
 import xarray as xr
 import yaml
 
-from data.dataset_creation.export_dataset_geotiff import export_training_geotiff_dataset
-from data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
+from depth_recon.data.dataset_creation.export_dataset_geotiff import (
+    export_training_geotiff_dataset,
+)
+from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
     SEA_HEIGHT_STRETCH,
     SALINITY_STRETCH,
     STRETCH_SPECS,

@@ -2,15 +2,15 @@
 This page maps key configuration flags to their runtime behavior in code.
 
 Primary config files used in current EO setup:
-- `configs/px_space/data_ostia_argo_netcdf.yaml` (OSTIA + Argo + GLORYS lazy NetCDF training preset)
-- `configs/px_space/model_config.yaml`
-- `configs/px_space/model_config_ambient.yaml`
-- `configs/px_space/training_config.yaml`
+- `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml` (OSTIA + Argo + GLORYS lazy NetCDF training preset)
+- `src/depth_recon/configs/px_space/model_config.yaml`
+- `src/depth_recon/configs/px_space/model_config_ambient.yaml`
+- `src/depth_recon/configs/px_space/training_config.yaml`
 
 Latent-space config set:
-- `configs/lat_space/model_config.yaml`
-- `configs/lat_space/training_config.yaml`
-- `configs/lat_space/ae_config.yaml`
+- `src/depth_recon/configs/lat_space/model_config.yaml`
+- `src/depth_recon/configs/lat_space/training_config.yaml`
+- `src/depth_recon/configs/lat_space/ae_config.yaml`
 
 See [Autoencoder + Latent Diffusion](autoencoder.md) for latent architecture and training workflow.
 
@@ -135,13 +135,13 @@ Runtime notes:
 ## FUll settings documentation
 This section contains the complete key-by-key configuration reference previously documented on the separate Configs page.
 
-### Dataset Configs (`configs/px_space/data_ostia_argo_netcdf.yaml`)
+### Dataset Configs (`src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`)
 Dataset settings are grouped by intent (`core`, `grid`, `sampling`, `selection`, `output`, `runtime`).
-Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless noted.
+Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml` unless noted.
 
 | Config key | Default value | Explanation |
 |---|---|---|
-| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects the dataset implementation in `train.py`; use `"argo_geotiff_gridded"` with `configs/px_space/data_ostia_argo_geotiff.yaml` for exported GeoTIFF stores. |
+| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects the dataset implementation in `train.py`; use `"argo_geotiff_gridded"` with `src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml` for exported GeoTIFF stores. |
 | `dataset.core.dataloader_type` | `"light"` | The current training runner supports only `"light"` loading. |
 | `dataset.core.argo_dir` | `"/data1/datasets/depth_v2/en4_profiles"` | Root directory scanned for raw ARGO/EN4 monthly NetCDF files. |
 | `dataset.core.glorys_dir` | `"/data1/datasets/depth_v2/glorys_weekly"` | Root directory scanned for GLORYS NetCDF target files. |
@@ -152,7 +152,7 @@ Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless no
 | `dataset.grid.tile_size` | `128` | Patch height and width in pixels. |
 | `dataset.grid.resolution_deg` | `0.1` | Patch grid resolution in geographic degrees. |
 | `dataset.grid.patch_grid_source` | `"land_mask"` | Builds patch origins from the committed GLORYS-aligned land-mask GeoTIFF. Use `"ostia_mask"` for the legacy OSTIA-derived grid. |
-| `dataset.grid.land_mask_path` | `"data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"` | GeoTIFF used when `patch_grid_source="land_mask"`; value `1` is land and `0` is water. |
+| `dataset.grid.land_mask_path` | `"src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"` | GeoTIFF used when `patch_grid_source="land_mask"`; value `1` is land and `0` is water. |
 | `dataset.grid.patch_stride` | `64` | Pixel stride between patch origins. Values smaller than `tile_size` create overlapping patch views. |
 | `dataset.grid.max_land_fraction` | `0.30` | Maximum allowed fraction of land pixels in a land-mask-derived patch. |
 | `dataset.grid.force_include_regions` | Mediterranean bbox, max land `0.60` | Optional named lat/lon regions that keep patches whose centers fall inside the region using that region's relaxed `max_land_fraction`. |
@@ -173,7 +173,7 @@ Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless no
 | `split.val_year` | `2018` | Calendar year assigned to validation rows; all other years become training rows. Required when `patch_stride < tile_size` to avoid overlapping spatial train/val leakage. |
 | `split.val_fraction` | `0.2` | Patch fraction reserved for validation when `split.val_year` is null. |
 
-### `configs/px_space/model_config.yaml`
+### `src/depth_recon/configs/px_space/model_config.yaml`
 | Config key | Default value | Explanation |
 |---|---|---|
 | `model.model_type` | `"cond_px_dif"` | Model type (`"cond_px_dif"` for pixel diffusion, `"latent_cond_dif"` for latent diffusion with AE bridge). |
@@ -210,7 +210,7 @@ Defaults below refer to `configs/px_space/data_ostia_argo_netcdf.yaml` unless no
 
 Detailed objective math, implementation mapping, visualization, and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md).
 
-### `configs/px_space/training_config.yaml`
+### `src/depth_recon/configs/px_space/training_config.yaml`
 | Config key | Default value | Explanation |
 |---|---|---|
 | `training.lr` | `1.0e-4` | Optimizer learning rate. |
