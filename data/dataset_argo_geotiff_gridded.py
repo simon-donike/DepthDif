@@ -14,7 +14,7 @@ from torch.utils.data import Dataset
 import xarray as xr
 import yaml
 
-from data.dataset_argo_netcdf_gridded import (
+from data.dataset_grid_utils import (
     DEFAULT_LAND_MASK_PATH,
     MISSING_TEXT_VALUES,
     _GridParams,
@@ -279,6 +279,13 @@ class GeoTIFFPatchIndex:
             return pd.read_csv(cache_path).to_dict(orient="records")
 
         patch_df = _build_land_mask_patch_table(self.grid_params)
+        if self.grid_params.val_year is None:
+            patch_records = patch_df.to_dict(orient="records")
+            phases = self._split_phases(len(patch_records))
+            for rec, phase in zip(patch_records, phases, strict=False):
+                rec["split"] = phase
+                rec["phase"] = phase
+            patch_df = pd.DataFrame.from_records(patch_records)
         support_counts = self._build_support_counts(patch_df)
         rows: list[dict[str, Any]] = []
         export_index = 0
@@ -290,6 +297,10 @@ class GeoTIFFPatchIndex:
                 row["export_index"] = int(export_index)
                 if self.grid_params.val_year is not None:
                     phase = self._phase_for_date(int(date_value))
+                    row["split"] = phase
+                    row["phase"] = phase
+                else:
+                    phase = str(patch.get("split", patch.get("phase", "train")))
                     row["split"] = phase
                     row["phase"] = phase
                 row["argo_profile_count"] = int(
@@ -332,6 +343,23 @@ class GeoTIFFPatchIndex:
         """Return the train/validation phase for one date."""
         year = int(date_value) // 10000
         return "val" if year == int(self.grid_params.val_year) else "train"
+
+    def _split_phases(self, n_patches: int) -> list[str]:
+        """Return deterministic spatial train/validation phases."""
+        phases = np.full((int(n_patches),), "train", dtype=object)
+        val_len = int(round(int(n_patches) * float(self.grid_params.val_fraction)))
+        if n_patches > 1:
+            val_len = min(
+                max(val_len, 1 if self.grid_params.val_fraction > 0.0 else 0),
+                int(n_patches) - 1,
+            )
+        else:
+            val_len = 0
+        if val_len > 0:
+            rng = np.random.default_rng(int(self.grid_params.split_seed))
+            val_indices = rng.permutation(np.arange(int(n_patches)))[:val_len]
+            phases[val_indices] = "val"
+        return [str(value) for value in phases.tolist()]
 
     def _build_support_counts(
         self,
