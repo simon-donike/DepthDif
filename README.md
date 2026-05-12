@@ -1,14 +1,28 @@
 <p align="center">
-  <img src="docs/assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
-</p>
-
-<p align="center">
+  <a href="https://pypi.org/project/depth-recon/">
+    <img src="https://img.shields.io/pypi/v/depth-recon?style=for-the-badge&label=PyPI" alt="PyPI version" />
+  </a>
+  <img src="https://img.shields.io/badge/python-%3E%3D3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python >= 3.12" />
+  <img src="https://img.shields.io/badge/PyTorch-2.10.0-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white" alt="PyTorch 2.10.0" />
+  <img src="https://img.shields.io/badge/Lightning-2.6.1-792EE5?style=for-the-badge&logo=lightning&logoColor=white" alt="PyTorch Lightning 2.6.1" />
+  <a href="https://github.com/simon-donike/DepthDif/actions/workflows/publish-pypi.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/simon-donike/DepthDif/publish-pypi.yml?branch=main&label=tests&style=for-the-badge" alt="Test workflow status" />
+  </a>
+  <img src="https://img.shields.io/badge/license-not%20declared-lightgrey?style=for-the-badge" alt="License not declared" />
   <a href="https://depthdif.donike.net/">
-    <img src="https://img.shields.io/badge/Visit-Documentation-0b2e4f?style=for-the-badge" alt="Open Documentation" />
+    <img src="https://img.shields.io/badge/docs-online-0b2e4f?style=for-the-badge" alt="Open Documentation" />
   </a>
   <a href="https://depthdif.donike.net/experiments/">
-    <img src="https://img.shields.io/badge/Open-Experiments-0f3f68?style=for-the-badge" alt="Check Experiments" />
+    <img src="https://img.shields.io/badge/experiments-online-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
+  <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/DepthDif_Colab_Inference.ipynb">
+    <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab" />
+  </a>
+</p>
+
+
+<p align="center">
+  <img src="docs/assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
 </p>
 
 # DepthDif
@@ -16,6 +30,11 @@
 DepthDif is a conditional diffusion project for densifying sparse ocean temperature observations. Visit the [Documentation](https://depthdif.donike.net/) for more info on the models, datasets, and auxiliary data - or follow along with the [Experiments](https://depthdif.donike.net/experiments/).
 
 
+## Demo
+
+Run the public inference notebook directly in Google Colab:
+
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/DepthDif_Colab_Inference.ipynb)
 
 ## Installation
 
