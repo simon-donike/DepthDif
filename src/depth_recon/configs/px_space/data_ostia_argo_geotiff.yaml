@@ -41,6 +41,6 @@ split:
   val_fraction: 0.2 # Used only when val_year is null; deterministic spatial-patch validation fraction.
 
 dataloader:
-  num_workers: 4 # Fastest GeoTIFF loader setting in a 528-sample ablation on this export.
-  prefetch_factor: 4 # Best paired prefetch depth for num_workers=4 in the same ablation.
+  num_workers: 6 # Fastest GeoTIFF loader setting in a 528-sample ablation on this export.
+  prefetch_factor: 2 # Best paired prefetch depth for num_workers=6 in the same ablation.
   val_shuffle: true # Enable validation shuffling for the current experimentation workflow.

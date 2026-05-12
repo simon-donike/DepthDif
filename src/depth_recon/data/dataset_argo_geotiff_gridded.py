@@ -205,6 +205,10 @@ class ArgoGeoTIFFProfileStore:
         ).reshape(-1)
         temp_valid = np.asarray(self.ds["argo_temp_valid"].values, dtype=bool)
         self._has_valid_temp = temp_valid.any(axis=1)
+        (
+            self._valid_profile_indices_by_date,
+            self._profile_index_bounds_by_date,
+        ) = self._build_valid_profile_index()
         self.temperature_stretch = self._temperature_stretch()
 
     def _open_dataset(self) -> xr.Dataset:
@@ -234,6 +238,32 @@ class ArgoGeoTIFFProfileStore:
             self._zarr_pid = pid
         return self._zarr_group
 
+    def _build_valid_profile_index(
+        self,
+    ) -> tuple[np.ndarray, dict[int, tuple[int, int]]]:
+        """Build date slices over valid-temperature profile indices."""
+        valid_indices = np.flatnonzero(self._has_valid_temp).astype(np.int64)
+        if valid_indices.size == 0:
+            return valid_indices, {}
+
+        # Querying per sample must not scan the full multi-million-profile store.
+        order = np.argsort(self.target_date[valid_indices], kind="stable")
+        sorted_indices = valid_indices[order]
+        sorted_dates = self.target_date[sorted_indices]
+        unique_dates, starts, counts = np.unique(
+            sorted_dates, return_index=True, return_counts=True
+        )
+        bounds = {
+            int(date): (int(start), int(start + count))
+            for date, start, count in zip(
+                unique_dates.tolist(),
+                starts.tolist(),
+                counts.tolist(),
+                strict=False,
+            )
+        }
+        return sorted_indices, bounds
+
     def _temperature_stretch(self) -> dict[str, Any]:
         """Read temperature stretch metadata from variable or dataset attributes."""
         ds = self._ensure_current_process()
@@ -260,15 +290,18 @@ class ArgoGeoTIFFProfileStore:
         y0 = int(grid_y0)
         x0 = int(grid_x0)
         tile = int(tile_size)
+        bounds = self._profile_index_bounds_by_date.get(int(target_date))
+        if bounds is None:
+            return np.zeros((0,), dtype=np.int64)
+        start, stop = bounds
+        candidates = self._valid_profile_indices_by_date[start:stop]
         mask = (
-            (self.target_date == int(target_date))
-            & self._has_valid_temp
-            & (self.grid_row >= y0)
-            & (self.grid_row < y0 + tile)
-            & (self.grid_col >= x0)
-            & (self.grid_col < x0 + tile)
+            (self.grid_row[candidates] >= y0)
+            & (self.grid_row[candidates] < y0 + tile)
+            & (self.grid_col[candidates] >= x0)
+            & (self.grid_col[candidates] < x0 + tile)
         )
-        return np.flatnonzero(mask).astype(np.int64, copy=False)
+        return candidates[mask].astype(np.int64, copy=False)
 
     def load_temperature_profiles(self, indices: np.ndarray) -> np.ndarray:
         """Load selected ARGO temperature profiles as Celsius arrays."""
