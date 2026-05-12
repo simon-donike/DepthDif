@@ -7,7 +7,7 @@ Folder layout:
 
 - `data_download_raw/`: source-specific scripts for downloading upstream
   EN4/ARGO, GLORYS, OSTIA, and sea-level NetCDF files.
-- `data_download_packaged/`: placeholder for future packaged dataset downloads.
+- `data_download_packaged/`: packaged dataset download and extraction helpers.
 - `export_aligned_argo/`: aligned ARGO export workflow scripts, source variable
   names, and NetCDF source-file utilities used by
   `ArgoNetCDFGriddedPatchDataset`.
