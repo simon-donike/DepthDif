@@ -1,207 +1,63 @@
-# NetCDF Patch Dataset
+# Data Overview
 
-DepthDif supports the raw NetCDF path `argo_netcdf_gridded` and a compact zarr
-path `argo_zarr_gridded`. Both build patch samples lazily and keep the same
-model-facing training keys.
+DepthDif learns to densify sparse in-situ ocean profiles into gridded
+temperature fields. The training data combines satellite surface context,
+profile observations, ocean reanalysis targets, and auxiliary sea-surface
+height on one shared global grid.
 
-Active config:
+Use [Data Sources](data-source.md) for product-specific details,
+[Raw Data Download](data-download.md) for download commands,
+[Depth Alignment](depth-alignment.md) for vertical profile projection,
+[Data Export](data-export.md) for the GeoTIFF training store, and
+[Data Contract](data-contract.md) for exact model tensor shapes.
 
-- `configs/px_space/data_ostia_argo_netcdf.yaml`
-- `configs/px_space/data_ostia_argo_zarr.yaml`
+## Modalities
 
-Active implementation:
+The current training workflow is built around these modalities:
 
-- `data/dataset_argo_netcdf_gridded.py`
-- `ArgoNetCDFGriddedPatchDataset`
-- `data/dataset_argo_zarr_gridded.py`
-- `ArgoZarrGriddedPatchDataset`
+| Modality | Source | Variables | Role |
+| --- | --- | --- | --- |
+| Sparse profile temperature | EN4 / ARGO | `TEMP`, projected to GLORYS depths | Sparse subsurface conditioning signal. |
+| Sparse profile salinity | EN4 / ARGO | `PSAL_CORRECTED`, projected to GLORYS depths | Auxiliary profile context stored with the training data. |
+| Surface temperature | OSTIA | `analysed_sst` | Dense surface conditioning signal. |
+| Target ocean temperature | GLORYS | `thetao` | Dense 3D supervision target. |
+| Reanalysis salinity | GLORYS | `so` | Dense aligned ocean state variable stored alongside temperature. |
+| Sea-surface height | Sea Level L4 | `adt` | Dense surface-height context stored on the same grid. |
+| Land/ocean mask | Rasterized world polygons | `land_mask` | Defines patch candidates and excludes land-heavy regions. |
 
-## Sources
+Temperature is kept physically in Kelvin in the exported GeoTIFF dataset, then
+converted or normalized by the loader as needed for model training.
 
-The dataset reads directly from local NetCDF roots configured under
-`dataset.core`:
+## Shared Axes
 
-- `argo_dir`: EN4 / ARGO profile NetCDF files
-- `glorys_dir`: GLORYS target NetCDF files
-- `ostia_dir`: OSTIA surface SST NetCDF files
-- `sealevel_dir`: sea-level NetCDF files, indexed for auxiliary metadata and
-  diagnostics
+All dense exported rasters use the committed global 0.1 degree land-mask grid:
 
-The zarr variant reads compact stores exported by
-`data/dataset_creation/export_dataset_zarr/export_dataset_zarr.py`:
-
-- `ostia.zarr`: `analysed_sst` and optional `mask`
-- `argo.zarr`: `TEMP`, `PSAL_CORRECTED`, GLORYS `depth`, and profile helpers
-- `glorys.zarr`: `thetao`, `so`, `zos`
-- `sealevel.zarr`: `adt` by default
-
-By default, the exporter interpolates GLORYS raster stores to 0.1 degrees and
-reprojects OSTIA plus sea-level rasters onto the exact same GLORYS
-latitude/longitude grid before writing. OSTIA and sea-level daily files are
-saved as centered 7-day aggregates around the GLORYS timesteps, matching the
-weekly training cadence. This matches the default patch grid and lets the zarr
-loader use exact grid selection for those rasters. Continuous fields are packed
-to int16, masks are stored as int8, and ARGO profile variables are pre-projected
-onto the GLORYS depth axis so the loader does not interpolate profiles at
-training time.
-
-An experimental raster export path is available in
-`data/dataset_creation/export_dataset_geotiff/export_dataset_geotiff.py`. It
-writes dense GLORYS temperature/salinity, OSTIA SST, and sea-level `adt` as
-aligned uint8 GeoTIFFs on the land-mask grid, plus
-`argo/argo_profiles_on_grid.zarr` with precomputed ARGO target dates and grid
-row/column indices. The default output root is `/work/data/depthdif`, and the
-default aligned ARGO input is
-`/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`. Temperature
-rasters and ARGO temperature are stretched in Kelvin, so decoding the uint8
-values returns Kelvin. Dense raster exports use process workers by default; tune
-`--workers` downward if RAM or source-disk contention becomes the bottleneck.
-
-The GeoTIFF and compact ARGO byte fields use valid `uint8` codes `0..254` and
-reserve `255` for nodata. Decoding uses
-`minimum + code / 254 * (maximum - minimum)`, with the quantization step and
-worst-case rounding error recorded in raster tags and `manifest.yaml`.
-
-| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
-| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
-| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
-
-Here, "int8 nonnegative" means a signed-byte encoding that uses only `0..126`
-as valid values and `127` as nodata. A signed int8 layout remapped across all
-255 non-nodata codes would have the same quantization error as `uint8`, but
-`uint8` keeps byte values and nodata handling explicit for raster readers.
-
-Only compact cache files are allowed under `metadata_cache_dir`. These caches
-store patch rows, split labels, land fractions, and ARGO support flags. They do
-not store model-ready patch tensors.
-
-## Sample Contract
-
-Each dataset item keeps the current training and inference batch contract:
-
-- `eo`: `(1, H, W)` normalized OSTIA `analysed_sst`
-- `x`: `(D, H, W)` normalized sparse ARGO temperature projected onto GLORYS depth
-- `y`: `(D, H, W)` normalized GLORYS `thetao`
-- `x_valid_mask`: `(D, H, W)` ARGO support mask
-- `y_valid_mask`: `(D, H, W)` GLORYS finite-value support mask
-- `x_valid_mask_1d`: `(1, H, W)` horizontal ARGO support mask
-- `land_mask`: `(1, H, W)` horizontal land/ocean mask
-- `date`: integer `YYYYMMDD`
-- optional `coords`
-- optional `info`
-
-When `dataset.output.return_modalities: true` is enabled for the zarr dataset,
-additional raw modality tensors are returned in `sample["modalities"]` with
-matching masks in `sample["modality_valid_masks"]`. Variable names are resolved
-from the zarr data variables and config aliases instead of fixed file paths.
-
-Public dataset metadata used by inference:
-
-- `dataset.rows`
-- `dataset.depth_axis_m`
-- `ArgoNetCDFGriddedPatchDataset.from_config(...)`
-- `ArgoZarrGriddedPatchDataset.from_config(...)`
-
-Rows expose stable fields: `patch_id`, `date`, `lat0`, `lat1`, `lon0`, `lon1`,
-`land_fraction`, `ocean_fraction`, `invalid_fraction`, and `split`.
-
-## Patch Grid
-
-By default, both dataset variants build spatial patch candidates from
-`data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif`.
-The GeoTIFF is on the global 0.1 degree GLORYS-style grid with `1=land` and
-`0=water`. `dataset.grid.patch_stride` controls overlap between patch origins,
-and `dataset.grid.max_land_fraction` drops land-heavy candidates before dates
-are expanded.
-
-Global ISO-week inference overrides these training/data defaults at runtime:
-it uses the same land-mask grid, sets `patch_stride` to one quarter of
-`tile_size` for 75% overlap, keeps every patch with at least 5% ocean cover by
-default, and disables the ARGO requirement for the `all` split so the stitched
-raster covers the globe. The ocean threshold is configurable with
-`--min-ocean-fraction`.
-
-`dataset.grid.force_include_regions` can preserve named ocean regions with
-coast-heavy geometry. The active configs force-include Mediterranean-centered
-patches up to `0.60` land fraction while keeping the global `0.30` cap
-elsewhere.
-
-Set `dataset.grid.patch_grid_source: "ostia_mask"` to use the previous
-OSTIA-mask-derived non-overlapping behavior. Metadata cache filenames include
-the grid source, stride, land threshold, force-include regions, resolution, tile
-size, temporal window, and split policy.
-
-## Patch Assembly
-
-For each `(patch, date)` row, the loader:
-
-1. Reads GLORYS `thetao` over the patch and depth axis to form `y`.
-2. Reads OSTIA `analysed_sst`, converts Kelvin values to Celsius when needed,
-   and interpolates to the patch grid to form `eo`.
-3. Finds ARGO profiles inside the configured spatial bounds and temporal window.
-4. Projects each ARGO `TEMP` profile from `DEPH_CORRECTED` depths onto the
-   GLORYS depth axis.
-5. Rasterizes profile hits into the patch; duplicate hits in the same
-   pixel/depth cell are averaged.
-6. Builds validity masks from finite support and returns normalized tensors.
-
-Empty-ARGO rows are kept only when the split selection allows them, such as
-global inference with `require_argo_for_all: false`.
-
-## Synthetic GLORYS Input Option
-
-For controlled ablations, the same NetCDF dataset can build sparse `x` from
-GLORYS instead of ARGO:
-
-```yaml
-dataset:
-  synthetic:
-    enabled: true
-    pixel_count: 250
+```text
+data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 ```
 
-When enabled, `x` is copied from `y` at `pixel_count` randomly selected
-horizontal pixels per patch. The full valid GLORYS depth profile is kept at each
-selected pixel, and every other `x` location is zeroed after normalization with
-`x_valid_mask=false`. Sampling is deterministic per `(random_seed, patch_id,
-date, row index)`.
+This grid gives a single spatial reference for GLORYS, OSTIA, sea-level fields,
+and ARGO profile locations. The vertical axis is the 50-level GLORYS depth
+coordinate. ARGO profiles are interpolated onto those same depths before they
+are rasterized into model patches.
 
-Synthetic mode does not require ARGO support for split filtering because the
-sparse input is produced from GLORYS.
+## Temporal Cadence
 
-## Normalization And Masks
+GLORYS weekly dates define the training timeline. For every GLORYS target date:
 
-Temperature tensors are loaded in degrees Celsius and normalized through
-`utils.normalizations.temperature_normalize`.
+- GLORYS `thetao` and `so` are saved for that weekly date.
+- OSTIA `analysed_sst` is saved as a centered 7-day mean around that date.
+- Sea-level `adt` is saved as a centered 7-day mean around that date.
+- ARGO profiles are assigned to the nearest GLORYS weekly date inside the same
+  centered temporal window.
 
-Mask semantics:
+## Training View
 
-- `x_valid_mask` marks observed ARGO support after profile-depth alignment.
-- `y_valid_mask` marks valid GLORYS target support.
-- `x_valid_mask_1d` collapses ARGO support across depth for conditioning and
-  visualization.
-- `land_mask` is horizontal and derived from target support.
+The model-facing training sample is a patch cut from the shared grid. It
+contains sparse ARGO temperature observations, dense OSTIA surface temperature,
+the dense GLORYS temperature target, and masks that tell the model which values
+are observed, supervised, ocean, or missing.
 
-## Split Behavior
-
-The active config uses `split.val_year: 2018`, so every row dated in 2018 is
-assigned to `val` and every other year is assigned to `train`.
-
-When `split.val_year` is null, patch split labels are deterministic and use
-`split.val_fraction` instead. Split labels are stored in the compact metadata
-cache.
-
-Selection flags control whether rows without ARGO support are retained:
-
-- `split.val_year`
-- `split.val_fraction`
-- `dataset.selection.require_argo_for_train`
-- `dataset.selection.require_argo_for_val`
-- `dataset.selection.require_argo_for_all`
-- `dataset.synthetic.enabled`
-- `dataset.synthetic.pixel_count`
-
-The default keeps ARGO-supported rows for train/val and permits no-ARGO rows for
-full-grid inference.
+The precise tensor contract is intentionally separated from this overview. See
+[Data Contract](data-contract.md) for shapes, normalization, masks, and loader
+assembly rules.

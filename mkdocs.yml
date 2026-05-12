@@ -78,10 +78,13 @@ nav:
       - Autoencoder + Latent Diffusion: autoencoder.md
       - Temporal Dimension Ideas: temporal_dimension.md
   - Data:
+      - Overview: data.md
       - Data Sources: data-source.md
+      - Raw Data Download: data-download.md
       - Depth Alignment: depth-alignment.md
+      - Data Export: data-export.md
+      - Data Contract: data-contract.md
       - Production Dataset: production-datasets.md
-      - NetCDF Patch Dataset: data.md
   - Experiments:
       - Early Experiments: experiments.md
       - GLORYS/Argo Aligned Experiments: experiments-glorys-argo-aligned.md

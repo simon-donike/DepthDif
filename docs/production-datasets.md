@@ -138,4 +138,4 @@ same: deterministic patch windows crossed with valid timesteps.
 Each sample returns `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`,
 `x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`.
 
-See [NetCDF Patch Dataset](data.md) for the full tensor contract.
+See [Data Contract](data-contract.md) for the full tensor contract.

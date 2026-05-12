@@ -1,8 +1,8 @@
 # Early Experiments
 
 This page is kept as a short index for older qualitative notes. The active
-training path is now the NetCDF patch dataset documented in
-[NetCDF Patch Dataset](data.md), and new runs should use:
+data workflow is documented in [Data Overview](data.md), [Data Export](data-export.md),
+and [Data Contract](data-contract.md). Existing training runs in this folder use:
 
 ```bash
 /work/envs/depth/bin/python train.py \

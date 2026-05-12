@@ -34,7 +34,9 @@ The repository currently supports:
 
 DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST plus coordinate/date context. See the full model details in [Model](model.md).
 
-In the active OSTIA setup, EO surface conditioning comes from OSTIA NetCDF files, while subsurface targets come from GLORYS NetCDF files and sparse inputs come from ARGO/EN4 profile NetCDF files.
+In the GeoTIFF training workflow, EO surface conditioning comes from OSTIA,
+subsurface targets come from GLORYS, and sparse inputs come from ARGO/EN4
+profiles after depth alignment.
 
 Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.
 For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize
@@ -43,8 +45,10 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 ## Documentation Map
 - [Quick Start](quickstart.md): environment setup + fastest train/infer path
 - [Production Datasets](production-datasets.md): OSTIA L4 + EN4 profile dataset specs and download workflows
-- [Data Source](data-source.md): source product, download, and raw variable tables
-- [NetCDF Patch Dataset](data.md): source roots, lazy patch assembly, masks, and split behavior
+- [Data Overview](data.md): high-level modalities, variables, shared axes, and cadence
+- [Data Source](data-source.md): source product and raw variable tables
+- [Data Export](data-export.md): GeoTIFF dataset layout, quantization, and export command
+- [Data Contract](data-contract.md): model-facing tensor shapes, masks, and normalization
 - [Model](model.md): architecture and diffusion conditioning flow
 - [Temporal Dimension Ideas](temporal_dimension.md): options and tradeoffs for extending from `B,C,H,W` to `B,T,C,H,W` on real dataset windows
 - [Autoencoder + Latent Diffusion](autoencoder.md): AE architecture, latent task setup, launch commands, and constraints
