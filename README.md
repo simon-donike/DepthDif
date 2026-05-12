@@ -15,7 +15,7 @@
   <a href="https://depthdif.donike.net/experiments/">
     <img src="https://img.shields.io/badge/experiments-online-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
-  <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/DepthDif_Colab_Inference.ipynb">
+  <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb">
     <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab" />
   </a>
 </p>
@@ -34,7 +34,7 @@ DepthDif is a conditional diffusion project for densifying sparse ocean temperat
 
 Run the public inference notebook directly in Google Colab:
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/DepthDif_Colab_Inference.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb)
 
 ## Installation
 
