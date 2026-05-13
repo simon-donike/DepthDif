@@ -175,6 +175,57 @@ def resolve_checkpoint_path(
     return str(ckpt_path)
 
 
+def extract_ema_state_dict(checkpoint: Any) -> dict[str, torch.Tensor] | None:
+    """Extract EMA weights from a Lightning checkpoint payload when present."""
+    if not isinstance(checkpoint, dict):
+        return None
+
+    direct_ema = checkpoint.get("ema_weights")
+    if isinstance(direct_ema, dict):
+        return {str(key): value for key, value in direct_ema.items()}
+
+    callbacks = checkpoint.get("callbacks")
+    if not isinstance(callbacks, dict):
+        return None
+
+    fallback_ema: dict[str, torch.Tensor] | None = None
+    for callback_key, callback_state in callbacks.items():
+        if not isinstance(callback_state, dict):
+            continue
+        ema_weights = callback_state.get("ema_weights")
+        if not isinstance(ema_weights, dict):
+            continue
+        normalized = {str(key): value for key, value in ema_weights.items()}
+        if "EMA" in str(callback_key):
+            return normalized
+        fallback_ema = normalized
+    return fallback_ema
+
+
+def load_checkpoint_weights(
+    model: torch.nn.Module,
+    checkpoint_path: str | Path,
+    *,
+    strict: bool = False,
+    prefer_ema: bool = True,
+) -> str:
+    """Load checkpoint weights into a model, preferring EMA weights when available."""
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    if prefer_ema:
+        ema_state_dict = extract_ema_state_dict(checkpoint)
+        if ema_state_dict is not None:
+            model.load_state_dict(ema_state_dict, strict=bool(strict))
+            return "ema"
+
+    state_dict = (
+        checkpoint["state_dict"]
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint
+        else checkpoint
+    )
+    model.load_state_dict(state_dict, strict=bool(strict))
+    return "standard"
+
+
 def to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     """Move tensor values in a batch dictionary to the target device."""
     out: dict[str, Any] = {}

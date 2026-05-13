@@ -30,7 +30,7 @@ trainer:
   log_every_n_steps: 25 # Keep console/logger cadence reasonable for long runs.
   num_sanity_val_steps: 1 # Run a minimal validation smoke test before training.
   val_check_interval: 0.1 # Run validation every 10% of the training dataloader.
-  limit_val_batches: 16 # Use more cheap validation-loss batches per validation run.
+  limit_val_batches: 64 # Use more cheap validation-loss batches per validation run.
   enable_model_summary: true # Show Lightning's model summary at startup.
   gradient_clip_val: 1.0 # Clip gradients to reduce occasional diffusion-training spikes.
 
@@ -70,7 +70,7 @@ scheduler:
     interval: "step" # Count patience in optimizer steps; use "epoch" for epoch-level patience.
     mode: "min" # Lower validation loss is better.
     factor: 0.5 # Halve the LR on plateau.
-    patience: 2000 # Optimizer steps with no improvement before reducing LR.
+    patience: 100_000 # Optimizer steps with no improvement before reducing LR.
     threshold: 1.0e-4 # Minimum relative improvement to reset patience.
     threshold_mode: "rel" # Use relative thresholding.
     cooldown: 0 # Scheduler intervals to wait after an LR drop before resuming checks.

@@ -32,7 +32,7 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
-from depth_recon.models.diffusion import PixelDiffusionConditional
+from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import config_path, resolve_config_path
 
@@ -390,6 +390,61 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     )
 
 
+def parse_config_bool(value: Any, *, key: str) -> bool:
+    """Parse a strict boolean value from YAML config data."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    raise ValueError(f"{key} must be a boolean value.")
+
+
+def build_ema_callback(model_cfg: dict[str, Any]) -> EMA | None:
+    """Build the optional EMA callback from model config."""
+    ema_cfg = model_cfg.get("model", {}).get("ema", {})
+    if ema_cfg is None or ema_cfg is False:
+        return None
+    if not isinstance(ema_cfg, dict):
+        raise ValueError("model.ema must be a mapping, false, or null.")
+    if not parse_config_bool(ema_cfg.get("enabled", False), key="model.ema.enabled"):
+        return None
+
+    decay = float(ema_cfg.get("decay", 0.9999))
+    if not (0.0 <= decay < 1.0):
+        raise ValueError("model.ema.decay must be >= 0.0 and < 1.0.")
+
+    apply_every_n_steps = int(
+        ema_cfg.get(
+            "apply_every_n_steps",
+            ema_cfg.get("apply_ema_every_n_steps", 1),
+        )
+    )
+    if apply_every_n_steps < 1:
+        raise ValueError("model.ema.apply_every_n_steps must be >= 1.")
+
+    start_step = int(ema_cfg.get("start_step", 0))
+    if start_step < 0:
+        raise ValueError("model.ema.start_step must be >= 0.")
+
+    return EMA(
+        decay=decay,
+        apply_ema_every_n_steps=apply_every_n_steps,
+        start_step=start_step,
+        save_ema_weights_in_callback_state=parse_config_bool(
+            ema_cfg.get("save_ema_weights_in_callback_state", True),
+            key="model.ema.save_ema_weights_in_callback_state",
+        ),
+        evaluate_ema_weights_instead=parse_config_bool(
+            ema_cfg.get("evaluate_ema_weights_instead", True),
+            key="model.ema.evaluate_ema_weights_instead",
+        ),
+    )
+
+
 def main(
     model_config_path: str = PX_MODEL_CONFIG_PATH,
     data_config_path: str = PX_DATA_CONFIG_PATH,
@@ -639,6 +694,11 @@ def main(
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
+    ema_callback = build_ema_callback(model_cfg)
+    callbacks: list[pl.Callback] = [checkpoint_callback, lr_monitor_callback]
+    if ema_callback is not None:
+        # Restore raw training weights before ModelCheckpoint writes resume state.
+        callbacks = [ema_callback, checkpoint_callback, lr_monitor_callback]
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
@@ -672,7 +732,7 @@ def main(
         # Keep sanity checks enabled by default, but model-side logic keeps them lightweight.
         num_sanity_val_steps=int(trainer_cfg.get("num_sanity_val_steps", 2)),
         logger=logger,
-        callbacks=[checkpoint_callback, lr_monitor_callback],
+        callbacks=callbacks,
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         val_check_interval=trainer_cfg.get("val_check_interval", 1.0),
         limit_val_batches=limit_val_batches,

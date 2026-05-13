@@ -35,6 +35,7 @@ from depth_recon.data.dataset_argo_netcdf_gridded import (
 from depth_recon.inference.core import (
     build_model,
     choose_device,
+    load_checkpoint_weights,
     load_yaml,
     resolve_checkpoint_path,
 )
@@ -1458,13 +1459,11 @@ def run_argo_week_inference(
     ckpt_path = resolve_checkpoint_path(str(assets.checkpoint), model_cfg)
     if ckpt_path is None:
         raise RuntimeError("No public inference checkpoint was resolved.")
-    checkpoint_payload = torch.load(ckpt_path, map_location="cpu")
-    state_dict = (
-        checkpoint_payload["state_dict"]
-        if "state_dict" in checkpoint_payload
-        else checkpoint_payload
+    weight_source = load_checkpoint_weights(
+        model,
+        ckpt_path,
+        strict=bool(strict_load),
     )
-    model.load_state_dict(state_dict, strict=bool(strict_load))
     target_device = choose_device(device)
     model = model.to(target_device)
     model.eval()
@@ -1486,6 +1485,7 @@ def run_argo_week_inference(
         f"iso_week={int(year)}-W{int(iso_week):02d}, "
         f"selected_patches={len(rows)}, "
         f"batch_size={batch_size_value}, "
+        f"weights={weight_source}, "
         f"ostia_conditioning={'enabled' if use_ostia_conditioning else 'disabled'}, "
         f"rectangle={rectangle}"
     )

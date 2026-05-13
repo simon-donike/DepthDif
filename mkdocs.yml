@@ -71,6 +71,7 @@ nav:
       - Public Inference Package: public-inference-package.md
       - Quickstart: quickstart.md
       - Model Description: model.md
+      - EMA Weights: ema.md
       - Sampling Diagnostics: sampling-diagnostics.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
       - Date + Time Injection: data-coordinate-injection.md

@@ -23,6 +23,7 @@ from depth_recon.inference.core import (
     build_dataset,
     build_model,
     choose_device,
+    load_checkpoint_weights,
     load_yaml,
     resolve_checkpoint_path,
     to_device,
@@ -471,12 +472,15 @@ def main() -> None:
     ckpt_path = resolve_checkpoint_path(args.checkpoint_path, model_cfg)
     if ckpt_path is None:
         raise RuntimeError("Validation summary export requires a resolved checkpoint.")
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
-    state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
-    model.load_state_dict(state_dict, strict=bool(args.strict_load))
+    weight_source = load_checkpoint_weights(
+        model,
+        ckpt_path,
+        strict=bool(args.strict_load),
+    )
     device = choose_device(args.device)
     model.to(device)
     model.eval()
+    print(f"Loaded checkpoint: {ckpt_path} ({weight_source} weights)")
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(

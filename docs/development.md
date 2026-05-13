@@ -29,7 +29,7 @@ Potential mitigation directions already identified:
 - [ ] DDIM sampling path still needs deeper validation across checkpoints/settings  
 - [ ] Increase U-Net capacity (for example `dim: 64 -> 96/128`, deeper `dim_mults`)  
 - [ ] Add frequency-aware objectives (for example gradient/PSD losses) to reduce speckle noise  
-- [ ] Activate and validate EMA weights in full training runs  
+- [ ] Validate and tune EMA weights in full training runs  
   
 ## Done  
 - [x] Encode timestamps together with coordinate embedding  

@@ -26,6 +26,7 @@ from depth_recon.inference.core import (
     choose_device,
     ds_cfg_value,
     load_yaml,
+    load_checkpoint_weights,
     pretty_shape,
     resolve_checkpoint_path,
     resolve_model_type,
@@ -97,12 +98,12 @@ def main() -> None:
 
     ckpt_path = resolve_checkpoint_path(CHECKPOINT_PATH, model_cfg)
     if ckpt_path is not None:
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        state_dict = (
-            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        weight_source = load_checkpoint_weights(
+            model,
+            ckpt_path,
+            strict=bool(STRICT_LOAD),
         )
-        model.load_state_dict(state_dict, strict=bool(STRICT_LOAD))
-        print(f"Loaded checkpoint: {ckpt_path}")
+        print(f"Loaded checkpoint: {ckpt_path} ({weight_source} weights)")
     else:
         print("No checkpoint provided/found. Running with current model weights.")
 

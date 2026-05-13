@@ -269,6 +269,7 @@ import torch
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.models.diffusion import PixelDiffusionConditional
 
 model_config = "src/depth_recon/configs/px_space/model_config.yaml"
@@ -287,9 +288,7 @@ model = PixelDiffusionConditional.from_config(
     datamodule=datamodule,
 )
 
-state = torch.load(ckpt_path, map_location="cpu")
-state_dict = state["state_dict"] if "state_dict" in state else state
-model.load_state_dict(state_dict, strict=False)
+weight_source = load_checkpoint_weights(model, ckpt_path, strict=False)
 model.eval()
 
 batch = next(iter(datamodule.val_dataloader()))

@@ -1678,8 +1678,87 @@ class PixelDiffusionConditional(pl.LightningModule):
                 )
                 self._logged_schedule_profile_in_sanity = True
 
+    def _get_ema_callback(self) -> Any | None:
+        """Return the active EMA callback, if one is attached to the trainer."""
+        try:
+            trainer = self.trainer
+        except RuntimeError:
+            return None
+        if trainer is None:
+            return None
+        for callback in getattr(trainer, "callbacks", []):
+            if type(callback).__name__ == "EMA" and hasattr(
+                callback, "replace_model_weights"
+            ):
+                return callback
+        return None
+
+    @staticmethod
+    def _suffixed_validation_image_key(base_key: str, suffix: str) -> str:
+        """Return validation image key with optional raw/EMA suffix."""
+        suffix = str(suffix).strip()
+        if not suffix:
+            return base_key
+        return f"{base_key}_{suffix}"
+
+    def _log_full_reconstruction_metrics(
+        self,
+        *,
+        recon_mse: torch.Tensor,
+        recon_psnr: torch.Tensor,
+        recon_ssim: torch.Tensor,
+        batch_size: int,
+        metric_prefix: str,
+        log_default_metrics: bool,
+    ) -> None:
+        """Log validation reconstruction metrics under configured prefixes."""
+        metric_prefixes = [metric_prefix]
+        if log_default_metrics and metric_prefix != "val":
+            metric_prefixes.append("val")
+
+        for prefix in metric_prefixes:
+            self.log(
+                f"{prefix}/recon_mse_full_recon",
+                recon_mse,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=(prefix == "val"),
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+            self.log(
+                f"{prefix}/recon_psnr_full_recon",
+                recon_psnr,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=(prefix == "val"),
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+            self.log(
+                f"{prefix}/recon_ssim_full_recon",
+                recon_ssim,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+
     @torch.no_grad()
-    def _run_single_image_full_reconstruction_and_log(self) -> None:
+    def _run_single_image_full_reconstruction_for_current_weights(
+        self,
+        *,
+        metric_prefix: str = "val",
+        image_key_suffix: str = "",
+        log_default_metrics: bool = True,
+        log_common_metrics: bool = True,
+        log_profile: bool = True,
+        log_denoise: bool = True,
+    ) -> None:
         # Expensive diagnostic path: run full reverse diffusion only once per validation
         # on a small cached validation mini-batch.
         """Helper that computes run single image full reconstruction and log.
@@ -1691,7 +1770,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             None: No value is returned.
         """
         if self._cached_val_example is None:
-            self._log_full_reconstruction_placeholders()
+            if log_default_metrics:
+                self._log_full_reconstruction_placeholders()
             return
 
         try:
@@ -1875,56 +1955,48 @@ class PixelDiffusionConditional(pl.LightningModule):
                 f"instead. Error: {exc}",
                 stacklevel=2,
             )
-            self._log_full_reconstruction_placeholders()
+            if log_default_metrics:
+                self._log_full_reconstruction_placeholders()
+            else:
+                placeholder_scalar = torch.zeros(
+                    (), device=self.device, dtype=torch.float32
+                )
+                self._log_full_reconstruction_metrics(
+                    recon_mse=placeholder_scalar,
+                    recon_psnr=placeholder_scalar,
+                    recon_ssim=placeholder_scalar,
+                    batch_size=1,
+                    metric_prefix=metric_prefix,
+                    log_default_metrics=False,
+                )
             return
 
-        self.log(
-            "val/recon_mse_full_recon",
-            recon_mse,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
+        self._log_full_reconstruction_metrics(
+            recon_mse=recon_mse,
+            recon_psnr=recon_psnr,
+            recon_ssim=recon_ssim,
             batch_size=recon_batch_size,
+            metric_prefix=metric_prefix,
+            log_default_metrics=log_default_metrics,
         )
-        self.log(
-            "val/recon_psnr_full_recon",
-            recon_psnr,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-            batch_size=recon_batch_size,
-        )
-        self.log(
-            "val/recon_ssim_full_recon",
-            recon_ssim,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=False,
-            logger=True,
-            sync_dist=True,
-            batch_size=recon_batch_size,
-        )
-        self._log_validation_triplet_stats(
-            x=x_denorm, y=target_denorm_masked, y_hat=y_hat_denorm
-        )
-        self._log_common_batch_stats(
-            y_hat_denorm,
-            prefix="val_pred",
-            batch_size=recon_batch_size,
-            on_step=False,
-            on_epoch=True,
-        )
-        self._log_common_batch_stats(
-            target_denorm_masked,
-            prefix="val_target",
-            batch_size=recon_batch_size,
-            on_step=False,
-            on_epoch=True,
-        )
+        if log_common_metrics:
+            self._log_validation_triplet_stats(
+                x=x_denorm, y=target_denorm_masked, y_hat=y_hat_denorm
+            )
+            self._log_common_batch_stats(
+                y_hat_denorm,
+                prefix="val_pred",
+                batch_size=recon_batch_size,
+                on_step=False,
+                on_epoch=True,
+            )
+            self._log_common_batch_stats(
+                target_denorm_masked,
+                prefix="val_target",
+                batch_size=recon_batch_size,
+                on_step=False,
+                on_epoch=True,
+            )
         # This is the one expensive full reconstruction for this validation run.
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
@@ -1936,22 +2008,29 @@ class PixelDiffusionConditional(pl.LightningModule):
             valid_mask=x_valid_mask,
             land_mask=land_mask,
             prefix="val_imgs",
-            image_key="x_y_full_reconstruction",
+            image_key=self._suffixed_validation_image_key(
+                "x_y_full_reconstruction",
+                image_key_suffix,
+            ),
             cmap=PLOT_CMAP,
             show_valid_mask_panel=False,
         )
-        log_wandb_glorys_profile_comparison(
-            logger=self.logger,
-            x=x_denorm,
-            y_hat=y_hat_denorm_for_plot,
-            y_target=y_denorm_masked,
-            conditioning_mask=x_valid_mask,
-            candidate_mask=generated_profile_mask,
-            prefix="val_imgs",
-            image_key="glorys_full_profile_comparison",
-            sample_idx=0,
-        )
-        if self.log_intermediates and sampler_for_val is not None:
+        if log_profile:
+            log_wandb_glorys_profile_comparison(
+                logger=self.logger,
+                x=x_denorm,
+                y_hat=y_hat_denorm_for_plot,
+                y_target=y_denorm_masked,
+                conditioning_mask=x_valid_mask,
+                candidate_mask=generated_profile_mask,
+                prefix="val_imgs",
+                image_key=self._suffixed_validation_image_key(
+                    "glorys_full_profile_comparison",
+                    image_key_suffix,
+                ),
+                sample_idx=0,
+            )
+        if log_denoise and self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
                 logger=self.logger,
                 denoise_samples=denoise_samples,
@@ -1969,6 +2048,57 @@ class PixelDiffusionConditional(pl.LightningModule):
         del recon_mse, y_hat, pred, pred_batch, y, x, target
         del target_denorm, y_hat_denorm, y_hat_denorm_for_plot, x_denorm, eo_denorm
         gc.collect()
+
+    def _run_single_image_full_reconstruction_and_log(self) -> None:
+        """Log full validation reconstructions, including raw and EMA variants."""
+        if self._cached_val_example is None:
+            self._log_full_reconstruction_placeholders()
+            return
+
+        ema_callback = self._get_ema_callback()
+        if ema_callback is None or not bool(
+            getattr(ema_callback, "ema_initialized", False)
+        ):
+            self._run_single_image_full_reconstruction_for_current_weights()
+            return
+
+        evaluate_with_ema = bool(
+            getattr(ema_callback, "evaluate_ema_weights_instead", False)
+        )
+        ema_was_applied = bool(getattr(ema_callback, "weights_are_applied", False))
+
+        if ema_was_applied:
+            ema_callback.restore_original_weights(self)
+        try:
+            self._run_single_image_full_reconstruction_for_current_weights(
+                metric_prefix="val_standard",
+                image_key_suffix="standard",
+                log_default_metrics=not evaluate_with_ema,
+                log_common_metrics=not evaluate_with_ema,
+                log_profile=not evaluate_with_ema,
+                log_denoise=not evaluate_with_ema,
+            )
+        finally:
+            if ema_was_applied:
+                ema_callback.replace_model_weights(self)
+
+        ema_applied_before_ema_log = bool(
+            getattr(ema_callback, "weights_are_applied", False)
+        )
+        if not ema_applied_before_ema_log:
+            ema_callback.replace_model_weights(self)
+        try:
+            self._run_single_image_full_reconstruction_for_current_weights(
+                metric_prefix="val_ema",
+                image_key_suffix="ema",
+                log_default_metrics=evaluate_with_ema,
+                log_common_metrics=evaluate_with_ema,
+                log_profile=evaluate_with_ema,
+                log_denoise=evaluate_with_ema,
+            )
+        finally:
+            if not ema_applied_before_ema_log:
+                ema_callback.restore_original_weights(self)
 
     def on_validation_epoch_end(self) -> None:
         # Run one full-reconstruction pass after cheap validation metrics are accumulated.

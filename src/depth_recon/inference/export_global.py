@@ -56,6 +56,7 @@ from depth_recon.inference.core import (
     build_dataset,
     build_model,
     choose_device,
+    load_checkpoint_weights,
     load_yaml,
     resolve_checkpoint_path,
 )
@@ -1710,12 +1711,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "No checkpoint was resolved. Set --checkpoint-path or configure "
             "model.load_checkpoint/model.resume_checkpoint."
         )
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
-    state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
-    model.load_state_dict(state_dict, strict=bool(args.strict_load))
+    weight_source = load_checkpoint_weights(
+        model,
+        ckpt_path,
+        strict=bool(args.strict_load),
+    )
     model = model.to(device)
     model.eval()
-    print(f"Loaded checkpoint: {ckpt_path}")
+    print(f"Loaded checkpoint: {ckpt_path} ({weight_source} weights)")
 
     inference_module = ExportInferenceWrapper(
         model,

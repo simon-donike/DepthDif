@@ -73,6 +73,8 @@ Current EO config (`src/depth_recon/configs/px_space/model_config.yaml`) uses:
 Latent model workflow is configured via `src/depth_recon/configs/lat_space/model_config.yaml` with AE controls in `src/depth_recon/configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
   
 This means: if ambient mode is disabled, training loss is pulled over all valid `y` pixels via `y_valid_mask`.  
+
+EMA weight averaging can be enabled through `model.ema`; see [Exponential Moving Average Weights](ema.md) for the implementation details, validation logging behavior, and metric definitions.
   
 ## Inference Flow  
 Prediction entry point is `predict_step`.  

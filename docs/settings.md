@@ -93,6 +93,23 @@ Runtime effect:
 - training loss still uses forward noising objective
 - full reverse sampling diagnostics use chosen validation sampler
 
+### Exponential moving average weights
+Config (`model.ema`):
+- `enabled`: disabled by default
+- `decay`: EMA smoothing factor, e.g. `0.9999`
+- `apply_every_n_steps`: optimizer-step cadence for updates
+- `start_step`: first global step where updates may run
+- `save_ema_weights_in_callback_state`: stores EMA weights in Lightning checkpoints
+- `evaluate_ema_weights_instead`: swaps EMA weights in for validation/test, then restores training weights
+
+Runtime effect:
+- EMA is wired as a Lightning callback in `train.py`
+- checkpoints keep raw training weights for resume plus EMA weights in callback state when saving is enabled
+- validation image logging emits both `x_y_full_reconstruction_standard` and
+  `x_y_full_reconstruction_ema` when EMA is enabled
+- validation also logs `val_standard/*`, `val_ema/*`, and raw-vs-EMA weight
+  diagnostics under `ema/*`
+
 ### Learning-rate warmup and plateau scheduler
 Config (`scheduler`):
 - `warmup.enabled`, `warmup.steps`, `warmup.start_ratio`
