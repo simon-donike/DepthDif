@@ -19,6 +19,7 @@ from depth_recon.paths import config_path, resolve_config_path
 from depth_recon.utils.normalizations import PLOT_CMAP, temperature_normalize
 from depth_recon.utils.stretching import minmax_stretch
 from depth_recon.utils.validation_denoise import (
+    average_observed_argo_pixels_per_image,
     build_evenly_spaced_capture_steps,
     log_wandb_diffusion_schedule_profile,
     log_wandb_conditional_reconstruction_grid,
@@ -62,6 +63,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         lr: float = 1e-3,
         lr_scheduler_enabled: bool = False,
         lr_scheduler_monitor: str = "val/loss_ckpt",
+        lr_scheduler_interval: str = "epoch",
         lr_scheduler_mode: str = "min",
         lr_scheduler_factor: float = 0.5,
         lr_scheduler_patience: int = 10,
@@ -123,6 +125,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             lr (float): Input value.
             lr_scheduler_enabled (bool): Boolean flag controlling behavior.
             lr_scheduler_monitor (str): Input value.
+            lr_scheduler_interval (str): Scheduler cadence, "step" or "epoch".
             lr_scheduler_mode (str): Input value.
             lr_scheduler_factor (float): Input value.
             lr_scheduler_patience (int): Input value.
@@ -165,6 +168,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.batch_size = batch_size
         self.lr_scheduler_enabled = bool(lr_scheduler_enabled)
         self.lr_scheduler_monitor = str(lr_scheduler_monitor)
+        self.lr_scheduler_interval = str(lr_scheduler_interval).strip().lower()
+        if self.lr_scheduler_interval.endswith("s"):
+            # Accept the human-readable config spellings "steps" and "epochs".
+            self.lr_scheduler_interval = self.lr_scheduler_interval[:-1]
+        if self.lr_scheduler_interval not in {"step", "epoch"}:
+            raise ValueError('lr_scheduler_interval must be "step" or "epoch".')
         self.lr_scheduler_mode = str(lr_scheduler_mode)
         self.lr_scheduler_factor = float(lr_scheduler_factor)
         self.lr_scheduler_patience = int(lr_scheduler_patience)
@@ -258,7 +267,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.val_sampler = self._build_validation_sampler(train_betas)
         # Cached validation mini-batch
         # (x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date)
-        # used for one epoch-end full reverse-diffusion reconstruction pass.
+        # used for one validation-end full reverse-diffusion reconstruction pass.
         self._cached_val_example: (
             tuple[
                 torch.Tensor,
@@ -311,6 +320,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
+        plateau_interval = str(plateau_cfg.get("interval", "epoch"))
         warmup_cfg = scheduler_cfg.get("warmup", {})
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
@@ -356,6 +366,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             lr=float(t.get("lr", 1e-3)),
             lr_scheduler_enabled=bool(plateau_cfg.get("enabled", False)),
             lr_scheduler_monitor=str(plateau_cfg.get("monitor", "val/loss_ckpt")),
+            lr_scheduler_interval=plateau_interval,
             lr_scheduler_mode=str(plateau_cfg.get("mode", "min")),
             lr_scheduler_factor=float(plateau_cfg.get("factor", 0.5)),
             lr_scheduler_patience=int(plateau_cfg.get("patience", 10)),
@@ -1637,7 +1648,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
 
     def on_validation_epoch_start(self) -> None:
-        # Reset cache every validation epoch to avoid carrying stale tensors across epochs.
+        # Reset cache every validation run to avoid carrying stale tensors forward.
         """Compute on validation epoch start and return the result.
 
         Args:
@@ -1669,7 +1680,7 @@ class PixelDiffusionConditional(pl.LightningModule):
 
     @torch.no_grad()
     def _run_single_image_full_reconstruction_and_log(self) -> None:
-        # Expensive diagnostic path: run full reverse diffusion only once per epoch
+        # Expensive diagnostic path: run full reverse diffusion only once per validation
         # on a small cached validation mini-batch.
         """Helper that computes run single image full reconstruction and log.
 
@@ -1914,7 +1925,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             on_step=False,
             on_epoch=True,
         )
-        # This is the one expensive full reconstruction for the epoch; always log it.
+        # This is the one expensive full reconstruction for this validation run.
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
             x=x_denorm,
@@ -2092,9 +2103,20 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
             masked_fraction = self._masked_fraction(original_valid_mask)
+            observed_argo_pixels = average_observed_argo_pixels_per_image(
+                original_valid_mask
+            )
             self.log(
                 "train/masked_fraction",
                 masked_fraction,
+                on_step=True,
+                on_epoch=False,
+                logger=True,
+                batch_size=target.size(0),
+            )
+            self.log(
+                "train/argo_observed_pixels_per_image",
+                observed_argo_pixels,
                 on_step=True,
                 on_epoch=False,
                 logger=True,
@@ -2162,7 +2184,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         self._log_pre_diffusion_stats(
             model_condition, prefix="val_condition", batch_size=int(target.size(0))
         )
-        # Same training objective for validation; full reverse-chain recon is logged at epoch end.
+        # Same training objective for validation; full reverse-chain recon is logged once
+        # at validation end.
         loss = self.model.p_loss(
             target_t,
             model_condition,
@@ -2237,6 +2260,9 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         if self.wandb_verbose and self.global_step % self.log_stats_every_n_steps == 0:
             masked_fraction = self._masked_fraction(original_valid_mask)
+            observed_argo_pixels = average_observed_argo_pixels_per_image(
+                original_valid_mask
+            )
             self.log(
                 "val/masked_fraction",
                 masked_fraction,
@@ -2246,10 +2272,19 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sync_dist=True,
                 batch_size=y.size(0),
             )
+            self.log(
+                "val/argo_observed_pixels_per_image",
+                observed_argo_pixels,
+                on_step=False,
+                on_epoch=True,
+                logger=True,
+                sync_dist=True,
+                batch_size=y.size(0),
+            )
 
         if batch_idx == 0 and self._cached_val_example is None:
             # Cache up to N validation samples from the first val batch for one
-            # epoch-end full reverse-diffusion reconstruction pass.
+            # validation-end full reverse-diffusion reconstruction pass.
             n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
             cached_x_valid_mask = (
                 valid_mask[:n_cache].detach() if valid_mask is not None else None
@@ -2303,13 +2338,20 @@ class PixelDiffusionConditional(pl.LightningModule):
             min_lr=self.lr_scheduler_min_lr,
             eps=self.lr_scheduler_eps,
         )
+        scheduler_strict = not (
+            self.lr_scheduler_interval == "step"
+            and self.lr_scheduler_monitor.startswith("val/")
+        )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": self.lr_scheduler_monitor,
-                "interval": "epoch",
+                "interval": self.lr_scheduler_interval,
                 "frequency": 1,
+                # Step-based validation metrics are unavailable before the first
+                # validation run; let Lightning skip those early scheduler checks.
+                "strict": scheduler_strict,
             },
         }
 

@@ -102,7 +102,7 @@ This post-processing is centralized in `predict_step`.
 ## Validation Diagnostics  
 Validation computes two paths:  
 - per-batch validation loss (`validation_step`) using the same objective as training  
-- one full reverse-diffusion reconstruction per epoch from the global-rank-0 cached first validation batch (`on_validation_epoch_end`)  
+- one full reverse-diffusion reconstruction per validation run from the global-rank-0 cached first validation batch (`on_validation_epoch_end`)  
 
 When available, full reconstruction logging includes:  
 - MSE  

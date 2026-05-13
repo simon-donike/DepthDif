@@ -13,7 +13,7 @@ training:
     ddim_temperature: 1.0 # DDIM noise temperature; lower values reduce generative variation.
     log_intermediates: false # Disable dense intermediate image logging by default.
     skip_full_reconstruction_in_sanity_check: true # Keep startup sanity validation lightweight.
-    max_full_reconstruction_samples: 2 # Cap qualitative reconstruction logging to a small sample count.
+    max_full_reconstruction_samples: 1 # Keep one full-reconstruction sample per validation run.
 
 trainer:
   max_epochs: 1500 # Conservative upper bound; plateau scheduler handles late-stage decay.
@@ -29,7 +29,8 @@ trainer:
   lr_logging_interval: "step" # Log LR changes at step granularity.
   log_every_n_steps: 25 # Keep console/logger cadence reasonable for long runs.
   num_sanity_val_steps: 1 # Run a minimal validation smoke test before training.
-  limit_val_batches: 4 # Keep validation cost bounded per epoch.
+  val_check_interval: 0.1 # Run validation every 10% of the training dataloader.
+  limit_val_batches: 16 # Use more cheap validation-loss batches per validation run.
   enable_model_summary: true # Show Lightning's model summary at startup.
   gradient_clip_val: 1.0 # Clip gradients to reduce occasional diffusion-training spikes.
 
@@ -65,12 +66,13 @@ scheduler:
     start_ratio: 0.2 # Start warmup at 20% of the base LR.
   reduce_on_plateau:
     enabled: true # Decay LR automatically when validation stops improving.
-    monitor: "val/loss_ckpt" # Metric used for plateau detection.
+    monitor: "val/loss_ckpt" # Validation loss used for plateau detection.
+    interval: "step" # Count patience in optimizer steps; use "epoch" for epoch-level patience.
     mode: "min" # Lower validation loss is better.
     factor: 0.5 # Halve the LR on plateau.
-    patience: 20 # Allow a longer plateau window on the larger dataset.
+    patience: 2000 # Optimizer steps with no improvement before reducing LR.
     threshold: 1.0e-4 # Minimum relative improvement to reset patience.
     threshold_mode: "rel" # Use relative thresholding.
-    cooldown: 0 # Resume plateau checks immediately after an LR drop.
+    cooldown: 0 # Scheduler intervals to wait after an LR drop before resuming checks.
     min_lr: 1.0e-6 # Do not decay below this LR floor.
     eps: 1.0e-8 # Ignore numerically insignificant LR updates.

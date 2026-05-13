@@ -22,6 +22,7 @@ from depth_recon.models.latent.Autoencoder import (
 )
 from depth_recon.models.latent.LatentDiffusion import LatentDiffusionConditional
 from depth_recon.utils.normalizations import temperature_normalize
+from depth_recon.utils.validation_denoise import average_observed_argo_pixels_per_image
 
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
@@ -160,6 +161,12 @@ class TestModelDryRuns(unittest.TestCase):
         torch.manual_seed(0)
         np.random.seed(0)
 
+    def test_observed_argo_pixels_count_spatial_locations_once(self) -> None:
+        batch = _make_pixel_batch()
+        observed_pixels = average_observed_argo_pixels_per_image(batch["x_valid_mask"])
+
+        self.assertTrue(torch.isclose(observed_pixels, torch.tensor(48.0)))
+
     def test_pixel_diffusion_from_config_wires_nested_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -232,7 +239,7 @@ class TestModelDryRuns(unittest.TestCase):
                         "warmup": {"enabled": True, "steps": 12, "start_ratio": 0.3},
                         "reduce_on_plateau": {
                             "enabled": True,
-                            "monitor": "val/custom",
+                            "interval": "steps",
                             "mode": "max",
                             "factor": 0.6,
                             "patience": 4,
@@ -264,6 +271,7 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertTrue(model.lr_warmup_enabled)
             self.assertEqual(model.lr_warmup_steps, 12)
             self.assertEqual(model.lr_warmup_start_ratio, 0.3)
+            self.assertEqual(model.lr_scheduler_interval, "step")
             self.assertTrue(model.postprocess_gaussian_blur_enabled)
             # Even kernel sizes are promoted to the next odd size in __init__.
             self.assertEqual(model.postprocess_gaussian_blur_kernel_size, 5)
@@ -273,14 +281,17 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertEqual(model.val_sampler.num_timesteps, 3)
             self.assertEqual(model.val_sampler.temperature, 0.5)
             self.assertIsInstance(optim_config, dict)
-            self.assertEqual(optim_config["lr_scheduler"]["monitor"], "val/custom")
+            self.assertEqual(optim_config["lr_scheduler"]["monitor"], "val/loss_ckpt")
+            self.assertEqual(optim_config["lr_scheduler"]["interval"], "step")
+            self.assertFalse(optim_config["lr_scheduler"]["strict"])
 
     def test_pixel_training_step_uses_standard_target_and_passes_land_mask(
         self,
     ) -> None:
-        model = _make_pixel_model()
+        model = _make_pixel_model(wandb_verbose=True)
         batch = _make_pixel_batch()
         captured: dict[str, Any] = {}
+        logged_names: list[str] = []
 
         def fake_p_loss(
             output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
@@ -292,7 +303,9 @@ class TestModelDryRuns(unittest.TestCase):
 
         with (
             patch.object(model.model, "p_loss", fake_p_loss),
-            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch.object(
+                model, "log", lambda *args, **kwargs: logged_names.append(args[0])
+            ),
         ):
             loss = model.training_step(batch, batch_idx=0)
 
@@ -312,6 +325,7 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(
             torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
         )
+        self.assertIn("train/argo_observed_pixels_per_image", logged_names)
         self.assertTrue(torch.isclose(loss, torch.tensor(1.25)))
 
     def test_pixel_validation_step_uses_ambient_target_and_intersection_mask(
@@ -321,11 +335,13 @@ class TestModelDryRuns(unittest.TestCase):
             ambient_occlusion_enabled=True,
             ambient_further_drop_prob=0.0,
             ambient_apply_to_noisy_branch=True,
+            wandb_verbose=True,
         )
         batch = _make_pixel_batch()
         further_mask = batch["x_valid_mask"].clone()
         further_mask[:, :, 0, 1] = False
         captured: dict[str, Any] = {}
+        logged_names: list[str] = []
 
         def fake_p_loss(
             output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
@@ -342,7 +358,9 @@ class TestModelDryRuns(unittest.TestCase):
                 "_build_ambient_further_valid_mask",
                 lambda valid_mask, reference: further_mask,
             ),
-            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch.object(
+                model, "log", lambda *args, **kwargs: logged_names.append(args[0])
+            ),
         ):
             loss = model.validation_step(batch, batch_idx=0)
 
@@ -367,6 +385,7 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(
             torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
         )
+        self.assertIn("val/argo_observed_pixels_per_image", logged_names)
         self.assertTrue(torch.isclose(loss, torch.tensor(0.75)))
 
     def test_pixel_predict_step_zeroes_land_only_when_land_mask_present(
@@ -527,6 +546,7 @@ class TestModelDryRuns(unittest.TestCase):
                         "reduce_on_plateau": {
                             "enabled": True,
                             "monitor": "val/loss_ckpt",
+                            "interval": "epochs",
                             "mode": "min",
                             "factor": 0.5,
                             "patience": 3,
@@ -552,8 +572,11 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertEqual(model.recon_l2_weight, 0.3)
             self.assertTrue(model.masked_only)
             self.assertTrue(model.lr_scheduler_enabled)
+            self.assertEqual(model.lr_scheduler_interval, "epoch")
             self.assertIsInstance(optim_config, dict)
             self.assertEqual(optim_config["lr_scheduler"]["monitor"], "val/loss_ckpt")
+            self.assertEqual(optim_config["lr_scheduler"]["interval"], "epoch")
+            self.assertTrue(optim_config["lr_scheduler"]["strict"])
 
 
 if __name__ == "__main__":

@@ -674,6 +674,7 @@ def main(
         logger=logger,
         callbacks=[checkpoint_callback, lr_monitor_callback],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
+        val_check_interval=trainer_cfg.get("val_check_interval", 1.0),
         limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),

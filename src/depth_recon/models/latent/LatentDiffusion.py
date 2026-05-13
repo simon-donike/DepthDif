@@ -107,6 +107,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
+        plateau_interval = str(plateau_cfg.get("interval", "epoch"))
         warmup_cfg = scheduler_cfg.get("warmup", {})
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
@@ -209,6 +210,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             lr=float(t.get("lr", 1e-4)),
             lr_scheduler_enabled=bool(plateau_cfg.get("enabled", False)),
             lr_scheduler_monitor=str(plateau_cfg.get("monitor", "val/loss_ckpt")),
+            lr_scheduler_interval=plateau_interval,
             lr_scheduler_mode=str(plateau_cfg.get("mode", "min")),
             lr_scheduler_factor=float(plateau_cfg.get("factor", 0.5)),
             lr_scheduler_patience=int(plateau_cfg.get("patience", 10)),
@@ -449,12 +451,19 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             min_lr=self.lr_scheduler_min_lr,
             eps=self.lr_scheduler_eps,
         )
+        scheduler_strict = not (
+            self.lr_scheduler_interval == "step"
+            and self.lr_scheduler_monitor.startswith("val/")
+        )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": self.lr_scheduler_monitor,
-                "interval": "epoch",
+                "interval": self.lr_scheduler_interval,
                 "frequency": 1,
+                # Step-based validation metrics are unavailable before the first
+                # validation run; let Lightning skip those early scheduler checks.
+                "strict": scheduler_strict,
             },
         }

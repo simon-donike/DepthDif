@@ -97,17 +97,19 @@ Runtime effect:
 Config (`scheduler`):
 - `warmup.enabled`, `warmup.steps`, `warmup.start_ratio`
 - `reduce_on_plateau.enabled`
-- `reduce_on_plateau.monitor`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
+- `reduce_on_plateau.monitor`, `interval`, `mode`, `factor`, `patience`, `threshold`, `cooldown`
 
 Runtime effect:
 - warmup is applied per optimizer step in `optimizer_step`
-- plateau scheduler is applied on epoch-level monitored metric
+- plateau scheduler is applied on the configured `step` or `epoch` interval
+- the default plateau monitor remains validation loss; cheap validation loss can use
+  more batches without increasing the single full-reconstruction pass per validation run
 
 ## Trainer/Runtime Controls
 Config (`trainer`):
 - hardware/precision: `accelerator`, `devices`, optional `num_gpus`, `precision`
 - logging/checkpoint cadence: `log_every_n_steps`, `ckpt_monitor`, `lr_logging_interval`
-- validation load: `val_batches_per_epoch` or `limit_val_batches`
+- validation cadence/load: `val_check_interval`, `val_batches_per_epoch`, or `limit_val_batches`
 - stability knobs: `gradient_clip_val`, warning suppressions
 
 ## Dataloader Settings
@@ -225,7 +227,7 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `training.validation_sampling.ddim_temperature` | `1.0` | DDIM initial and stochastic step noise scale; lower values reduce generative variation. |
 | `training.validation_sampling.log_intermediates` | `false` | Captures/logs denoising intermediate images in validation. |
 | `training.validation_sampling.skip_full_reconstruction_in_sanity_check` | `true` | Skips expensive full reconstruction during Lightning sanity checks when true. |
-| `training.validation_sampling.max_full_reconstruction_samples` | `2` | Max first-batch val samples used for full reconstruction pass. |
+| `training.validation_sampling.max_full_reconstruction_samples` | `1` | Max first-batch val samples used for the single full reconstruction pass. |
 | `trainer.max_epochs` | `1500` | Maximum training epochs. |
 | `trainer.accelerator` | `"auto"` | Lightning accelerator backend selection. |
 | `trainer.devices` | `"auto"` | Device selection (`auto`, int, list). |
@@ -239,7 +241,8 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `trainer.lr_logging_interval` | `"step"` | Learning-rate logging cadence (`step` or `epoch`). |
 | `trainer.log_every_n_steps` | `25` | Trainer logging interval in steps. |
 | `trainer.num_sanity_val_steps` | `1` | Number of startup sanity-validation steps. |
-| `trainer.limit_val_batches` | `4` | Number/fraction of validation batches per epoch. |
+| `trainer.val_check_interval` | `0.1` | Validation cadence within each training epoch. |
+| `trainer.limit_val_batches` | `16` | Number/fraction of validation batches per validation run. |
 | `trainer.enable_model_summary` | `true` | Enables Lightning model summary printout. |
 | `trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold (`0.0` disables). |
 | `wandb.project` | `"DepthDif_Simon"` | W&B project name. |
@@ -267,12 +270,13 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `scheduler.warmup.steps` | `2000` | Warmup step count to ramp LR from `start_ratio` to base LR. |
 | `scheduler.warmup.start_ratio` | `0.2` | Initial warmup LR as ratio of `training.lr`. |
 | `scheduler.reduce_on_plateau.enabled` | `true` | Enables `ReduceLROnPlateau`. |
-| `scheduler.reduce_on_plateau.monitor` | `"val/loss_ckpt"` | Metric monitored for LR reduction. |
+| `scheduler.reduce_on_plateau.monitor` | `"val/loss_ckpt"` | Validation metric monitored for LR reduction. |
+| `scheduler.reduce_on_plateau.interval` | `"step"` | Scheduler cadence; `patience` counts this unit (`step` or `epoch`). |
 | `scheduler.reduce_on_plateau.mode` | `"min"` | Plateau mode (`min` or `max`). |
 | `scheduler.reduce_on_plateau.factor` | `0.5` | Multiplicative LR decay factor on plateau. |
-| `scheduler.reduce_on_plateau.patience` | `20` | Validation epochs with no improvement before reducing LR. |
+| `scheduler.reduce_on_plateau.patience` | `2000` | Scheduler intervals with no improvement before reducing LR. |
 | `scheduler.reduce_on_plateau.threshold` | `1.0e-4` | Minimum significant metric change. |
 | `scheduler.reduce_on_plateau.threshold_mode` | `"rel"` | Threshold mode (`rel` or `abs`). |
-| `scheduler.reduce_on_plateau.cooldown` | `0` | Epoch cooldown after LR reduction. |
+| `scheduler.reduce_on_plateau.cooldown` | `0` | Scheduler-interval cooldown after LR reduction. |
 | `scheduler.reduce_on_plateau.min_lr` | `1.0e-6` | Lower bound for LR. |
 | `scheduler.reduce_on_plateau.eps` | `1.0e-8` | Minimum effective LR change. |

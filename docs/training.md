@@ -121,6 +121,12 @@ Warmup and scheduler are configured via:
 - `scheduler.warmup.*`
 - `scheduler.reduce_on_plateau.*`
 
+`scheduler.reduce_on_plateau.interval` selects whether `patience` counts optimizer
+steps or epochs. The default monitor is `val/loss_ckpt`; with step-based patience,
+Lightning skips scheduler updates until validation has logged that metric.
+Increasing cheap validation-loss batches does not increase the full reverse-chain
+reconstruction count, which remains one cached first-batch pass per validation run.
+
 ## Logging
 W&B logging is configured in `training_config.wandb`.
 
@@ -146,4 +152,3 @@ Equivalent manual steps:
 /work/envs/depth/bin/wandb sweep src/depth_recon/configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml
 /work/envs/depth/bin/wandb agent <entity/project/sweep_id>
 ```
-

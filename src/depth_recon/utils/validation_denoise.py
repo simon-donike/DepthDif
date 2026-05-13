@@ -658,6 +658,34 @@ def _temperature_band_to_plot_image(
     return image_plot.cpu().numpy().astype(np.float32)
 
 
+def average_observed_argo_pixels_per_image(
+    valid_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    """Return the average number of spatial pixels with ARGO observations."""
+    if valid_mask is None:
+        return torch.zeros((), dtype=torch.float32)
+    observed = valid_mask > 0.5
+    if observed.ndim == 4:
+        # A profile can span many depth bands; count each spatial location once.
+        observed = observed.any(dim=1)
+    elif observed.ndim == 2:
+        observed = observed.unsqueeze(0)
+    elif observed.ndim != 3:
+        return torch.zeros((), dtype=torch.float32, device=valid_mask.device)
+    observed_flat = observed.float().reshape(int(observed.size(0)), -1)
+    return observed_flat.sum(dim=1).mean()
+
+
+def _resize_input_plot_image(image: np.ndarray, *, size: int = 64) -> np.ndarray:
+    """Resize the sparse input panel so observed ARGO pixels remain visible."""
+    image_np = np.asarray(image, dtype=np.float32)
+    if image_np.ndim != 2 or tuple(image_np.shape) == (int(size), int(size)):
+        return image_np
+    image_t = torch.from_numpy(image_np).unsqueeze(0).unsqueeze(0)
+    resized = F.interpolate(image_t, size=(int(size), int(size)), mode="nearest")
+    return resized.squeeze(0).squeeze(0).numpy().astype(np.float32, copy=False)
+
+
 def log_wandb_conditional_reconstruction_grid(
     *,
     logger: Any,
@@ -712,6 +740,17 @@ def log_wandb_conditional_reconstruction_grid(
 
     fig = None
     try:
+        input_avg_count: float | None = None
+        if valid_mask is not None:
+            valid_mask_for_count = valid_mask
+            if valid_mask.ndim >= 3:
+                valid_mask_for_count = valid_mask[:num_to_plot]
+            input_avg_count = float(
+                average_observed_argo_pixels_per_image(valid_mask_for_count)
+                .detach()
+                .cpu()
+                .item()
+            )
         total_rows = num_to_plot * channels_to_plot
         show_valid_panel = bool(show_valid_mask_panel and valid_mask is not None)
         show_target_panel = True
@@ -770,10 +809,14 @@ def log_wandb_conditional_reconstruction_grid(
                     y_target_img[~ocean_np] = 0.0
 
                 col = 0
+                x_img = _resize_input_plot_image(x_img)
                 axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
-                    axes[row_idx, col].set_title("Input")
+                    title = "Input"
+                    if input_avg_count is not None:
+                        title = f"Input (avg {input_avg_count:.1f} ARGO px/img)"
+                    axes[row_idx, col].set_title(title)
                 col += 1
 
                 if y_img is not None:

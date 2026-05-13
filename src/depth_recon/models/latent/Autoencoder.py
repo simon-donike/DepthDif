@@ -153,6 +153,7 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
         masked_only: bool = False,
         lr_scheduler_enabled: bool = False,
         lr_scheduler_monitor: str = "val/loss_ckpt",
+        lr_scheduler_interval: str = "epoch",
         lr_scheduler_mode: str = "min",
         lr_scheduler_factor: float = 0.5,
         lr_scheduler_patience: int = 10,
@@ -174,6 +175,7 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
             masked_only (bool): Boolean flag controlling behavior.
             lr_scheduler_enabled (bool): Boolean flag controlling behavior.
             lr_scheduler_monitor (str): Input value.
+            lr_scheduler_interval (str): Scheduler cadence, "step" or "epoch".
             lr_scheduler_mode (str): Input value.
             lr_scheduler_factor (float): Input value.
             lr_scheduler_patience (int): Input value.
@@ -198,6 +200,12 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
 
         self.lr_scheduler_enabled = bool(lr_scheduler_enabled)
         self.lr_scheduler_monitor = str(lr_scheduler_monitor)
+        self.lr_scheduler_interval = str(lr_scheduler_interval).strip().lower()
+        if self.lr_scheduler_interval.endswith("s"):
+            # Accept the human-readable config spellings "steps" and "epochs".
+            self.lr_scheduler_interval = self.lr_scheduler_interval[:-1]
+        if self.lr_scheduler_interval not in {"step", "epoch"}:
+            raise ValueError('lr_scheduler_interval must be "step" or "epoch".')
         self.lr_scheduler_mode = str(lr_scheduler_mode)
         self.lr_scheduler_factor = float(lr_scheduler_factor)
         self.lr_scheduler_patience = int(lr_scheduler_patience)
@@ -235,6 +243,7 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
             "reduce_on_plateau",
             scheduler_cfg.get("reduce_lr_on_plateau", {}),
         )
+        plateau_interval = str(plateau_cfg.get("interval", "epoch"))
 
         return cls(
             autoencoder=DepthBandAutoencoder.from_config(ae_config_path),
@@ -246,6 +255,7 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
             masked_only=bool(ae_loss.get("masked_only", False)),
             lr_scheduler_enabled=bool(plateau_cfg.get("enabled", False)),
             lr_scheduler_monitor=str(plateau_cfg.get("monitor", "val/loss_ckpt")),
+            lr_scheduler_interval=plateau_interval,
             lr_scheduler_mode=str(plateau_cfg.get("mode", "min")),
             lr_scheduler_factor=float(plateau_cfg.get("factor", 0.5)),
             lr_scheduler_patience=int(plateau_cfg.get("patience", 10)),
@@ -401,12 +411,19 @@ class DepthBandAutoencoderLightning(pl.LightningModule):
             min_lr=self.lr_scheduler_min_lr,
             eps=self.lr_scheduler_eps,
         )
+        scheduler_strict = not (
+            self.lr_scheduler_interval == "step"
+            and self.lr_scheduler_monitor.startswith("val/")
+        )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": self.lr_scheduler_monitor,
-                "interval": "epoch",
+                "interval": self.lr_scheduler_interval,
                 "frequency": 1,
+                # Step-based validation metrics are unavailable before the first
+                # validation run; let Lightning skip those early scheduler checks.
+                "strict": scheduler_strict,
             },
         }
