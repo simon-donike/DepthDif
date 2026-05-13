@@ -6,6 +6,9 @@ scripts live in `../data_download_raw/`.
 
 ## Packaged Dataset Downloaders
 
+Hosted dataset links are read from `dataset_links.yaml`. Edit that file to
+change where these scripts download from.
+
 Download and extract the hosted aligned ARGO zarr archive from Hugging Face:
 
 ```bash
@@ -13,12 +16,10 @@ Download and extract the hosted aligned ARGO zarr archive from Hugging Face:
   --output-dir /work/data/depthdif/aligned_argo
 ```
 
-Download and extract the future exported GeoTIFF dataset zip from public Google
-Drive hosting. The default URL is still a placeholder, so pass the hosted link
-with `--url` once it is available:
+Download and extract the exported GeoTIFF dataset zip from the public Google
+Drive link configured in `dataset_links.yaml`:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_exported_geotiff_dataset \
-  --output-dir /work/data/depthdif/geotiff_export \
-  --url https://drive.google.com/file/d/GOOGLE_DRIVE_FILE_ID/view?usp=sharing
+  --output-dir /work/data/depthdif/geotiff_export
 ```

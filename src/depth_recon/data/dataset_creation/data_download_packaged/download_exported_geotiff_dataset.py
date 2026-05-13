@@ -1,13 +1,12 @@
 # Example with all options:
 # /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_exported_geotiff_dataset \
 #   --output-dir /work/data/depthdif/geotiff_export \
-#   --url https://drive.google.com/file/d/GOOGLE_DRIVE_FILE_ID/view?usp=sharing \
 #   --archive-name exported_geotiff_dataset.zip \
 #   --timeout-seconds 120 \
 #   --chunk-size-mb 8 \
 #   --force-download \
 #   --overwrite
-"""Download and unpack the future packaged exported GeoTIFF dataset archive."""
+"""Download and unpack the packaged exported GeoTIFF dataset archive."""
 
 from __future__ import annotations
 
@@ -20,9 +19,11 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlparse, urlu
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 import zipfile
 
-DEFAULT_SOURCE_URL = (
-    "https://drive.google.com/file/d/PLACEHOLDER_FILE_ID/view?usp=sharing"
+from depth_recon.data.dataset_creation.data_download_packaged._dataset_links import (
+    load_dataset_url,
 )
+
+DATASET_LINK_KEY = "depthdif_training"
 DEFAULT_ARCHIVE_NAME = "exported_geotiff_dataset.zip"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_CHUNK_SIZE_MB = 8
@@ -166,8 +167,8 @@ def download_file(
 
     if _is_placeholder_url(url):
         raise ValueError(
-            f"Dataset URL is still a placeholder: {url}. Pass the hosted zip URL "
-            "with --url once it is available."
+            f"Dataset URL is still a placeholder: {url}. Update "
+            "dataset_links.yaml with the hosted zip URL once it is available."
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,7 +202,7 @@ def download_file(
 
     raise RuntimeError(
         "Google Drive did not return a downloadable zip. Check that the file is "
-        "publicly shared and pass a direct public file link with --url."
+        "publicly shared and update dataset_links.yaml with a direct public file link."
     )
 
 
@@ -254,18 +255,13 @@ def extract_archive(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the command-line parser for exported GeoTIFF dataset downloads."""
     parser = argparse.ArgumentParser(
-        description="Download the future exported GeoTIFF dataset zip and extract it."
+        description="Download the exported GeoTIFF dataset zip and extract it."
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         required=True,
         help="Folder where the archive is downloaded and extracted.",
-    )
-    parser.add_argument(
-        "--url",
-        default=DEFAULT_SOURCE_URL,
-        help="Public Google Drive zip URL.",
     )
     parser.add_argument(
         "--archive-name",
@@ -298,7 +294,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Download and extract the future exported GeoTIFF dataset archive."""
+    """Download and extract the exported GeoTIFF dataset archive."""
     parser = build_arg_parser()
     args = parser.parse_args()
     if int(args.timeout_seconds) <= 0:
@@ -308,8 +304,9 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     archive_path = output_dir / str(args.archive_name)
+    source_url = load_dataset_url(DATASET_LINK_KEY)
     downloaded_path = download_file(
-        str(args.url),
+        source_url,
         archive_path,
         force=bool(args.force_download),
         timeout_seconds=int(args.timeout_seconds),

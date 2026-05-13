@@ -1,7 +1,6 @@
 # Example with all options:
 # /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_aligned_argo_zarr \
 #   --output-dir /work/data/depthdif/aligned_argo \
-#   --url https://huggingface.co/simon-donike/DepthDif/resolve/main/aligned_argo_zarr.zip \
 #   --archive-name aligned_argo_zarr.zip \
 #   --timeout-seconds 120 \
 #   --chunk-size-mb 8 \
@@ -17,9 +16,11 @@ import shutil
 from urllib.request import Request, urlopen
 import zipfile
 
-DEFAULT_SOURCE_URL = (
-    "https://huggingface.co/simon-donike/DepthDif/resolve/main/aligned_argo_zarr.zip"
+from depth_recon.data.dataset_creation.data_download_packaged._dataset_links import (
+    load_dataset_url,
 )
+
+DATASET_LINK_KEY = "argo_aligned"
 DEFAULT_ARCHIVE_NAME = "aligned_argo_zarr.zip"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_CHUNK_SIZE_MB = 8
@@ -116,11 +117,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Folder where the archive is downloaded and extracted.",
     )
     parser.add_argument(
-        "--url",
-        default=DEFAULT_SOURCE_URL,
-        help="Aligned ARGO zarr zip URL.",
-    )
-    parser.add_argument(
         "--archive-name",
         default=DEFAULT_ARCHIVE_NAME,
         help="Local archive filename inside --output-dir.",
@@ -161,8 +157,9 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     archive_path = output_dir / str(args.archive_name)
+    source_url = load_dataset_url(DATASET_LINK_KEY)
     downloaded_path = download_file(
-        str(args.url),
+        source_url,
         archive_path,
         force=bool(args.force_download),
         timeout_seconds=int(args.timeout_seconds),
