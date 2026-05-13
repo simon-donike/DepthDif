@@ -20,9 +20,14 @@ from train import build_dataset
 from depth_recon.utils.normalizations import temperature_normalize
 
 
-def _write_land_mask(path: Path) -> Path:
+def _write_land_mask(path: Path, values: np.ndarray | None = None) -> Path:
     """Write a tiny authoritative raster grid."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    mask = (
+        np.zeros((2, 2), dtype=np.uint8)
+        if values is None
+        else np.asarray(values, dtype=np.uint8)
+    )
     with rasterio.open(
         path,
         "w",
@@ -34,7 +39,7 @@ def _write_land_mask(path: Path) -> Path:
         crs="EPSG:4326",
         transform=from_origin(10.0, 2.0, 1.0, 1.0),
     ) as dst:
-        dst.write(np.zeros((2, 2), dtype=np.uint8), 1)
+        dst.write(mask, 1)
     return path
 
 
@@ -143,7 +148,10 @@ def _make_geotiff_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
     glorys_dir = tmp_path / "glorys"
     ostia_dir = tmp_path / "ostia"
     sealevel_dir = tmp_path / "sealevel"
-    land_mask_path = _write_land_mask(tmp_path / "land_mask.tif")
+    land_mask_path = _write_land_mask(
+        tmp_path / "land_mask.tif",
+        values=np.asarray([[0, 0], [0, 1]], dtype=np.uint8),
+    )
     enriched_argo = tmp_path / "aligned_argo" / "enriched_argo_profiles.zarr"
     _write_glorys(glorys_dir, date_value=20240108)
     for date_value, ostia_base, sea_base in (
@@ -206,6 +214,15 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(sample["y_valid_mask"].shape, (2, 2, 2))
             self.assertEqual(sample["x_valid_mask_1d"].shape, (1, 2, 2))
             self.assertEqual(sample["land_mask"].shape, (1, 2, 2))
+            self.assertTrue(
+                torch.equal(
+                    sample["land_mask"],
+                    torch.tensor(
+                        [[[1.0, 1.0], [1.0, 0.0]]],
+                        dtype=torch.float32,
+                    ),
+                )
+            )
             self.assertEqual(sample["date"], 20240108)
             self.assertTrue(
                 torch.allclose(sample["coords"], torch.tensor([1.0, 11.0]), atol=1e-5)
@@ -232,7 +249,11 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
     def test_train_builder_wires_argo_geotiff_gridded_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(tmp_path)
+            output_dir, cache_dir, _land_mask_path = _make_geotiff_dataset(tmp_path)
+            config_land_mask_path = _write_land_mask(
+                tmp_path / "config_land_mask.tif",
+                values=np.zeros((2, 2), dtype=np.uint8),
+            )
             config_path = tmp_path / "data.yaml"
             payload = {
                 "dataset": {
@@ -245,7 +266,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                         "tile_size": 2,
                         "resolution_deg": 1.0,
                         "patch_grid_source": "land_mask",
-                        "land_mask_path": str(land_mask_path),
+                        "land_mask_path": str(config_land_mask_path),
                         "patch_stride": 2,
                         "max_land_fraction": 1.0,
                     },
@@ -268,6 +289,15 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(dataset.return_info)
             self.assertFalse(dataset.return_coords)
             self.assertFalse(dataset.synthetic_mode)
+            self.assertTrue(
+                torch.equal(
+                    dataset[0]["land_mask"],
+                    torch.tensor(
+                        [[[1.0, 1.0], [1.0, 0.0]]],
+                        dtype=torch.float32,
+                    ),
+                )
+            )
 
     def test_active_geotiff_config_uses_land_mask_grid_defaults(self) -> None:
         with packaged_config_path("px_space", "data_ostia_argo_geotiff.yaml").open(

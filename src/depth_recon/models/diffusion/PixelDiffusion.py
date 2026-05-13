@@ -1300,6 +1300,21 @@ class PixelDiffusionConditional(pl.LightningModule):
             keep_mask > 0.5, tensor, torch.full_like(tensor, float("nan"))
         )
 
+    def _apply_postprocess_land_to_zero(
+        self, tensor: torch.Tensor, land_mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Zero non-ocean prediction pixels when a land mask is available."""
+        if land_mask is None:
+            return tensor
+        if tensor.ndim not in (3, 4):
+            return tensor
+        ocean_mask = (land_mask > 0.5).to(dtype=tensor.dtype, device=tensor.device)
+        ocean_mask = self._align_valid_mask_to_reference(
+            ocean_mask, tensor, mask_name="land_mask"
+        )
+        # Dataset samples keep ocean pixels as 1 and land pixels as 0.
+        return torch.where(ocean_mask > 0.5, tensor, torch.zeros_like(tensor))
+
     def _apply_postprocess_merge_observed_pixels(
         self,
         generated: torch.Tensor,
@@ -1379,6 +1394,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         eo = batch.get("eo")
         valid_mask = batch["x_valid_mask"]
         y_valid_mask = batch["y_valid_mask"]
+        land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
         sampler = batch.get("sampler", self.val_sampler)
@@ -1445,6 +1461,14 @@ class PixelDiffusionConditional(pl.LightningModule):
         y_hat_denorm = self._apply_postprocess_invalid_to_nan(
             generated_denorm,
             y_valid_mask,
+        )
+        y_hat_denorm_for_plot = self._apply_postprocess_land_to_zero(
+            y_hat_denorm_for_plot,
+            land_mask,
+        )
+        y_hat_denorm = self._apply_postprocess_land_to_zero(
+            y_hat_denorm,
+            land_mask,
         )
 
         return {

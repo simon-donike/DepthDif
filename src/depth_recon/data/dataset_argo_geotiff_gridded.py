@@ -30,7 +30,7 @@ from depth_recon.data.dataset_grid_utils import (
     _sanitize_cache_text,
     _validate_grid_params,
 )
-from depth_recon.paths import config_path, resolve_config_path
+from depth_recon.paths import config_path, resolve_config_path, resolve_package_path
 from depth_recon.utils.normalizations import (
     CELSIUS_TO_KELVIN_OFFSET,
     temperature_normalize,
@@ -68,6 +68,14 @@ def _resolve_manifest_path(root_dir: Path, raw_path: str | Path) -> Path:
     if path.is_absolute():
         return path
     return root_dir / path
+
+
+def _resolve_land_mask_path(root_dir: Path, raw_path: str | Path) -> Path:
+    """Resolve a land-mask path from an export manifest or package config."""
+    export_path = _resolve_manifest_path(root_dir, raw_path)
+    if export_path.exists():
+        return export_path
+    return resolve_package_path(raw_path)
 
 
 def _records_by_date(
@@ -537,13 +545,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.resolution_deg = float(resolution_deg)
         self.patch_grid_source = str(patch_grid_source)
         manifest_grid = self.manifest.get("grid", {})
-        configured_land_mask = (
-            manifest_grid.get("source") if land_mask_path is None else land_mask_path
-        )
-        self.land_mask_path = Path(
-            DEFAULT_LAND_MASK_PATH
-            if configured_land_mask is None
-            else configured_land_mask
+        configured_land_mask = manifest_grid.get("source") or land_mask_path
+        self.land_mask_path = _resolve_land_mask_path(
+            self.root_dir,
+            (
+                DEFAULT_LAND_MASK_PATH
+                if configured_land_mask is None
+                else configured_land_mask
+            ),
         )
         self.patch_stride = None if patch_stride is None else int(patch_stride)
         self.max_land_fraction = float(max_land_fraction)
@@ -898,6 +907,29 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return y_np.astype(np.float32, copy=False)
 
+    def _load_land_mask_patch(self, row: dict[str, Any]) -> np.ndarray:
+        """Load the exported world-mask patch as a model ocean mask."""
+        src = self.raster_cache.get(self.land_mask_path)
+        window = Window(
+            col_off=int(row["grid_x0"]),
+            row_off=int(row["grid_y0"]),
+            width=int(self.tile_size),
+            height=int(self.tile_size),
+        )
+        land_np = src.read(1, window=window)
+        expected_shape = (int(self.tile_size), int(self.tile_size))
+        if land_np.shape != expected_shape:
+            raise RuntimeError(
+                "Land-mask patch shape does not match dataset tile_size: "
+                f"{tuple(land_np.shape)} != {expected_shape}"
+            )
+        # The world raster stores 1 for land, while the training loss expects
+        # this sample field to be 1 for valid ocean pixels.
+        return (np.asarray(land_np, dtype=np.float32) <= 0.5).astype(
+            np.float32,
+            copy=False,
+        )[None, ...]
+
     def _load_eo_patch(self, row: dict[str, Any]) -> np.ndarray:
         """Load the dense OSTIA surface-context patch."""
         eo_np = self.ostia_store.read_patch(
@@ -1039,7 +1071,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         else:
             x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
 
-        land_mask_np = y_valid_mask_np[:1].astype(np.float32, copy=False)
+        land_mask_np = self._load_land_mask_patch(row)
         eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
         x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
         y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))

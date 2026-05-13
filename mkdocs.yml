@@ -80,7 +80,7 @@ nav:
   - Data:
       - Overview: data.md
       - Data Sources: data-source.md
-      - Raw Data Download: data-download.md
+      - Dataset Downloads: data-download.md
       - Depth Alignment: depth-alignment.md
       - Data Export: data-export.md
       - Data Contract: data-contract.md

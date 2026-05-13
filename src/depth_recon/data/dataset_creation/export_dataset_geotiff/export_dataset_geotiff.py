@@ -522,6 +522,21 @@ def _output_relative(path: Path, output_dir: Path) -> str:
     return str(Path(path).relative_to(output_dir)).replace("\\", "/")
 
 
+def _copy_land_mask_to_output(
+    *, land_mask_path: Path, output_dir: Path, overwrite: bool
+) -> Path:
+    """Copy the authoritative land-mask GeoTIFF into the export folder."""
+    source_path = Path(land_mask_path)
+    target_path = Path(output_dir) / "masks" / source_path.name
+    if source_path.resolve() == target_path.resolve():
+        return target_path
+    if target_path.exists() and not overwrite:
+        raise FileExistsError(f"Land-mask copy already exists: {target_path}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, target_path)
+    return target_path
+
+
 def _glorys_depth_axis(ds: xr.Dataset) -> np.ndarray:
     """Read the GLORYS depth axis from a source dataset."""
     if "depth" not in ds:
@@ -1477,6 +1492,11 @@ def export_training_geotiff_dataset(
             cache=False,
         ) as first_glorys:
             depth_axis = _glorys_depth_axis(first_glorys)
+        exported_land_mask_path = _copy_land_mask_to_output(
+            land_mask_path=Path(land_mask_path),
+            output_dir=output_root,
+            overwrite=overwrite,
+        )
         target_date_values = [
             _date_int_from_days_since_1950(float(item.day)) for item in glorys_items
         ]
@@ -1492,7 +1512,8 @@ def export_training_geotiff_dataset(
                 "end_date": None if end_date is None else int(end_date),
             },
             "grid": {
-                "source": str(land_mask_path),
+                "source": _output_relative(exported_land_mask_path, output_root),
+                "source_original": str(land_mask_path),
                 "width": int(grid.width),
                 "height": int(grid.height),
                 "crs": str(grid.crs),

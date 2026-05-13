@@ -266,6 +266,9 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
 
             manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
             self.assertEqual(manifest["output_dir"], str(output_dir))
+            self.assertEqual(manifest["grid"]["source"], "masks/land_mask.tif")
+            self.assertEqual(manifest["grid"]["source_original"], str(land_mask_path))
+            self.assertTrue((output_dir / manifest["grid"]["source"]).exists())
             self.assertEqual(manifest["stretch"]["temperature_kelvin"]["units"], "K")
             self.assertEqual(
                 manifest["stretch"]["temperature_kelvin"]["storage_dtype"],

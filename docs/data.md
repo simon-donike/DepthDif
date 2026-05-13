@@ -6,7 +6,7 @@ profile observations, ocean reanalysis targets, and auxiliary sea-surface
 height on one shared global grid.
 
 Use [Data Sources](data-source.md) for product-specific details,
-[Raw Data Download](data-download.md) for download commands,
+[Dataset Downloads](data-download.md) for raw and packaged download commands,
 [Depth Alignment](depth-alignment.md) for vertical profile projection,
 [Data Export](data-export.md) for the GeoTIFF training store, and
 [Data Contract](data-contract.md) for exact model tensor shapes.

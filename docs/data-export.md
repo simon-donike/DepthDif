@@ -1,7 +1,7 @@
 # Data Export
 
 This page describes the GeoTIFF training dataset exported from the downloaded
-raw products. Use [Raw Data Download](data-download.md) for acquisition and
+raw products. Use [Dataset Downloads](data-download.md) for acquisition and
 [Depth Alignment](depth-alignment.md) for the ARGO-to-GLORYS vertical
 projection.
 

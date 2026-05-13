@@ -21,6 +21,7 @@ from depth_recon.models.latent.Autoencoder import (
     DepthBandAutoencoderLightning,
 )
 from depth_recon.models.latent.LatentDiffusion import LatentDiffusionConditional
+from depth_recon.utils.normalizations import temperature_normalize
 
 matplotlib.use("Agg")
 os.environ.setdefault("WANDB_MODE", "disabled")
@@ -367,6 +368,54 @@ class TestModelDryRuns(unittest.TestCase):
             torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
         )
         self.assertTrue(torch.isclose(loss, torch.tensor(0.75)))
+
+    def test_pixel_predict_step_zeroes_land_only_when_land_mask_present(
+        self,
+    ) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+        batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
+        land_mask = torch.ones_like(batch["land_mask"])
+        land_mask[..., 0, 1] = 0.0
+        batch["land_mask"] = land_mask
+        generated_celsius = torch.full_like(batch["x"], 5.0)
+        generated_norm = temperature_normalize(
+            mode="norm",
+            tensor=generated_celsius,
+        )
+
+        with patch.object(model, "forward", lambda *args, **kwargs: generated_norm):
+            masked = model.predict_step(batch, batch_idx=0)
+            without_land_mask_batch = dict(batch)
+            without_land_mask_batch.pop("land_mask")
+            unmasked = model.predict_step(without_land_mask_batch, batch_idx=0)
+
+        self.assertTrue(
+            torch.equal(
+                masked["y_hat_denorm"][:, :, 0, 1],
+                torch.zeros_like(masked["y_hat_denorm"][:, :, 0, 1]),
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                masked["y_hat_denorm_for_plot"][:, :, 0, 1],
+                torch.zeros_like(masked["y_hat_denorm_for_plot"][:, :, 0, 1]),
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                masked["y_hat_denorm"][:, :, 0, 0],
+                torch.full_like(masked["y_hat_denorm"][:, :, 0, 0], 5.0),
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                unmasked["y_hat_denorm"][:, :, 0, 1],
+                torch.full_like(unmasked["y_hat_denorm"][:, :, 0, 1], 5.0),
+                atol=1e-5,
+            )
+        )
 
     def test_pixel_diffusion_completes_one_training_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
