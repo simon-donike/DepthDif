@@ -83,6 +83,14 @@ Ambient-occlusion training is available via `model.ambient_occlusion.*`: the mod
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
 ![depthdif_schema](docs/assets/figures/depthdif_schema.png)
 
+## Data Example
+
+Representative surface-level training patches:
+
+<p align="center">
+  <img src="docs/assets/data/geotiff_dataset_random100_surface.png" width="85%" alt="Random surface-level training dataset patches" />
+</p>
+
 ## Training
 
 OSTIA + Argo NetCDF training:

@@ -93,6 +93,13 @@ changed configuration creates a new cache instead of reusing stale rows.
 The cache is metadata only. It records where patches are and which dates are
 valid; it does not store precomputed GLORYS, OSTIA, sea-level, or ARGO tensors.
 
+## Sample Visualization
+
+Representative surface-level training patches show the image-like model input
+and target layout used by the dataset.
+
+![Random surface-level dataset patches](assets/data/geotiff_dataset_random100_surface.png)
+
 ## Sample Read Path
 
 When training asks for an item, `__getitem__` reads one registry row, converts
