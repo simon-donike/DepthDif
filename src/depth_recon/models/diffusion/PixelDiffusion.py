@@ -91,6 +91,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         postprocess_gaussian_blur_enabled: bool = False,
         postprocess_gaussian_blur_sigma: float = 0.35,
         postprocess_gaussian_blur_kernel_size: int = 3,
+        model_summary_input_size: int = 128,
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
@@ -153,6 +154,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             postprocess_gaussian_blur_enabled (bool): Boolean flag controlling behavior.
             postprocess_gaussian_blur_sigma (float): Input value.
             postprocess_gaussian_blur_kernel_size (int): Input value.
+            model_summary_input_size (int): Spatial size used for Lightning FLOP summary.
             wandb_verbose (bool): Boolean flag controlling behavior.
             log_stats_every_n_steps (int): Step or timestep value.
             log_images_every_n_steps (int): Step or timestep value.
@@ -265,6 +267,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         train_betas = self.model.forward_process.betas.detach().clone()
         self.val_sampler = self._build_validation_sampler(train_betas)
+        self.example_input_array = self._build_model_summary_input(
+            train_betas=train_betas,
+            input_size=model_summary_input_size,
+        )
         # Cached validation mini-batch
         # (x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date)
         # used for one validation-end full reverse-diffusion reconstruction pass.
@@ -413,6 +419,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             postprocess_gaussian_blur_sigma=float(gaussian_blur_cfg.get("sigma", 0.35)),
             postprocess_gaussian_blur_kernel_size=int(
                 gaussian_blur_cfg.get("kernel_size", 3)
+            ),
+            model_summary_input_size=int(
+                data_cfg.get("dataset", {}).get("grid", {}).get("tile_size", 128)
             ),
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
@@ -776,6 +785,33 @@ class PixelDiffusionConditional(pl.LightningModule):
             "training.validation_sampling.sampler must be one of {'ddpm', 'ddim'} "
             f"(got '{self.val_inference_sampler}')."
         )
+
+    def _build_model_summary_input(
+        self, *, train_betas: torch.Tensor, input_size: int
+    ) -> dict[str, Any]:
+        """Build a one-step example input for Lightning's model/FLOP summary."""
+        input_size = max(1, int(input_size))
+        condition_channels = int(self.model.condition_channels)
+        condition = torch.zeros(
+            (1, condition_channels, input_size, input_size), dtype=torch.float32
+        )
+        sampler = DDIM_Sampler(
+            num_timesteps=1,
+            train_timesteps=int(train_betas.numel()),
+            betas=train_betas,
+            parameterization=str(self.model.parameterization),
+            clip_sample=False,
+            eta=0.0,
+            temperature=0.0,
+        )
+        example: dict[str, Any] = {"condition": condition, "sampler": sampler}
+        if self.model.coord_conditioning_enabled:
+            # Provide neutral coordinates so coordinate-conditioned models trace
+            # the same denoiser path as a real batch.
+            example["coords"] = torch.zeros((1, 2), dtype=torch.float32)
+        if self.model.date_conditioning_enabled:
+            example["date"] = torch.ones((1,), dtype=torch.long)
+        return example
 
     @classmethod
     def _is_sampler_only_state_mismatch(
