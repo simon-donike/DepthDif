@@ -810,7 +810,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             # the same denoiser path as a real batch.
             example["coords"] = torch.zeros((1, 2), dtype=torch.float32)
         if self.model.date_conditioning_enabled:
-            example["date"] = torch.ones((1,), dtype=torch.long)
+            example["date"] = torch.full((1,), 20240101, dtype=torch.long)
         return example
 
     @classmethod
