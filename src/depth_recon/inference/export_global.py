@@ -2,17 +2,19 @@
 
 This exporter treats an ISO week as one globally complete Wednesday snapshot,
 forces 75% overlapping land-mask-grid patches at inference time, stitches
-overlaps by averaging, zeroes land pixels, and can package/upload Cesium assets.
+overlaps with spatial weights, zeroes land pixels, and can package/upload
+Cesium assets.
 
 Typical CLI:
 /work/envs/depth/bin/python -m depth_recon.inference.export_global \
-  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
-  --year 2015 \
-  --iso-week 25 \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml \
+  --year 2018 \
+  --iso-week <ISO_WEEK> \
+  --split all \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
   --export-ground-truth \
-  --sigma 1.0 \
+  --sigma 0 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
   --rclone-remote r2:depth-data/inference_production/globe \
   --rclone-sync-scope globe
@@ -65,7 +67,7 @@ from depth_recon.utils.normalizations import temperature_normalize
 from depth_recon.utils.validation_denoise import save_glorys_profile_comparison_plot
 
 DEFAULT_MODEL_CONFIG = str(config_path("px_space", "model_config.yaml"))
-DEFAULT_DATA_CONFIG = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+DEFAULT_DATA_CONFIG = str(config_path("px_space", "data_ostia_argo_geotiff.yaml"))
 DEFAULT_TRAIN_CONFIG = str(config_path("px_space", "training_config.yaml"))
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
@@ -73,7 +75,7 @@ DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 # Default to all observed ARGO locations so every clickable full-profile marker
 # can open a hosted PNG without requiring a separate export override.
 DEFAULT_FULL_SAMPLE_COUNT = -1
-DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 1.0
+DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
@@ -739,6 +741,7 @@ def global_inference_dataset_overrides(
         "patch_grid_source": "land_mask",
         "land_mask_path": str(land_mask_path),
         "require_argo_for_all": False,
+        "overlap_stitching": "weighted",
     }
     return overrides, metadata
 
@@ -1000,6 +1003,25 @@ def _window_for_row(row: dict[str, Any], layout: MosaicLayout) -> tuple[slice, s
     )
 
 
+def _patch_weight_window(patch_shape: tuple[int, int]) -> np.ndarray:
+    """Build a deterministic overlap window with lower patch-edge weights."""
+    patch_height, patch_width = (int(patch_shape[0]), int(patch_shape[1]))
+    if patch_height <= 0 or patch_width <= 0:
+        raise ValueError("patch_shape dimensions must be >= 1.")
+
+    def _axis_weights(size: int) -> np.ndarray:
+        if size == 1:
+            return np.ones((1,), dtype=np.float32)
+        indices = np.arange(size, dtype=np.float32)
+        distance_to_edge = np.minimum(indices + 1.0, float(size) - indices)
+        center_distance = float((size + 1) // 2)
+        return (distance_to_edge / center_distance).astype(np.float32, copy=False)
+
+    y_weights = _axis_weights(patch_height)[:, None]
+    x_weights = _axis_weights(patch_width)[None, :]
+    return (y_weights * x_weights).astype(np.float32, copy=False)
+
+
 def _accumulate_patch_into_arrays(
     sum_array: np.ndarray,
     count_array: np.ndarray,
@@ -1021,12 +1043,14 @@ def _accumulate_patch_into_arrays(
         return
 
     # The accumulation buffers may live on disk via memmap. Update only the valid
-    # pixels inside each patch window so we can average overlaps later without
-    # storing every patch prediction in memory.
+    # pixels inside each patch window so weighted overlaps can be finalized later
+    # without storing every patch prediction in memory.
+    patch_weights = _patch_weight_window(patch.shape)
     sum_window = sum_array[row_slice, col_slice]
     count_window = count_array[row_slice, col_slice]
-    sum_window[valid_mask] += patch[valid_mask]
-    count_window[valid_mask] += 1
+    valid_weights = patch_weights[valid_mask].astype(np.float64, copy=False)
+    sum_window[valid_mask] += patch[valid_mask].astype(np.float64) * valid_weights
+    count_window[valid_mask] += valid_weights
 
 
 def build_global_mosaic(
@@ -1048,7 +1072,7 @@ def build_global_mosaic(
 
     layout = build_mosaic_layout(rows, patch_shape=first_patch.shape)
     mosaic_sum = np.zeros((layout.height, layout.width), dtype=np.float64)
-    mosaic_count = np.zeros((layout.height, layout.width), dtype=np.uint16)
+    mosaic_count = np.zeros((layout.height, layout.width), dtype=np.float64)
     for row, patch_pred in zip(rows, top_band_predictions):
         _accumulate_patch_into_arrays(
             mosaic_sum,
@@ -1206,11 +1230,11 @@ def create_raster_accumulator(
     sum_array[:] = 0.0
     count_array = np.memmap(
         count_path,
-        dtype=np.uint16,
+        dtype=np.float64,
         mode="w+",
         shape=(layout.height, layout.width),
     )
-    count_array[:] = 0
+    count_array[:] = 0.0
     return RasterAccumulator(
         sum_path=sum_path,
         count_path=count_path,
@@ -1304,12 +1328,12 @@ def write_global_top_band_geotiff(
             )
             count_block = np.asarray(
                 accumulator.count_array[row_off:row_stop, :],
-                dtype=np.uint16,
+                dtype=np.float64,
             )
             out_block = np.full(sum_block.shape, float(nodata), dtype=np.float32)
-            valid_mask = count_block > 0
+            valid_mask = count_block > 0.0
             out_block[valid_mask] = (
-                sum_block[valid_mask] / count_block[valid_mask].astype(np.float64)
+                sum_block[valid_mask] / count_block[valid_mask]
             ).astype(np.float32, copy=False)
             ds.write(
                 out_block,
@@ -1357,7 +1381,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run DepthDif inference for one globally complete daily snapshot selected "
-            "from the NetCDF patch dataset, then export configured depth rasters."
+            "from the GeoTIFF patch dataset, then export configured depth rasters."
         )
     )
     parser.add_argument("--model-config", type=str, default=DEFAULT_MODEL_CONFIG)
@@ -1449,7 +1473,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
         help=(
             "Extra export-time Gaussian blur sigma for prediction GeoTIFFs. "
-            "Defaults to 1.0 with kernel size 3; pass --sigma 0 to disable."
+            "Defaults to 0.0; pass a positive value to enable the kernel size 3 blur."
         ),
     )
     parser.add_argument(
@@ -1542,6 +1566,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
     training_cfg = _load_yaml(args.train_config)
     data_cfg = load_yaml(args.data_config)
+    configured_val_year = data_cfg.get("split", {}).get("val_year")
     dataset, inference_grid_metadata = resolve_global_inference_dataset(
         None,
         data_config_path=args.data_config,
@@ -2061,6 +2086,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             else [float(value) for value in args.rectangle]
         ),
         "inference_grid": inference_grid_metadata,
+        "validation_year": (
+            None if configured_val_year is None else int(configured_val_year)
+        ),
+        "global_export_uses_all_patches": True,
+        "global_export_split_note": (
+            "Global raster export uses split=all for complete world coverage; "
+            "the configured validation year identifies validation-year rows."
+        ),
         "land_mask_path": str(args.land_mask_path),
         "land_zeroed": True,
         "checkpoint_path": str(ckpt_path),

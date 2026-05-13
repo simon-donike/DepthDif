@@ -12,6 +12,7 @@ from rasterio.transform import from_origin
 from torch import nn
 
 from depth_recon.inference.export_global import (
+    DEFAULT_DATA_CONFIG,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     ExportInferenceWrapper,
@@ -83,8 +84,11 @@ class TestGlobalInferenceExport(unittest.TestCase):
     def test_default_full_sample_count_exports_all_locations(self) -> None:
         self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, -1)
 
-    def test_default_export_gaussian_blur_sigma_is_one(self) -> None:
-        self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 1.0)
+    def test_default_data_config_uses_geotiff_dataset(self) -> None:
+        self.assertTrue(DEFAULT_DATA_CONFIG.endswith("data_ostia_argo_geotiff.yaml"))
+
+    def test_default_export_gaussian_blur_sigma_is_zero(self) -> None:
+        self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 0.0)
 
     def test_normalize_cli_args_accepts_sigma_colon_zero(self) -> None:
         self.assertEqual(
@@ -184,6 +188,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(overrides["grid"]["patch_stride"], 32)
         self.assertEqual(overrides["grid"]["max_land_fraction"], 0.95)
         self.assertFalse(overrides["selection"]["require_argo_for_all"])
+        self.assertEqual(metadata["overlap_stitching"], "weighted")
         self.assertAlmostEqual(metadata["patch_overlap_fraction"], 0.75)
         self.assertAlmostEqual(metadata["min_ocean_fraction"], 0.05)
 
@@ -252,14 +257,14 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertAlmostEqual(transform.c, 0.0, places=6)
         self.assertAlmostEqual(transform.f, 2.0, places=6)
 
-    def test_build_global_mosaic_averages_overlapping_tiles(self) -> None:
+    def test_build_global_mosaic_weight_stitches_overlapping_tiles(self) -> None:
         rows = [
-            {"date": 20260105, "lat0": 0.0, "lat1": 2.0, "lon0": 0.0, "lon1": 2.0},
-            {"date": 20260105, "lat0": 0.0, "lat1": 2.0, "lon0": 1.0, "lon1": 3.0},
+            {"date": 20260105, "lat0": 0.0, "lat1": 4.0, "lon0": 0.0, "lon1": 4.0},
+            {"date": 20260105, "lat0": 0.0, "lat1": 4.0, "lon0": 2.0, "lon1": 6.0},
         ]
         patches = [
-            np.full((2, 2), 2.0, dtype=np.float32),
-            np.full((2, 2), 6.0, dtype=np.float32),
+            np.full((4, 4), 2.0, dtype=np.float32),
+            np.full((4, 4), 6.0, dtype=np.float32),
         ]
 
         mosaic, _ = build_global_mosaic(
@@ -270,7 +275,15 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
         np.testing.assert_allclose(
             mosaic,
-            np.asarray([[2.0, 4.0, 6.0], [2.0, 4.0, 6.0]], dtype=np.float32),
+            np.asarray(
+                [
+                    [2.0, 2.0, 10.0 / 3.0, 14.0 / 3.0, 6.0, 6.0],
+                    [2.0, 2.0, 10.0 / 3.0, 14.0 / 3.0, 6.0, 6.0],
+                    [2.0, 2.0, 10.0 / 3.0, 14.0 / 3.0, 6.0, 6.0],
+                    [2.0, 2.0, 10.0 / 3.0, 14.0 / 3.0, 6.0, 6.0],
+                ],
+                dtype=np.float32,
+            ),
         )
 
     def test_repair_small_nodata_gaps_fills_only_tiny_internal_seams(self) -> None:
