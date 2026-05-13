@@ -9,7 +9,7 @@ dataset:
     resolution_deg: 0.1
     patch_grid_source: "land_mask"
     land_mask_path: "src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
-    patch_stride: 64
+    patch_stride: 32 # 75% overlap for 128-pixel patches; centroids are spaced by 3.2 degrees.
     max_land_fraction: 0.30
     force_include_regions:
       - name: "mediterranean"

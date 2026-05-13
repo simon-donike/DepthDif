@@ -17,8 +17,8 @@ Symbols used in this contract:
 | `W` | patch width in raster columns | `128` |
 
 The default horizontal resolution is `0.1` degrees. With `H = W = 128`, one
-training patch covers `12.8 x 12.8` degrees. The default patch stride is `64`
-pixels, so neighboring patches overlap by half a tile.
+training patch covers `12.8 x 12.8` degrees. The default GeoTIFF patch stride is
+`32` pixels, so neighboring patches overlap by 75% of a tile.
 
 ## Sample Keys
 

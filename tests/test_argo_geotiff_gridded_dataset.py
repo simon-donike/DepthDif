@@ -312,7 +312,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
         )
         grid = payload["dataset"]["grid"]
         self.assertEqual(grid["patch_grid_source"], "land_mask")
-        self.assertEqual(grid["patch_stride"], 64)
+        self.assertEqual(grid["patch_stride"], 32)
         self.assertEqual(float(grid["max_land_fraction"]), 0.30)
         self.assertTrue(Path(grid["land_mask_path"]).exists())
         self.assertEqual(grid["force_include_regions"][0]["name"], "mediterranean")

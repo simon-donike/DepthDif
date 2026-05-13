@@ -38,8 +38,8 @@ Model-facing tensors are produced on demand.
 A patch is a fixed-size window on the 0.1 degree GLORYS grid. The production
 configuration uses `tile_size: 128`, so each patch covers 128 by 128 grid cells.
 Instead of placing every patch once in a non-overlapping grid, the loader moves
-the window by `patch_stride`. The default stride is 64 cells, which means nearby
-patches overlap by half their width and height.
+the window by `patch_stride`. The default GeoTIFF stride is 32 cells, which means
+nearby patches overlap by 75% of their width and height.
 
 The same world grid is reused every time the dataset is instantiated. That makes
 the patch locations deterministic: changing the date range changes which
@@ -72,7 +72,9 @@ otherwise lose useful ocean context around coastlines.
 
 Overlapping patches mean an ARGO profile is not tied to only one spatial
 context. If a profile falls inside several retained patch bounds, it can
-contribute support to each matching `(patch, date)` row.
+contribute support to each matching `(patch, date)` row. The stride-32 GeoTIFF
+preset increases these contexts compared with the earlier half-overlap grid,
+giving each profile more local visual neighborhoods during training.
 
 ![ARGO profile in multiple patch contexts](assets/data/patch_grid/argo_profile_multiple_contexts.png)
 
