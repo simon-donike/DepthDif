@@ -244,7 +244,7 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `training.validation_sampling.ddim_temperature` | `1.0` | DDIM initial and stochastic step noise scale; lower values reduce generative variation. |
 | `training.validation_sampling.log_intermediates` | `false` | Captures/logs denoising intermediate images in validation. |
 | `training.validation_sampling.skip_full_reconstruction_in_sanity_check` | `true` | Skips expensive full reconstruction during Lightning sanity checks when true. |
-| `training.validation_sampling.max_full_reconstruction_samples` | `1` | Max first-batch val samples used for the single full reconstruction pass. |
+| `training.validation_sampling.max_full_reconstruction_samples` | `5` | Max first-batch val samples used for the single full reconstruction pass. |
 | `trainer.max_epochs` | `1500` | Maximum training epochs. |
 | `trainer.accelerator` | `"auto"` | Lightning accelerator backend selection. |
 | `trainer.devices` | `"auto"` | Device selection (`auto`, int, list). |
@@ -274,14 +274,14 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `wandb.log_stats_every_n_steps` | `200` | Step interval for scalar debug stats. |
 | `wandb.log_images_every_n_steps` | `200` | Step interval for validation preview images. |
 | `dataloader.batch_size` | `4` | Training dataloader batch size. |
-| `dataloader.val_batch_size` | `2` | Validation batch size (falls back to `batch_size` if omitted). |
+| `dataloader.val_batch_size` | `5` | Validation batch size (falls back to `batch_size` if omitted). |
 | `dataloader.num_workers` | `4` | Number of training dataloader workers. |
 | `dataloader.val_num_workers` | `0` | Validation workers (`0` avoids h5netcdf sanity-check instability). |
 | `dataloader.persistent_workers` | `true` | Keeps train workers alive across epochs when true. |
 | `dataloader.val_persistent_workers` | `false` | Validation worker persistence (when `val_num_workers > 0`). |
 | `dataloader.prefetch_factor` | `2` | Prefetched batches per worker (only used when workers > 0). |
 | `dataloader.shuffle` | `true` | Shuffles training dataset each epoch. |
-| `dataloader.val_shuffle` | `false` | Shuffles validation set (often used with limited val batches). |
+| `dataloader.val_shuffle` | `true` | Shuffles validation set (often used with limited val batches). |
 | `dataloader.pin_memory` | `true` | Enables pinned host memory for faster H2D transfer. |
 | `scheduler.warmup.enabled` | `true` | Enables linear warmup before plateau scheduling. |
 | `scheduler.warmup.steps` | `2000` | Warmup step count to ramp LR from `start_ratio` to base LR. |

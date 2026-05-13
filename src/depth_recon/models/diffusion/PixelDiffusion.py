@@ -87,7 +87,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         ambient_min_kept_observed_pixels: int = 1,
         ambient_require_x0_parameterization: bool = True,
         skip_full_reconstruction_in_sanity_check: bool = True,
-        max_full_reconstruction_samples: int = 4,
+        max_full_reconstruction_samples: int = 5,
         postprocess_gaussian_blur_enabled: bool = False,
         postprocess_gaussian_blur_sigma: float = 0.35,
         postprocess_gaussian_blur_kernel_size: int = 3,
@@ -405,7 +405,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
             ),
             max_full_reconstruction_samples=int(
-                val_sampling_cfg.get("max_full_reconstruction_samples", 4)
+                val_sampling_cfg.get("max_full_reconstruction_samples", 5)
             ),
             postprocess_gaussian_blur_enabled=bool(
                 gaussian_blur_cfg.get("enabled", False)

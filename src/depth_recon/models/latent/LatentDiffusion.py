@@ -248,7 +248,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
             ),
             max_full_reconstruction_samples=int(
-                val_sampling_cfg.get("max_full_reconstruction_samples", 4)
+                val_sampling_cfg.get("max_full_reconstruction_samples", 5)
             ),
             postprocess_gaussian_blur_enabled=bool(
                 gaussian_blur_cfg.get("enabled", False)

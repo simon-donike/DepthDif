@@ -12,7 +12,7 @@ training: # Internal Model Training Settings
     ddim_eta: 0.0 # Used only when sampler="ddim"; 0.0 is deterministic DDIM.
     log_intermediates: true # If true, capture and log denoising intermediates during validation reconstruction.
     skip_full_reconstruction_in_sanity_check: false # If true, skip expensive full reverse-diffusion reconstruction during sanity validation.
-    max_full_reconstruction_samples: 1 # Keep one full-reconstruction sample per validation run.
+    max_full_reconstruction_samples: 5 # Log five full-reconstruction samples per validation run.
 
 trainer: # PL Trainer Settings
   max_epochs: 5000 # Maximum number of training epochs.
@@ -49,7 +49,7 @@ wandb: # Logging Settings
 
 dataloader: # DataLoader Settings
   batch_size: 32 # Training batch size.
-  val_batch_size: 4 # Validation batch size (falls back to batch_size if omitted).
+  val_batch_size: 5 # Validation batch size (falls back to batch_size if omitted).
   num_workers: 6 # Number of DataLoader worker processes.
   val_num_workers: 0 # Validation workers; keep at 0 for h5netcdf stability during sanity checks.
   persistent_workers: true # Keep train workers alive across epochs.
