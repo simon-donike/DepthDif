@@ -44,6 +44,9 @@ This project uses Python 3.12.3.
 python -m pip install -r requirements.txt
 ```
 
+The root `requirements.txt` delegates to `pyproject.toml` so local installs and
+package metadata use the same curated dependency list.
+
 For public inference only, install the published PyPI package:
 
 ```bash
@@ -56,8 +59,7 @@ To install a branch or tag directly from GitHub, use the same package metadata:
 python -m pip install "depth-recon @ git+https://github.com/simon-donike/DepthDif.git@main"
 ```
 
-When developing from this repository, the same package can be installed in
-editable mode:
+The equivalent explicit editable install is:
 
 ```bash
 python -m pip install -e .

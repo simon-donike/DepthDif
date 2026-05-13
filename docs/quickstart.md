@@ -9,6 +9,9 @@ Use this page for the shortest path from setup to first train/inference run.
 /work/envs/depth/bin/python -m pip install -r requirements.txt
 ```
 
+The root `requirements.txt` installs this repository from the curated
+dependencies in `pyproject.toml`.
+
 ## Quick Training
 OSTIA + Argo NetCDF training (`dataset.core.dataset_variant="argo_netcdf_gridded"`):
 

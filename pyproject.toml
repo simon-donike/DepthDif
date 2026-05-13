@@ -9,20 +9,27 @@ description = "DepthDif public inference helpers for sparse ocean temperature di
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "click>=8.2.1",
+    "affine",
     "copernicusmarine",
-    "h5netcdf",
+    "dask",
     "einops",
+    "h5netcdf",
     "matplotlib",
     "numpy>=1.26,<2.1",
     "pandas",
+    "Pillow",
     "pytorch-lightning",
     "PyYAML",
     "rasterio",
+    "requests",
+    "scikit-image",
     "scipy",
     "torch",
+    "torchvision",
     "tqdm",
+    "wandb",
     "xarray",
+    "zarr",
 ]
 
 [project.scripts]
