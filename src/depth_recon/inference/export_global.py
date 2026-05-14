@@ -660,6 +660,61 @@ def _build_inference_loader(
     return DataLoader(**loader_kwargs)
 
 
+def _print_global_inference_settings(
+    *,
+    args: argparse.Namespace,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+    effective_land_mask_path: Path,
+    effective_min_ocean_fraction: float,
+    effective_patch_stride: int | None,
+    batch_size: int,
+    inference_num_workers: int,
+    inference_prefetch_factor: int,
+    requested_full_sample_count: int,
+) -> None:
+    """Print a concise summary of the resolved global inference settings."""
+    tile_size = int(_nested_cfg_value(data_cfg, "dataset.grid.tile_size", default=128))
+    resolved_patch_stride = (
+        max(1, tile_size // 4)
+        if effective_patch_stride is None
+        else int(effective_patch_stride)
+    )
+    training_section = training_cfg.get("training", {})
+    noise_cfg = training_section.get("noise", {})
+    validation_sampling_cfg = training_section.get("validation_sampling", {})
+    sampler_name = str(validation_sampling_cfg.get("sampler", "ddpm"))
+    diffusion_steps = int(noise_cfg.get("num_timesteps", 1000))
+    ddim_steps = int(validation_sampling_cfg.get("ddim_num_timesteps", 200))
+    overlap_fraction = 1.0 - (float(resolved_patch_stride) / float(tile_size))
+    print(
+        "\nGlobal inference settings:"
+        f"\n  model_config: {args.model_config}"
+        f"\n  data_config: {args.data_config}"
+        f"\n  train_config: {args.train_config}"
+        f"\n  inference_config: {args.inference_config}"
+        f"\n  checkpoint: {args.checkpoint_path}"
+        f"\n  iso_week: {int(args.year)}-W{int(args.iso_week):02d}"
+        f"\n  requested_split: {args.split}"
+        f"\n  tile_size: {tile_size}"
+        f"\n  patch_stride: {resolved_patch_stride}"
+        f"\n  patch_overlap_fraction: {overlap_fraction:.3f}"
+        f"\n  min_ocean_fraction: {float(effective_min_ocean_fraction):.3f}"
+        f"\n  land_mask_path: {effective_land_mask_path}"
+        f"\n  batch_size: {int(batch_size)}"
+        f"\n  inference_num_workers: {int(inference_num_workers)}"
+        f"\n  inference_prefetch_factor: {int(inference_prefetch_factor)}"
+        f"\n  sampler: {sampler_name}"
+        f"\n  diffusion_num_timesteps: {diffusion_steps}"
+        f"\n  ddim_num_timesteps: {ddim_steps}"
+        f"\n  export_ground_truth: {bool(args.export_ground_truth)}"
+        f"\n  full_sample_count: {requested_full_sample_count}"
+        f"\n  sigma: {float(args.sigma)}"
+        f"\n  rectangle: {args.rectangle}\n",
+        flush=True,
+    )
+
+
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in batch.items():
@@ -1746,6 +1801,50 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             else int(inference_grid_cfg["patch_stride"])
         )
     )
+    batch_size = int(
+        args.batch_size
+        if args.batch_size is not None
+        else inference_dataloader_cfg.get(
+            "batch_size",
+            training_cfg.get("dataloader", {}).get("batch_size", 4),
+        )
+    )
+    inference_num_workers = int(
+        args.inference_num_workers
+        if args.inference_num_workers is not None
+        else inference_dataloader_cfg.get(
+            "num_workers",
+            DEFAULT_INFERENCE_NUM_WORKERS,
+        )
+    )
+    inference_prefetch_factor = int(
+        args.inference_prefetch_factor
+        if args.inference_prefetch_factor is not None
+        else inference_dataloader_cfg.get(
+            "prefetch_factor",
+            DEFAULT_INFERENCE_PREFETCH_FACTOR,
+        )
+    )
+    requested_full_sample_count = int(args.full_sample_count)
+    if batch_size < 1:
+        raise ValueError("--batch-size must be >= 1.")
+    if inference_num_workers < 0:
+        raise ValueError("--inference-num-workers must be >= 0.")
+    if inference_prefetch_factor < 1:
+        raise ValueError("--inference-prefetch-factor must be >= 1.")
+    _print_global_inference_settings(
+        args=args,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+        effective_land_mask_path=effective_land_mask_path,
+        effective_min_ocean_fraction=effective_min_ocean_fraction,
+        effective_patch_stride=effective_patch_stride,
+        batch_size=batch_size,
+        inference_num_workers=inference_num_workers,
+        inference_prefetch_factor=inference_prefetch_factor,
+        requested_full_sample_count=requested_full_sample_count,
+    )
+
     configured_val_year = data_cfg.get("split", {}).get("val_year")
     dataset, inference_grid_metadata = resolve_global_inference_dataset(
         None,
@@ -1785,40 +1884,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     selected_patches.to_csv(run_dir / "selected_patches.csv", index=False)
 
     model_cfg = load_yaml(args.model_config)
-    batch_size = int(
-        args.batch_size
-        if args.batch_size is not None
-        else inference_dataloader_cfg.get(
-            "batch_size",
-            training_cfg.get("dataloader", {}).get("batch_size", 4),
-        )
-    )
-    inference_num_workers = int(
-        args.inference_num_workers
-        if args.inference_num_workers is not None
-        else inference_dataloader_cfg.get(
-            "num_workers",
-            DEFAULT_INFERENCE_NUM_WORKERS,
-        )
-    )
-    inference_prefetch_factor = int(
-        args.inference_prefetch_factor
-        if args.inference_prefetch_factor is not None
-        else inference_dataloader_cfg.get(
-            "prefetch_factor",
-            DEFAULT_INFERENCE_PREFETCH_FACTOR,
-        )
-    )
-    requested_full_sample_count = int(args.full_sample_count)
     export_all_full_samples = requested_full_sample_count < 0
     full_sample_count = int(max(0, requested_full_sample_count))
     export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
-    if batch_size < 1:
-        raise ValueError("--batch-size must be >= 1.")
-    if inference_num_workers < 0:
-        raise ValueError("--inference-num-workers must be >= 0.")
-    if inference_prefetch_factor < 1:
-        raise ValueError("--inference-prefetch-factor must be >= 1.")
 
     sample_for_shape = dataset[selection.indices[0]]
     patch_shape = tuple(int(v) for v in sample_for_shape["y"].shape[-2:])
@@ -1940,7 +2008,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     if ckpt_path is None:
         raise RuntimeError(
             "No checkpoint was resolved. Set --checkpoint-path or configure "
-            "model.load_checkpoint/model.resume_checkpoint."
+            "model.resume_checkpoint."
         )
     weight_source = load_checkpoint_weights(
         model,

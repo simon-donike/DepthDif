@@ -1,8 +1,8 @@
 # Settings for instantiating the pixel-space diffusion architecture/checkpoint behavior.
 model:
   model_type: "cond_px_dif" # Pixel-space conditional diffusion.
-  resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
-  load_checkpoint: "logs/selection/GLORYS_pretrained/last.ckpt" # false/null disables warm start; set to a .ckpt path to load model weights only.
+  resume_checkpoint: "logs/selection/new_dataset/v1_targGLORYS/last.ckpt" # false/null starts from scratch; set to a .ckpt path to load checkpoint state.
+  load_checkpoint_only: true # true loads model weights only; false resumes optimizer/scheduler/trainer state too.
   generated_channels: 50 # Predict the full 50-level GLORYS temperature stack.
   condition_channels: 52 # OSTIA (1) + corrupted Argo stack (50) + collapsed x_valid_mask (1).
   condition_mask_channels: 1 # Collapse x_valid_mask across depth to keep conditioning lighter than a 50-channel mask.
@@ -13,7 +13,7 @@ model:
   parameterization: "x0" # Keeps the base preset compatible with the ambient objective.
   log_intermediates: false # Training config can still override validation logging behavior.
   ema:
-    enabled: false # Disabled by default; set true to maintain EMA weights during training.
+    enabled: true # Disabled by default; set true to maintain EMA weights during training.
     decay: 0.9999 # Exponential decay for shadow weights; higher values smooth longer histories.
     apply_every_n_steps: 1 # Update EMA after every optimizer step by default.
     start_step: 0 # Delay EMA updates until this global step.

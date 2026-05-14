@@ -61,7 +61,7 @@ dataloader:
 
 scheduler:
   warmup:
-    enabled: true # Use a short warmup before plateau scheduling takes over.
+    enabled: false # Use a short warmup before plateau scheduling takes over.
     steps: 2000 # Warmup length in optimizer steps.
     start_ratio: 0.2 # Start warmup at 20% of the base LR.
   reduce_on_plateau:
@@ -70,7 +70,7 @@ scheduler:
     interval: "step" # Count patience in optimizer steps; use "epoch" for epoch-level patience.
     mode: "min" # Lower validation loss is better.
     factor: 0.5 # Halve the LR on plateau.
-    patience: 100_000 # Optimizer steps with no improvement before reducing LR.
+    patience: 25_000 # Optimizer steps with no improvement before reducing LR.
     threshold: 1.0e-4 # Minimum relative improvement to reset patience.
     threshold_mode: "rel" # Use relative thresholding.
     cooldown: 0 # Scheduler intervals to wait after an LR drop before resuming checks.

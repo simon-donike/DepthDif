@@ -157,15 +157,6 @@ def resolve_checkpoint_path(
         return str(ckpt_path)
 
     model_section = model_cfg.get("model", {})
-    load_cfg = model_section.get("load_checkpoint", False)
-    if load_cfg not in (False, None):
-        ckpt_path = Path(str(load_cfg)).expanduser()
-        if not ckpt_path.is_file():
-            raise FileNotFoundError(
-                f"Checkpoint from config model.load_checkpoint not found: {ckpt_path}"
-            )
-        return str(ckpt_path)
-
     resume_cfg = model_section.get("resume_checkpoint", False)
     if resume_cfg in (False, None):
         return None

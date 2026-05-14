@@ -113,7 +113,7 @@ ground-truth rasters. For a deeper package walkthrough, see
 
 ### What it supports  
 - load config files and instantiate model/datamodule  
-- load checkpoint (explicit override or `model.load_checkpoint` / `model.resume_checkpoint`)  
+- load checkpoint (explicit override or `model.resume_checkpoint`)  
 - run from:  
   - dataloader sample (`MODE="dataloader"`)  
   - random tensor batch (`MODE="random"`)  
@@ -124,7 +124,7 @@ At the top of `src/depth_recon/inference/run_single.py`, set:
 - `MODEL_CONFIG_PATH`  
 - `DATA_CONFIG_PATH`  
 - `TRAIN_CONFIG_PATH`  
-- `CHECKPOINT_PATH` (or keep `None` to use `model.load_checkpoint` then `model.resume_checkpoint`)  
+- `CHECKPOINT_PATH` (or keep `None` to use `model.resume_checkpoint`)  
 - `MODE`, `LOADER_SPLIT`, `DEVICE`, `INCLUDE_INTERMEDIATES`  
 
 ### Note on default paths  

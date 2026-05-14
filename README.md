@@ -117,7 +117,7 @@ Ambient-occlusion objective example:
 Notes:
 - `--train-config` and `--training-config` are equivalent.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.
-- `model.resume_checkpoint` resumes full Lightning state; `model.load_checkpoint` warm-starts by loading only model weights.
+- `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.
 - Latent diffusion workflow configs live in `src/depth_recon/configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
 - Latent launcher scripts: `src/depth_recon/scripts/train_autoencoder.sh`, `src/depth_recon/scripts/train_latent_diffusion.sh`.
 

@@ -42,7 +42,7 @@ MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
 DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
 TRAIN_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
 
-# Optional explicit checkpoint path. If None, uses model.load_checkpoint then model.resume_checkpoint from model config.
+# Optional explicit checkpoint path. If None, uses model.resume_checkpoint from model config.
 CHECKPOINT_PATH: str | None = None
 
 # "dataloader" or "random"

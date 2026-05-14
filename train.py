@@ -151,28 +151,19 @@ def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     return str(ckpt_path)
 
 
-def resolve_load_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
-    # Accept false/null to skip weight initialization from checkpoint.
-    """Resolve and validate state-dict-only load ckpt path.
+def resolve_load_checkpoint_only(model_cfg: dict[str, Any]) -> bool:
+    """Resolve whether checkpoint loading should restore only model weights.
 
     Args:
         model_cfg (dict[str, Any]): Configuration dictionary or section.
 
     Returns:
-        str | None: Computed output value.
+        bool: True when only model weights should be loaded from resume checkpoint.
     """
-    load_cfg = model_cfg.get("model", {}).get("load_checkpoint", False)
-    if load_cfg is False or load_cfg is None:
-        return None
-    if not isinstance(load_cfg, str):
-        raise ValueError(
-            "model.load_checkpoint must be false/null or a checkpoint path string."
-        )
-
-    ckpt_path = Path(load_cfg).expanduser()
-    if not ckpt_path.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    return str(ckpt_path)
+    load_checkpoint_only = model_cfg.get("model", {}).get("load_checkpoint_only", False)
+    if not isinstance(load_checkpoint_only, bool):
+        raise ValueError("model.load_checkpoint_only must be true or false.")
+    return load_checkpoint_only
 
 
 # Build process rank defensively across common launchers.
@@ -567,11 +558,7 @@ def main(
 
     # Resolve checkpoint paths once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
-    load_ckpt_path = resolve_load_ckpt_path(model_cfg)
-    if resume_ckpt_path is not None and load_ckpt_path is not None:
-        raise ValueError(
-            "model.resume_checkpoint and model.load_checkpoint are mutually exclusive."
-        )
+    load_checkpoint_only = resolve_load_checkpoint_only(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
     model_type = resolve_model_type(model_cfg)
 
@@ -665,14 +652,14 @@ def main(
             training_config_path=effective_training_config_path,
             datamodule=datamodule,
         )
-    if load_ckpt_path is not None:
-        checkpoint = torch.load(load_ckpt_path, map_location="cpu")
-        # load_checkpoint is a warm-start: copy model weights only (no optimizer/trainer state).
+    if resume_ckpt_path is not None and load_checkpoint_only:
+        checkpoint = torch.load(resume_ckpt_path, map_location="cpu")
+        # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
         state_dict = (
             checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
         )
         model.load_state_dict(state_dict)
-        print(f"Loaded model weights from checkpoint: {load_ckpt_path}")
+        print(f"Loaded model weights from checkpoint: {resume_ckpt_path}")
 
     # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(training_cfg, model)
@@ -749,7 +736,8 @@ def main(
         )
 
     # Start (or resume) training.
-    trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
+    fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
+    trainer.fit(model=model, datamodule=datamodule, ckpt_path=fit_ckpt_path)
 
 
 def parse_args() -> argparse.Namespace:

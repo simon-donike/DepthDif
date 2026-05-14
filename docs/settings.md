@@ -196,8 +196,8 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 | Config key | Default value | Explanation |  
 |---|---|---|  
 | `model.model_type` | `"cond_px_dif"` | Model type (`"cond_px_dif"` for pixel diffusion, `"latent_cond_dif"` for latent diffusion with AE bridge). |  
-| `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path resumes training. |  
-| `model.load_checkpoint` | `false` | `false/null` disables warm start; checkpoint path loads model `state_dict` only (no Lightning optimizer/trainer resume). |  
+| `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path loads checkpoint state. |  
+| `model.load_checkpoint_only` | `false` | When `true`, loads model `state_dict` only; when `false`, resumes optimizer/scheduler/trainer state too. |  
 | `model.generated_channels` | `50` | Number of predicted GLORYS depth channels. |  
 | `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`). |  
 | `model.condition_mask_channels` | `1` | Number of `x_valid_mask` condition channels. |  

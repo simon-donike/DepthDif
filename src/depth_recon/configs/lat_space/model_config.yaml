@@ -1,8 +1,8 @@
 # Settings for instantiating latent conditional diffusion architecture/checkpoint behavior.
 model: # Model Settings
   model_type: "latent_cond_dif" # Latent conditional diffusion model type.
-  resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to continue training.
-  load_checkpoint: false # false/null disables warm start; set to a .ckpt path to load model state_dict only.
+  resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to load checkpoint state.
+  load_checkpoint_only: false # true loads model weights only; false resumes optimizer/scheduler/trainer state too.
   generated_channels: 12 # Predict latent z_y channels.
   condition_channels: 14 # z_x (12) + EO (1) + collapsed x_valid_mask (1).
   condition_mask_channels: 1 # One x_valid_mask channel is concatenated to the model condition.
