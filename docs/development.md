@@ -17,13 +17,13 @@ Potential mitigation directions already identified:
 - `x0` parameterization: implemented and working well in current experiments  
 - combined date + coordinate embedding: implemented, now exercised in EO config  
 
-## Repository Layout
-- installable package code lives under `src/depth_recon/`
-- bundled configs live under `src/depth_recon/configs/`
-- local launcher scripts live under `src/depth_recon/scripts/`
-- root-level `train.py`, `train_autoencoder.py`, and `experiments.py` remain direct local entry points
-- package modules should be imported through the `depth_recon.*` namespace
-- generated runtime outputs default to root-level `inference/outputs/`; historical moved outputs under `src/depth_recon/inference/outputs/` are also ignored and excluded from package builds
+## Repository Layout  
+- installable package code lives under `src/depth_recon/`  
+- bundled configs live under `src/depth_recon/configs/`  
+- local launcher scripts live under `src/depth_recon/scripts/`  
+- root-level `train.py`, `train_autoencoder.py`, and `experiments.py` remain direct local entry points  
+- package modules should be imported through the `depth_recon.*` namespace  
+- generated runtime outputs default to root-level `inference/outputs/`; historical moved outputs under `src/depth_recon/inference/outputs/` are also ignored and excluded from package builds  
   
 ## ToDos  
 - [ ] DDIM sampling path still needs deeper validation across checkpoints/settings  
