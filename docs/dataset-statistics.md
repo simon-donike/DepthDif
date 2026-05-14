@@ -89,7 +89,12 @@ The configured split uses `2018` as validation year. Training and validation
 rows require at least one valid ARGO temperature profile; the `all` split keeps
 patch/date rows even when no ARGO profile is present.
 
-ARGO profile support per patch/date row:
+**ARGO profile support per patch/date row**
+
+Each value is the number of ARGO profiles inside one spatial patch for one
+weekly date. `all` has a minimum of `0` because it keeps patch/date rows without
+ARGO support; `train` and `val` require at least one valid ARGO temperature
+profile, so their minimum is `1`.
 
 | Split | Min | Median | Mean | Max |
 | --- | ---: | ---: | ---: | ---: |
@@ -114,11 +119,3 @@ Land fraction per selected patch/date row:
 | Nominal overlap per axis | 96 px / 9.6 degrees |
 | Nominal overlap fraction per axis | 75% |
 | Selected spatial patches | 3,547 |
-| Covered grid pixels | 4,883,456 |
-| Coverage multiplicity min | 1 |
-| Coverage multiplicity median | 15 |
-| Coverage multiplicity mean | 11.90 |
-| Coverage multiplicity max | 20 |
-
-Coverage multiplicity is the number of selected spatial patches covering a
-grid pixel before the date dimension is applied.
