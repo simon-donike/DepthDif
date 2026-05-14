@@ -527,7 +527,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
             finally:
                 _cleanup_accumulator(accumulator)
 
-    def test_write_global_top_band_geotiff_zeroes_land_after_stitching(self) -> None:
+    def test_write_global_top_band_geotiff_masks_land_to_nodata_after_stitching(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             layout = MosaicLayout(
@@ -574,8 +576,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     band = ds.read(1)
 
                 self.assertEqual(band[0, 0], 4.0)
-                self.assertEqual(band[0, 1], 0.0)
-                self.assertEqual(band[1, 1], 0.0)
+                self.assertEqual(band[0, 1], -9999.0)
+                self.assertEqual(band[1, 1], -9999.0)
                 self.assertEqual(band[3, 3], -9999.0)
             finally:
                 _cleanup_accumulator(accumulator)

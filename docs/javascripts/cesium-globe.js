@@ -580,6 +580,39 @@
     argoLegend.hidden = !hasCombinedLayer || !state.elements.pointsToggle.checked;
   }
 
+  function cleanedClosedPatchPositions(positions) {
+    const cleanedPositions = [];
+    positions.forEach(function (position) {
+      const previousPosition = cleanedPositions[cleanedPositions.length - 1];
+      if (
+        position &&
+        (!previousPosition ||
+          !Cesium.Cartesian3.equalsEpsilon(
+            position,
+            previousPosition,
+            Cesium.Math.EPSILON7
+          ))
+      ) {
+        cleanedPositions.push(position);
+      }
+    });
+    if (cleanedPositions.length < 3) {
+      return null;
+    }
+    const firstPosition = cleanedPositions[0];
+    const lastPosition = cleanedPositions[cleanedPositions.length - 1];
+    if (
+      !Cesium.Cartesian3.equalsEpsilon(
+        firstPosition,
+        lastPosition,
+        Cesium.Math.EPSILON7
+      )
+    ) {
+      cleanedPositions.push(firstPosition);
+    }
+    return cleanedPositions;
+  }
+
   function stylePatchSplitEntities(dataSource) {
     const fillColor = Cesium.Color.fromCssColorString(PATCH_FILL_COLOR).withAlpha(PATCH_FILL_ALPHA);
     const outlineColor = Cesium.Color.fromCssColorString(PATCH_OUTLINE_COLOR);
@@ -599,11 +632,16 @@
         : null;
       const positions = hierarchy && hierarchy.positions ? hierarchy.positions : null;
       if (positions && positions.length > 1) {
+        const borderPositions = cleanedClosedPatchPositions(positions);
+        if (!borderPositions) {
+          return;
+        }
         entity.polyline = new Cesium.PolylineGraphics({
-          positions: positions.concat([positions[0]]),
+          positions: borderPositions,
           material: outlineColor,
           width: PATCH_OUTLINE_WIDTH,
-          clampToGround: true,
+          arcType: Cesium.ArcType.GEODESIC,
+          clampToGround: false,
         });
       }
     });

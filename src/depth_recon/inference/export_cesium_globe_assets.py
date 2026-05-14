@@ -27,8 +27,6 @@ from typing import Any
 
 import numpy as np
 import rasterio
-from rasterio.enums import Resampling
-from rasterio.warp import reproject
 import yaml
 
 if __package__ in {None, ""}:
@@ -41,6 +39,9 @@ DEFAULT_TEMPLATE_PATH = (
 DEFAULT_COLOR_RAMP_PATH = (
     Path(__file__).resolve().parent / "transforms" / "temperature_blue_red_ramp.txt"
 )
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_TRANSPARENT_ALPHA = 0
+DEFAULT_OPAQUE_ALPHA = 255
 DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
@@ -108,6 +109,12 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
     if candidate.exists():
         return candidate
     if not candidate.is_absolute():
+        run_relative = run_dir / candidate
+        if run_relative.exists():
+            return run_relative
+        repo_relative = DEFAULT_REPO_ROOT / candidate
+        if repo_relative.exists():
+            return repo_relative
         run_relative = run_dir / candidate.name
         if run_relative.exists():
             return run_relative
@@ -295,7 +302,6 @@ def _colorize_raster(
     output_path: Path,
     *,
     color_ramp_path: Path,
-    land_mask_path: Path | None = None,
 ) -> None:
     """Colorize one Celsius raster and make nodata/land pixels transparent."""
     gdaldem_exe = shutil.which("gdaldem")
@@ -312,36 +318,11 @@ def _colorize_raster(
         str(output_path),
     ]
     subprocess.run(command, check=True)
-    _apply_alpha_mask_to_colorized_raster(
-        input_path,
-        output_path,
-        land_mask_path=land_mask_path,
-    )
-
-
-def _reproject_land_mask_for_raster(
-    source: rasterio.io.DatasetReader,
-    land_mask_path: Path,
-) -> np.ndarray:
-    """Return the land mask aligned to the raster being tiled."""
-    with rasterio.open(land_mask_path) as mask_ds:
-        destination = np.zeros((source.height, source.width), dtype=np.uint8)
-        reproject(
-            source=mask_ds.read(1),
-            destination=destination,
-            src_transform=mask_ds.transform,
-            src_crs=mask_ds.crs,
-            dst_transform=source.transform,
-            dst_crs=source.crs,
-            resampling=Resampling.nearest,
-        )
-    return destination > 0
+    _apply_alpha_mask_to_colorized_raster(input_path, output_path)
 
 
 def _transparent_pixel_mask(
     input_path: Path,
-    *,
-    land_mask_path: Path | None = None,
 ) -> np.ndarray:
     """Build a boolean mask for pixels that should be transparent in Cesium."""
     with rasterio.open(input_path) as ds:
@@ -349,10 +330,6 @@ def _transparent_pixel_mask(
         transparent = ~np.isfinite(data)
         if ds.nodata is not None:
             transparent |= np.isclose(data, float(ds.nodata))
-        if land_mask_path is not None:
-            # The GeoTIFF export zeroes land for numeric use; Cesium needs the
-            # original mask so real 0 C ocean pixels are still visible.
-            transparent |= _reproject_land_mask_for_raster(ds, land_mask_path)
     return transparent
 
 
@@ -360,10 +337,11 @@ def _apply_alpha_mask_to_colorized_raster(
     input_path: Path,
     output_path: Path,
     *,
-    land_mask_path: Path | None = None,
+    transparent: np.ndarray | None = None,
 ) -> None:
     """Apply transparent alpha to colorized nodata and land pixels."""
-    transparent = _transparent_pixel_mask(input_path, land_mask_path=land_mask_path)
+    if transparent is None:
+        transparent = _transparent_pixel_mask(input_path)
     with rasterio.open(output_path, "r+") as ds:
         if ds.count < 4:
             raise RuntimeError(
@@ -372,9 +350,9 @@ def _apply_alpha_mask_to_colorized_raster(
 
         alpha = ds.read(4)
         opaque_value = (
-            np.iinfo(alpha.dtype).max if np.issubdtype(alpha.dtype, np.integer) else 1.0
+            DEFAULT_OPAQUE_ALPHA if np.issubdtype(alpha.dtype, np.integer) else 1.0
         )
-        alpha[transparent] = 0
+        alpha[transparent] = DEFAULT_TRANSPARENT_ALPHA
         alpha[~transparent] = opaque_value
         ds.write(alpha, 4)
 
@@ -383,6 +361,22 @@ def _apply_alpha_mask_to_colorized_raster(
             band = ds.read(band_index)
             band[transparent] = 0
             ds.write(band, band_index)
+
+
+def _validate_raster_transparency_contract(path: Path) -> None:
+    """Require rasters to use their nodata value for land-masked pixels."""
+    with rasterio.open(path) as ds:
+        tags = ds.tags()
+    land_zeroed = str(tags.get("land_zeroed", "")).strip().lower() == "true"
+    land_masked_to_nodata = (
+        str(tags.get("land_masked_to_nodata", "")).strip().lower() == "true"
+    )
+    if land_zeroed and not land_masked_to_nodata:
+        raise RuntimeError(
+            "This GeoTIFF uses the old land-mask convention with land pixels set "
+            f"to 0.0: {path}. Re-run inference/export or repair the TIFF so land "
+            "pixels use the GeoTIFF nodata value before packaging Cesium assets."
+        )
 
 
 def _estimate_native_zoom_level(input_path: Path) -> int:
@@ -625,6 +619,40 @@ def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
     return f"{public_base_url.rstrip('/')}/{name}"
 
 
+def _raster_transparency_config(
+    raster_path: Path,
+    *,
+    land_mask_path: Path | None,
+) -> dict[str, Any]:
+    """Describe how raster pixels are converted to transparent globe tiles."""
+    with rasterio.open(raster_path) as ds:
+        nodata_value = None if ds.nodata is None else float(ds.nodata)
+        tags = ds.tags()
+    land_masked_to_nodata = (
+        str(tags.get("land_masked_to_nodata", "")).strip().lower() == "true"
+    )
+    land_mask_applied_value = None
+    land_mask_mode = "none"
+    if land_masked_to_nodata:
+        land_mask_applied_value = nodata_value
+        land_mask_mode = "nodata"
+    return {
+        "nodata_value": nodata_value,
+        "nodata_alpha": DEFAULT_TRANSPARENT_ALPHA,
+        "land_mask_path": None if land_mask_path is None else str(land_mask_path),
+        "land_mask_applied_value": land_mask_applied_value,
+        "land_mask_mode": land_mask_mode,
+        "land_mask_alpha": DEFAULT_TRANSPARENT_ALPHA,
+        "valid_alpha": DEFAULT_OPAQUE_ALPHA,
+        "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
+        "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
+        "note": (
+            "Land-masked source pixels use the GeoTIFF nodata value before "
+            "color relief so 0 C remains a valid ocean color in the globe tiles."
+        ),
+    }
+
+
 def build_globe_config(
     *,
     selected_date: int | None,
@@ -647,6 +675,7 @@ def build_globe_config(
     color_scale_min_c: float,
     color_scale_max_c: float,
     color_palette: str,
+    raster_transparency: dict[str, Any],
     template: dict[str, Any],
 ) -> dict[str, Any]:
     config = dict(template)
@@ -671,6 +700,7 @@ def build_globe_config(
             "color_scale_min_c": float(color_scale_min_c),
             "color_scale_max_c": float(color_scale_max_c),
             "color_palette": str(color_palette),
+            "raster_transparency": dict(raster_transparency),
         }
     )
     credits = dict(config.get("credits", {}))
@@ -805,6 +835,7 @@ def export_cesium_globe_assets(
     for depth_export in depth_exports:
         suffix = str(depth_export["suffix"])
         prediction_export_path = Path(depth_export["prediction_path"])
+        _validate_raster_transparency_contract(prediction_export_path)
         prediction_colorized_path = (
             temp_dir / f"{prediction_export_path.stem}_colorized.tif"
         )
@@ -812,7 +843,6 @@ def export_cesium_globe_assets(
             prediction_export_path,
             prediction_colorized_path,
             color_ramp_path=color_ramp_path,
-            land_mask_path=land_mask_path,
         )
         prediction_tiles_dir_for_depth = globe_dir / f"prediction_tiles_{suffix}"
         _run_gdal2tiles(
@@ -827,6 +857,7 @@ def export_cesium_globe_assets(
         ground_truth_export_path = depth_export.get("ground_truth_path")
         if ground_truth_export_path is not None:
             ground_truth_export_path = Path(ground_truth_export_path)
+            _validate_raster_transparency_contract(ground_truth_export_path)
             ground_truth_colorized_path = (
                 temp_dir / f"{ground_truth_export_path.stem}_colorized.tif"
             )
@@ -834,7 +865,6 @@ def export_cesium_globe_assets(
                 ground_truth_export_path,
                 ground_truth_colorized_path,
                 color_ramp_path=color_ramp_path,
-                land_mask_path=land_mask_path,
             )
             ground_truth_tiles_dir_for_depth = (
                 globe_dir / f"ground_truth_tiles_{suffix}"
@@ -921,6 +951,10 @@ def export_cesium_globe_assets(
         if ground_truth_path is not None
         else None
     )
+    raster_transparency = _raster_transparency_config(
+        prediction_path,
+        land_mask_path=land_mask_path,
+    )
     template = _load_template(Path(template_path))
     config = build_globe_config(
         selected_date=run_summary.get("selected_date"),
@@ -983,6 +1017,7 @@ def export_cesium_globe_assets(
         color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
         color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
         color_palette="temperature_blue_red",
+        raster_transparency=raster_transparency,
         template=template,
     )
     config_path = globe_dir / "globe-config.json"

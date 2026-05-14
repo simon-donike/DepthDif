@@ -2,7 +2,7 @@
 
 This exporter treats an ISO week as one globally complete Wednesday snapshot,
 forces 75% overlapping land-mask-grid patches at inference time, stitches
-overlaps with spatial weights, zeroes land pixels, and can package/upload
+overlaps with spatial weights, masks land pixels to nodata, and can package/upload
 Cesium assets.
 
 Typical CLI:
@@ -1533,9 +1533,9 @@ def write_global_top_band_geotiff(
             else repaired_band
         )
         if land_mask_bool is not None:
-            # Land is zeroed after all averaging/repair/blur steps so it does not
-            # affect neighboring ocean pixels during post-processing.
-            final_band[land_mask_bool] = 0.0
+            # Land is masked after all averaging/repair/blur steps so it does
+            # not affect neighboring ocean pixels during post-processing.
+            final_band[land_mask_bool] = float(nodata)
         if np.any(repaired_mask) or land_mask_bool is not None:
             ds.write(final_band, 1)
         elif float(extra_gaussian_blur_sigma) > 0.0:
@@ -2278,7 +2278,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
             "channel_index": str(int(level.channel_index)),
             "land_mask_path": str(effective_land_mask_path),
-            "land_zeroed": "true",
+            "land_zeroed": "false",
+            "land_masked_to_nodata": "true",
         }
         write_global_top_band_geotiff(
             output_path=prediction_tif_path_for_level,
@@ -2376,7 +2377,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "the configured validation year identifies validation-year rows."
         ),
         "land_mask_path": str(effective_land_mask_path),
-        "land_zeroed": True,
+        "land_zeroed": False,
+        "land_masked_to_nodata": True,
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
         "data_config": str(args.data_config),

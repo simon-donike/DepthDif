@@ -1582,7 +1582,8 @@ def run_argo_week_inference(
             "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
             "channel_index": str(int(level.channel_index)),
             "land_mask_path": str(land_mask_path),
-            "land_zeroed": "true",
+            "land_zeroed": "false",
+            "land_masked_to_nodata": "true",
         }
         write_global_top_band_geotiff(
             output_path=prediction_tif_path,
@@ -1627,7 +1628,8 @@ def run_argo_week_inference(
         ),
         "inference_grid": inference_grid_metadata,
         "land_mask_path": str(land_mask_path),
-        "land_zeroed": True,
+        "land_zeroed": False,
+        "land_masked_to_nodata": True,
         "checkpoint_path": str(ckpt_path),
         "model_config": str(assets.model_config),
         "data_config": str(assets.data_config),

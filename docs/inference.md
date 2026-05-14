@@ -142,7 +142,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`  
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM  
 - stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams  
-- applies the configured land-mask GeoTIFF at the final write step so land pixels are `0.0` and uncovered water remains nodata  
+- applies the configured land-mask GeoTIFF at the final write step so land pixels and uncovered water use the same GeoTIFF nodata value  
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
 - exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
@@ -208,7 +208,7 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 ## Workflow 1d: Package One Run for the Cesium Globe  
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:  
 - reads one completed `inference/outputs/<run_name>/` directory  
-- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping raster nodata and the exported land mask transparent, then tiles them with `gdal2tiles.py`  
+- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the 0-30 C color ramp so true 0 C ocean remains visible, then tiles them with `gdal2tiles.py`  
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties  
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder  
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points  

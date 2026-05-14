@@ -22,6 +22,18 @@
   "color_scale_min_c": 0.0,
   "color_scale_max_c": 30.0,
   "color_palette": "temperature_blue_red",
+  "raster_transparency": {
+    "nodata_value": null,
+    "nodata_alpha": 0,
+    "land_mask_path": null,
+    "land_mask_applied_value": null,
+    "land_mask_mode": "none",
+    "land_mask_alpha": 0,
+    "valid_alpha": 255,
+    "color_scale_min_c": 0.0,
+    "color_scale_max_c": 30.0,
+    "note": "Land-masked source pixels use the GeoTIFF nodata value before color relief so 0 C remains a valid ocean color in the globe tiles."
+  },
   "credits": {
     "prediction": "DepthDif prediction overlay",
     "ground_truth": "GLORYS top-band overlay",

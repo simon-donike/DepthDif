@@ -29,6 +29,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _rewrite_argo_sample_locations_geojson,
     _rewrite_geojson,
     _sync_with_rclone,
+    _validate_raster_transparency_contract,
     build_globe_config,
 )
 
@@ -90,6 +91,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "east": 180.0,
             "north": 90.0,
             "default_camera_destination": {"lon": 0.0, "lat": 0.0, "height": 1.0},
+            "raster_transparency": {},
             "credits": {},
         }
         bounds = {
@@ -130,6 +132,13 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             color_scale_min_c=0.0,
             color_scale_max_c=30.0,
             color_palette="temperature_blue_red",
+            raster_transparency={
+                "nodata_value": -9999.0,
+                "land_mask_applied_value": -9999.0,
+                "land_mask_mode": "nodata",
+                "land_mask_alpha": 0,
+                "valid_alpha": 255,
+            },
             template=template,
         )
 
@@ -159,6 +168,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["color_scale_min_c"], 0.0)
         self.assertEqual(config["color_scale_max_c"], 30.0)
         self.assertEqual(config["color_palette"], "temperature_blue_red")
+        self.assertEqual(config["raster_transparency"]["land_mask_alpha"], 0)
+        self.assertEqual(config["raster_transparency"]["valid_alpha"], 255)
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
         self.assertEqual(config["credits"]["points"], "Observed Argo points")
@@ -168,14 +179,13 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "Random full-depth profile locations",
         )
 
-    def test_apply_alpha_mask_to_colorized_raster_hides_nodata_and_land(
+    def test_apply_alpha_mask_to_colorized_raster_hides_nodata(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             input_path = tmp_path / "input.tif"
             colorized_path = tmp_path / "colorized.tif"
-            land_mask_path = tmp_path / "land_mask.tif"
             transform = from_origin(0.0, 2.0, 1.0, 1.0)
 
             with rasterio.open(
@@ -198,19 +208,6 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 )
 
             with rasterio.open(
-                land_mask_path,
-                "w",
-                driver="GTiff",
-                height=2,
-                width=3,
-                count=1,
-                dtype="uint8",
-                crs="EPSG:4326",
-                transform=transform,
-            ) as ds:
-                ds.write(np.array([[[0, 0, 0], [0, 1, 0]]], dtype=np.uint8))
-
-            with rasterio.open(
                 colorized_path,
                 "w",
                 driver="GTiff",
@@ -226,16 +223,62 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             _apply_alpha_mask_to_colorized_raster(
                 input_path,
                 colorized_path,
-                land_mask_path=land_mask_path,
             )
 
             with rasterio.open(colorized_path) as ds:
                 rgba = ds.read()
 
         self.assertEqual(int(rgba[3, 0, 1]), 0)
-        self.assertEqual(int(rgba[3, 1, 1]), 0)
+        self.assertEqual(int(rgba[3, 1, 1]), 255)
         self.assertEqual(int(rgba[3, 0, 2]), 255)
-        self.assertEqual(int(rgba[0, 1, 1]), 0)
+
+    def test_validate_raster_transparency_contract_rejects_zeroed_land(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "input.tif"
+            transform = from_origin(0.0, 1.0, 1.0, 1.0)
+
+            with rasterio.open(
+                input_path,
+                "w",
+                driver="GTiff",
+                height=1,
+                width=3,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(np.array([[[0.0, 0.0, 2.0]]], dtype=np.float32))
+                ds.update_tags(land_zeroed="true")
+
+            with self.assertRaisesRegex(RuntimeError, "old land-mask convention"):
+                _validate_raster_transparency_contract(input_path)
+
+    def test_validate_raster_transparency_contract_accepts_land_nodata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tif_path = Path(tmp_dir) / "input.tif"
+            with rasterio.open(
+                tif_path,
+                "w",
+                driver="GTiff",
+                height=1,
+                width=1,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=from_origin(0.0, 1.0, 1.0, 1.0),
+            ) as ds:
+                ds.write(np.array([[[-9999.0]]], dtype=np.float32))
+                ds.update_tags(land_zeroed="false", land_masked_to_nodata="true")
+
+            _validate_raster_transparency_contract(tif_path)
 
     def test_template_is_valid_json(self) -> None:
         template_path = DEFAULT_TEMPLATE_PATH
@@ -249,6 +292,12 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("full_sample_points_url", template)
         self.assertIn("default_camera_destination", template)
         self.assertIn("color_scale_min_c", template)
+        self.assertIn("raster_transparency", template)
+        self.assertEqual(
+            template["raster_transparency"]["land_mask_applied_value"],
+            None,
+        )
+        self.assertEqual(template["raster_transparency"]["land_mask_mode"], "none")
 
     def test_standalone_globe_page_uses_full_window_root_shell(self) -> None:
         html = Path("docs/globe/index.html").read_text(encoding="utf-8")
