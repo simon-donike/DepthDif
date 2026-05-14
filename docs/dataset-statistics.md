@@ -1,28 +1,154 @@
 # Dataset Statistics
 
-These statistics were measured from the local exported GeoTIFF dataset at
-`/work/data/depthdif` with the active GeoTIFF data config:
-`src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml`.
+These statistics were measured from the local dataset root at
+`/work/data/depthdif`. The page is split into two parts:
 
-The export manifest was created at `2026-05-12T11:28:47+00:00` and covers
-weekly target dates from `20100101` to `20240726`.
+1. the exported enriched ARGO Zarr profile dataset
+2. the saved GeoTIFF ML dataset used by the patch dataloader
 
-## Summary
+## 1. Exported ARGO Zarr Dataset
+
+Path:
+
+```text
+/work/data/depthdif/enriched_argo_profiles.zarr
+```
+
+This Zarr is the profile-level export. Each row is one EN4/ARGO profile that
+passed the date and coordinate filters. ARGO values are projected onto the
+GLORYS depth axis, and GLORYS, OSTIA, and sea-level fields are sampled at the
+same profile location and date.
+
+The export was created at `2026-05-10T17:54:01+00:00` for the requested date
+range `20100101` to `20240731`.
+
+### Summary
 
 | Item | Value |
 | --- | ---: |
-| Target dates (Weeks) | 761 |
+| Profile rows | 6,637,381 |
+| GLORYS depth levels | 50 |
+| Profile dates | 20100101 to 20240731 |
+| Unique profile dates | 5,142 |
+| Source EN4/ARGO files | 169 |
+| Profiles with valid temperature | 6,609,159 |
+| Profiles with valid potential temperature | 6,609,159 |
+| Profiles with valid salinity | 5,394,516 |
+| Valid temperature depth points | 156,319,955 |
+| Valid potential-temperature depth points | 156,319,955 |
+| Valid salinity depth points | 133,248,365 |
+
+### Source Products
+
+| Source | Files | First file/date | Last file/date |
+| --- | ---: | --- | --- |
+| EN4/ARGO profiles | 169 | `EN.4.2.2.f.profiles.g10.201001.nc` | `EN.4.2.2.f.profiles.g10.202407.nc` |
+| GLORYS | 843 | 20100101 | 20260220 |
+| OSTIA | 5,326 | 20100101 | 20240731 |
+| Sea level | 5,326 | 20100101 | 20240731 |
+
+### Dimensions
+
+| Dimension | Meaning | Count |
+| --- | --- | ---: |
+| `profile` | One ARGO profile location/date. | 6,637,381 |
+| `glorys_depth` | Native GLORYS depth axis used for vertical alignment. | 50 |
+
+### Variables
+
+Variables with shape `profile x glorys_depth` store one value per ARGO profile
+and GLORYS depth level. Variables with shape `profile` store one value per
+profile.
+
+| Variable | Explanation | Shape | Type |
+| --- | --- | --- | --- |
+| `latitude` | Profile latitude in degrees north. | `profile` | `float64` |
+| `longitude` | Profile longitude in degrees east. | `profile` | `float64` |
+| `profile_date` | Profile observation date as `YYYYMMDD`. | `profile` | `int64` |
+| `profile_juld` | Original EN4/ARGO Julian day timestamp. | `profile` | `float64` |
+| `profile_idx` | Profile index in the exported Zarr. | `profile` | `int64` |
+| `profile_source_file` | Source EN4/ARGO file name. | `profile` | `<U33` |
+| `valid_observed_depth_count` | Number of valid observed depth levels in the source profile. | `profile` | `int64` |
+| `argo_temp_on_glorys_depth` | ARGO in-situ temperature interpolated to GLORYS depth levels. | `profile x glorys_depth` | `float32` |
+| `argo_temp_valid_on_glorys_depth` | True where interpolated ARGO temperature is valid. | `profile x glorys_depth` | `bool` |
+| `argo_temp_qc_on_glorys_depth` | ARGO temperature QC code on GLORYS depth levels. | `profile x glorys_depth` | `int8` |
+| `argo_potm_on_glorys_depth` | ARGO potential temperature interpolated to GLORYS depth levels. | `profile x glorys_depth` | `float32` |
+| `argo_potm_valid_on_glorys_depth` | True where interpolated ARGO potential temperature is valid. | `profile x glorys_depth` | `bool` |
+| `argo_potm_qc_on_glorys_depth` | ARGO potential-temperature QC code on GLORYS depth levels. | `profile x glorys_depth` | `int8` |
+| `argo_psal_on_glorys_depth` | ARGO practical salinity interpolated to GLORYS depth levels. | `profile x glorys_depth` | `float32` |
+| `argo_psal_valid_on_glorys_depth` | True where interpolated ARGO salinity is valid. | `profile x glorys_depth` | `bool` |
+| `argo_psal_qc_on_glorys_depth` | ARGO salinity QC code on GLORYS depth levels. | `profile x glorys_depth` | `int8` |
+| `argo_depth_qc_on_glorys_depth` | ARGO depth QC code projected to GLORYS depth levels. | `profile x glorys_depth` | `int8` |
+| `argo_juld_qc` | Whole-profile date/time QC code. | `profile` | `int8` |
+| `argo_position_qc` | Whole-profile position QC code. | `profile` | `int8` |
+| `argo_profile_depth_qc` | Whole-profile depth QC code. | `profile` | `int8` |
+| `argo_profile_potm_qc` | Whole-profile potential-temperature QC code. | `profile` | `int8` |
+| `argo_profile_psal_qc` | Whole-profile salinity QC code. | `profile` | `int8` |
+| `glorys_thetao` | GLORYS sea-water potential temperature sampled at the profile point. | `profile x glorys_depth` | `float32` |
+| `glorys_so` | GLORYS salinity sampled at the profile point. | `profile x glorys_depth` | `float32` |
+| `glorys_uo` | GLORYS eastward sea-water velocity sampled at the profile point. | `profile x glorys_depth` | `float32` |
+| `glorys_vo` | GLORYS northward sea-water velocity sampled at the profile point. | `profile x glorys_depth` | `float32` |
+| `glorys_zos` | GLORYS sea-surface height sampled at the profile point. | `profile` | `float32` |
+| `glorys_mlotst` | GLORYS mixed-layer thickness sampled at the profile point. | `profile` | `float32` |
+| `glorys_bottomT` | GLORYS sea-floor potential temperature sampled at the profile point. | `profile` | `float32` |
+| `glorys_sithick` | GLORYS sea-ice thickness sampled at the profile point. | `profile` | `float32` |
+| `glorys_siconc` | GLORYS sea-ice area fraction sampled at the profile point. | `profile` | `float32` |
+| `glorys_usi` | GLORYS eastward sea-ice velocity sampled at the profile point. | `profile` | `float32` |
+| `glorys_vsi` | GLORYS northward sea-ice velocity sampled at the profile point. | `profile` | `float32` |
+| `glorys_temporal_status` | Status of GLORYS temporal matching. | `profile` | `int8` |
+| `ostia_analysed_sst` | OSTIA analysed sea-surface temperature sampled at the profile point. | `profile` | `float32` |
+| `ostia_analysis_error` | OSTIA SST analysis error sampled at the profile point. | `profile` | `float32` |
+| `ostia_sea_ice_fraction` | OSTIA sea-ice fraction sampled at the profile point. | `profile` | `float32` |
+| `ostia_mask` | OSTIA categorical mask sampled at the profile point. | `profile` | `float32` |
+| `ostia_temporal_status` | Status of OSTIA temporal matching. | `profile` | `int8` |
+| `sealevel_sla` | Sea-level anomaly sampled at the profile point. | `profile` | `float32` |
+| `sealevel_err_sla` | Sea-level anomaly formal mapping error. | `profile` | `float32` |
+| `sealevel_adt` | Absolute dynamic topography sampled at the profile point. | `profile` | `float32` |
+| `sealevel_ugosa` | Eastward geostrophic velocity anomaly. | `profile` | `float32` |
+| `sealevel_err_ugosa` | Formal mapping error for eastward velocity anomaly. | `profile` | `float32` |
+| `sealevel_vgosa` | Northward geostrophic velocity anomaly. | `profile` | `float32` |
+| `sealevel_err_vgosa` | Formal mapping error for northward velocity anomaly. | `profile` | `float32` |
+| `sealevel_ugos` | Absolute eastward geostrophic velocity. | `profile` | `float32` |
+| `sealevel_vgos` | Absolute northward geostrophic velocity. | `profile` | `float32` |
+| `sealevel_flag_ice` | Sea-level product ice flag. | `profile` | `float32` |
+| `sealevel_tpa_correction` | TOPEX-A instrumental drift correction field. | `profile` | `float32` |
+| `sealevel_temporal_status` | Status of sea-level temporal matching. | `profile` | `int8` |
+
+Temporal status codes use `0 = nearest_or_exact`, `1 = nearest_edge`, and
+`2 = missing`.
+
+## 2. Saved GeoTIFF ML Dataset
+
+Path:
+
+```text
+/work/data/depthdif
+```
+
+This is the model-ready dataset. It stores dense fields as aligned GeoTIFF
+rasters and uses a compact, grid-indexed ARGO Zarr store for the patch
+dataloader. The active config is
+`src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml`.
+
+The GeoTIFF export manifest was created at `2026-05-12T11:28:47+00:00` and
+covers weekly target dates from `20100101` to `20240726`.
+
+### Summary
+
+| Item | Value |
+| --- | ---: |
+| Target dates (weeks) | 761 |
 | Grid size | 3600 x 1800 pixels |
 | Grid resolution | 0.1 degrees |
 | CRS | EPSG:4326 |
 | GLORYS depth levels | 50 |
-| ARGO profiles in exported profile store | 6,608,517 |
-| ARGO profiles with valid temperature | 6,608,321 |
-| ARGO profiles with valid salinity | 5,393,686 |
-| Valid ARGO temperature depth points | 156,290,112 |
-| Valid ARGO salinity depth points | 133,218,721 |
+| Compact ARGO profiles | 6,608,517 |
+| Compact ARGO profiles with valid temperature | 6,608,321 |
+| Compact ARGO profiles with valid salinity | 5,393,686 |
+| Valid compact ARGO temperature depth points | 156,290,112 |
+| Valid compact ARGO salinity depth points | 133,218,721 |
 
-## ARGO Profile Store
+### Compact ARGO Profile Store
 
 Path:
 
@@ -30,38 +156,35 @@ Path:
 /work/data/depthdif/argo/argo_profiles_on_grid.zarr
 ```
 
-The profile store has dimensions:
+This store is smaller than the enriched ARGO export because it keeps only the
+profile fields needed by the GeoTIFF patch loader.
 
-| Dimension | Count |
-| --- | ---: |
-| `profile` | 6,608,517 |
-| `glorys_depth` | 50 |
-
-Stored variables:
+| Dimension | Meaning | Count |
+| --- | --- | ---: |
+| `profile` | ARGO profile assigned to the GeoTIFF grid. | 6,608,517 |
+| `glorys_depth` | GLORYS depth level. | 50 |
 
 | Variable | Explanation | Shape | Type |
 | --- | --- | --- | --- |
 | `argo_temp_kelvin_uint8` | ARGO temperature values, quantized in Kelvin. | `profile x glorys_depth` | `uint8` |
-| `argo_temp_valid` | True where the temperature value is an observed valid point. | `profile x glorys_depth` | `bool` |
+| `argo_temp_valid` | True where the temperature value is valid. | `profile x glorys_depth` | `bool` |
 | `argo_psal_uint8` | ARGO practical salinity values, quantized. | `profile x glorys_depth` | `uint8` |
-| `argo_psal_valid` | True where the salinity value is an observed valid point. | `profile x glorys_depth` | `bool` |
+| `argo_psal_valid` | True where the salinity value is valid. | `profile x glorys_depth` | `bool` |
 | `profile_date` | Date of the original ARGO profile observation. | `profile` | `int32` |
-| `target_date` | Weekly GLORYS target date the profile was assigned to. | `profile` | `int32` |
+| `target_date` | Weekly GLORYS target date assigned to the profile. | `profile` | `int32` |
 | `latitude` | Profile latitude in degrees north. | `profile` | `float32` |
 | `longitude` | Profile longitude in degrees east. | `profile` | `float32` |
-| `grid_row` | Row index of the nearest raster grid cell. | `profile` | `int32` |
-| `grid_col` | Column index of the nearest raster grid cell. | `profile` | `int32` |
-| `profile_source_file` | Source EN4/ARGO file name for traceability. | `profile` | `<U33` |
+| `grid_row` | Row index of the nearest GeoTIFF grid cell. | `profile` | `int32` |
+| `grid_col` | Column index of the nearest GeoTIFF grid cell. | `profile` | `int32` |
+| `profile_source_file` | Source EN4/ARGO file name. | `profile` | `<U33` |
 | `source_profile_idx` | Profile index inside the source file. | `profile` | `int32` |
-
-Date coverage:
 
 | Field | First | Last | Unique target dates |
 | --- | ---: | ---: | ---: |
 | ARGO profile dates | 20100101 | 20240729 | - |
 | Assigned target dates | 20100101 | 20240726 | 736 |
 
-## GeoTIFF Rasters
+### GeoTIFF Rasters
 
 All raster files share the same grid: 3600 x 1800 pixels, EPSG:4326, stored as
 `uint8`.
@@ -73,7 +196,7 @@ All raster files share the same grid: 3600 x 1800 pixels, EPSG:4326, stored as
 | OSTIA | `analysed_sst` | 761 | 1 | 20100101 | 20240726 |
 | Sea level | `adt` | 761 | 1 | 20100101 | 20240726 |
 
-## Patch Dataset
+### Patch Dataset
 
 The active GeoTIFF loader uses 128 x 128 pixel patches with a 32-pixel stride.
 At 0.1 degrees per pixel, each patch is 12.8 x 12.8 degrees and neighboring
@@ -110,7 +233,10 @@ Land fraction per selected patch/date row:
 | `train` | 0.0000 | 0.0001 | 0.0420 | 0.5994 |
 | `val` | 0.0000 | 0.0001 | 0.0430 | 0.5994 |
 
-## Overlap
+### Overlap
+
+Coverage multiplicity is the number of selected spatial patches covering a
+grid pixel before the date dimension is applied.
 
 | Statistic | Value |
 | --- | ---: |
@@ -119,3 +245,8 @@ Land fraction per selected patch/date row:
 | Nominal overlap per axis | 96 px / 9.6 degrees |
 | Nominal overlap fraction per axis | 75% |
 | Selected spatial patches | 3,547 |
+| Covered grid pixels | 4,883,456 |
+| Coverage multiplicity min | 1 |
+| Coverage multiplicity median | 15 |
+| Coverage multiplicity mean | 11.90 |
+| Coverage multiplicity max | 20 |
