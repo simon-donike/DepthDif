@@ -89,7 +89,7 @@ nav:
       - Production Dataset: production-datasets.md
   - Experiments:
       - Early Experiments: experiments.md
-      - GLORYS/Argo Aligned Experiments: experiments-glorys-argo-aligned.md
+      - Second Dataset Results: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
   - 3D Globe: https://depthdif.donike.net/globe/
   - API Reference: api.md
