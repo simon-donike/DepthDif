@@ -4,7 +4,23 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from train import resolve_load_checkpoint_only, resolve_resume_ckpt_path
+import torch
+
+from train import (
+    load_weights_only_checkpoint,
+    resolve_load_checkpoint_only,
+    resolve_resume_ckpt_path,
+)
+
+
+class _TinyCheckpointModule(torch.nn.Module):
+    """Tiny module with one parameter and one buffer for checkpoint loading tests."""
+
+    def __init__(self) -> None:
+        """Initialize deterministic raw module state."""
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.tensor([1.0]))
+        self.register_buffer("counter", torch.tensor([1], dtype=torch.long))
 
 
 class TestTrainCheckpointConfig(unittest.TestCase):
@@ -36,6 +52,34 @@ class TestTrainCheckpointConfig(unittest.TestCase):
             ValueError, "model.load_checkpoint_only must be true or false"
         ):
             resolve_load_checkpoint_only(model_cfg)
+
+    def test_weights_only_checkpoint_prefers_ema_state_when_present(self) -> None:
+        module = _TinyCheckpointModule()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "ema.ckpt"
+            torch.save(
+                {
+                    "state_dict": {
+                        "weight": torch.tensor([5.0]),
+                        "counter": torch.tensor([2], dtype=torch.long),
+                    },
+                    "callbacks": {
+                        "depth_recon.models.diffusion.EMA": {
+                            "ema_weights": {
+                                "weight": torch.tensor([3.0]),
+                                "counter": torch.tensor([4], dtype=torch.long),
+                            }
+                        }
+                    },
+                },
+                checkpoint_path,
+            )
+
+            weight_source = load_weights_only_checkpoint(module, str(checkpoint_path))
+
+        self.assertEqual(weight_source, "ema")
+        self.assertTrue(torch.allclose(module.weight.detach(), torch.tensor([3.0])))
+        self.assertTrue(torch.equal(module.counter, torch.tensor([4])))
 
 
 if __name__ == "__main__":

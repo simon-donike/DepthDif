@@ -32,6 +32,7 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
+from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import config_path, resolve_config_path
@@ -164,6 +165,19 @@ def resolve_load_checkpoint_only(model_cfg: dict[str, Any]) -> bool:
     if not isinstance(load_checkpoint_only, bool):
         raise ValueError("model.load_checkpoint_only must be true or false.")
     return load_checkpoint_only
+
+
+def load_weights_only_checkpoint(model: torch.nn.Module, ckpt_path: str) -> str:
+    """Load only model weights from a checkpoint, preferring EMA weights if present.
+
+    Args:
+        model (torch.nn.Module): Model receiving the loaded state dict.
+        ckpt_path (str): Checkpoint path to load.
+
+    Returns:
+        str: Loaded weight source, either "ema" or "standard".
+    """
+    return load_checkpoint_weights(model, ckpt_path, strict=True, prefer_ema=True)
 
 
 # Build process rank defensively across common launchers.
@@ -653,13 +667,11 @@ def main(
             datamodule=datamodule,
         )
     if resume_ckpt_path is not None and load_checkpoint_only:
-        checkpoint = torch.load(resume_ckpt_path, map_location="cpu")
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
-        state_dict = (
-            checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        weight_source = load_weights_only_checkpoint(model, resume_ckpt_path)
+        print(
+            f"Loaded {weight_source} model weights from checkpoint: {resume_ckpt_path}"
         )
-        model.load_state_dict(state_dict)
-        print(f"Loaded model weights from checkpoint: {resume_ckpt_path}")
 
     # Set up experiment tracking and best-checkpoint saving.
     logger = build_wandb_logger(training_cfg, model)
