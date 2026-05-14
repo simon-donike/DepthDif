@@ -48,6 +48,7 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 - [Data Overview](data.md): high-level modalities, variables, shared axes, and cadence
 - [Data Source](data-source.md): source product and raw variable tables
 - [Data Export](data-export.md): GeoTIFF dataset layout, quantization, and export command
+- [Dataset Statistics](dataset-statistics.md): measured ARGO, raster, patch, and overlap counts
 - [Data Contract](data-contract.md): model-facing tensor shapes, masks, and normalization
 - [Model](model.md): architecture and diffusion conditioning flow
 - [Temporal Dimension Ideas](temporal_dimension.md): options and tradeoffs for extending from `B,C,H,W` to `B,T,C,H,W` on real dataset windows

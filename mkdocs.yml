@@ -84,6 +84,7 @@ nav:
       - Dataset Downloads: data-download.md
       - Depth Alignment: depth-alignment.md
       - Data Export: data-export.md
+      - Dataset Statistics: dataset-statistics.md
       - Data Contract: data-contract.md
       - Production Dataset: production-datasets.md
   - Experiments:
