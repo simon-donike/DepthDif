@@ -15,12 +15,14 @@ from depth_recon.inference.export_global import (
     DEFAULT_DATA_CONFIG,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
+    DEFAULT_INFERENCE_CONFIG,
     ExportInferenceWrapper,
     FullProfileSample,
     MosaicLayout,
     _cleanup_accumulator,
     _argo_point_features_for_patch,
     _build_parser,
+    _build_inference_loader,
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _default_run_stem,
@@ -37,6 +39,22 @@ from depth_recon.inference.export_global import (
     select_export_indices,
     write_global_top_band_geotiff,
 )
+
+
+class _TinyInferenceDataset:
+    """Small map-style dataset used to test inference-loader collation."""
+
+    def __len__(self) -> int:
+        """Return the sample count."""
+        return 3
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor | int]:
+        """Return one deterministic tensor sample."""
+        value = float(idx)
+        return {
+            "x": torch.full((1, 1, 1), value, dtype=torch.float32),
+            "date": 20260105 + int(idx),
+        }
 
 
 class _IncrementingPredictModel(nn.Module):
@@ -90,6 +108,40 @@ class TestGlobalInferenceExport(unittest.TestCase):
     def test_default_export_gaussian_blur_sigma_is_zero(self) -> None:
         self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 0.0)
 
+    def test_inference_loader_defaults_are_parallel_prefetch(self) -> None:
+        parser = _build_parser()
+
+        args = parser.parse_args(["--year", "2026", "--iso-week", "2"])
+
+        self.assertTrue(DEFAULT_INFERENCE_CONFIG.endswith("inference_config.yaml"))
+        self.assertEqual(args.inference_config, DEFAULT_INFERENCE_CONFIG)
+        self.assertIsNone(args.inference_num_workers)
+        self.assertIsNone(args.inference_prefetch_factor)
+
+    def test_build_inference_loader_collates_selected_grid_rows(self) -> None:
+        rows = [
+            {"date": 20260105, "patch_id": "a"},
+            {"date": 20260106, "patch_id": "b"},
+        ]
+        loader = _build_inference_loader(
+            dataset=_TinyInferenceDataset(),
+            indices=[2, 0],
+            rows=rows,
+            batch_size=2,
+            num_workers=0,
+            prefetch_factor=2,
+            pin_memory=False,
+        )
+
+        batch = next(iter(loader))
+
+        self.assertEqual(batch["dataset_indices"], [2, 0])
+        self.assertEqual(batch["rows"], rows)
+        torch.testing.assert_close(
+            batch["batch"]["x"],
+            torch.tensor([[[[2.0]]], [[[0.0]]]], dtype=torch.float32),
+        )
+
     def test_normalize_cli_args_accepts_sigma_colon_zero(self) -> None:
         self.assertEqual(
             _normalize_cli_args(["--device", "cpu", "sigma:0"]),
@@ -107,6 +159,21 @@ class TestGlobalInferenceExport(unittest.TestCase):
         selection = select_export_indices(rows, iso_year=2026, iso_week=2)
 
         self.assertEqual(selection.selected_date, 20260107)
+        self.assertEqual(selection.iso_year, 2026)
+        self.assertEqual(selection.iso_week, 2)
+        self.assertEqual(selection.indices, [1])
+
+    def test_select_export_indices_picks_closest_available_iso_week_date(self) -> None:
+        rows = [
+            {"date": 20260105, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
+            {"date": 20260108, "lat0": 0.0, "lat1": 1.0, "lon0": 1.0, "lon1": 2.0},
+            {"date": 20260109, "lat0": 1.0, "lat1": 2.0, "lon0": 0.0, "lon1": 1.0},
+            {"date": 20260112, "lat0": 0.0, "lat1": 1.0, "lon0": 0.0, "lon1": 1.0},
+        ]
+
+        selection = select_export_indices(rows, iso_year=2026, iso_week=2)
+
+        self.assertEqual(selection.selected_date, 20260108)
         self.assertEqual(selection.iso_year, 2026)
         self.assertEqual(selection.iso_week, 2)
         self.assertEqual(selection.indices, [1])
@@ -204,6 +271,18 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(overrides["grid"]["patch_stride"], 25)
         self.assertAlmostEqual(overrides["grid"]["max_land_fraction"], 0.80)
         self.assertAlmostEqual(metadata["min_ocean_fraction"], 0.20)
+
+    def test_global_inference_dataset_overrides_accept_custom_patch_stride(
+        self,
+    ) -> None:
+        overrides, metadata = global_inference_dataset_overrides(
+            {"dataset": {"grid": {"tile_size": 128}}},
+            land_mask_path="mask.tif",
+            patch_stride=64,
+        )
+
+        self.assertEqual(overrides["grid"]["patch_stride"], 64)
+        self.assertAlmostEqual(metadata["patch_overlap_fraction"], 0.50)
 
     def test_parser_accepts_one_command_upload_args(self) -> None:
         args = _build_parser().parse_args(

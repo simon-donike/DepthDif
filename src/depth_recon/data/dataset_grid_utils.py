@@ -8,6 +8,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 import rasterio
+from tqdm import tqdm
 
 from depth_recon.paths import resolve_package_path
 
@@ -382,7 +383,12 @@ def _build_land_mask_patch_table(grid_params: _GridParams) -> pd.DataFrame:
 
     records: list[dict[str, Any]] = []
     patch_id = 0
-    for y0 in y_starts:
+    for y0 in tqdm(
+        y_starts,
+        desc="Building land-mask patch grid",
+        unit="row",
+        dynamic_ncols=True,
+    ):
         for x0 in x_starts:
             land_fraction = _window_sum(table, y0=y0, x0=x0, tile=tile) / float(
                 tile * tile

@@ -133,9 +133,10 @@ The script constants should be set explicitly. In this repository, the actively 
 
 ## Workflow 1b: Export Global Depth Rasters  
 Use `src/depth_recon/inference/export_global.py` when you want the standard production inference path: one spatially complete ISO-week globe from raw ARGO/GLORYS/OSTIA/sea-surface products or an equivalent patch dataset. The script:  
-- requires `--year ... --iso-week ...` and uses the ISO-week Wednesday as the single target date  
-- forces the inference grid to `patch_grid_source=land_mask`, `require_argo_for_all=false`, and `patch_stride=tile_size/4` for 75% overlapping patches  
-- keeps every tile with at least `--min-ocean-fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean  
+- requires `--year ... --iso-week ...` and selects the nearest available dataset date within that ISO week  
+- reads inference-grid settings from `src/depth_recon/inference/inference_config.yaml` by default  
+- forces the inference grid to `patch_grid_source=land_mask` and `require_argo_for_all=false`; the default inference config uses `patch_stride=32` for 75% overlap with 128-pixel patches  
+- keeps every tile with at least the configured `min_ocean_fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean  
 - runs batched `predict_step(...)` over all global patches for that week-centered date  
 - runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 75% spatial overlap and overlap-weighted stitching  
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`  
@@ -157,12 +158,12 @@ Typical run:
   --year 2010 \
   --iso-week 1 \
   --device cuda \
-  --min-ocean-fraction 0.05 \
+  --inference-config src/depth_recon/inference/inference_config.yaml \
   --public-base-url https://<bucket-or-site>/inference_production/globe/ \
   --rclone-remote r2:<bucket>/inference_production/globe \
   --rclone-sync-scope globe
 ```
-Increase overlap or lower `--min-ocean-fraction` for coverage changes; per-tile multi-generation is intentionally disabled.  
+Adjust `inference.grid.patch_stride` or `inference.grid.min_ocean_fraction` in the inference config for coverage changes; CLI flags such as `--patch-stride` and `--min-ocean-fraction` still override the config for one-off runs. Per-tile multi-generation is intentionally disabled.  
 
 Outputs land under `inference/outputs/<run_name>/` and include:  
 - `<run_name>_prediction_surface.tif`, `<run_name>_prediction_10m.tif`, `<run_name>_prediction_50m.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters  

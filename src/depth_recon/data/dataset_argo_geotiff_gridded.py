@@ -12,6 +12,7 @@ import rasterio
 from rasterio.windows import Window
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
 import xarray as xr
 import yaml
 import zarr
@@ -473,7 +474,12 @@ class GeoTIFFPatchIndex:
         x_starts = np.asarray(
             sorted({key[1] for key in patch_by_start}), dtype=np.int64
         )
-        for profile_idx in range(int(self.argo_store.target_date.size)):
+        for profile_idx in tqdm(
+            range(int(self.argo_store.target_date.size)),
+            desc="Counting ARGO overlap support",
+            unit="profile",
+            dynamic_ncols=True,
+        ):
             if not bool(self.argo_store._has_valid_temp[profile_idx]):
                 continue
             date_value = int(self.argo_store.target_date[profile_idx])

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
 import xarray as xr
 import yaml
 
@@ -798,7 +799,12 @@ class VirtualPatchIndex:
         # to at most temporal_window_days target dates instead of checking every
         # patch/date row independently.
         patch_lookup = _build_patch_lookup(patch_df, self.grid_params)
-        for profile_idx in range(int(self.argo_store.profile_date.size)):
+        for profile_idx in tqdm(
+            range(int(self.argo_store.profile_date.size)),
+            desc="Counting ARGO overlap support",
+            unit="profile",
+            dynamic_ncols=True,
+        ):
             if not bool(self.argo_store._has_valid_temp[profile_idx]):
                 continue
             profile_date = int(self.argo_store.profile_date[profile_idx])

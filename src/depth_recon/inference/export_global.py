@@ -41,6 +41,7 @@ from rasterio.windows import Window
 from scipy import ndimage as ndi
 import torch
 from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 import yaml
 
@@ -69,6 +70,9 @@ from depth_recon.utils.validation_denoise import save_glorys_profile_comparison_
 DEFAULT_MODEL_CONFIG = str(config_path("px_space", "model_config.yaml"))
 DEFAULT_DATA_CONFIG = str(config_path("px_space", "data_ostia_argo_geotiff.yaml"))
 DEFAULT_TRAIN_CONFIG = str(config_path("px_space", "training_config.yaml"))
+DEFAULT_INFERENCE_CONFIG = str(
+    Path(__file__).resolve().parent / "inference_config.yaml"
+)
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
@@ -77,6 +81,8 @@ DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 DEFAULT_FULL_SAMPLE_COUNT = -1
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
+DEFAULT_INFERENCE_NUM_WORKERS = 8
+DEFAULT_INFERENCE_PREFETCH_FACTOR = 2
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
     ("10m", "10m", 10.0),
@@ -176,6 +182,39 @@ class FullProfileSample:
     ostia_sst_c: float
     observed_profile: np.ndarray
     target_valid_profile: np.ndarray
+
+
+class SelectedInferencePatchDataset(Dataset):
+    """Dataset view over the exact patch indices selected for one export run."""
+
+    def __init__(
+        self,
+        *,
+        dataset: Any,
+        indices: Sequence[int],
+        rows: Sequence[dict[str, Any]],
+    ) -> None:
+        self.dataset = dataset
+        self.indices = [int(idx) for idx in indices]
+        self.rows = [dict(row) for row in rows]
+        if len(self.indices) != len(self.rows):
+            raise ValueError("indices and rows must have the same length.")
+
+    def __len__(self) -> int:
+        """Return the number of selected inference patches."""
+        return int(len(self.indices))
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Load one selected patch and keep metadata needed for stitching."""
+        local_idx = int(idx)
+        dataset_idx = int(self.indices[local_idx])
+        # Keep the original dataset index and row beside the tensor sample so
+        # multi-worker loading can still feed the mosaic writer in grid order.
+        return {
+            "dataset_idx": dataset_idx,
+            "row": self.rows[local_idx],
+            "sample": self.dataset[dataset_idx],
+        }
 
 
 class ExportInferenceWrapper(nn.Module):
@@ -394,6 +433,31 @@ def _iso_week_wednesday(iso_year: int, iso_week: int) -> date:
     return date.fromisocalendar(int(iso_year), int(iso_week), 3)
 
 
+def _closest_available_iso_week_date(
+    parsed_dates: Sequence[tuple[date, int]],
+    *,
+    iso_year: int,
+    iso_week: int,
+) -> date:
+    """Return the available dataset date closest to the ISO-week Wednesday."""
+    target = _iso_week_wednesday(int(iso_year), int(iso_week))
+    candidate_dates = sorted(
+        {
+            sample_date
+            for sample_date, _idx in parsed_dates
+            if sample_date.isocalendar()[:2] == (int(iso_year), int(iso_week))
+        }
+    )
+    if not candidate_dates:
+        raise RuntimeError(
+            "No dataset rows matched ISO week " f"{int(iso_year)}-W{int(iso_week):02d}."
+        )
+    return min(
+        candidate_dates,
+        key=lambda sample_date: (abs(sample_date - target), sample_date),
+    )
+
+
 def _iso_week_label_for_date(parsed_date: date) -> str:
     iso_year, iso_week, _iso_day = parsed_date.isocalendar()
     week_start = parsed_date - timedelta(days=parsed_date.isoweekday() - 1)
@@ -449,16 +513,14 @@ def select_export_indices(
         if not matching_indices:
             raise RuntimeError(f"No dataset rows matched exact date {int(exact_date)}.")
     elif iso_year is not None and iso_week is not None:
-        selected = _iso_week_wednesday(int(iso_year), int(iso_week))
+        selected = _closest_available_iso_week_date(
+            parsed_dates,
+            iso_year=int(iso_year),
+            iso_week=int(iso_week),
+        )
         matching_indices = [
             idx for sample_date, idx in parsed_dates if sample_date == selected
         ]
-        if not matching_indices:
-            raise RuntimeError(
-                "No dataset rows matched the ISO-week Wednesday target date "
-                f"{int(selected.strftime('%Y%m%d'))} for "
-                f"{int(iso_year)}-W{int(iso_week):02d}."
-            )
     else:
         selected = min(sample_date for sample_date, _ in parsed_dates)
         matching_indices = [
@@ -556,6 +618,46 @@ def _collate_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         # Date values arrive as Python ints from the dataset and need explicit batching.
         batch[key] = torch.as_tensor([sample[key] for sample in samples])
     return batch
+
+
+def _collate_inference_items(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Collate selected inference items while preserving row metadata."""
+    return {
+        "dataset_indices": [int(item["dataset_idx"]) for item in items],
+        "rows": [dict(item["row"]) for item in items],
+        "batch": _collate_samples([item["sample"] for item in items]),
+    }
+
+
+def _build_inference_loader(
+    *,
+    dataset: Any,
+    indices: Sequence[int],
+    rows: Sequence[dict[str, Any]],
+    batch_size: int,
+    num_workers: int,
+    prefetch_factor: int,
+    pin_memory: bool,
+) -> DataLoader:
+    """Build the optimized DataLoader used by global export inference."""
+    selected_dataset = SelectedInferencePatchDataset(
+        dataset=dataset,
+        indices=indices,
+        rows=rows,
+    )
+    worker_count = int(num_workers)
+    loader_kwargs: dict[str, Any] = {
+        "dataset": selected_dataset,
+        "batch_size": int(batch_size),
+        "shuffle": False,
+        "num_workers": worker_count,
+        "pin_memory": bool(pin_memory),
+        "persistent_workers": worker_count > 0,
+        "collate_fn": _collate_inference_items,
+    }
+    if worker_count > 0:
+        loader_kwargs["prefetch_factor"] = int(prefetch_factor)
+    return DataLoader(**loader_kwargs)
 
 
 def _to_device(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
@@ -710,15 +812,26 @@ def _nested_cfg_value(mapping: dict[str, Any], path: str, *, default: Any) -> An
     return node
 
 
+def _inference_section(inference_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the root inference config section."""
+    section = inference_cfg.get("inference", inference_cfg)
+    return section if isinstance(section, dict) else {}
+
+
 def global_inference_dataset_overrides(
     data_cfg: dict[str, Any],
     *,
     land_mask_path: str | Path,
     min_ocean_fraction: float = 0.05,
+    patch_stride: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build forced dataset overrides and metadata for global inference."""
     tile_size = int(_nested_cfg_value(data_cfg, "dataset.grid.tile_size", default=128))
-    patch_stride = max(1, tile_size // 4)
+    effective_patch_stride = (
+        max(1, tile_size // 4) if patch_stride is None else int(patch_stride)
+    )
+    if effective_patch_stride < 1:
+        raise ValueError("inference.grid.patch_stride must be >= 1.")
     min_ocean_fraction = float(min_ocean_fraction)
     if not (0.0 <= min_ocean_fraction <= 1.0):
         raise ValueError("--min-ocean-fraction must be in [0, 1].")
@@ -727,15 +840,16 @@ def global_inference_dataset_overrides(
         "grid": {
             "patch_grid_source": "land_mask",
             "land_mask_path": str(land_mask_path),
-            "patch_stride": int(patch_stride),
+            "patch_stride": int(effective_patch_stride),
             "max_land_fraction": float(max_land_fraction),
         },
         "selection": {"require_argo_for_all": False},
     }
     metadata = {
         "tile_size": int(tile_size),
-        "patch_stride": int(patch_stride),
-        "patch_overlap_fraction": 1.0 - (float(patch_stride) / float(tile_size)),
+        "patch_stride": int(effective_patch_stride),
+        "patch_overlap_fraction": 1.0
+        - (float(effective_patch_stride) / float(tile_size)),
         "min_ocean_fraction": float(min_ocean_fraction),
         "max_land_fraction": float(max_land_fraction),
         "patch_grid_source": "land_mask",
@@ -754,12 +868,14 @@ def resolve_global_inference_dataset(
     split: str,
     land_mask_path: str | Path,
     min_ocean_fraction: float = 0.05,
+    patch_stride: int | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Resolve an existing dataset/dataloader or build the raw-product dataset."""
     overrides, metadata = global_inference_dataset_overrides(
         data_cfg,
         land_mask_path=land_mask_path,
         min_ocean_fraction=min_ocean_fraction,
+        patch_stride=patch_stride,
     )
     if source is None:
         dataset = build_dataset(
@@ -1388,6 +1504,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-config", type=str, default=DEFAULT_DATA_CONFIG)
     parser.add_argument("--train-config", type=str, default=DEFAULT_TRAIN_CONFIG)
     parser.add_argument(
+        "--inference-config",
+        type=str,
+        default=DEFAULT_INFERENCE_CONFIG,
+        help="YAML file controlling global inference grid and DataLoader settings.",
+    )
+    parser.add_argument(
         "--checkpoint-path",
         "--model-path-checkpoint",
         "--checkpoint",
@@ -1418,7 +1540,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--batch-size",
         type=int,
         default=None,
-        help="Inference batch size. Defaults to dataloader.val_batch_size then 4.",
+        help="Inference batch size. Defaults to dataloader.batch_size then 4.",
+    )
+    parser.add_argument(
+        "--inference-num-workers",
+        type=int,
+        default=None,
+        help=(
+            "Number of worker processes used by the optimized inference DataLoader. "
+            "Defaults to inference.dataloader.num_workers."
+        ),
+    )
+    parser.add_argument(
+        "--inference-prefetch-factor",
+        type=int,
+        default=None,
+        help=(
+            "Number of batches prefetched by each inference DataLoader worker. "
+            "Defaults to inference.dataloader.prefetch_factor and is only used "
+            "when worker processes are enabled."
+        ),
     )
     parser.add_argument(
         "--device",
@@ -1479,16 +1620,28 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--land-mask-path",
         type=Path,
-        default=Path(DEFAULT_LAND_MASK_PATH),
-        help="GLORYS-aligned GeoTIFF with 1=land and 0=water for final zeroing.",
+        default=None,
+        help=(
+            "GLORYS-aligned GeoTIFF with 1=land and 0=water for final zeroing. "
+            "Defaults to inference.grid.land_mask_path."
+        ),
     )
     parser.add_argument(
         "--min-ocean-fraction",
         type=float,
-        default=0.05,
+        default=None,
         help=(
             "Minimum ocean fraction required for an inference patch. "
-            "Defaults to 0.05, keeping every tile with at least 5%% ocean cover."
+            "Defaults to inference.grid.min_ocean_fraction."
+        ),
+    )
+    parser.add_argument(
+        "--patch-stride",
+        type=int,
+        default=None,
+        help=(
+            "Patch-grid stride in pixels for inference. Defaults to "
+            "inference.grid.patch_stride."
         ),
     )
     parser.add_argument(
@@ -1566,14 +1719,42 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
     training_cfg = _load_yaml(args.train_config)
     data_cfg = load_yaml(args.data_config)
+    inference_cfg = _load_yaml(args.inference_config)
+    inference_section = _inference_section(inference_cfg)
+    inference_grid_cfg = inference_section.get("grid", {})
+    inference_dataloader_cfg = inference_section.get("dataloader", {})
+    if not isinstance(inference_grid_cfg, dict):
+        inference_grid_cfg = {}
+    if not isinstance(inference_dataloader_cfg, dict):
+        inference_dataloader_cfg = {}
+    effective_land_mask_path = Path(
+        args.land_mask_path
+        if args.land_mask_path is not None
+        else inference_grid_cfg.get("land_mask_path", DEFAULT_LAND_MASK_PATH)
+    )
+    effective_min_ocean_fraction = float(
+        args.min_ocean_fraction
+        if args.min_ocean_fraction is not None
+        else inference_grid_cfg.get("min_ocean_fraction", 0.05)
+    )
+    effective_patch_stride = (
+        int(args.patch_stride)
+        if args.patch_stride is not None
+        else (
+            None
+            if inference_grid_cfg.get("patch_stride") is None
+            else int(inference_grid_cfg["patch_stride"])
+        )
+    )
     configured_val_year = data_cfg.get("split", {}).get("val_year")
     dataset, inference_grid_metadata = resolve_global_inference_dataset(
         None,
         data_config_path=args.data_config,
         data_cfg=data_cfg,
         split=args.split,
-        land_mask_path=args.land_mask_path,
-        min_ocean_fraction=args.min_ocean_fraction,
+        land_mask_path=effective_land_mask_path,
+        min_ocean_fraction=effective_min_ocean_fraction,
+        patch_stride=effective_patch_stride,
     )
     if hasattr(dataset, "return_info"):
         dataset.return_info = False
@@ -1607,7 +1788,26 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     batch_size = int(
         args.batch_size
         if args.batch_size is not None
-        else training_cfg.get("dataloader", {}).get("val_batch_size", 4)
+        else inference_dataloader_cfg.get(
+            "batch_size",
+            training_cfg.get("dataloader", {}).get("batch_size", 4),
+        )
+    )
+    inference_num_workers = int(
+        args.inference_num_workers
+        if args.inference_num_workers is not None
+        else inference_dataloader_cfg.get(
+            "num_workers",
+            DEFAULT_INFERENCE_NUM_WORKERS,
+        )
+    )
+    inference_prefetch_factor = int(
+        args.inference_prefetch_factor
+        if args.inference_prefetch_factor is not None
+        else inference_dataloader_cfg.get(
+            "prefetch_factor",
+            DEFAULT_INFERENCE_PREFETCH_FACTOR,
+        )
     )
     requested_full_sample_count = int(args.full_sample_count)
     export_all_full_samples = requested_full_sample_count < 0
@@ -1615,6 +1815,10 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
     if batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
+    if inference_num_workers < 0:
+        raise ValueError("--inference-num-workers must be >= 0.")
+    if inference_prefetch_factor < 1:
+        raise ValueError("--inference-prefetch-factor must be >= 1.")
 
     sample_for_shape = dataset[selection.indices[0]]
     patch_shape = tuple(int(v) for v in sample_for_shape["y"].shape[-2:])
@@ -1629,7 +1833,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     )
     layout = build_mosaic_layout(selected_rows, patch_shape=patch_shape)
     land_mask = load_land_mask_for_layout(
-        land_mask_path=Path(args.land_mask_path),
+        land_mask_path=effective_land_mask_path,
         layout=layout,
     )
     scratch_dir = run_dir / ".scratch"
@@ -1692,6 +1896,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"iso_week={selection.iso_year}-W{selection.iso_week:02d}, "
         f"selected_patches={len(selection.indices)}, "
         f"batch_size={batch_size}, "
+        f"inference_num_workers={inference_num_workers}, "
+        f"inference_prefetch_factor={inference_prefetch_factor}, "
         f"export_ground_truth={bool(args.export_ground_truth)}, "
         f"full_sample_count="
         f"{'all' if export_all_full_samples else full_sample_count}, "
@@ -1700,7 +1906,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"patch_stride={inference_grid_metadata['patch_stride']}, "
         f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
         f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
-        f"land_mask_path={args.land_mask_path}, "
+        f"land_mask_path={effective_land_mask_path}, "
         f"rectangle={args.rectangle}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
@@ -1756,17 +1962,24 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     else:
         inference_runner = inference_module
 
-    total_batches = (len(selection.indices) + batch_size - 1) // batch_size
+    inference_loader = _build_inference_loader(
+        dataset=dataset,
+        indices=selection.indices,
+        rows=selected_rows,
+        batch_size=batch_size,
+        num_workers=inference_num_workers,
+        prefetch_factor=inference_prefetch_factor,
+        pin_memory=device.type == "cuda",
+    )
     progress = tqdm(
-        range(0, len(selection.indices), batch_size),
-        total=total_batches,
+        inference_loader,
+        total=len(inference_loader),
         desc="Running inference and streaming patches",
         unit="batch",
     )
-    for start in progress:
-        batch_indices = selection.indices[start : start + batch_size]
-        batch_samples = [dataset[idx] for idx in batch_indices]
-        batch = _collate_samples(batch_samples)
+    for inference_items in progress:
+        batch_indices = inference_items["dataset_indices"]
+        batch = inference_items["batch"]
         model_batch = batch if use_multi_gpu else _to_device(batch, device)
         with torch.no_grad():
             outputs = inference_runner(model_batch)
@@ -1811,7 +2024,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             if export_full_profiles
             else None
         )
-        selected_row_batch = selected_rows[start : start + len(batch_indices)]
+        selected_row_batch = inference_items["rows"]
         for local_idx, (dataset_idx, row) in enumerate(
             zip(batch_indices, selected_row_batch, strict=False)
         ):
@@ -1996,7 +2209,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "requested_depth_m": f"{float(level.requested_depth_m):.3f}",
             "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
             "channel_index": str(int(level.channel_index)),
-            "land_mask_path": str(args.land_mask_path),
+            "land_mask_path": str(effective_land_mask_path),
             "land_zeroed": "true",
         }
         write_global_top_band_geotiff(
@@ -2094,12 +2307,13 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "Global raster export uses split=all for complete world coverage; "
             "the configured validation year identifies validation-year rows."
         ),
-        "land_mask_path": str(args.land_mask_path),
+        "land_mask_path": str(effective_land_mask_path),
         "land_zeroed": True,
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
         "data_config": str(args.data_config),
         "train_config": str(args.train_config),
+        "inference_config": str(args.inference_config),
         "device": str(device),
         "visible_gpus": int(visible_gpu_count),
         "multi_gpu_enabled": bool(use_multi_gpu),

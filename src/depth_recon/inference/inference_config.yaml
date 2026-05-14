@@ -1,0 +1,12 @@
+inference:
+  grid:
+    # The global exporter builds a dedicated inference grid from the land mask.
+    # For 128-pixel patches, stride 32 gives 75% overlap in each spatial axis.
+    patch_stride: 32
+    min_ocean_fraction: 0.05
+    land_mask_path: "src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
+
+  dataloader:
+    batch_size: 48
+    num_workers: 8
+    prefetch_factor: 2
