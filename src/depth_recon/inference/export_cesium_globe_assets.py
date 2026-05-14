@@ -25,7 +25,10 @@ import subprocess
 import sys
 from typing import Any
 
+import numpy as np
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.warp import reproject
 import yaml
 
 if __package__ in {None, ""}:
@@ -111,6 +114,19 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
     return None
 
 
+def _resolve_land_mask_path(
+    run_summary: dict[str, Any],
+    *,
+    run_dir: Path,
+) -> Path | None:
+    """Resolve the land-mask path recorded by the inference export."""
+    path_value = run_summary.get("land_mask_path")
+    inference_grid = run_summary.get("inference_grid")
+    if path_value is None and isinstance(inference_grid, dict):
+        path_value = inference_grid.get("land_mask_path")
+    return _coerce_existing_path(path_value, run_dir=run_dir)
+
+
 def _resolve_run_artifacts(
     run_dir: Path,
 ) -> tuple[
@@ -169,6 +185,9 @@ def _resolve_run_artifacts(
     if full_sample_points_path is None:
         matches = sorted(run_dir.glob("*_full_sample_locations.geojson"))
         full_sample_points_path = matches[0] if matches else None
+    if full_sample_points_path is None:
+        candidate = run_dir / "globe" / "full_sample_locations.geojson"
+        full_sample_points_path = candidate if candidate.exists() else None
 
     graphs_dir_path = _coerce_existing_path(
         run_summary.get("graphs_dir_path"),
@@ -176,6 +195,9 @@ def _resolve_run_artifacts(
     )
     if graphs_dir_path is None:
         candidate = run_dir / "graphs"
+        graphs_dir_path = candidate if candidate.exists() else None
+    if graphs_dir_path is None:
+        candidate = run_dir / "globe" / "graphs"
         graphs_dir_path = candidate if candidate.exists() else None
 
     return (
@@ -273,7 +295,9 @@ def _colorize_raster(
     output_path: Path,
     *,
     color_ramp_path: Path,
+    land_mask_path: Path | None = None,
 ) -> None:
+    """Colorize one Celsius raster and make nodata/land pixels transparent."""
     gdaldem_exe = shutil.which("gdaldem")
     if gdaldem_exe is None:
         raise RuntimeError("gdaldem was not found on PATH.")
@@ -288,6 +312,77 @@ def _colorize_raster(
         str(output_path),
     ]
     subprocess.run(command, check=True)
+    _apply_alpha_mask_to_colorized_raster(
+        input_path,
+        output_path,
+        land_mask_path=land_mask_path,
+    )
+
+
+def _reproject_land_mask_for_raster(
+    source: rasterio.io.DatasetReader,
+    land_mask_path: Path,
+) -> np.ndarray:
+    """Return the land mask aligned to the raster being tiled."""
+    with rasterio.open(land_mask_path) as mask_ds:
+        destination = np.zeros((source.height, source.width), dtype=np.uint8)
+        reproject(
+            source=mask_ds.read(1),
+            destination=destination,
+            src_transform=mask_ds.transform,
+            src_crs=mask_ds.crs,
+            dst_transform=source.transform,
+            dst_crs=source.crs,
+            resampling=Resampling.nearest,
+        )
+    return destination > 0
+
+
+def _transparent_pixel_mask(
+    input_path: Path,
+    *,
+    land_mask_path: Path | None = None,
+) -> np.ndarray:
+    """Build a boolean mask for pixels that should be transparent in Cesium."""
+    with rasterio.open(input_path) as ds:
+        data = ds.read(1, masked=False)
+        transparent = ~np.isfinite(data)
+        if ds.nodata is not None:
+            transparent |= np.isclose(data, float(ds.nodata))
+        if land_mask_path is not None:
+            # The GeoTIFF export zeroes land for numeric use; Cesium needs the
+            # original mask so real 0 C ocean pixels are still visible.
+            transparent |= _reproject_land_mask_for_raster(ds, land_mask_path)
+    return transparent
+
+
+def _apply_alpha_mask_to_colorized_raster(
+    input_path: Path,
+    output_path: Path,
+    *,
+    land_mask_path: Path | None = None,
+) -> None:
+    """Apply transparent alpha to colorized nodata and land pixels."""
+    transparent = _transparent_pixel_mask(input_path, land_mask_path=land_mask_path)
+    with rasterio.open(output_path, "r+") as ds:
+        if ds.count < 4:
+            raise RuntimeError(
+                f"Colorized raster must have an alpha band: {output_path}"
+            )
+
+        alpha = ds.read(4)
+        opaque_value = (
+            np.iinfo(alpha.dtype).max if np.issubdtype(alpha.dtype, np.integer) else 1.0
+        )
+        alpha[transparent] = 0
+        alpha[~transparent] = opaque_value
+        ds.write(alpha, 4)
+
+        # Also clear RGB behind transparent pixels to avoid colored tile edges.
+        for band_index in range(1, min(3, ds.count) + 1):
+            band = ds.read(band_index)
+            band[transparent] = 0
+            ds.write(band, band_index)
 
 
 def _estimate_native_zoom_level(input_path: Path) -> int:
@@ -696,6 +791,7 @@ def export_cesium_globe_assets(
     color_ramp_path = Path(color_ramp_path)
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
+    land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
 
     depth_exports = _resolve_depth_export_artifacts(
         run_dir=run_dir,
@@ -716,6 +812,7 @@ def export_cesium_globe_assets(
             prediction_export_path,
             prediction_colorized_path,
             color_ramp_path=color_ramp_path,
+            land_mask_path=land_mask_path,
         )
         prediction_tiles_dir_for_depth = globe_dir / f"prediction_tiles_{suffix}"
         _run_gdal2tiles(
@@ -737,6 +834,7 @@ def export_cesium_globe_assets(
                 ground_truth_export_path,
                 ground_truth_colorized_path,
                 color_ramp_path=color_ramp_path,
+                land_mask_path=land_mask_path,
             )
             ground_truth_tiles_dir_for_depth = (
                 globe_dir / f"ground_truth_tiles_{suffix}"
@@ -812,9 +910,10 @@ def export_cesium_globe_assets(
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():
         copied_graphs_dir_path = globe_dir / "graphs"
-        if copied_graphs_dir_path.exists():
-            shutil.rmtree(copied_graphs_dir_path)
-        shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
+        if graphs_dir_path.resolve() != copied_graphs_dir_path.resolve():
+            if copied_graphs_dir_path.exists():
+                shutil.rmtree(copied_graphs_dir_path)
+            shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
 
     prediction_meta = _read_raster_metadata(prediction_path)
     ground_truth_meta = (
@@ -917,6 +1016,7 @@ def export_cesium_globe_assets(
         f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
     )
     print(f"- color ramp: {color_ramp_path}")
+    print(f"- transparent land mask: {land_mask_path}")
     print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
     print("- tile resampling: nearest-neighbor")
     upload_ok: bool | None = None

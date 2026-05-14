@@ -19,6 +19,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_TEMPLATE_PATH,
     FULL_SAMPLE_PROPERTY_KEYS,
+    _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
     _estimate_native_zoom_level,
@@ -167,6 +168,75 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "Random full-depth profile locations",
         )
 
+    def test_apply_alpha_mask_to_colorized_raster_hides_nodata_and_land(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "input.tif"
+            colorized_path = tmp_path / "colorized.tif"
+            land_mask_path = tmp_path / "land_mask.tif"
+            transform = from_origin(0.0, 2.0, 1.0, 1.0)
+
+            with rasterio.open(
+                input_path,
+                "w",
+                driver="GTiff",
+                height=2,
+                width=3,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(
+                    np.array(
+                        [[[10.0, -9999.0, 0.0], [8.0, 0.0, 12.0]]],
+                        dtype=np.float32,
+                    )
+                )
+
+            with rasterio.open(
+                land_mask_path,
+                "w",
+                driver="GTiff",
+                height=2,
+                width=3,
+                count=1,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(np.array([[[0, 0, 0], [0, 1, 0]]], dtype=np.uint8))
+
+            with rasterio.open(
+                colorized_path,
+                "w",
+                driver="GTiff",
+                height=2,
+                width=3,
+                count=4,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(np.full((4, 2, 3), 200, dtype=np.uint8))
+
+            _apply_alpha_mask_to_colorized_raster(
+                input_path,
+                colorized_path,
+                land_mask_path=land_mask_path,
+            )
+
+            with rasterio.open(colorized_path) as ds:
+                rgba = ds.read()
+
+        self.assertEqual(int(rgba[3, 0, 1]), 0)
+        self.assertEqual(int(rgba[3, 1, 1]), 0)
+        self.assertEqual(int(rgba[3, 0, 2]), 255)
+        self.assertEqual(int(rgba[0, 1, 1]), 0)
+
     def test_template_is_valid_json(self) -> None:
         template_path = DEFAULT_TEMPLATE_PATH
         with template_path.open("r", encoding="utf-8") as f:
@@ -194,14 +264,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
 
         self.assertIn('class="standalone-globe-root"', html)
+        self.assertIn('id="globe-page-eyebrow"', html)
         self.assertIn('id="globe-depth-level-ticks"', html)
         self.assertIn("ARGO Locations", html)
+        self.assertIn("Patches", html)
         self.assertIn('loading="lazy"', html)
         self.assertIn(".standalone-globe-root,", css)
         self.assertIn("box-sizing: border-box;", css)
         self.assertIn('document.querySelectorAll("script[src]")', loader)
         self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
         self.assertIn("function resolveConfigUrl()", globe_script)
+        self.assertIn('const PATCH_FILL_COLOR = "#f97316";', globe_script)
         self.assertIn(
             "new URL(configParam, window.location.href).toString()", globe_script
         )

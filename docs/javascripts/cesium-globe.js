@@ -18,10 +18,10 @@
     { value: 30.0, rgb: [180, 16, 26] },
   ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
-  const PATCH_FILL_ALPHA = 0.06;
-  const PATCH_FILL_COLOR = "#38bdf8";
-  const PATCH_OUTLINE_COLOR = "#f8fafc";
-  const PATCH_OUTLINE_WIDTH = 2.0;
+  const PATCH_FILL_ALPHA = 0.18;
+  const PATCH_FILL_COLOR = "#f97316";
+  const PATCH_OUTLINE_COLOR = "#fb923c";
+  const PATCH_OUTLINE_WIDTH = 2.75;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
   const BACKGROUND_PRELOAD_DELAY_MS = 180;
   const MONTH_ABBREVIATIONS = [
@@ -75,8 +75,11 @@
       depthTicks: document.getElementById("globe-depth-level-ticks"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
+      pageEyebrow: document.getElementById("globe-page-eyebrow"),
       pageTitle: document.getElementById("globe-page-title"),
       pageDescription: document.getElementById("globe-page-description"),
+      mobileBlockTitle: document.getElementById("globe-mobile-block-title"),
+      mobileBlockText: document.getElementById("globe-mobile-block-text"),
       argoLegend: document.getElementById("globe-argo-legend"),
       profilePopup: document.getElementById("globe-profile-popup"),
       profilePopupTitle: document.getElementById("globe-profile-popup-title"),
@@ -193,15 +196,17 @@
   function resolveConfigDateParts(config) {
     const targetDate = config.target_date || config.selected_date;
     const dateParts = resolveSelectedDateParts(targetDate);
-    if (!dateParts) {
+    const configIsoYear = Number(config.iso_year);
+    const configIsoWeek = Number(config.iso_week);
+    if (!dateParts && (!Number.isFinite(configIsoYear) || !Number.isFinite(configIsoWeek))) {
       return null;
     }
-    const isoYear = Number(config.iso_year || dateParts.isoYear);
-    const isoWeek = Number(config.iso_week || dateParts.isoWeek);
+    const isoYear = Number.isFinite(configIsoYear) ? configIsoYear : dateParts.isoYear;
+    const isoWeek = Number.isFinite(configIsoWeek) ? configIsoWeek : dateParts.isoWeek;
     return {
       isoYear: Number.isFinite(isoYear) ? isoYear : dateParts.isoYear,
       isoWeek: Number.isFinite(isoWeek) ? isoWeek : dateParts.isoWeek,
-      dominantMonthLabel: dateParts.dominantMonthLabel,
+      dominantMonthLabel: dateParts ? dateParts.dominantMonthLabel : "",
       dateLabel: formatCompactDate(targetDate),
     };
   }
@@ -233,36 +238,68 @@
     );
   }
 
+  function formatConfigIsoWeekLabel(dateParts) {
+    return (
+      String(dateParts.isoYear) +
+      "-W" +
+      String(dateParts.isoWeek).padStart(2, "0") +
+      (dateParts.dominantMonthLabel ? " (" + dateParts.dominantMonthLabel + ")" : "")
+    );
+  }
+
   function updatePageHeader(elements, config) {
-    if (!elements.pageTitle && !elements.pageDescription) {
+    if (
+      !elements.pageEyebrow &&
+      !elements.pageTitle &&
+      !elements.pageDescription &&
+      !elements.mobileBlockTitle &&
+      !elements.mobileBlockText
+    ) {
       return;
     }
 
     const selectedDateParts = resolveConfigDateParts(config);
+    const weekLabel = selectedDateParts ? formatConfigIsoWeekLabel(selectedDateParts) : "";
+    const compactWeekLabel = selectedDateParts
+      ? String(selectedDateParts.isoYear) +
+        "-W" +
+        String(selectedDateParts.isoWeek).padStart(2, "0")
+      : "";
+    const titleText = compactWeekLabel ? "DepthDif " + compactWeekLabel : "DepthDif";
+    const descriptionText = selectedDateParts
+      ? "Densifies deep sea measurements using diffusion. This 3D globe shows the export for ISO week " +
+        weekLabel +
+        (selectedDateParts.dateLabel ? ", selected date " + selectedDateParts.dateLabel + "." : ".")
+      : "Densifies deep sea measurements using diffusion.";
+
+    document.title = compactWeekLabel ? titleText + " Globe" : "DepthDif Globe";
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription) {
+      metaDescription.setAttribute("content", descriptionText);
+    }
+    if (elements.pageEyebrow) {
+      elements.pageEyebrow.textContent = compactWeekLabel
+        ? "DepthDif Viewer " + compactWeekLabel
+        : "DepthDif Viewer";
+    }
     if (elements.pageTitle) {
-      elements.pageTitle.textContent = selectedDateParts
-        ? "DepthDif " +
-          String(selectedDateParts.isoYear) +
-          "-W" +
-          String(selectedDateParts.isoWeek).padStart(2, "0")
-        : "DepthDif";
+      elements.pageTitle.textContent = titleText;
     }
 
     if (elements.pageDescription) {
-      if (selectedDateParts) {
-        elements.pageDescription.textContent =
-          "Densifies deep sea measurements using diffusion. This 3D globe shows the export for ISO week " +
-          String(selectedDateParts.isoYear) +
-          "-W" +
-          String(selectedDateParts.isoWeek).padStart(2, "0") +
-          (selectedDateParts.dominantMonthLabel
-            ? " (" + selectedDateParts.dominantMonthLabel + ")"
-            : "") +
-          (selectedDateParts.dateLabel ? ", selected date " + selectedDateParts.dateLabel + "." : ".");
-      } else {
-        elements.pageDescription.textContent =
-          "Densifies deep sea measurements using diffusion.";
-      }
+      elements.pageDescription.textContent = descriptionText;
+    }
+    if (elements.mobileBlockTitle) {
+      elements.mobileBlockTitle.textContent = compactWeekLabel
+        ? "3D globe visualization for " + compactWeekLabel + " is disabled on mobile"
+        : "3D globe visualization is disabled on mobile";
+    }
+    if (elements.mobileBlockText) {
+      elements.mobileBlockText.textContent = selectedDateParts
+        ? "Open the page on a desktop or laptop to load Cesium and inspect the " +
+          weekLabel +
+          " prediction globe."
+        : "Open the page on a desktop or laptop to load Cesium and inspect the prediction globe.";
     }
   }
 
@@ -487,12 +524,21 @@
       return "argo";
     }
     if (properties.marker_kind) {
-      return String(properties.marker_kind.getValue(now) || "argo");
+      const markerKind = String(properties.marker_kind.getValue(now) || "argo");
+      if (markerKind !== "argo") {
+        return markerKind;
+      }
     }
     if (properties.has_full_depth_graph) {
-      return properties.has_full_depth_graph.getValue(now) ? "full_depth_profile" : "argo";
+      if (properties.has_full_depth_graph.getValue(now)) {
+        return "full_depth_profile";
+      }
     }
-    return properties.graph_png_path ? "full_depth_profile" : "argo";
+    if (properties.graph_png_path) {
+      const graphPath = properties.graph_png_path.getValue(now);
+      return graphPath ? "full_depth_profile" : "argo";
+    }
+    return "argo";
   }
 
   function entityHasFullDepthGraph(entity, now) {
@@ -537,6 +583,7 @@
   function stylePatchSplitEntities(dataSource) {
     const fillColor = Cesium.Color.fromCssColorString(PATCH_FILL_COLOR).withAlpha(PATCH_FILL_ALPHA);
     const outlineColor = Cesium.Color.fromCssColorString(PATCH_OUTLINE_COLOR);
+    const now = Cesium.JulianDate.now();
     dataSource.entities.values.forEach(function (entity) {
       entity.billboard = null;
       entity.label = null;
@@ -546,10 +593,19 @@
 
       // Keep patch overlays readable above imagery without hiding the raster values.
       entity.polygon.material = fillColor;
-      entity.polygon.outline = true;
-      entity.polygon.outlineColor = outlineColor;
-      entity.polygon.outlineWidth = PATCH_OUTLINE_WIDTH;
-      entity.polyline = null;
+      entity.polygon.outline = false;
+      const hierarchy = entity.polygon.hierarchy
+        ? entity.polygon.hierarchy.getValue(now)
+        : null;
+      const positions = hierarchy && hierarchy.positions ? hierarchy.positions : null;
+      if (positions && positions.length > 1) {
+        entity.polyline = new Cesium.PolylineGraphics({
+          positions: positions.concat([positions[0]]),
+          material: outlineColor,
+          width: PATCH_OUTLINE_WIDTH,
+          clampToGround: true,
+        });
+      }
     });
   }
 
