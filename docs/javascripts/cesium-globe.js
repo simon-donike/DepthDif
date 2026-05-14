@@ -18,13 +18,12 @@
     { value: 30.0, rgb: [180, 16, 26] },
   ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
-  const PATCH_SPLIT_ALPHA = 0.5;
+  const PATCH_FILL_ALPHA = 0.06;
+  const PATCH_FILL_COLOR = "#38bdf8";
+  const PATCH_OUTLINE_COLOR = "#f8fafc";
+  const PATCH_OUTLINE_WIDTH = 2.0;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
   const BACKGROUND_PRELOAD_DELAY_MS = 180;
-  const PATCH_SPLIT_COLORS = {
-    train: "#1f9d55",
-    val: "#d64545",
-  };
   const MONTH_ABBREVIATIONS = [
     "Jan",
     "Feb",
@@ -191,6 +190,36 @@
     return { isoYear, isoWeek, dominantMonthLabel };
   }
 
+  function resolveConfigDateParts(config) {
+    const targetDate = config.target_date || config.selected_date;
+    const dateParts = resolveSelectedDateParts(targetDate);
+    if (!dateParts) {
+      return null;
+    }
+    const isoYear = Number(config.iso_year || dateParts.isoYear);
+    const isoWeek = Number(config.iso_week || dateParts.isoWeek);
+    return {
+      isoYear: Number.isFinite(isoYear) ? isoYear : dateParts.isoYear,
+      isoWeek: Number.isFinite(isoWeek) ? isoWeek : dateParts.isoWeek,
+      dominantMonthLabel: dateParts.dominantMonthLabel,
+      dateLabel: formatCompactDate(targetDate),
+    };
+  }
+
+  function formatCompactDate(dateValue) {
+    const date = parseCompactUtcDate(dateValue);
+    if (!date) {
+      return "";
+    }
+    return (
+      String(date.getUTCFullYear()) +
+      "-" +
+      String(date.getUTCMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(date.getUTCDate()).padStart(2, "0")
+    );
+  }
+
   function formatCompactIsoWeek(dateValue) {
     const dateParts = resolveSelectedDateParts(dateValue);
     if (!dateParts) {
@@ -209,21 +238,27 @@
       return;
     }
 
-    const selectedDateParts = resolveSelectedDateParts(config.selected_date);
+    const selectedDateParts = resolveConfigDateParts(config);
     if (elements.pageTitle) {
-      elements.pageTitle.textContent = "DepthDif";
+      elements.pageTitle.textContent = selectedDateParts
+        ? "DepthDif " +
+          String(selectedDateParts.isoYear) +
+          "-W" +
+          String(selectedDateParts.isoWeek).padStart(2, "0")
+        : "DepthDif";
     }
 
     if (elements.pageDescription) {
       if (selectedDateParts) {
         elements.pageDescription.textContent =
-          "Densifies deep sea measurements using diffusion. This 3D globe represents a weekly aggregate from ISO week " +
+          "Densifies deep sea measurements using diffusion. This 3D globe shows the export for ISO week " +
           String(selectedDateParts.isoYear) +
           "-W" +
           String(selectedDateParts.isoWeek).padStart(2, "0") +
           (selectedDateParts.dominantMonthLabel
-            ? " (" + selectedDateParts.dominantMonthLabel + ")."
-            : ".");
+            ? " (" + selectedDateParts.dominantMonthLabel + ")"
+            : "") +
+          (selectedDateParts.dateLabel ? ", selected date " + selectedDateParts.dateLabel + "." : ".");
       } else {
         elements.pageDescription.textContent =
           "Densifies deep sea measurements using diffusion.";
@@ -383,11 +418,6 @@
     );
   }
 
-  function splitColor(splitValue) {
-    const normalized = String(splitValue || "").trim().toLowerCase();
-    return Cesium.Color.fromCssColorString(PATCH_SPLIT_COLORS[normalized] || "#ffffff");
-  }
-
   function formatCoordinate(value, positiveLabel, negativeLabel) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -505,23 +535,20 @@
   }
 
   function stylePatchSplitEntities(dataSource) {
-    const now = Cesium.JulianDate.now();
+    const fillColor = Cesium.Color.fromCssColorString(PATCH_FILL_COLOR).withAlpha(PATCH_FILL_ALPHA);
+    const outlineColor = Cesium.Color.fromCssColorString(PATCH_OUTLINE_COLOR);
     dataSource.entities.values.forEach(function (entity) {
-      const splitValue =
-        entity.properties && entity.properties.split
-          ? entity.properties.split.getValue(now)
-          : null;
-      const fillColor = splitColor(splitValue).withAlpha(PATCH_SPLIT_ALPHA);
-
       entity.billboard = null;
       entity.label = null;
       if (!entity.polygon) {
         return;
       }
 
-      // Keep the split overlay simple and stable: solid train/val squares with fixed alpha.
+      // Keep patch overlays readable above imagery without hiding the raster values.
       entity.polygon.material = fillColor;
-      entity.polygon.outline = false;
+      entity.polygon.outline = true;
+      entity.polygon.outlineColor = outlineColor;
+      entity.polygon.outlineWidth = PATCH_OUTLINE_WIDTH;
       entity.polyline = null;
     });
   }

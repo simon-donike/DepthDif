@@ -533,6 +533,9 @@ def _resolve_layer_url(name: str, *, public_base_url: str | None) -> str:
 def build_globe_config(
     *,
     selected_date: int | None,
+    target_date: int | None,
+    iso_year: int | None,
+    iso_week: int | None,
     prediction_tiles_url: str,
     ground_truth_tiles_url: str | None,
     depth_levels: list[dict[str, Any]],
@@ -555,6 +558,9 @@ def build_globe_config(
     config.update(
         {
             "selected_date": selected_date,
+            "target_date": target_date,
+            "iso_year": iso_year,
+            "iso_week": iso_week,
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "depth_levels": depth_levels,
@@ -819,6 +825,9 @@ def export_cesium_globe_assets(
     template = _load_template(Path(template_path))
     config = build_globe_config(
         selected_date=run_summary.get("selected_date"),
+        target_date=run_summary.get("target_date", run_summary.get("selected_date")),
+        iso_year=run_summary.get("iso_year"),
+        iso_week=run_summary.get("iso_week"),
         prediction_tiles_url=str(config_depth_levels[0]["prediction_tiles_url"]),
         ground_truth_tiles_url=(
             None
@@ -865,7 +874,7 @@ def export_cesium_globe_assets(
         ),
         points_credit=None if copied_points_path is None else "Observed Argo points",
         patch_splits_credit=(
-            None if copied_patch_splits_path is None else "Train/val patch split grid"
+            None if copied_patch_splits_path is None else "Inference patch grid"
         ),
         full_sample_points_credit=(
             None

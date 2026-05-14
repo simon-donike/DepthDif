@@ -74,6 +74,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
     def test_build_globe_config_preserves_expected_urls_and_bounds(self) -> None:
         template = {
             "selected_date": None,
+            "target_date": None,
+            "iso_year": None,
+            "iso_week": None,
             "prediction_tiles_url": None,
             "ground_truth_tiles_url": None,
             "depth_levels": [],
@@ -98,6 +101,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         config = build_globe_config(
             selected_date=20260105,
+            target_date=20260105,
+            iso_year=2026,
+            iso_week=2,
             prediction_tiles_url="./prediction_tiles",
             ground_truth_tiles_url="./ground_truth_tiles",
             depth_levels=[
@@ -118,7 +124,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             prediction_credit="Prediction source",
             ground_truth_credit="Ground truth source",
             points_credit="Observed Argo points",
-            patch_splits_credit="Train/val patch split grid",
+            patch_splits_credit="Inference patch grid",
             full_sample_points_credit="Random full-depth profile locations",
             color_scale_min_c=0.0,
             color_scale_max_c=30.0,
@@ -127,6 +133,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
 
         self.assertEqual(config["selected_date"], 20260105)
+        self.assertEqual(config["target_date"], 20260105)
+        self.assertEqual(config["iso_year"], 2026)
+        self.assertEqual(config["iso_week"], 2)
         self.assertEqual(config["prediction_tiles_url"], "./prediction_tiles")
         self.assertEqual(config["ground_truth_tiles_url"], "./ground_truth_tiles")
         self.assertEqual(config["depth_levels"][0]["label"], "Surface")
@@ -152,9 +161,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
         self.assertEqual(config["credits"]["points"], "Observed Argo points")
-        self.assertEqual(
-            config["credits"]["patch_splits"], "Train/val patch split grid"
-        )
+        self.assertEqual(config["credits"]["patch_splits"], "Inference patch grid")
         self.assertEqual(
             config["credits"]["full_sample_points"],
             "Random full-depth profile locations",

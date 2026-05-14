@@ -212,7 +212,7 @@ The standard path is to let `src/depth_recon/inference/export_global.py` package
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties  
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder  
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points  
-- rewrites the train/val patch-split GeoJSON with rounded coordinates and only the `split` property  
+- rewrites the patch GeoJSON with rounded coordinates for the viewer overlay  
 - writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider  
 
 Typical run:  
@@ -229,7 +229,7 @@ The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/glob
 - `argo_points.geojson`: hosted raw observed-point overlay source retained alongside the combined file  
 - `full_sample_locations.geojson`: hosted sampled-profile point overlay source retained alongside the combined file  
 - `graphs/`: hosted PNGs opened by the sampled-profile popup  
-- `patch_splits.geojson`: hosted train/val patch grid overlay rendered as solid red/green fills at fixed 50% opacity in the globe viewer  
+- `patch_splits.geojson`: hosted patch grid overlay rendered with transparent fill and hard borders in the globe viewer  
 - `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route  
 
 Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for bucket upload.  
