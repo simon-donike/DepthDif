@@ -66,6 +66,20 @@
                   <span>Patches</span>
                 </label>
               </div>
+              <div class="globe-toolbar__group globe-toolbar__group--compare">
+                <span class="globe-toolbar__label">Compare</span>
+                <label class="globe-toggle">
+                  <input id="globe-toggle-compare" type="checkbox" />
+                  <span>Prediction / GLORYS</span>
+                </label>
+                <label class="globe-range globe-range--compare" for="globe-compare-swipe">
+                  <span class="globe-toolbar__label">Swipe</span>
+                  <span class="globe-range__control">
+                    <input id="globe-compare-swipe" type="range" min="0" max="100" step="1" value="50" disabled />
+                  </span>
+                </label>
+                <span id="globe-compare-status" class="globe-toolbar__status" aria-live="polite"></span>
+              </div>
               <div class="globe-toolbar__group globe-toolbar__group--depth">
                 <label class="globe-range" for="globe-depth-level">
                   <span class="globe-toolbar__label">Depth <span id="globe-depth-level-label">Surface</span></span>
@@ -79,6 +93,7 @@
                     Spin Globe
                   </button>
                   <button id="globe-reset-camera" class="globe-reset-button" type="button">Reset View</button>
+                  <button id="globe-open-tour" class="globe-reset-button" type="button">Tour</button>
                 </div>
               </div>
             </div>
@@ -115,6 +130,11 @@
             </div>
           </div>
           <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
+          <div id="globe-compare-handle" class="globe-compare-handle" hidden aria-hidden="true">
+            <span class="globe-compare-handle__label globe-compare-handle__label--left">Prediction</span>
+            <span class="globe-compare-handle__bar"></span>
+            <span class="globe-compare-handle__label globe-compare-handle__label--right">GLORYS</span>
+          </div>
           <div id="globe-mobile-block" class="globe-mobile-block" hidden>
             <div class="globe-mobile-block__card">
               <span class="globe-mobile-block__eyebrow">Desktop Only</span>
@@ -144,6 +164,19 @@
                 loading="lazy"
                 decoding="async"
               />
+            </div>
+          </div>
+          <div id="globe-tour" class="globe-tour" hidden>
+            <div class="globe-tour__card" role="dialog" aria-modal="true" aria-labelledby="globe-tour-title">
+              <span id="globe-tour-step" class="globe-tour__eyebrow">Step 1 of 3</span>
+              <h2 id="globe-tour-title" class="globe-tour__title">Compare the model with GLORYS</h2>
+              <p id="globe-tour-text" class="globe-tour__text">
+                Prediction shows the DepthDif output. GLORYS is the reference reanalysis layer for the same week and depth.
+              </p>
+              <div class="globe-tour__actions">
+                <button id="globe-tour-skip" class="globe-reset-button" type="button">Skip</button>
+                <button id="globe-tour-next" class="globe-reset-button" type="button">Next</button>
+              </div>
             </div>
           </div>
         </div>
