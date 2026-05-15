@@ -83,6 +83,7 @@ DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 DEFAULT_FULL_SAMPLE_COUNT = -1
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
+PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
 DEFAULT_INFERENCE_NUM_WORKERS = 8
 DEFAULT_INFERENCE_PREFETCH_FACTOR = 2
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
@@ -1448,11 +1449,19 @@ def _cleanup_accumulator(accumulator: RasterAccumulator) -> None:
     accumulator.count_path.unlink(missing_ok=True)
 
 
+def _prediction_zero_artifact_mask(patch: np.ndarray) -> np.ndarray:
+    """Return pixels that are indistinguishable from prediction land-mask zeros."""
+    patch_array = np.asarray(patch, dtype=np.float32)
+    return np.isfinite(patch_array) & (
+        np.abs(patch_array) <= PREDICTION_ZERO_ARTIFACT_EPSILON
+    )
+
+
 def _prediction_zeros_to_nan(patch: np.ndarray) -> np.ndarray:
-    """Return a prediction patch with exact zero values masked as NaN."""
+    """Return a prediction patch with zero-artifact values masked as NaN."""
     patch_array = np.asarray(patch, dtype=np.float32).copy()
     # Prediction zeros come from model land-mask post-processing, not plausible ocean values.
-    patch_array[np.isclose(patch_array, 0.0, atol=0.0, rtol=0.0)] = np.nan
+    patch_array[_prediction_zero_artifact_mask(patch_array)] = np.nan
     return patch_array
 
 
@@ -1518,9 +1527,18 @@ def write_global_top_band_geotiff(
     }
 
     block_height = min(1024, int(layout.height))
+    output_tags = dict(tags)
+    output_tags["prediction_zero_masked_to_nodata"] = str(
+        bool(prediction_zero_masked_to_nodata)
+    ).lower()
+    if prediction_zero_masked_to_nodata:
+        output_tags["prediction_zero_mask_epsilon_c"] = (
+            f"{PREDICTION_ZERO_ARTIFACT_EPSILON:.1e}"
+        )
+
     with rasterio.open(output_path, "w", **profile) as ds:
         ds.set_band_description(1, band_description)
-        ds.update_tags(**tags)
+        ds.update_tags(**output_tags)
         for row_off in tqdm(
             range(0, layout.height, block_height),
             total=(layout.height + block_height - 1) // block_height,
@@ -1572,9 +1590,9 @@ def write_global_top_band_geotiff(
             final_band[land_mask_bool] = float(nodata)
         zero_mask = np.zeros(final_band.shape, dtype=bool)
         if prediction_zero_masked_to_nodata:
-            # Exact prediction zeros are residual land-mask artifacts that should
-            # not survive into GeoTIFFs or Cesium color relief.
-            zero_mask = np.isclose(final_band, 0.0, atol=0.0, rtol=0.0)
+            # Zero-valued prediction artifacts should not survive into GeoTIFFs
+            # or Cesium color relief.
+            zero_mask = _prediction_zero_artifact_mask(final_band)
             final_band[zero_mask] = float(nodata)
         if np.any(repaired_mask) or land_mask_bool is not None or np.any(zero_mask):
             ds.write(final_band, 1)
@@ -2442,6 +2460,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "land_mask_path": str(effective_land_mask_path),
         "land_zeroed": False,
         "land_masked_to_nodata": True,
+        "prediction_zero_masked_to_nodata": True,
+        "prediction_zero_mask_epsilon_c": float(PREDICTION_ZERO_ARTIFACT_EPSILON),
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
         "data_config": str(args.data_config),

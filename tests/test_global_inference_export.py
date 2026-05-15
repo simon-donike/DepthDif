@@ -583,12 +583,16 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 _cleanup_accumulator(accumulator)
 
     def test_prediction_zeros_to_nan_masks_exact_zero_values(self) -> None:
-        patch = np.asarray([[0.0, 1.0], [-0.0, 0.0001]], dtype=np.float32)
+        patch = np.asarray(
+            [[0.0, 1.0], [-0.0, 0.0001], [1.0e-7, -1.0e-7]], dtype=np.float32
+        )
 
         masked = _prediction_zeros_to_nan(patch)
 
         self.assertTrue(np.isnan(masked[0, 0]))
         self.assertTrue(np.isnan(masked[1, 0]))
+        self.assertTrue(np.isnan(masked[2, 0]))
+        self.assertTrue(np.isnan(masked[2, 1]))
         self.assertEqual(masked[0, 1], 1.0)
         self.assertEqual(masked[1, 1], np.float32(0.0001))
 
