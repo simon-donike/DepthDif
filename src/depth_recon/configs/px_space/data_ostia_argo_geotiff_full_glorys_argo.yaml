@@ -23,25 +23,25 @@ dataset:
         lon_max: 31.0
         lat_min: 53.0
         lat_max: 66.0
-        max_land_fraction: 0.60
+        max_land_fraction: 0.85
       - name: "red_sea"
         lon_min: 32.0
         lon_max: 44.0
         lat_min: 12.0
         lat_max: 30.0
-        max_land_fraction: 1.00
+        max_land_fraction: 0.85
       - name: "great_lakes"
         lon_min: -93.0
         lon_max: -75.0
         lat_min: 41.0
         lat_max: 49.0
-        max_land_fraction: 1.00
+        max_land_fraction: 0.95
   sampling:
     temporal_window_days: 7
     glorys_var_name: "thetao" # Full 50-level GLORYS temperature stack used as dense target y.
     ostia_var_name: "analysed_sst" # OSTIA surface SST used as dense EO condition eo.
   selection:
-    require_argo_for_train: true # Keep only train rows containing actual ARGO profile points.
+    require_argo_for_train: false # Train on all retained GLORYS target patches, including rows without ARGO support.
     require_argo_for_val: true # Keep only validation rows containing actual ARGO profile points.
     require_argo_for_all: false
   synthetic:
