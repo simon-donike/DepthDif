@@ -17,7 +17,7 @@ from depth_recon.data.dataset_creation.export_dataset_geotiff import (
 )
 from depth_recon.paths import config_path as packaged_config_path
 from train import build_dataset
-from depth_recon.utils.normalizations import temperature_normalize
+from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
 
 
 def _write_land_mask(path: Path, values: np.ndarray | None = None) -> Path:
@@ -210,9 +210,14 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(sample["eo"].shape, (1, 2, 2))
             self.assertEqual(sample["x"].shape, (2, 2, 2))
             self.assertEqual(sample["y"].shape, (2, 2, 2))
+            self.assertEqual(sample["x_salinity"].shape, (2, 2, 2))
+            self.assertEqual(sample["y_salinity"].shape, (2, 2, 2))
             self.assertEqual(sample["x_valid_mask"].shape, (2, 2, 2))
             self.assertEqual(sample["y_valid_mask"].shape, (2, 2, 2))
+            self.assertEqual(sample["x_salinity_valid_mask"].shape, (2, 2, 2))
+            self.assertEqual(sample["y_salinity_valid_mask"].shape, (2, 2, 2))
             self.assertEqual(sample["x_valid_mask_1d"].shape, (1, 2, 2))
+            self.assertEqual(sample["x_salinity_valid_mask_1d"].shape, (1, 2, 2))
             self.assertEqual(sample["land_mask"].shape, (1, 2, 2))
             self.assertTrue(
                 torch.equal(
@@ -231,6 +236,12 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             x_c = temperature_normalize(mode="denorm", tensor=sample["x"])
             y_c = temperature_normalize(mode="denorm", tensor=sample["y"])
             eo_c = temperature_normalize(mode="denorm", tensor=sample["eo"])
+            x_salinity_psu = salinity_normalize(
+                mode="denorm", tensor=sample["x_salinity"]
+            )
+            y_salinity_psu = salinity_normalize(
+                mode="denorm", tensor=sample["y_salinity"]
+            )
             self.assertTrue(bool(sample["x_valid_mask"][:, 0, 0].all().item()))
             self.assertFalse(bool(sample["x_valid_mask"][:, 0, 1].any().item()))
             self.assertTrue(
@@ -240,10 +251,25 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                     atol=0.25,
                 )
             )
+            self.assertTrue(
+                torch.allclose(
+                    x_salinity_psu[:, 0, 0],
+                    torch.tensor([35.0, 36.0], dtype=torch.float32),
+                    atol=0.05,
+                )
+            )
+            self.assertTrue(bool(sample["x_salinity_valid_mask"][:, 0, 0].all().item()))
+            self.assertFalse(
+                bool(sample["x_salinity_valid_mask"][:, 0, 1].any().item())
+            )
+            self.assertEqual(float(sample["x_salinity"][0, 0, 1]), 0.0)
             self.assertAlmostEqual(float(y_c[0, 0, 0]), 12.0, delta=0.25)
             self.assertAlmostEqual(float(y_c[1, 0, 0]), 22.0, delta=0.25)
+            self.assertAlmostEqual(float(y_salinity_psu[0, 0, 0]), 35.2, delta=0.05)
+            self.assertAlmostEqual(float(y_salinity_psu[1, 0, 0]), 36.2, delta=0.05)
             self.assertAlmostEqual(float(eo_c[0, 0, 0]), 18.85, delta=0.25)
             self.assertFalse(bool(sample["y_valid_mask"][0, 1, 1].item()))
+            self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
 
     def test_train_builder_wires_argo_geotiff_gridded_variant(self) -> None:

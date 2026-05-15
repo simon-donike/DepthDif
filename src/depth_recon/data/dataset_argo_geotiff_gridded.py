@@ -34,6 +34,7 @@ from depth_recon.data.dataset_grid_utils import (
 from depth_recon.paths import config_path, resolve_config_path, resolve_package_path
 from depth_recon.utils.normalizations import (
     CELSIUS_TO_KELVIN_OFFSET,
+    salinity_normalize,
     temperature_normalize,
 )
 
@@ -200,6 +201,8 @@ class ArgoGeoTIFFProfileStore:
             "grid_col",
             "argo_temp_kelvin_uint8",
             "argo_temp_valid",
+            "argo_psal_uint8",
+            "argo_psal_valid",
         }
         missing = sorted(name for name in required if name not in self.ds)
         if missing:
@@ -219,6 +222,7 @@ class ArgoGeoTIFFProfileStore:
             self._profile_index_bounds_by_date,
         ) = self._build_valid_profile_index()
         self.temperature_stretch = self._temperature_stretch()
+        self.salinity_stretch = self._salinity_stretch()
 
     def _open_dataset(self) -> xr.Dataset:
         """Open the zarr dataset in the current process."""
@@ -287,6 +291,20 @@ class ArgoGeoTIFFProfileStore:
             f"ARGO profile zarr lacks temperature stretch metadata: {self.path}"
         )
 
+    def _salinity_stretch(self) -> dict[str, Any]:
+        """Read salinity stretch metadata from variable or dataset attributes."""
+        ds = self._ensure_current_process()
+        attrs = dict(ds["argo_psal_uint8"].attrs)
+        if "minimum" in attrs and "maximum" in attrs:
+            return attrs
+        ds_attrs = dict(ds.attrs)
+        stretch = ds_attrs.get("salinity_stretch")
+        if isinstance(stretch, dict):
+            return stretch
+        raise RuntimeError(
+            f"ARGO profile zarr lacks salinity stretch metadata: {self.path}"
+        )
+
     def query_indices(
         self,
         *,
@@ -332,6 +350,25 @@ class ArgoGeoTIFFProfileStore:
         kelvin = _decode_stretched_uint8(encoded, self.temperature_stretch)
         kelvin[~valid] = np.nan
         return _kelvin_to_celsius(kelvin).astype(np.float32, copy=False)
+
+    def load_salinity_profiles(self, indices: np.ndarray) -> np.ndarray:
+        """Load selected ARGO salinity profiles as raw PSU arrays."""
+        indices = np.asarray(indices, dtype=np.int64).reshape(-1)
+        depth_size = int(self.depth_axis_m.size)
+        if indices.size == 0:
+            return np.zeros((0, depth_size), dtype=np.float32)
+        group = self._ensure_zarr_group()
+        encoded = np.asarray(
+            group["argo_psal_uint8"].get_orthogonal_selection((indices, slice(None))),
+            dtype=np.uint8,
+        )
+        valid = np.asarray(
+            group["argo_psal_valid"].get_orthogonal_selection((indices, slice(None))),
+            dtype=bool,
+        )
+        salinity = _decode_stretched_uint8(encoded, self.salinity_stretch)
+        salinity[~valid] = np.nan
+        return salinity.astype(np.float32, copy=False)
 
     def close(self) -> None:
         """Close the opened zarr dataset."""
@@ -594,10 +631,20 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "ARGO profile zarr depth axis does not match GeoTIFF manifest depth_axis_m."
             )
 
-        self.glorys_store, self.ostia_store = self._build_raster_stores()
+        self.glorys_store, self.salinity_store, self.ostia_store = (
+            self._build_raster_stores()
+        )
         self.available_dates = sorted(self.glorys_store.dates & self.ostia_store.dates)
         if not self.available_dates:
             raise RuntimeError("No overlapping GeoTIFF raster dates were found.")
+        missing_salinity_dates = sorted(
+            set(self.available_dates) - self.salinity_store.dates
+        )
+        if missing_salinity_dates:
+            raise RuntimeError(
+                "GeoTIFF manifest is missing GLORYS salinity 'so' rasters "
+                f"for dates: {missing_salinity_dates[:5]}"
+            )
 
         grid_params = _GridParams(
             tile_size=self.tile_size,
@@ -634,29 +681,38 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             return None
         return ArgoGeoTIFFProfileStore(_resolve_manifest_path(self.root_dir, raw_path))
 
-    def _build_raster_stores(self) -> tuple[GeoTIFFRasterStore, GeoTIFFRasterStore]:
+    def _build_raster_stores(
+        self,
+    ) -> tuple[GeoTIFFRasterStore, GeoTIFFRasterStore, GeoTIFFRasterStore]:
         """Build date-indexed dense raster stores from manifest entries."""
         rasters = self.manifest.get("rasters", {})
         stretch = self.manifest.get("stretch", {})
         temp_stretch = stretch.get("temperature_kelvin")
+        salinity_stretch = stretch.get("salinity")
         if not isinstance(temp_stretch, dict):
             raise RuntimeError(
                 "GeoTIFF manifest is missing temperature_kelvin stretch."
             )
+        if not isinstance(salinity_stretch, dict):
+            raise RuntimeError("GeoTIFF manifest is missing salinity stretch.")
+        glorys_rasters = rasters.get("glorys", {})
         glorys_entries = (
-            rasters.get("glorys", {}).get(self.glorys_var_name, [])
-            if isinstance(rasters.get("glorys", {}), dict)
+            glorys_rasters.get(self.glorys_var_name, [])
+            if isinstance(glorys_rasters, dict)
             else []
+        )
+        salinity_entries = (
+            glorys_rasters.get("so", []) if isinstance(glorys_rasters, dict) else []
         )
         ostia_entries = (
             rasters.get("ostia", {}).get(self.ostia_var_name, [])
             if isinstance(rasters.get("ostia", {}), dict)
             else []
         )
-        if not glorys_entries or not ostia_entries:
+        if not glorys_entries or not salinity_entries or not ostia_entries:
             raise RuntimeError(
                 "GeoTIFF manifest is missing GLORYS/OSTIA raster entries for "
-                f"{self.glorys_var_name!r}/{self.ostia_var_name!r}."
+                f"{self.glorys_var_name!r}/'so'/{self.ostia_var_name!r}."
             )
         return (
             GeoTIFFRasterStore(
@@ -664,6 +720,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 stretch=temp_stretch,
                 cache=self.raster_cache,
                 kelvin_temperature=True,
+            ),
+            GeoTIFFRasterStore(
+                paths_by_date=_records_by_date(salinity_entries, self.root_dir),
+                stretch=salinity_stretch,
+                cache=self.raster_cache,
+                kelvin_temperature=False,
             ),
             GeoTIFFRasterStore(
                 paths_by_date=_records_by_date(ostia_entries, self.root_dir),
@@ -913,6 +975,27 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return y_np.astype(np.float32, copy=False)
 
+    def _load_y_salinity_patch(self, row: dict[str, Any]) -> np.ndarray:
+        """Load the dense GLORYS salinity target patch as raw PSU."""
+        salinity_np = self.salinity_store.read_patch(
+            target_date=int(row["date"]),
+            grid_y0=int(row["grid_y0"]),
+            grid_x0=int(row["grid_x0"]),
+            tile_size=self.tile_size,
+        )
+        if salinity_np.ndim != 3:
+            raise RuntimeError(
+                "Expected GLORYS salinity patch shape (D,H,W), "
+                f"got {tuple(salinity_np.shape)}"
+            )
+        if int(salinity_np.shape[0]) != int(self._depth_axis_m.size):
+            raise RuntimeError(
+                "GLORYS salinity raster band count does not match manifest "
+                f"depth_axis_m: {int(salinity_np.shape[0])} != "
+                f"{int(self._depth_axis_m.size)}"
+            )
+        return salinity_np.astype(np.float32, copy=False)
+
     def _load_land_mask_patch(self, row: dict[str, Any]) -> np.ndarray:
         """Load the exported world-mask patch as a model ocean mask."""
         src = self.raster_cache.get(self.land_mask_path)
@@ -952,33 +1035,34 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return eo_np.astype(np.float32, copy=False)[None, ...]
 
-    def _rasterize_argo_patch(
-        self, row: dict[str, Any]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Rasterize compact ARGO profile observations into one patch."""
+    def _empty_sparse_patch(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return an empty sparse profile patch and validity mask."""
         depth_size = int(self._depth_axis_m.size)
-        x_sum = np.zeros((depth_size, self.tile_size, self.tile_size), dtype=np.float64)
-        x_count = np.zeros(
-            (depth_size, self.tile_size, self.tile_size), dtype=np.uint16
-        )
-        if self.argo_store is None:
-            return (
-                np.full(x_sum.shape, np.nan, dtype=np.float32),
-                np.zeros(x_sum.shape, dtype=bool),
-            )
-        indices = self.argo_store.query_indices(
-            target_date=int(row["date"]),
-            grid_y0=int(row["grid_y0"]),
-            grid_x0=int(row["grid_x0"]),
-            tile_size=self.tile_size,
-        )
+        shape = (depth_size, self.tile_size, self.tile_size)
+        return np.full(shape, np.nan, dtype=np.float32), np.zeros(shape, dtype=bool)
+
+    def _rasterize_profile_values(
+        self,
+        row: dict[str, Any],
+        indices: np.ndarray,
+        values: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Rasterize selected profile values into one sparse patch."""
+        depth_size = int(self._depth_axis_m.size)
         if indices.size == 0:
-            return (
-                np.full(x_sum.shape, np.nan, dtype=np.float32),
-                np.zeros(x_sum.shape, dtype=bool),
+            return self._empty_sparse_patch()
+        if values.ndim != 2 or int(values.shape[1]) != depth_size:
+            raise RuntimeError(
+                "ARGO profile values do not match manifest depth_axis_m: "
+                f"{tuple(values.shape)}"
             )
 
-        values = self.argo_store.load_temperature_profiles(indices)
+        value_sum = np.zeros(
+            (depth_size, self.tile_size, self.tile_size), dtype=np.float64
+        )
+        value_count = np.zeros(
+            (depth_size, self.tile_size, self.tile_size), dtype=np.uint16
+        )
         y0 = int(row["grid_y0"])
         x0 = int(row["grid_x0"])
         for local_idx, profile_idx in enumerate(indices.tolist()):
@@ -995,16 +1079,51 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             valid = np.isfinite(profile)
             if not np.any(valid):
                 continue
-            x_sum[valid, row_idx, col_idx] += profile[valid].astype(np.float64)
-            x_count[valid, row_idx, col_idx] += 1
+            # Multiple ARGO profiles can land on the same grid cell and depth.
+            value_sum[valid, row_idx, col_idx] += profile[valid].astype(np.float64)
+            value_count[valid, row_idx, col_idx] += 1
 
-        x_np = np.full(x_sum.shape, np.nan, dtype=np.float32)
-        x_valid = x_count > 0
-        x_np[x_valid] = (x_sum[x_valid] / x_count[x_valid].astype(np.float64)).astype(
+        value_np = np.full(value_sum.shape, np.nan, dtype=np.float32)
+        value_valid = value_count > 0
+        value_np[value_valid] = (
+            value_sum[value_valid] / value_count[value_valid].astype(np.float64)
+        ).astype(
             np.float32,
             copy=False,
         )
-        return x_np, x_valid
+        return value_np, value_valid
+
+    def _query_temperature_valid_argo_indices(self, row: dict[str, Any]) -> np.ndarray:
+        """Return temperature-valid ARGO indices for the current patch."""
+        if self.argo_store is None:
+            return np.zeros((0,), dtype=np.int64)
+        return self.argo_store.query_indices(
+            target_date=int(row["date"]),
+            grid_y0=int(row["grid_y0"]),
+            grid_x0=int(row["grid_x0"]),
+            tile_size=self.tile_size,
+        )
+
+    def _rasterize_argo_patch(
+        self, row: dict[str, Any]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Rasterize compact ARGO temperature observations into one patch."""
+        indices = self._query_temperature_valid_argo_indices(row)
+        if indices.size == 0 or self.argo_store is None:
+            return self._empty_sparse_patch()
+        values = self.argo_store.load_temperature_profiles(indices)
+        return self._rasterize_profile_values(row, indices, values)
+
+    def _rasterize_argo_salinity_patch(
+        self, row: dict[str, Any]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Rasterize compact ARGO salinity observations into one patch."""
+        indices = self._query_temperature_valid_argo_indices(row)
+        if indices.size == 0 or self.argo_store is None:
+            return self._empty_sparse_patch()
+        # Keep salinity on the same temperature-valid support used for filtering.
+        values = self.argo_store.load_salinity_profiles(indices)
+        return self._rasterize_profile_values(row, indices, values)
 
     def _synthetic_rng_for_row(
         self,
@@ -1052,7 +1171,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             depth_valid = y_valid_mask_np[:, int(row_idx), int(col_idx)]
             if not np.any(depth_valid):
                 continue
-            # Synthetic mode uses decoded GLORYS Celsius values as sparse input.
+            # Synthetic mode uses decoded dense target values as sparse input.
             x_np[depth_valid, int(row_idx), int(col_idx)] = y_np[
                 depth_valid,
                 int(row_idx),
@@ -1066,7 +1185,9 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         row = self._rows[int(idx)]
         eo_np = self._load_eo_patch(row)
         y_np = self._load_y_patch(row)
+        y_salinity_np = self._load_y_salinity_patch(row)
         y_valid_mask_np = np.isfinite(y_np)
+        y_salinity_valid_mask_np = np.isfinite(y_salinity_np)
         if self.synthetic_mode:
             x_np, x_valid_mask_np = self._build_synthetic_x_from_glorys(
                 y_np,
@@ -1074,20 +1195,46 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 row,
                 idx=int(idx),
             )
+            x_salinity_np, x_salinity_valid_mask_np = (
+                self._build_synthetic_x_from_glorys(
+                    y_salinity_np,
+                    y_salinity_valid_mask_np,
+                    row,
+                    idx=int(idx),
+                )
+            )
         else:
             x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
+            x_salinity_np, x_salinity_valid_mask_np = (
+                self._rasterize_argo_salinity_patch(row)
+            )
 
         land_mask_np = self._load_land_mask_patch(row)
         eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
         x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
         y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))
+        x_salinity = salinity_normalize(
+            mode="norm", tensor=torch.from_numpy(x_salinity_np)
+        )
+        y_salinity = salinity_normalize(
+            mode="norm", tensor=torch.from_numpy(y_salinity_np)
+        )
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+        x_salinity = torch.nan_to_num(x_salinity, nan=0.0, posinf=0.0, neginf=0.0)
+        y_salinity = torch.nan_to_num(y_salinity, nan=0.0, posinf=0.0, neginf=0.0)
         x_valid_mask = torch.from_numpy(x_valid_mask_np.astype(np.bool_, copy=False))
         y_valid_mask = torch.from_numpy(y_valid_mask_np.astype(np.bool_, copy=False))
+        x_salinity_valid_mask = torch.from_numpy(
+            x_salinity_valid_mask_np.astype(np.bool_, copy=False)
+        )
+        y_salinity_valid_mask = torch.from_numpy(
+            y_salinity_valid_mask_np.astype(np.bool_, copy=False)
+        )
         land_mask = torch.from_numpy(land_mask_np)
         x_valid_mask_1d = x_valid_mask.any(dim=0, keepdim=True)
+        x_salinity_valid_mask_1d = x_salinity_valid_mask.any(dim=0, keepdim=True)
 
         sample: dict[str, Any] = {
             "eo": eo,
@@ -1096,6 +1243,11 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             "x_valid_mask": x_valid_mask,
             "y_valid_mask": y_valid_mask,
             "x_valid_mask_1d": x_valid_mask_1d,
+            "x_salinity": x_salinity,
+            "y_salinity": y_salinity,
+            "x_salinity_valid_mask": x_salinity_valid_mask,
+            "y_salinity_valid_mask": y_salinity_valid_mask,
+            "x_salinity_valid_mask_1d": x_salinity_valid_mask_1d,
             "land_mask": land_mask,
             "date": _parse_date_int(row.get("date", 19700115)),
         }

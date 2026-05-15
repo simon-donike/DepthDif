@@ -70,6 +70,10 @@ The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
 variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
 salinity, and validity masks. Temperature stretches decode to Kelvin.
+The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys and
+returns salinity separately as normalized side-channel tensors: `x_salinity`,
+`y_salinity`, and their validity masks. Use `salinity_normalize(..., mode="denorm")`
+to recover physical PSU values.
 The authoritative land-mask GeoTIFF is copied into `masks/` in the export root
 and recorded in `manifest.yaml`.
 Dense raster dates are exported with process workers by default; use `--workers`
