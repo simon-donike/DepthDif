@@ -65,6 +65,7 @@
       container: container,
       predictionToggle: document.getElementById("globe-toggle-prediction"),
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
+      absoluteErrorToggle: document.getElementById("globe-toggle-absolute-error"),
       pointsToggle: document.getElementById("globe-toggle-points"),
       patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
       toolbar: document.querySelector(".globe-toolbar"),
@@ -81,6 +82,8 @@
       mobileBlockTitle: document.getElementById("globe-mobile-block-title"),
       mobileBlockText: document.getElementById("globe-mobile-block-text"),
       argoLegend: document.getElementById("globe-argo-legend"),
+      errorLegend: document.getElementById("globe-error-legend"),
+      errorLegendMax: document.getElementById("globe-error-legend-max"),
       profilePopup: document.getElementById("globe-profile-popup"),
       profilePopupTitle: document.getElementById("globe-profile-popup-title"),
       profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
@@ -265,14 +268,14 @@
         "-W" +
         String(selectedDateParts.isoWeek).padStart(2, "0")
       : "";
-    const titleText = compactWeekLabel ? "DepthDif " + compactWeekLabel : "DepthDif";
+    const titleText = "Ocean Variable Reconstruction";
     const descriptionText = selectedDateParts
       ? "Densifying ocean variables based on sparse ARGO submarine measurements.\nShowing ISO week " +
         weekLabel +
         "."
       : "Densifying ocean variables based on sparse ARGO submarine measurements.";
 
-    document.title = compactWeekLabel ? titleText + " Globe" : "DepthDif Globe";
+    document.title = compactWeekLabel ? titleText + " " + compactWeekLabel : titleText;
     const metaDescription = document.querySelector('meta[name="description"]');
     if (metaDescription) {
       metaDescription.setAttribute("content", descriptionText);
@@ -365,6 +368,7 @@
         channel_index: 0,
         prediction_tiles_url: config ? config.prediction_tiles_url : null,
         ground_truth_tiles_url: config ? config.ground_truth_tiles_url : null,
+        absolute_error_tiles_url: config ? config.absolute_error_tiles_url : null,
       },
     ];
   }
@@ -384,6 +388,14 @@
     }
     if (Math.abs(depthM) < 0.05) {
       return "0 m";
+    }
+    if (Math.abs(depthM) >= 1000.0) {
+      const depthKm = depthM / 1000.0;
+      const roundedKm = Math.round(depthKm);
+      if (Math.abs(depthKm - roundedKm) < 0.05) {
+        return String(roundedKm) + "k m";
+      }
+      return String(Number(depthKm.toFixed(1))) + "k m";
     }
     if (Math.abs(depthM - Math.round(depthM)) < 0.05) {
       return String(Math.round(depthM)) + " m";
@@ -421,6 +433,12 @@
     if (state.elements.depthLabel) {
       const depthLevel = selectedDepthLevel(state);
       state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
+    }
+    if (state.elements.absoluteErrorToggle) {
+      const hasAnyAbsoluteErrorLayer = depthLevels.some(hasAbsoluteErrorLayer);
+      if (!hasAnyAbsoluteErrorLayer) {
+        markToggleUnavailable(state.elements.absoluteErrorToggle);
+      }
     }
     updateDepthTicks(state, depthLevels);
   }
@@ -578,6 +596,39 @@
     }
     const hasCombinedLayer = Boolean(state.config && state.config.argo_sample_locations_url);
     argoLegend.hidden = !hasCombinedLayer || !state.elements.pointsToggle.checked;
+  }
+
+  function hasAbsoluteErrorLayer(depthLevel) {
+    return Boolean(depthLevel && depthLevel.absolute_error_tiles_url);
+  }
+
+  function formatErrorLegendValue(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) {
+      return "0°C";
+    }
+    return String(Math.max(0, Math.round(numericValue))) + "°C";
+  }
+
+  function updateAbsoluteErrorLegend(state) {
+    const errorLegend = state.elements.errorLegend;
+    if (!errorLegend) {
+      return;
+    }
+    const depthLevel = selectedDepthLevel(state);
+    const visible = Boolean(
+      state.elements.absoluteErrorToggle &&
+        state.elements.absoluteErrorToggle.checked &&
+        hasAbsoluteErrorLayer(depthLevel)
+    );
+    errorLegend.hidden = !visible;
+    if (visible && state.elements.errorLegendMax) {
+      const legendMax = Number(depthLevel.absolute_error_legend_max_c);
+      const colorScaleMax = Number(depthLevel.absolute_error_color_scale_max_c);
+      state.elements.errorLegendMax.textContent = formatErrorLegendValue(
+        Number.isFinite(legendMax) ? legendMax : colorScaleMax
+      );
+    }
   }
 
   function cleanedClosedPatchPositions(positions) {
@@ -804,6 +855,10 @@
     if (state.groundTruthLayer) {
       // Keep GLORYS above prediction without moving prediction below the basemap.
       imageryLayers.raise(state.groundTruthLayer);
+    }
+    if (state.absoluteErrorLayer) {
+      // Error tiles use a different color scale, so keep them above temperature rasters.
+      imageryLayers.raise(state.absoluteErrorLayer);
     }
 
     const dataSources = state.viewer.dataSources;
@@ -1032,6 +1087,26 @@
     return layer;
   }
 
+  async function addAbsoluteErrorLayer(state) {
+    const depthLevel = selectedDepthLevel(state);
+    const errorUrl = resolveAssetUrl(depthLevel.absolute_error_tiles_url, state.configUrl);
+    if (!errorUrl) {
+      markToggleUnavailable(state.elements.absoluteErrorToggle);
+      updateAbsoluteErrorLegend(state);
+      return null;
+    }
+    const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(errorUrl, {
+      credit: state.config.credits && state.config.credits.absolute_error,
+    });
+    const layer = state.viewer.imageryLayers.addImageryProvider(provider);
+    layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
+    layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
+    layer.alpha = 1.0;
+    layer.show = state.elements.absoluteErrorToggle.checked;
+    updateAbsoluteErrorLegend(state);
+    return layer;
+  }
+
   async function addPointsLayer(state) {
     const pointsUrl = resolveAssetUrl(state.config.argo_sample_locations_url, state.configUrl);
     if (!pointsUrl) {
@@ -1131,6 +1206,42 @@
     return state.groundTruthLayerLoadPromise;
   }
 
+  async function ensureAbsoluteErrorLayer(state) {
+    if (state.absoluteErrorLayer) {
+      return state.absoluteErrorLayer;
+    }
+    if (state.absoluteErrorLayerLoadPromise) {
+      return state.absoluteErrorLayerLoadPromise;
+    }
+
+    const rasterDepthReloadToken = state.rasterDepthReloadToken;
+    setToggleLoading(state.elements.absoluteErrorToggle, true);
+    const loadPromise = addAbsoluteErrorLayer(state)
+      .then(function (layer) {
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (layer) {
+            state.viewer.imageryLayers.remove(layer, true);
+          }
+          requestRender(state);
+          return null;
+        }
+        state.absoluteErrorLayer = layer;
+        enforceOverlayOrder(state);
+        updateAbsoluteErrorLegend(state);
+        requestRender(state);
+        return layer;
+      })
+      .finally(function () {
+        if (state.absoluteErrorLayerLoadPromise === loadPromise) {
+          state.absoluteErrorLayerLoadPromise = null;
+          setToggleLoading(state.elements.absoluteErrorToggle, false);
+        }
+      });
+
+    state.absoluteErrorLayerLoadPromise = loadPromise;
+    return state.absoluteErrorLayerLoadPromise;
+  }
+
   async function ensurePointsLayer(state) {
     return loadOptionalLayer(
       state,
@@ -1160,6 +1271,7 @@
       state.preloadTaskId = null;
       const loaders = [
         ensureGroundTruthLayer,
+        ensureAbsoluteErrorLayer,
         ensurePointsLayer,
         ensurePatchSplitsLayer,
       ];
@@ -1192,6 +1304,9 @@
       if (stateKey === "pointsDataSource") {
         updateArgoLegendVisibility(state);
       }
+      if (stateKey === "absoluteErrorLayer") {
+        updateAbsoluteErrorLegend(state);
+      }
       requestRender(state);
       return;
     }
@@ -1203,11 +1318,17 @@
         if (stateKey === "pointsDataSource") {
           updateArgoLegendVisibility(state);
         }
+        if (stateKey === "absoluteErrorLayer") {
+          updateAbsoluteErrorLegend(state);
+        }
         requestRender(state);
       }
     } catch (error) {
       toggle.checked = false;
       setToggleLoading(toggle, false);
+      if (stateKey === "absoluteErrorLayer") {
+        updateAbsoluteErrorLegend(state);
+      }
       console.error(error);
     }
   }
@@ -1216,6 +1337,7 @@
     const imageryLayers = state.viewer.imageryLayers;
     const showPrediction = state.elements.predictionToggle.checked;
     const showGroundTruth = state.elements.groundTruthToggle.checked;
+    const showAbsoluteError = state.elements.absoluteErrorToggle.checked;
     const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
     state.rasterDepthReloadToken = rasterDepthReloadToken;
 
@@ -1227,8 +1349,13 @@
       imageryLayers.remove(state.groundTruthLayer, true);
       state.groundTruthLayer = null;
     }
+    if (state.absoluteErrorLayer) {
+      imageryLayers.remove(state.absoluteErrorLayer, true);
+      state.absoluteErrorLayer = null;
+    }
     state.predictionLayerLoadPromise = null;
     state.groundTruthLayerLoadPromise = null;
+    state.absoluteErrorLayerLoadPromise = null;
 
     try {
       const predictionLayer = await addPredictionLayer(state);
@@ -1255,7 +1382,21 @@
           groundTruthLayer.show = true;
         }
       }
+      if (showAbsoluteError) {
+        const absoluteErrorLayer = await addAbsoluteErrorLayer(state);
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (absoluteErrorLayer) {
+            imageryLayers.remove(absoluteErrorLayer, true);
+          }
+          return;
+        }
+        state.absoluteErrorLayer = absoluteErrorLayer;
+        if (absoluteErrorLayer) {
+          absoluteErrorLayer.show = true;
+        }
+      }
       enforceOverlayOrder(state);
+      updateAbsoluteErrorLegend(state);
       requestRender(state);
     } catch (error) {
       console.error(error);
@@ -1290,6 +1431,16 @@
       );
     });
 
+    elements.absoluteErrorToggle.addEventListener("change", function () {
+      handleOptionalLayerToggle(
+        state,
+        elements.absoluteErrorToggle,
+        "absoluteErrorLayer",
+        ensureAbsoluteErrorLayer
+      );
+      updateAbsoluteErrorLegend(state);
+    });
+
     elements.pointsToggle.addEventListener("change", function () {
       handleOptionalLayerToggle(
         state,
@@ -1314,6 +1465,7 @@
       elements.depthSlider.addEventListener("input", function () {
         state.selectedDepthIndex = Number(elements.depthSlider.value);
         updateDepthControl(state);
+        updateAbsoluteErrorLegend(state);
         reloadRasterDepthLayers(state);
       });
     }
@@ -1405,10 +1557,12 @@
         elements: elements,
         predictionLayer: null,
         groundTruthLayer: null,
+        absoluteErrorLayer: null,
         pointsDataSource: null,
         patchSplitsDataSource: null,
         predictionLayerLoadPromise: null,
         groundTruthLayerLoadPromise: null,
+        absoluteErrorLayerLoadPromise: null,
         pointsDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
         selectedDepthIndex: 0,
@@ -1424,6 +1578,7 @@
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
       updateDepthControl(state);
+      updateAbsoluteErrorLegend(state);
 
       try {
         state.predictionLayer = await addPredictionLayer(state);
@@ -1445,6 +1600,7 @@
       wireUi(state);
       setToolbarCollapsed(elements, false);
       updateArgoLegendVisibility(state);
+      updateAbsoluteErrorLegend(state);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
         const picked = viewer.scene.pick(movement.position);
         if (!picked || !picked.id) {

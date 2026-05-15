@@ -39,6 +39,7 @@ from depth_recon.inference.export_global import (
     global_inference_dataset_overrides,
     resolve_depth_export_levels,
     select_export_indices,
+    write_absolute_error_geotiff,
     write_global_top_band_geotiff,
 )
 from depth_recon.utils.normalizations import temperature_normalize
@@ -745,6 +746,58 @@ class TestGlobalInferenceExport(unittest.TestCase):
             finally:
                 _cleanup_accumulator(accumulator)
 
+    def test_write_absolute_error_geotiff_computes_valid_celsius_difference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            transform = from_origin(0.0, 16.0, 1.0, 1.0)
+            prediction_path = tmp_path / "prediction.tif"
+            ground_truth_path = tmp_path / "glorys.tif"
+            prediction = np.full((16, 16), 10.0, dtype=np.float32)
+            ground_truth = np.full((16, 16), 7.0, dtype=np.float32)
+            prediction[0, 1] = -9999.0
+            ground_truth[0, 2] = -9999.0
+
+            for path, data in (
+                (prediction_path, prediction),
+                (ground_truth_path, ground_truth),
+            ):
+                with rasterio.open(
+                    path,
+                    "w",
+                    driver="GTiff",
+                    height=16,
+                    width=16,
+                    count=1,
+                    dtype="float32",
+                    nodata=-9999.0,
+                    crs="EPSG:4326",
+                    transform=transform,
+                ) as ds:
+                    ds.write(data, 1)
+
+            error_path = tmp_path / "absolute_error.tif"
+            write_absolute_error_geotiff(
+                prediction_path=prediction_path,
+                ground_truth_path=ground_truth_path,
+                output_path=error_path,
+                nodata=-9999.0,
+                band_description="absolute_error_surface_celsius",
+                tags={"kind": "absolute_error"},
+            )
+
+            with rasterio.open(error_path) as ds:
+                band = ds.read(1)
+                tags = ds.tags()
+                description = ds.descriptions[0]
+
+        self.assertEqual(band[0, 0], 3.0)
+        self.assertEqual(band[0, 1], -9999.0)
+        self.assertEqual(band[0, 2], -9999.0)
+        self.assertEqual(tags["kind"], "absolute_error")
+        self.assertEqual(description, "absolute_error_surface_celsius")
+
     def test_resolve_depth_export_levels_uses_nearest_glorys_depths(self) -> None:
         levels = resolve_depth_export_levels(
             np.asarray(
@@ -998,6 +1051,12 @@ class TestGlobalInferenceExport(unittest.TestCase):
             (staging_dir / "global_top_band_20260105_prediction_100m.tif").write_text(
                 "prediction depth", encoding="utf-8"
             )
+            (staging_dir / "global_top_band_20260105_absolute_error.tif").write_text(
+                "absolute error", encoding="utf-8"
+            )
+            (
+                staging_dir / "global_top_band_20260105_absolute_error_100m.tif"
+            ).write_text("absolute error depth", encoding="utf-8")
             (staging_dir / "global_top_band_20260105_argo_points.geojson").write_text(
                 "points", encoding="utf-8"
             )
@@ -1011,11 +1070,13 @@ class TestGlobalInferenceExport(unittest.TestCase):
                         "run_dir": str(staging_dir),
                         "prediction_tif_path": "global_top_band_20260105_prediction.tif",
                         "ground_truth_tif_path": None,
+                        "absolute_error_tif_path": "global_top_band_20260105_absolute_error.tif",
                         "depth_exports": [
                             {
                                 "suffix": "100m",
                                 "prediction_tif_path": "global_top_band_20260105_prediction_100m.tif",
                                 "ground_truth_tif_path": None,
+                                "absolute_error_tif_path": "global_top_band_20260105_absolute_error_100m.tif",
                             }
                         ],
                         "argo_points_geojson_path": "global_top_band_20260105_argo_points.geojson",
@@ -1035,6 +1096,12 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 (production_dir / "global_top_band_prediction_100m.tif").exists()
             )
             self.assertTrue(
+                (production_dir / "global_top_band_absolute_error.tif").exists()
+            )
+            self.assertTrue(
+                (production_dir / "global_top_band_absolute_error_100m.tif").exists()
+            )
+            self.assertTrue(
                 (production_dir / "global_top_band_argo_points.geojson").exists()
             )
             self.assertTrue(
@@ -1051,6 +1118,14 @@ class TestGlobalInferenceExport(unittest.TestCase):
             self.assertEqual(
                 summary["depth_exports"][0]["prediction_tif_path"],
                 "global_top_band_prediction_100m.tif",
+            )
+            self.assertEqual(
+                summary["absolute_error_tif_path"],
+                "global_top_band_absolute_error.tif",
+            )
+            self.assertEqual(
+                summary["depth_exports"][0]["absolute_error_tif_path"],
+                "global_top_band_absolute_error_100m.tif",
             )
             self.assertEqual(
                 summary["argo_points_geojson_path"],

@@ -19,6 +19,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_TEMPLATE_PATH,
     FULL_SAMPLE_PROPERTY_KEYS,
+    _absolute_error_color_scale,
     _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
@@ -30,6 +31,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _rewrite_geojson,
     _sync_with_rclone,
     _validate_raster_transparency_contract,
+    _write_absolute_error_color_ramp,
     build_globe_config,
 )
 
@@ -81,6 +83,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "iso_week": None,
             "prediction_tiles_url": None,
             "ground_truth_tiles_url": None,
+            "absolute_error_tiles_url": None,
             "depth_levels": [],
             "argo_sample_locations_url": None,
             "argo_points_url": None,
@@ -109,6 +112,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             iso_week=2,
             prediction_tiles_url="./prediction_tiles",
             ground_truth_tiles_url="./ground_truth_tiles",
+            absolute_error_tiles_url="./absolute_error_tiles",
             depth_levels=[
                 {
                     "label": "Surface",
@@ -117,6 +121,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                     "channel_index": 0,
                     "prediction_tiles_url": "./prediction_tiles_surface",
                     "ground_truth_tiles_url": "./ground_truth_tiles_surface",
+                    "absolute_error_tiles_url": "./absolute_error_tiles_surface",
+                    "absolute_error_legend_max_c": 5,
                 }
             ],
             argo_sample_locations_url="./argo_sample_locations.geojson",
@@ -126,6 +132,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             bounds=bounds,
             prediction_credit="Prediction source",
             ground_truth_credit="Ground truth source",
+            absolute_error_credit="Absolute error source",
             points_credit="Observed Argo points",
             patch_splits_credit="Inference patch grid",
             full_sample_points_credit="Random full-depth profile locations",
@@ -148,10 +155,15 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["iso_week"], 2)
         self.assertEqual(config["prediction_tiles_url"], "./prediction_tiles")
         self.assertEqual(config["ground_truth_tiles_url"], "./ground_truth_tiles")
+        self.assertEqual(config["absolute_error_tiles_url"], "./absolute_error_tiles")
         self.assertEqual(config["depth_levels"][0]["label"], "Surface")
         self.assertEqual(
             config["depth_levels"][0]["prediction_tiles_url"],
             "./prediction_tiles_surface",
+        )
+        self.assertEqual(
+            config["depth_levels"][0]["absolute_error_tiles_url"],
+            "./absolute_error_tiles_surface",
         )
         self.assertEqual(
             config["argo_sample_locations_url"], "./argo_sample_locations.geojson"
@@ -172,6 +184,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["raster_transparency"]["valid_alpha"], 255)
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
+        self.assertEqual(config["credits"]["absolute_error"], "Absolute error source")
         self.assertEqual(config["credits"]["points"], "Observed Argo points")
         self.assertEqual(config["credits"]["patch_splits"], "Inference patch grid")
         self.assertEqual(
@@ -287,6 +300,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertIn("prediction_tiles_url", template)
         self.assertIn("depth_levels", template)
+        self.assertIn("absolute_error_tiles_url", template)
         self.assertIn("argo_sample_locations_url", template)
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
@@ -315,15 +329,31 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('class="standalone-globe-root"', html)
         self.assertIn('id="globe-page-eyebrow"', html)
         self.assertIn('id="globe-depth-level-ticks"', html)
+        self.assertIn("Rasters", html)
+        self.assertIn("Reconstruction", html)
+        self.assertIn("Inputs", html)
         self.assertIn("ARGO Locations", html)
+        self.assertIn("Analysis", html)
+        self.assertIn("Absolute Difference", html)
+        self.assertIn("Depth Levels", html)
+        self.assertIn("Ocean Variable Reconstruction", html)
         self.assertIn("Patches", html)
+        self.assertIn('id="globe-error-legend"', html)
         self.assertIn('loading="lazy"', html)
         self.assertIn(".standalone-globe-root,", css)
         self.assertIn("box-sizing: border-box;", css)
+        self.assertIn(".globe-toolbar__sections", css)
+        self.assertIn("width: max-content;", css)
+        self.assertIn("globe-legend__bar--error", css)
         self.assertIn('document.querySelectorAll("script[src]")', loader)
         self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
         self.assertIn("function resolveConfigUrl()", globe_script)
         self.assertIn('const PATCH_FILL_COLOR = "#f97316";', globe_script)
+        self.assertIn(
+            'const titleText = "Ocean Variable Reconstruction";', globe_script
+        )
+        self.assertIn("function addAbsoluteErrorLayer", globe_script)
+        self.assertIn('+ "k m"', globe_script)
         self.assertIn(
             "new URL(configParam, window.location.href).toString()", globe_script
         )
@@ -450,7 +480,15 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             ground_truth_surface = (
                 run_dir / "global_top_band_20260105_glorys_surface.tif"
             )
-            for path in (prediction_surface, prediction_100m, ground_truth_surface):
+            absolute_error_surface = (
+                run_dir / "global_top_band_20260105_absolute_error_surface.tif"
+            )
+            for path in (
+                prediction_surface,
+                prediction_100m,
+                ground_truth_surface,
+                absolute_error_surface,
+            ):
                 path.write_text("placeholder", encoding="utf-8")
 
             depth_exports = _resolve_depth_export_artifacts(
@@ -465,6 +503,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                             "channel_index": 0,
                             "prediction_tif_path": prediction_surface.name,
                             "ground_truth_tif_path": ground_truth_surface.name,
+                            "absolute_error_tif_path": absolute_error_surface.name,
                         },
                         {
                             "suffix": "100m",
@@ -486,8 +525,48 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
         self.assertEqual(depth_exports[0]["prediction_path"], prediction_surface)
         self.assertEqual(depth_exports[0]["ground_truth_path"], ground_truth_surface)
+        self.assertEqual(
+            depth_exports[0]["absolute_error_path"], absolute_error_surface
+        )
         self.assertIsNone(depth_exports[1]["ground_truth_path"])
         self.assertEqual(depth_exports[1]["channel_index"], 1)
+
+    def test_absolute_error_color_scale_uses_robust_percentiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            tif_path = tmp_path / "absolute_error.tif"
+            values = np.arange(100, dtype=np.float32).reshape(10, 10)
+            values[0, 0] = -9999.0
+            with rasterio.open(
+                tif_path,
+                "w",
+                driver="GTiff",
+                height=10,
+                width=10,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=from_origin(0.0, 10.0, 1.0, 1.0),
+            ) as ds:
+                ds.write(values, 1)
+
+            scale = _absolute_error_color_scale(tif_path)
+            ramp_path = tmp_path / "error_ramp.txt"
+            _write_absolute_error_color_ramp(
+                ramp_path,
+                color_scale_min_c=float(scale["color_scale_min_c"]),
+                color_scale_max_c=float(scale["color_scale_max_c"]),
+                valid_max_c=float(scale["valid_max_c"]),
+            )
+            ramp_text = ramp_path.read_text(encoding="utf-8")
+
+        self.assertGreater(float(scale["color_scale_min_c"]), 0.0)
+        self.assertLess(float(scale["color_scale_max_c"]), 99.0)
+        self.assertGreater(int(scale["legend_max_c"]), 0)
+        self.assertIn("34 197 94", ramp_text)
+        self.assertIn("220 38 38", ramp_text)
+        self.assertIn("nv   0 0 0 0", ramp_text)
 
     def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(
         self,
