@@ -145,6 +145,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - applies the configured land-mask GeoTIFF at the final write step so land pixels and uncovered water use the same GeoTIFF nodata value  
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`  
 - exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized and written in degrees Celsius, matching the prediction rasters and globe color ramp  
+- writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius on the finalized raster grid  
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters  
 - exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset  
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep  
@@ -168,6 +169,7 @@ Adjust `inference.grid.patch_stride` or `inference.grid.min_ocean_fraction` in t
 Outputs land under `inference/outputs/<run_name>/` and include:  
 - `<run_name>_prediction_surface.tif`, `<run_name>_prediction_10m.tif`, `<run_name>_prediction_50m.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters  
 - `<run_name>_glorys_surface.tif`, `<run_name>_glorys_10m.tif`, `<run_name>_glorys_50m.tif`, `<run_name>_glorys_100m.tif`, `<run_name>_glorys_250m.tif`, `<run_name>_glorys_500m.tif`, `<run_name>_glorys_1000m.tif`, `<run_name>_glorys_2000m.tif`, `<run_name>_glorys_2500m.tif`, `<run_name>_glorys_5000m.tif`: stitched GLORYS truth rasters by default  
+- `<run_name>_absolute_error_surface.tif`, `<run_name>_absolute_error_10m.tif`, `<run_name>_absolute_error_50m.tif`, `<run_name>_absolute_error_100m.tif`, `<run_name>_absolute_error_250m.tif`, `<run_name>_absolute_error_500m.tif`, `<run_name>_absolute_error_1000m.tif`, `<run_name>_absolute_error_2000m.tif`, `<run_name>_absolute_error_2500m.tif`, `<run_name>_absolute_error_5000m.tif`: absolute prediction-vs-GLORYS error rasters when GLORYS export is enabled  
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep  
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers  
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only  
@@ -209,6 +211,7 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:  
 - reads one completed `inference/outputs/<run_name>/` directory  
 - colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the 0-30 C color ramp so true 0 C ocean remains visible, then tiles them with `gdal2tiles.py`  
+- colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth's 2nd-98th percentile range, then tiles them beside prediction and GLORYS  
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties  
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder  
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points  
@@ -225,6 +228,7 @@ Typical run:
 The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/globe/` locally and under `inference_production/globe/` in the bucket when synced. It includes:  
 - `prediction_tiles_surface/`, `prediction_tiles_100m/`, etc.: TMS imagery tiles for each prediction depth raster  
 - `ground_truth_tiles_surface/`, `ground_truth_tiles_100m/`, etc.: TMS imagery tiles for each GLORYS depth raster when present  
+- `absolute_error_tiles_surface/`, `absolute_error_tiles_100m/`, etc.: TMS imagery tiles for each absolute-error raster when present  
 - `argo_sample_locations.geojson`: hosted combined ARGO point overlay used by the single ARGO globe layer, with per-feature marker metadata for ordinary points versus full-depth profiles  
 - `argo_points.geojson`: hosted raw observed-point overlay source retained alongside the combined file  
 - `full_sample_locations.geojson`: hosted sampled-profile point overlay source retained alongside the combined file  

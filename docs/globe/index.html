@@ -25,7 +25,7 @@
             <div class="standalone-globe-header__content">
               <span id="globe-page-eyebrow" class="standalone-globe-header__eyebrow">DepthDif Viewer</span>
               <h1 id="globe-page-title" class="standalone-globe-header__title">
-                DepthDif
+                Ocean Variable Reconstruction
               </h1>
               <p id="globe-page-description" class="standalone-globe-header__text">
                 Densifying ocean variables based on sparse ARGO submarine measurements.
@@ -47,28 +47,49 @@
               </button>
             </div>
             <div id="globe-toolbar-content" class="globe-toolbar__content">
-              <div class="globe-toolbar__group">
-                <span class="globe-toolbar__label">Layers</span>
-                <label class="globe-toggle">
-                  <input id="globe-toggle-prediction" type="checkbox" checked />
-                  <span>Prediction</span>
-                </label>
-                <label class="globe-toggle">
-                  <input id="globe-toggle-ground-truth" type="checkbox" />
-                  <span>GLORYS</span>
-                </label>
-                <label class="globe-toggle">
-                  <input id="globe-toggle-points" type="checkbox" />
-                  <span>ARGO Locations</span>
-                </label>
-                <label class="globe-toggle">
-                  <input id="globe-toggle-patch-splits" type="checkbox" />
-                  <span>Patches</span>
-                </label>
+              <div class="globe-toolbar__sections" aria-label="Layer controls">
+                <section class="globe-layer-section" aria-labelledby="globe-raster-layer-heading">
+                  <span id="globe-raster-layer-heading" class="globe-toolbar__label">Rasters</span>
+                  <div class="globe-layer-section__controls">
+                    <label class="globe-toggle">
+                      <input id="globe-toggle-prediction" type="checkbox" checked />
+                      <span>Reconstruction</span>
+                    </label>
+                    <label class="globe-toggle">
+                      <input id="globe-toggle-ground-truth" type="checkbox" />
+                      <span>GLORYS</span>
+                    </label>
+                  </div>
+                </section>
+                <section class="globe-layer-section" aria-labelledby="globe-input-layer-heading">
+                  <span id="globe-input-layer-heading" class="globe-toolbar__label">Inputs</span>
+                  <div class="globe-layer-section__controls">
+                    <label class="globe-toggle">
+                      <input id="globe-toggle-points" type="checkbox" />
+                      <span>ARGO Locations</span>
+                    </label>
+                    <label class="globe-toggle">
+                      <input id="globe-toggle-patch-splits" type="checkbox" />
+                      <span>Patches</span>
+                    </label>
+                  </div>
+                </section>
+                <section class="globe-layer-section" aria-labelledby="globe-analysis-layer-heading">
+                  <span id="globe-analysis-layer-heading" class="globe-toolbar__label">Analysis</span>
+                  <div class="globe-layer-section__controls">
+                    <label class="globe-toggle">
+                      <input id="globe-toggle-absolute-error" type="checkbox" />
+                      <span>Absolute Difference</span>
+                    </label>
+                  </div>
+                </section>
               </div>
               <div class="globe-toolbar__group globe-toolbar__group--depth">
                 <label class="globe-range" for="globe-depth-level">
-                  <span class="globe-toolbar__label">Depth <span id="globe-depth-level-label">Surface</span></span>
+                  <span class="globe-range__header">
+                    <span class="globe-toolbar__label">Depth Levels</span>
+                    <span id="globe-depth-level-label" class="globe-range__value">Surface</span>
+                  </span>
                   <span class="globe-range__control">
                     <input id="globe-depth-level" type="range" min="0" max="4" step="1" value="0" />
                     <span id="globe-depth-level-ticks" class="globe-depth-ticks" aria-hidden="true"></span>
@@ -90,6 +111,19 @@
               <div class="globe-legend__labels">
                 <span>0°C</span>
                 <span>30°C</span>
+              </div>
+            </div>
+            <div
+              id="globe-error-legend"
+              class="globe-legend globe-legend--error"
+              aria-label="Absolute error color scale"
+              hidden
+            >
+              <span class="globe-legend__title">Absolute Error</span>
+              <div class="globe-legend__bar globe-legend__bar--error"></div>
+              <div class="globe-legend__labels">
+                <span>0°C</span>
+                <span id="globe-error-legend-max">0°C</span>
               </div>
             </div>
             <div

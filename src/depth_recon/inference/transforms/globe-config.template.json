@@ -39,7 +39,9 @@
     "ground_truth": "GLORYS top-band overlay",
     "points": "Observed Argo points",
     "patch_splits": "Inference patch grid",
-    "full_sample_points": "Full-depth profiles"
+    "full_sample_points": "Full-depth profiles",
+    "absolute_error": "Prediction absolute error overlay"
   },
-  "description": "Fill this template with hosted asset URLs to drive the Cesium globe page."
+  "description": "Fill this template with hosted asset URLs to drive the Cesium globe page.",
+  "absolute_error_tiles_url": null
 }

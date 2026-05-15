@@ -44,6 +44,10 @@ DEFAULT_TRANSPARENT_ALPHA = 0
 DEFAULT_OPAQUE_ALPHA = 255
 DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
+DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
+DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
+DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
+DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_TILE_SIZE = 256
@@ -80,6 +84,7 @@ def _surface_depth_export(
     *,
     prediction_path: Path,
     ground_truth_path: Path | None,
+    absolute_error_path: Path | None = None,
 ) -> dict[str, Any]:
     return {
         "suffix": "surface",
@@ -89,6 +94,7 @@ def _surface_depth_export(
         "channel_index": 0,
         "prediction_path": prediction_path,
         "ground_truth_path": ground_truth_path,
+        "absolute_error_path": absolute_error_path,
     }
 
 
@@ -143,6 +149,7 @@ def _resolve_run_artifacts(
     Path | None,
     Path | None,
     Path | None,
+    Path | None,
     dict[str, Any],
 ]:
     run_summary_path = run_dir / "run_summary.yaml"
@@ -168,6 +175,11 @@ def _resolve_run_artifacts(
     if ground_truth_path is None:
         matches = sorted(run_dir.glob("*_glorys_top_band.tif"))
         ground_truth_path = matches[0] if matches else None
+
+    absolute_error_path = _coerce_existing_path(
+        run_summary.get("absolute_error_tif_path"),
+        run_dir=run_dir,
+    )
 
     points_path = _coerce_existing_path(
         run_summary.get("argo_points_geojson_path"),
@@ -210,6 +222,7 @@ def _resolve_run_artifacts(
     return (
         prediction_path,
         ground_truth_path,
+        absolute_error_path,
         points_path,
         patch_splits_path,
         full_sample_points_path,
@@ -231,6 +244,10 @@ def _resolve_depth_export_artifacts(
             _surface_depth_export(
                 prediction_path=prediction_path,
                 ground_truth_path=ground_truth_path,
+                absolute_error_path=_coerce_existing_path(
+                    run_summary.get("absolute_error_tif_path"),
+                    run_dir=run_dir,
+                ),
             )
         ]
 
@@ -251,6 +268,10 @@ def _resolve_depth_export_artifacts(
             raw_export.get("ground_truth_tif_path"),
             run_dir=run_dir,
         )
+        absolute_error_export_path = _coerce_existing_path(
+            raw_export.get("absolute_error_tif_path"),
+            run_dir=run_dir,
+        )
         depth_exports.append(
             {
                 "suffix": str(raw_export.get("suffix", prediction_export_path.stem)),
@@ -260,6 +281,7 @@ def _resolve_depth_export_artifacts(
                 "channel_index": int(raw_export.get("channel_index", 0)),
                 "prediction_path": prediction_export_path,
                 "ground_truth_path": ground_truth_export_path,
+                "absolute_error_path": absolute_error_export_path,
             }
         )
 
@@ -268,6 +290,10 @@ def _resolve_depth_export_artifacts(
             _surface_depth_export(
                 prediction_path=prediction_path,
                 ground_truth_path=ground_truth_path,
+                absolute_error_path=_coerce_existing_path(
+                    run_summary.get("absolute_error_tif_path"),
+                    run_dir=run_dir,
+                ),
             )
         ]
     return depth_exports
@@ -303,7 +329,7 @@ def _colorize_raster(
     *,
     color_ramp_path: Path,
 ) -> None:
-    """Colorize one Celsius raster and make nodata/land pixels transparent."""
+    """Colorize one single-band raster and make nodata/land pixels transparent."""
     gdaldem_exe = shutil.which("gdaldem")
     if gdaldem_exe is None:
         raise RuntimeError("gdaldem was not found on PATH.")
@@ -319,6 +345,101 @@ def _colorize_raster(
     ]
     subprocess.run(command, check=True)
     _apply_alpha_mask_to_colorized_raster(input_path, output_path)
+
+
+def _valid_raster_values(path: Path) -> np.ndarray:
+    """Read finite, non-nodata values from a single-band raster."""
+    with rasterio.open(path) as ds:
+        data = ds.read(1, masked=False)
+        valid_mask = np.isfinite(data)
+        if ds.nodata is not None and np.isfinite(float(ds.nodata)):
+            valid_mask &= ~np.isclose(data, float(ds.nodata), atol=0.0, rtol=0.0)
+    return data[valid_mask].astype(np.float64, copy=False)
+
+
+def _rounded_absolute_error_legend_max(value: float) -> int:
+    """Round an absolute-error legend maximum to the nearest display integer."""
+    value = float(value)
+    if not np.isfinite(value) or value <= 0.0:
+        return 0
+    return int(max(1, round(value)))
+
+
+def _absolute_error_color_scale(path: Path) -> dict[str, float | int]:
+    """Compute robust color-scale metadata for an absolute-error raster."""
+    values = _valid_raster_values(path)
+    if values.size == 0:
+        return {
+            "valid_min_c": 0.0,
+            "valid_max_c": 0.0,
+            "color_scale_min_c": 0.0,
+            "color_scale_max_c": 1.0,
+            "legend_min_c": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+            "legend_max_c": 0,
+        }
+
+    valid_min = float(np.min(values))
+    valid_max = float(np.max(values))
+    scale_min = float(
+        np.percentile(values, DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE)
+    )
+    scale_max = float(
+        np.percentile(values, DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE)
+    )
+    scale_min = max(0.0, scale_min)
+    if not np.isfinite(scale_max) or scale_max <= scale_min:
+        scale_max = max(float(valid_max), scale_min + 1.0)
+    if scale_max <= scale_min:
+        scale_max = scale_min + 1.0
+    return {
+        "valid_min_c": valid_min,
+        "valid_max_c": valid_max,
+        "color_scale_min_c": scale_min,
+        "color_scale_max_c": float(scale_max),
+        "legend_min_c": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+        "legend_max_c": _rounded_absolute_error_legend_max(scale_max),
+    }
+
+
+def _write_absolute_error_color_ramp(
+    output_path: Path,
+    *,
+    color_scale_min_c: float,
+    color_scale_max_c: float,
+    valid_max_c: float,
+) -> None:
+    """Write a GDAL color-relief ramp for absolute-error visualization."""
+    scale_min = max(0.0, float(color_scale_min_c))
+    scale_max = max(scale_min + 1.0e-6, float(color_scale_max_c))
+    valid_max = max(scale_max, float(valid_max_c))
+    stops: list[tuple[float, tuple[int, int, int]]] = [
+        (0.0, (34, 197, 94)),
+    ]
+    if scale_min > 0.0:
+        # Values below the lower percentile stay fully green, while the middle
+        # range is stretched between the requested robust percentiles.
+        stops.append((scale_min, (34, 197, 94)))
+    stops.extend(
+        [
+            ((scale_min + scale_max) / 2.0, (250, 204, 21)),
+            (scale_max, (220, 38, 38)),
+        ]
+    )
+    if valid_max > scale_max:
+        stops.append((valid_max, (220, 38, 38)))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    previous_value: float | None = None
+    for value, rgb in sorted(stops, key=lambda item: item[0]):
+        if previous_value is not None and np.isclose(value, previous_value):
+            continue
+        previous_value = float(value)
+        lines.append(
+            f"{float(value):.6f}    {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}"
+        )
+    lines.append("nv   0 0 0 0")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _transparent_pixel_mask(
@@ -661,6 +782,7 @@ def build_globe_config(
     iso_week: int | None,
     prediction_tiles_url: str,
     ground_truth_tiles_url: str | None,
+    absolute_error_tiles_url: str | None,
     depth_levels: list[dict[str, Any]],
     argo_sample_locations_url: str | None,
     argo_points_url: str | None,
@@ -669,6 +791,7 @@ def build_globe_config(
     bounds: dict[str, Any],
     prediction_credit: str,
     ground_truth_credit: str | None,
+    absolute_error_credit: str | None,
     points_credit: str | None,
     patch_splits_credit: str | None,
     full_sample_points_credit: str | None,
@@ -687,6 +810,7 @@ def build_globe_config(
             "iso_week": iso_week,
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
+            "absolute_error_tiles_url": absolute_error_tiles_url,
             "depth_levels": depth_levels,
             "argo_sample_locations_url": argo_sample_locations_url,
             "argo_points_url": argo_points_url,
@@ -707,6 +831,8 @@ def build_globe_config(
     credits["prediction"] = prediction_credit
     if ground_truth_credit is not None:
         credits["ground_truth"] = ground_truth_credit
+    if absolute_error_credit is not None:
+        credits["absolute_error"] = absolute_error_credit
     if points_credit is not None:
         credits["points"] = points_credit
     if patch_splits_credit is not None:
@@ -807,6 +933,7 @@ def export_cesium_globe_assets(
     (
         prediction_path,
         ground_truth_path,
+        absolute_error_path,
         points_path,
         patch_splits_path,
         full_sample_points_path,
@@ -832,6 +959,7 @@ def export_cesium_globe_assets(
     config_depth_levels: list[dict[str, Any]] = []
     prediction_tiles_dir: Path | None = None
     ground_truth_tiles_dir: Path | None = None
+    absolute_error_tiles_dir: Path | None = None
     for depth_export in depth_exports:
         suffix = str(depth_export["suffix"])
         prediction_export_path = Path(depth_export["prediction_path"])
@@ -877,6 +1005,41 @@ def export_cesium_globe_assets(
             if ground_truth_tiles_dir is None:
                 ground_truth_tiles_dir = ground_truth_tiles_dir_for_depth
 
+        absolute_error_tiles_dir_for_depth: Path | None = None
+        absolute_error_scale: dict[str, float | int] | None = None
+        absolute_error_export_path = depth_export.get("absolute_error_path")
+        if absolute_error_export_path is not None:
+            absolute_error_export_path = Path(absolute_error_export_path)
+            _validate_raster_transparency_contract(absolute_error_export_path)
+            absolute_error_scale = _absolute_error_color_scale(absolute_error_export_path)
+            absolute_error_ramp_path = (
+                temp_dir / f"{absolute_error_export_path.stem}_green_red_ramp.txt"
+            )
+            _write_absolute_error_color_ramp(
+                absolute_error_ramp_path,
+                color_scale_min_c=float(absolute_error_scale["color_scale_min_c"]),
+                color_scale_max_c=float(absolute_error_scale["color_scale_max_c"]),
+                valid_max_c=float(absolute_error_scale["valid_max_c"]),
+            )
+            absolute_error_colorized_path = (
+                temp_dir / f"{absolute_error_export_path.stem}_colorized.tif"
+            )
+            _colorize_raster(
+                absolute_error_export_path,
+                absolute_error_colorized_path,
+                color_ramp_path=absolute_error_ramp_path,
+            )
+            absolute_error_tiles_dir_for_depth = (
+                globe_dir / f"absolute_error_tiles_{suffix}"
+            )
+            _run_gdal2tiles(
+                absolute_error_colorized_path,
+                absolute_error_tiles_dir_for_depth,
+                extra_zoom_levels=extra_zoom_levels,
+            )
+            if absolute_error_tiles_dir is None:
+                absolute_error_tiles_dir = absolute_error_tiles_dir_for_depth
+
         config_depth_levels.append(
             {
                 "suffix": suffix,
@@ -898,6 +1061,42 @@ def export_cesium_globe_assets(
                         ground_truth_tiles_dir_for_depth.name,
                         public_base_url=public_base_url,
                     )
+                ),
+                "absolute_error_tiles_url": (
+                    None
+                    if absolute_error_tiles_dir_for_depth is None
+                    else _resolve_layer_url(
+                        absolute_error_tiles_dir_for_depth.name,
+                        public_base_url=public_base_url,
+                    )
+                ),
+                "absolute_error_color_palette": DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+                "absolute_error_color_scale_min_c": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_min_c"])
+                ),
+                "absolute_error_color_scale_max_c": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_max_c"])
+                ),
+                "absolute_error_legend_min_c": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+                "absolute_error_legend_max_c": (
+                    None
+                    if absolute_error_scale is None
+                    else int(absolute_error_scale["legend_max_c"])
+                ),
+                "absolute_error_valid_max_c": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["valid_max_c"])
+                ),
+                "absolute_error_scale_min_percentile": (
+                    DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE
+                ),
+                "absolute_error_scale_max_percentile": (
+                    DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE
                 ),
             }
         )
@@ -954,6 +1153,11 @@ def export_cesium_globe_assets(
         if ground_truth_path is not None
         else None
     )
+    absolute_error_meta = (
+        _read_raster_metadata(absolute_error_path)
+        if absolute_error_path is not None
+        else None
+    )
     raster_transparency = _raster_transparency_config(
         prediction_path,
         land_mask_path=land_mask_path,
@@ -969,6 +1173,11 @@ def export_cesium_globe_assets(
             None
             if ground_truth_tiles_dir is None
             else config_depth_levels[0]["ground_truth_tiles_url"]
+        ),
+        absolute_error_tiles_url=(
+            None
+            if absolute_error_tiles_dir is None
+            else config_depth_levels[0]["absolute_error_tiles_url"]
         ),
         depth_levels=config_depth_levels,
         argo_sample_locations_url=(
@@ -1008,6 +1217,9 @@ def export_cesium_globe_assets(
         ground_truth_credit=(
             None if ground_truth_meta is None else ground_truth_meta["credit"]
         ),
+        absolute_error_credit=(
+            None if absolute_error_meta is None else absolute_error_meta["credit"]
+        ),
         points_credit=None if copied_points_path is None else "Observed Argo points",
         patch_splits_credit=(
             None if copied_patch_splits_path is None else "Inference patch grid"
@@ -1035,6 +1247,8 @@ def export_cesium_globe_assets(
     print(f"- first prediction tiles: {prediction_tiles_dir}")
     if ground_truth_tiles_dir is not None:
         print(f"- first ground-truth tiles: {ground_truth_tiles_dir}")
+    if absolute_error_tiles_dir is not None:
+        print(f"- first absolute-error tiles: {absolute_error_tiles_dir}")
     if copied_argo_sample_locations_path is not None:
         print(
             "- combined ARGO sample locations GeoJSON: "
@@ -1085,6 +1299,13 @@ def export_cesium_globe_assets(
         "globe_dir": str(globe_dir),
         "config_path": str(config_path),
         "depth_tile_set_count": int(len(config_depth_levels)),
+        "absolute_error_tile_set_count": int(
+            sum(
+                1
+                for depth_level in config_depth_levels
+                if depth_level.get("absolute_error_tiles_url") is not None
+            )
+        ),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,

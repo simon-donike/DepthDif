@@ -51,6 +51,8 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_netcdf_gridded import DEFAULT_LAND_MASK_PATH
 from depth_recon.inference.export_cesium_globe_assets import (
+    DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE,
+    DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE,
     DEFAULT_COLOR_SCALE_MAX_C,
     DEFAULT_COLOR_SCALE_MIN_C,
     DEFAULT_EXTRA_ZOOM_LEVELS,
@@ -135,6 +137,7 @@ class ExportRunResult:
     iso_year: int
     iso_week: int
     selected_patch_count: int
+    absolute_error_tif_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +346,7 @@ def _rewrite_summary_for_production(
     for key in (
         "prediction_tif_path",
         "ground_truth_tif_path",
+        "absolute_error_tif_path",
         "argo_points_geojson_path",
         "full_sample_locations_geojson_path",
         "patch_splits_geojson_path",
@@ -354,7 +358,11 @@ def _rewrite_summary_for_production(
     for depth_export in summary.get("depth_exports", []):
         if not isinstance(depth_export, dict):
             continue
-        for key in ("prediction_tif_path", "ground_truth_tif_path"):
+        for key in (
+            "prediction_tif_path",
+            "ground_truth_tif_path",
+            "absolute_error_tif_path",
+        ):
             value = depth_export.get(key)
             if isinstance(value, str):
                 depth_export[key] = _production_artifact_name(value, run_stem=run_stem)
@@ -1606,6 +1614,89 @@ def write_global_top_band_geotiff(
             ds.update_tags(ns="rio_overview", resampling="average")
 
 
+def _valid_raster_mask(data: np.ndarray, nodata: float | None) -> np.ndarray:
+    """Return finite raster pixels that are not equal to the dataset nodata value."""
+    mask = np.isfinite(data)
+    if nodata is not None and np.isfinite(float(nodata)):
+        mask &= ~np.isclose(data, float(nodata), atol=0.0, rtol=0.0)
+    return mask
+
+
+def write_absolute_error_geotiff(
+    *,
+    prediction_path: Path,
+    ground_truth_path: Path,
+    output_path: Path,
+    nodata: float,
+    band_description: str,
+    tags: dict[str, str],
+) -> None:
+    """Write a GeoTIFF of per-pixel absolute prediction-vs-GLORYS error in Celsius."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(prediction_path) as prediction_ds, rasterio.open(
+        ground_truth_path
+    ) as ground_truth_ds:
+        if (
+            prediction_ds.width != ground_truth_ds.width
+            or prediction_ds.height != ground_truth_ds.height
+            or prediction_ds.transform != ground_truth_ds.transform
+            or prediction_ds.crs != ground_truth_ds.crs
+        ):
+            raise RuntimeError(
+                "Prediction and GLORYS rasters must share shape, transform, and CRS "
+                f"before absolute-error export: {prediction_path}, {ground_truth_path}"
+            )
+
+        profile = prediction_ds.profile.copy()
+        profile.update(
+            driver="GTiff",
+            count=1,
+            dtype="float32",
+            nodata=float(nodata),
+            compress="deflate",
+            predictor=3,
+            tiled=True,
+            blockxsize=_geotiff_block_size(int(prediction_ds.width)),
+            blockysize=_geotiff_block_size(int(prediction_ds.height)),
+            BIGTIFF="IF_SAFER",
+        )
+        with rasterio.open(output_path, "w", **profile) as output_ds:
+            output_ds.set_band_description(1, band_description)
+            output_ds.update_tags(**tags)
+            for _block_index, window in prediction_ds.block_windows(1):
+                prediction_block = prediction_ds.read(1, window=window, masked=False)
+                ground_truth_block = ground_truth_ds.read(1, window=window, masked=False)
+                valid_mask = _valid_raster_mask(
+                    prediction_block,
+                    None
+                    if prediction_ds.nodata is None
+                    else float(prediction_ds.nodata),
+                ) & _valid_raster_mask(
+                    ground_truth_block,
+                    None
+                    if ground_truth_ds.nodata is None
+                    else float(ground_truth_ds.nodata),
+                )
+                out_block = np.full(
+                    prediction_block.shape,
+                    float(nodata),
+                    dtype=np.float32,
+                )
+                # The source rasters are already denormalized Celsius values, so
+                # the absolute difference remains in degrees Celsius.
+                out_block[valid_mask] = np.abs(
+                    prediction_block[valid_mask].astype(np.float32, copy=False)
+                    - ground_truth_block[valid_mask].astype(np.float32, copy=False)
+                )
+                output_ds.write(out_block, 1, window=window)
+
+    overview_factors = _overview_factors(profile["width"], profile["height"])
+    if overview_factors:
+        with rasterio.open(output_path, "r+") as ds:
+            ds.build_overviews(overview_factors, Resampling.average)
+            ds.update_tags(ns="rio_overview", resampling="average")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -2404,6 +2495,39 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             )
             print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
 
+        absolute_error_tif_path_for_level: Path | None = None
+        if ground_truth_tif_path_for_level is not None:
+            absolute_error_tif_path_for_level = (
+                run_dir / f"{run_stem}_absolute_error_{level.suffix}.tif"
+            )
+            write_absolute_error_geotiff(
+                prediction_path=prediction_tif_path_for_level,
+                ground_truth_path=ground_truth_tif_path_for_level,
+                output_path=absolute_error_tif_path_for_level,
+                nodata=float(args.nodata),
+                band_description=f"absolute_error_{level.suffix}_celsius",
+                tags={
+                    **common_depth_tags,
+                    "source": "DepthDif global weekly absolute-error export",
+                    "kind": "absolute_error",
+                    "source_prediction_tif_path": prediction_tif_path_for_level.name,
+                    "source_ground_truth_tif_path": ground_truth_tif_path_for_level.name,
+                    "source_value_transform": "abs(prediction_celsius_minus_glorys_celsius)",
+                    "value_space": "absolute_error_celsius",
+                    "globe_color_palette": "absolute_error_green_red",
+                    "globe_color_scale_min_percentile": (
+                        f"{float(DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE):.3f}"
+                    ),
+                    "globe_color_scale_max_percentile": (
+                        f"{float(DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE):.3f}"
+                    ),
+                },
+            )
+            print(
+                "Wrote absolute-error GeoTIFF: "
+                f"{absolute_error_tif_path_for_level}"
+            )
+
         depth_export_records.append(
             {
                 "suffix": level.suffix,
@@ -2419,6 +2543,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     if ground_truth_tif_path_for_level is None
                     else _summary_artifact_path(ground_truth_tif_path_for_level)
                 ),
+                "absolute_error_tif_path": (
+                    None
+                    if absolute_error_tif_path_for_level is None
+                    else _summary_artifact_path(absolute_error_tif_path_for_level)
+                ),
             }
         )
 
@@ -2427,6 +2556,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         None
         if depth_export_records[0]["ground_truth_tif_path"] is None
         else run_dir / str(depth_export_records[0]["ground_truth_tif_path"])
+    )
+    absolute_error_tif_path = (
+        None
+        if depth_export_records[0]["absolute_error_tif_path"] is None
+        else run_dir / str(depth_export_records[0]["absolute_error_tif_path"])
     )
     if ground_truth_tif_path is not None:
         print(f"Wrote Argo points GeoJSON: {argo_points_geojson_path}")
@@ -2486,6 +2620,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             if ground_truth_tif_path is None
             else _summary_artifact_path(ground_truth_tif_path)
         ),
+        "absolute_error_tif_path": (
+            None
+            if absolute_error_tif_path is None
+            else _summary_artifact_path(absolute_error_tif_path)
+        ),
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
             None
@@ -2534,6 +2673,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 ground_truth_tif_path.name,
                 run_stem=_default_run_stem(selection.selected_date),
             )
+        if absolute_error_tif_path is not None:
+            absolute_error_tif_path = run_dir / _production_artifact_name(
+                absolute_error_tif_path.name,
+                run_stem=_default_run_stem(selection.selected_date),
+            )
         if argo_points_geojson_path is not None:
             argo_points_geojson_path = run_dir / argo_points_geojson_path.name
         if full_sample_locations_geojson_path is not None:
@@ -2567,6 +2711,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"patches={len(selection.indices)}, "
         f"prediction={prediction_tif_path}, "
         f"ground_truth={ground_truth_tif_path}, "
+        f"absolute_error={absolute_error_tif_path}, "
         f"argo_points={argo_points_geojson_path}, "
         f"full_sample_locations={full_sample_locations_geojson_path}, "
         f"graphs={graphs_dir_path}, "
@@ -2582,6 +2727,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         iso_year=int(selection.iso_year),
         iso_week=int(selection.iso_week),
         selected_patch_count=int(len(selection.indices)),
+        absolute_error_tif_path=absolute_error_tif_path,
     )
 
 
