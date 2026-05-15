@@ -24,25 +24,6 @@
   const PATCH_OUTLINE_WIDTH = 2.75;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
   const BACKGROUND_PRELOAD_DELAY_MS = 180;
-  const DEFAULT_COMPARE_SPLIT_PERCENT = 50;
-  const TOUR_STORAGE_KEY = "depthdif-globe-tour-dismissed";
-  const TOUR_STEPS = [
-    {
-      title: "Compare the model with GLORYS",
-      text:
-        "Prediction shows the DepthDif output. GLORYS is the reference reanalysis layer for the same week and depth.",
-    },
-    {
-      title: "Drag the swipe divider",
-      text:
-        "Enable Compare, then move the Swipe control to inspect where Prediction and GLORYS agree or diverge.",
-    },
-    {
-      title: "Change depth and inspect samples",
-      text:
-        "Use the depth slider to move through the water column. ARGO markers and full-depth profiles connect map patterns with observations.",
-    },
-  ];
   const MONTH_ABBREVIATIONS = [
     "Jan",
     "Feb",
@@ -86,10 +67,6 @@
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
       pointsToggle: document.getElementById("globe-toggle-points"),
       patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
-      compareToggle: document.getElementById("globe-toggle-compare"),
-      compareSwipe: document.getElementById("globe-compare-swipe"),
-      compareStatus: document.getElementById("globe-compare-status"),
-      compareHandle: document.getElementById("globe-compare-handle"),
       toolbar: document.querySelector(".globe-toolbar"),
       toolbarContent: document.getElementById("globe-toolbar-content"),
       toolbarToggle: document.getElementById("globe-toggle-toolbar"),
@@ -98,7 +75,6 @@
       depthTicks: document.getElementById("globe-depth-level-ticks"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
-      tourButton: document.getElementById("globe-open-tour"),
       pageEyebrow: document.getElementById("globe-page-eyebrow"),
       pageTitle: document.getElementById("globe-page-title"),
       pageDescription: document.getElementById("globe-page-description"),
@@ -110,12 +86,6 @@
       profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
       profilePopupImage: document.getElementById("globe-profile-popup-image"),
       profilePopupClose: document.getElementById("globe-profile-popup-close"),
-      tour: document.getElementById("globe-tour"),
-      tourStep: document.getElementById("globe-tour-step"),
-      tourTitle: document.getElementById("globe-tour-title"),
-      tourText: document.getElementById("globe-tour-text"),
-      tourNext: document.getElementById("globe-tour-next"),
-      tourSkip: document.getElementById("globe-tour-skip"),
     };
   }
 
@@ -359,26 +329,11 @@
     toggle.dataset.globeUnavailable = "true";
   }
 
-  function markToggleAvailable(toggle) {
-    if (!toggle || toggle.dataset.globeUnavailable !== "true") {
-      return;
-    }
-    delete toggle.dataset.globeUnavailable;
-    toggle.disabled = false;
-  }
-
   function setToggleLoading(toggle, loading) {
     if (!toggle || toggle.dataset.globeUnavailable === "true") {
       return;
     }
     toggle.disabled = loading;
-  }
-
-  function setToggleEnabled(toggle, enabled) {
-    if (!toggle || toggle.dataset.globeUnavailable === "true") {
-      return;
-    }
-    toggle.disabled = !enabled;
   }
 
   function clamp(value, minValue, maxValue) {
@@ -418,105 +373,6 @@
     const depthLevels = getDepthLevels(state.config);
     const index = clamp(Number(state.selectedDepthIndex || 0), 0, depthLevels.length - 1);
     return depthLevels[index] || depthLevels[0];
-  }
-
-  function selectedDepthHasGroundTruth(state) {
-    const depthLevel = selectedDepthLevel(state);
-    return Boolean(depthLevel && depthLevel.ground_truth_tiles_url);
-  }
-
-  function setCompareStatus(state, message) {
-    if (state.elements.compareStatus) {
-      state.elements.compareStatus.textContent = message || "";
-    }
-  }
-
-  function setCompareSwipePercent(state, percent) {
-    const splitPercent = clamp(Number(percent), 0, 100);
-    state.compareSplitPercent = splitPercent;
-    if (state.elements.compareSwipe) {
-      state.elements.compareSwipe.value = String(Math.round(splitPercent));
-    }
-    if (state.elements.compareHandle) {
-      state.elements.compareHandle.style.left = String(splitPercent) + "%";
-    }
-    if (state.viewer && !state.viewer.isDestroyed()) {
-      state.viewer.scene.imagerySplitPosition = splitPercent / 100.0;
-    }
-    requestRender(state);
-  }
-
-  function clearCompareLayerSplit(state) {
-    if (state.predictionLayer) {
-      state.predictionLayer.splitDirection = Cesium.SplitDirection.NONE;
-    }
-    if (state.groundTruthLayer) {
-      state.groundTruthLayer.splitDirection = Cesium.SplitDirection.NONE;
-    }
-  }
-
-  function applyCompareLayerSplit(state) {
-    if (state.predictionLayer) {
-      state.predictionLayer.splitDirection = Cesium.SplitDirection.LEFT;
-      state.predictionLayer.show = true;
-    }
-    if (state.groundTruthLayer) {
-      state.groundTruthLayer.splitDirection = Cesium.SplitDirection.RIGHT;
-      state.groundTruthLayer.show = true;
-    }
-    setCompareSwipePercent(state, state.compareSplitPercent);
-  }
-
-  function setCompareControlsVisible(state, visible) {
-    if (state.elements.compareSwipe) {
-      state.elements.compareSwipe.disabled = !visible;
-    }
-    if (state.elements.compareHandle) {
-      state.elements.compareHandle.hidden = !visible;
-    }
-  }
-
-  function setLayerToggleLock(state, locked) {
-    setToggleEnabled(state.elements.predictionToggle, !locked);
-    setToggleEnabled(state.elements.groundTruthToggle, !locked);
-  }
-
-  function restoreCompareLayerState(state) {
-    const previous = state.comparePreviousVisibility;
-    if (!previous) {
-      return;
-    }
-    state.elements.predictionToggle.checked = previous.predictionChecked;
-    state.elements.groundTruthToggle.checked = previous.groundTruthChecked;
-    if (state.predictionLayer) {
-      state.predictionLayer.show = previous.predictionShown;
-    }
-    if (state.groundTruthLayer) {
-      state.groundTruthLayer.show = previous.groundTruthShown;
-    }
-    state.comparePreviousVisibility = null;
-  }
-
-  function updateCompareAvailability(state) {
-    if (!state.elements.compareToggle) {
-      return;
-    }
-    const available = selectedDepthHasGroundTruth(state);
-    state.elements.compareToggle.disabled = !available;
-    if (!available) {
-      if (state.compareEnabled) {
-        setCompareMode(state, false);
-      }
-      state.elements.compareToggle.checked = false;
-      setCompareControlsVisible(state, false);
-      setCompareStatus(state, "GLORYS unavailable for this depth");
-      return;
-    }
-    markToggleAvailable(state.elements.groundTruthToggle);
-    if (state.compareEnabled) {
-      setLayerToggleLock(state, true);
-    }
-    setCompareStatus(state, state.compareEnabled ? "Prediction left, GLORYS right" : "");
   }
 
   function formatDepthMeters(depthLevel) {
@@ -567,7 +423,6 @@
       state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
     }
     updateDepthTicks(state, depthLevels);
-    updateCompareAvailability(state);
   }
 
   function colorForTemperature(tempC, colorScale) {
@@ -1357,75 +1212,10 @@
     }
   }
 
-  async function setCompareMode(state, enabled) {
-    const elements = state.elements;
-    if (!elements.compareToggle) {
-      return;
-    }
-
-    if (!enabled) {
-      state.compareEnabled = false;
-      elements.compareToggle.checked = false;
-      clearCompareLayerSplit(state);
-      setCompareControlsVisible(state, false);
-      setLayerToggleLock(state, false);
-      restoreCompareLayerState(state);
-      setCompareStatus(state, selectedDepthHasGroundTruth(state) ? "" : "GLORYS unavailable for this depth");
-      requestRender(state);
-      return;
-    }
-
-    if (!selectedDepthHasGroundTruth(state)) {
-      elements.compareToggle.checked = false;
-      updateCompareAvailability(state);
-      return;
-    }
-
-    if (!state.comparePreviousVisibility) {
-      state.comparePreviousVisibility = {
-        predictionChecked: elements.predictionToggle.checked,
-        groundTruthChecked: elements.groundTruthToggle.checked,
-        predictionShown: state.predictionLayer ? state.predictionLayer.show : false,
-        groundTruthShown: state.groundTruthLayer ? state.groundTruthLayer.show : false,
-      };
-    }
-
-    state.compareEnabled = true;
-    elements.compareToggle.checked = true;
-    setCompareControlsVisible(state, true);
-    setLayerToggleLock(state, true);
-    setCompareStatus(state, "Loading GLORYS...");
-
-    try {
-      if (!state.predictionLayer) {
-        state.predictionLayer = await addPredictionLayer(state);
-      }
-      await ensureGroundTruthLayer(state);
-      if (!state.groundTruthLayer) {
-        throw new Error("GLORYS layer could not be loaded for comparison.");
-      }
-      elements.predictionToggle.checked = true;
-      elements.groundTruthToggle.checked = true;
-      applyCompareLayerSplit(state);
-      enforceOverlayOrder(state);
-      setCompareStatus(state, "Prediction left, GLORYS right");
-    } catch (error) {
-      console.error(error);
-      state.compareEnabled = false;
-      elements.compareToggle.checked = false;
-      clearCompareLayerSplit(state);
-      setCompareControlsVisible(state, false);
-      setLayerToggleLock(state, false);
-      restoreCompareLayerState(state);
-      setCompareStatus(state, "Comparison unavailable");
-    }
-    requestRender(state);
-  }
-
   async function reloadRasterDepthLayers(state) {
     const imageryLayers = state.viewer.imageryLayers;
-    const showPrediction = state.compareEnabled || state.elements.predictionToggle.checked;
-    const showGroundTruth = state.compareEnabled || state.elements.groundTruthToggle.checked;
+    const showPrediction = state.elements.predictionToggle.checked;
+    const showGroundTruth = state.elements.groundTruthToggle.checked;
     const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
     state.rasterDepthReloadToken = rasterDepthReloadToken;
 
@@ -1465,88 +1255,11 @@
           groundTruthLayer.show = true;
         }
       }
-      if (state.compareEnabled) {
-        if (!state.groundTruthLayer) {
-          setCompareMode(state, false);
-          return;
-        }
-        applyCompareLayerSplit(state);
-      }
       enforceOverlayOrder(state);
       requestRender(state);
     } catch (error) {
       console.error(error);
     }
-  }
-
-  function readTourDismissed() {
-    try {
-      return window.localStorage.getItem(TOUR_STORAGE_KEY) === "true";
-    } catch (error) {
-      return false;
-    }
-  }
-
-  function writeTourDismissed() {
-    try {
-      window.localStorage.setItem(TOUR_STORAGE_KEY, "true");
-    } catch (error) {
-      return;
-    }
-  }
-
-  function updateTourStep(state) {
-    const stepIndex = clamp(Number(state.tourStepIndex || 0), 0, TOUR_STEPS.length - 1);
-    const step = TOUR_STEPS[stepIndex];
-    if (state.elements.tourStep) {
-      state.elements.tourStep.textContent =
-        "Step " + String(stepIndex + 1) + " of " + String(TOUR_STEPS.length);
-    }
-    if (state.elements.tourTitle) {
-      state.elements.tourTitle.textContent = step.title;
-    }
-    if (state.elements.tourText) {
-      state.elements.tourText.textContent = step.text;
-    }
-    if (state.elements.tourNext) {
-      state.elements.tourNext.textContent =
-        stepIndex >= TOUR_STEPS.length - 1 ? "Done" : "Next";
-    }
-  }
-
-  function openTour(state, force) {
-    if (!force && readTourDismissed()) {
-      return;
-    }
-    if (!state.elements.tour) {
-      return;
-    }
-    state.tourStepIndex = 0;
-    updateTourStep(state);
-    state.elements.tour.hidden = false;
-    requestRender(state);
-  }
-
-  function closeTour(state, rememberDismissal) {
-    if (!state.elements.tour) {
-      return;
-    }
-    state.elements.tour.hidden = true;
-    if (rememberDismissal) {
-      writeTourDismissed();
-    }
-    requestRender(state);
-  }
-
-  function advanceTour(state) {
-    const nextIndex = Number(state.tourStepIndex || 0) + 1;
-    if (nextIndex >= TOUR_STEPS.length) {
-      closeTour(state, true);
-      return;
-    }
-    state.tourStepIndex = nextIndex;
-    updateTourStep(state);
-    requestRender(state);
   }
 
   function wireUi(state) {
@@ -1597,18 +1310,6 @@
       });
     }
 
-    if (elements.compareToggle) {
-      elements.compareToggle.addEventListener("change", function () {
-        setCompareMode(state, elements.compareToggle.checked);
-      });
-    }
-
-    if (elements.compareSwipe) {
-      elements.compareSwipe.addEventListener("input", function () {
-        setCompareSwipePercent(state, elements.compareSwipe.value);
-      });
-    }
-
     if (elements.depthSlider) {
       elements.depthSlider.addEventListener("input", function () {
         state.selectedDepthIndex = Number(elements.depthSlider.value);
@@ -1628,32 +1329,6 @@
         flyToConfig(state);
       }
     });
-
-    if (elements.tourButton) {
-      elements.tourButton.addEventListener("click", function () {
-        openTour(state, true);
-      });
-    }
-
-    if (elements.tourNext) {
-      elements.tourNext.addEventListener("click", function () {
-        advanceTour(state);
-      });
-    }
-
-    if (elements.tourSkip) {
-      elements.tourSkip.addEventListener("click", function () {
-        closeTour(state, true);
-      });
-    }
-
-    if (elements.tour) {
-      elements.tour.addEventListener("click", function (event) {
-        if (event.target === elements.tour) {
-          closeTour(state, true);
-        }
-      });
-    }
 
     if (elements.profilePopupClose) {
       elements.profilePopupClose.addEventListener("click", function () {
@@ -1738,10 +1413,6 @@
         patchSplitsDataSourceLoadPromise: null,
         selectedDepthIndex: 0,
         rasterDepthReloadToken: 0,
-        compareEnabled: false,
-        comparePreviousVisibility: null,
-        compareSplitPercent: DEFAULT_COMPARE_SPLIT_PERCENT,
-        tourStepIndex: 0,
         spinEnabled: false,
         lastSpinTime: null,
         profilePopupCloseTimer: null,
@@ -1753,7 +1424,6 @@
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
       updateDepthControl(state);
-      setCompareSwipePercent(state, DEFAULT_COMPARE_SPLIT_PERCENT);
 
       try {
         state.predictionLayer = await addPredictionLayer(state);
@@ -1797,11 +1467,6 @@
       window.addEventListener("resize", state.handleWindowResize);
       elements.container.dataset.globeInitialized = "true";
       preloadOptionalLayers(state);
-      window.setTimeout(function () {
-        if (window.__depthdifCesiumGlobeState === state) {
-          openTour(state, false);
-        }
-      }, 400);
       requestRender(state);
       return true;
     } catch (error) {
