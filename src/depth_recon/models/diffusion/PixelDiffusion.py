@@ -16,7 +16,12 @@ from .DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
 )
 from depth_recon.paths import config_path, resolve_config_path
-from depth_recon.utils.normalizations import PLOT_CMAP, temperature_normalize
+from depth_recon.utils.normalizations import (
+    PLOT_CMAP,
+    PLOT_SALINITY_CMAP,
+    salinity_normalize,
+    temperature_normalize,
+)
 from depth_recon.utils.stretching import minmax_stretch
 from depth_recon.utils.validation_denoise import (
     average_observed_argo_pixels_per_image,
@@ -33,12 +38,14 @@ class PixelDiffusionConditional(pl.LightningModule):
     # validation sampler implementation/config changed (e.g., DDPM <-> DDIM).
     """Lightning module that trains and samples conditional pixel diffusion."""
     _SAMPLER_STATE_PREFIXES: tuple[str, ...] = ("val_sampler.",)
+    _SUPPORTED_OUTPUT_FIELDS: tuple[str, ...] = ("temperature", "salinity")
 
     def __init__(
         self,
         datamodule: pl.LightningDataModule | None = None,
         generated_channels: int = 1,
         condition_channels: int = 1,
+        output_fields: tuple[str, ...] | list[str] | None = None,
         condition_mask_channels: int = 1,
         condition_include_eo: bool = False,
         condition_use_valid_mask: bool = True,
@@ -102,6 +109,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             datamodule (pl.LightningDataModule | None): Input value.
             generated_channels (int): Input value.
             condition_channels (int): Input value.
+            output_fields (tuple[str, ...] | list[str] | None): Output variables to
+                train/predict. Defaults to temperature only.
             condition_mask_channels (int): Mask tensor controlling valid or known pixels.
             condition_include_eo (bool): Boolean flag controlling behavior.
             condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
@@ -231,6 +240,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.condition_use_valid_mask = bool(condition_use_valid_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
+        self.output_fields = self._normalize_output_fields(output_fields)
+        self.predicts_salinity = "salinity" in self.output_fields
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
@@ -271,22 +282,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             train_betas=train_betas,
             input_size=model_summary_input_size,
         )
-        # Cached validation mini-batch
-        # (x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date)
-        # used for one validation-end full reverse-diffusion reconstruction pass.
-        self._cached_val_example: (
-            tuple[
-                torch.Tensor,
-                torch.Tensor,
-                torch.Tensor | None,
-                torch.Tensor | None,
-                torch.Tensor | None,
-                torch.Tensor | None,
-                torch.Tensor | None,
-                torch.Tensor | None,
-            ]
-            | None
-        ) = None
+        # Cached validation mini-batch used for one validation-end full
+        # reverse-diffusion reconstruction pass.
+        self._cached_val_example: dict[str, Any] | None = None
         self._logged_schedule_profile_in_sanity = False
 
     @classmethod
@@ -342,6 +340,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             datamodule=datamodule,
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
+            output_fields=m.get("output_fields", None),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             condition_include_eo=bool(m.get("condition_include_eo", False)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
@@ -440,6 +439,37 @@ class PixelDiffusionConditional(pl.LightningModule):
         """
         with resolve_config_path(path).open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
+
+    @classmethod
+    def _normalize_output_fields(
+        cls, output_fields: tuple[str, ...] | list[str] | str | None
+    ) -> tuple[str, ...]:
+        """Normalize and validate the configured model output variables."""
+        if output_fields is None:
+            fields = ("temperature",)
+        elif isinstance(output_fields, str):
+            fields = (output_fields,)
+        else:
+            fields = tuple(str(field) for field in output_fields)
+
+        if not fields:
+            raise ValueError("model.output_fields must contain at least one field.")
+        unsupported = [
+            field for field in fields if field not in cls._SUPPORTED_OUTPUT_FIELDS
+        ]
+        if unsupported:
+            raise ValueError(
+                "Unsupported model.output_fields values: "
+                f"{unsupported}. Supported values are {cls._SUPPORTED_OUTPUT_FIELDS}."
+            )
+        if len(set(fields)) != len(fields):
+            raise ValueError("model.output_fields cannot contain duplicates.")
+        if fields not in (("temperature",), ("temperature", "salinity")):
+            raise ValueError(
+                "model.output_fields currently supports only [temperature] or "
+                "[temperature, salinity]."
+            )
+        return fields
 
     @staticmethod
     def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:
@@ -960,6 +990,237 @@ class PixelDiffusionConditional(pl.LightningModule):
             f"channels ({int(reference.size(1))}) and cannot be broadcast."
         )
 
+    def _require_batch_tensor(self, batch: dict[str, Any], key: str) -> torch.Tensor:
+        """Return a required tensor from a batch or fail with a clear error."""
+        if key not in batch or batch[key] is None:
+            raise RuntimeError(
+                f"model.output_fields={list(self.output_fields)} requires batch[{key}]."
+            )
+        value = batch[key]
+        if not torch.is_tensor(value):
+            raise RuntimeError(f"batch[{key}] must be a torch.Tensor.")
+        return value
+
+    @staticmethod
+    def _validate_stack_shape(
+        reference: torch.Tensor,
+        tensor: torch.Tensor,
+        *,
+        reference_key: str,
+        key: str,
+    ) -> None:
+        """Validate that two model-field tensors can be concatenated by channel."""
+        if int(tensor.ndim) != int(reference.ndim):
+            raise RuntimeError(
+                f"batch[{key}] ndim ({int(tensor.ndim)}) does not match "
+                f"batch[{reference_key}] ndim ({int(reference.ndim)})."
+            )
+        if int(tensor.ndim) < 2:
+            raise RuntimeError(
+                f"batch[{key}] must include batch and channel dimensions."
+            )
+        if int(tensor.size(0)) != int(reference.size(0)):
+            raise RuntimeError(
+                f"batch[{key}] batch size does not match batch[{reference_key}]."
+            )
+        if tuple(tensor.shape[2:]) != tuple(reference.shape[2:]):
+            raise RuntimeError(
+                f"batch[{key}] spatial shape does not match batch[{reference_key}]."
+            )
+
+    def _stack_output_tensor(
+        self,
+        batch: dict[str, Any],
+        *,
+        temperature_key: str,
+        salinity_key: str,
+    ) -> torch.Tensor:
+        """Stack configured output fields along the channel dimension."""
+        temperature = self._require_batch_tensor(batch, temperature_key)
+        if not self.predicts_salinity:
+            return temperature
+
+        salinity = self._require_batch_tensor(batch, salinity_key)
+        # Temperature and salinity stay separate in the dataset and are joined only
+        # for the channel-agnostic diffusion model.
+        self._validate_stack_shape(
+            temperature,
+            salinity,
+            reference_key=temperature_key,
+            key=salinity_key,
+        )
+        return torch.cat([temperature, salinity], dim=1)
+
+    def _prepare_model_batch_tensors(
+        self, batch: dict[str, Any], *, include_y: bool
+    ) -> dict[str, torch.Tensor]:
+        """Build model-facing tensors from explicit dataset batch fields."""
+        model_batch = {
+            "x": self._stack_output_tensor(
+                batch, temperature_key="x", salinity_key="x_salinity"
+            ),
+            "x_valid_mask": self._stack_output_tensor(
+                batch,
+                temperature_key="x_valid_mask",
+                salinity_key="x_salinity_valid_mask",
+            ),
+            "y_valid_mask": self._stack_output_tensor(
+                batch,
+                temperature_key="y_valid_mask",
+                salinity_key="y_salinity_valid_mask",
+            ),
+        }
+        if include_y:
+            model_batch["y"] = self._stack_output_tensor(
+                batch, temperature_key="y", salinity_key="y_salinity"
+            )
+        return model_batch
+
+    def _split_output_tensor(
+        self, tensor: torch.Tensor, batch: dict[str, Any]
+    ) -> dict[str, torch.Tensor]:
+        """Split a model output tensor back into configured output fields."""
+        if not self.predicts_salinity:
+            return {"temperature": tensor}
+        if int(tensor.ndim) < 2:
+            raise RuntimeError("Joint output tensors must include channel dimension.")
+
+        temperature = self._require_batch_tensor(batch, "x")
+        salinity = self._require_batch_tensor(batch, "x_salinity")
+        temperature_channels = int(temperature.size(1))
+        salinity_channels = int(salinity.size(1))
+        expected_channels = temperature_channels + salinity_channels
+        if int(tensor.size(1)) != expected_channels:
+            raise RuntimeError(
+                "Joint output channel mismatch: "
+                f"got {int(tensor.size(1))}, expected {expected_channels}."
+            )
+
+        split_at = temperature_channels
+        return {
+            "temperature": tensor[:, :split_at],
+            "salinity": tensor[:, split_at : split_at + salinity_channels],
+        }
+
+    def _postprocess_prediction_field(
+        self,
+        normalized: torch.Tensor,
+        valid_mask: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+        *,
+        normalize_fn: Any,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Denormalize and apply standard prediction post-processing."""
+        denorm = normalize_fn(mode="denorm", tensor=normalized)
+        denorm = self._apply_postprocess_gaussian_blur(denorm)
+        denorm_for_plot = self._apply_postprocess_invalid_to_nan(denorm, valid_mask)
+        denorm = self._apply_postprocess_invalid_to_nan(denorm, valid_mask)
+        denorm_for_plot = self._apply_postprocess_land_to_zero(
+            denorm_for_plot, land_mask
+        )
+        denorm = self._apply_postprocess_land_to_zero(denorm, land_mask)
+        return denorm, denorm_for_plot
+
+    def _build_prediction_outputs(
+        self,
+        y_hat: torch.Tensor,
+        batch: dict[str, Any],
+        *,
+        y_valid_mask: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+    ) -> dict[str, torch.Tensor]:
+        """Build predict_step output tensors in normalized and physical units."""
+        if not self.predicts_salinity:
+            y_hat_denorm, y_hat_denorm_for_plot = self._postprocess_prediction_field(
+                y_hat,
+                y_valid_mask,
+                land_mask,
+                normalize_fn=temperature_normalize,
+            )
+            return {
+                "y_hat": y_hat,
+                "y_hat_denorm": y_hat_denorm,
+                "y_hat_denorm_for_plot": y_hat_denorm_for_plot,
+            }
+
+        y_hat_by_field = self._split_output_tensor(y_hat, batch)
+        mask_by_field = (
+            self._split_output_tensor(y_valid_mask, batch)
+            if y_valid_mask is not None
+            else {"temperature": None, "salinity": None}
+        )
+        temperature_denorm, temperature_denorm_for_plot = (
+            self._postprocess_prediction_field(
+                y_hat_by_field["temperature"],
+                mask_by_field["temperature"],
+                land_mask,
+                normalize_fn=temperature_normalize,
+            )
+        )
+        salinity_denorm, salinity_denorm_for_plot = self._postprocess_prediction_field(
+            y_hat_by_field["salinity"],
+            mask_by_field["salinity"],
+            land_mask,
+            normalize_fn=salinity_normalize,
+        )
+        return {
+            "y_hat": y_hat,
+            "y_hat_temperature": y_hat_by_field["temperature"],
+            "y_hat_salinity": y_hat_by_field["salinity"],
+            "y_hat_temperature_denorm": temperature_denorm,
+            "y_hat_temperature_denorm_for_plot": temperature_denorm_for_plot,
+            "y_hat_salinity_denorm": salinity_denorm,
+            "y_hat_salinity_denorm_for_plot": salinity_denorm_for_plot,
+            # Legacy aliases remain temperature-only so existing consumers do not see
+            # mixed Celsius/PSU tensors under the historical key.
+            "y_hat_denorm": temperature_denorm,
+            "y_hat_denorm_for_plot": temperature_denorm_for_plot,
+        }
+
+    def _split_prediction_samples(
+        self, samples: list[tuple[int, torch.Tensor]], batch: dict[str, Any]
+    ) -> list[tuple[int, torch.Tensor]]:
+        """Return temperature samples for legacy validation diagnostics."""
+        if not self.predicts_salinity:
+            return samples
+        return [
+            (step, self._split_output_tensor(sample, batch)["temperature"])
+            for step, sample in samples
+        ]
+
+    def _cache_validation_batch(self, batch: dict[str, Any], *, n_cache: int) -> None:
+        """Cache the raw validation batch fields needed by predict_step."""
+        keys = [
+            "x",
+            "y",
+            "eo",
+            "x_valid_mask",
+            "y_valid_mask",
+            "land_mask",
+            "coords",
+            "date",
+        ]
+        if self.predicts_salinity:
+            keys.extend(
+                [
+                    "x_salinity",
+                    "y_salinity",
+                    "x_salinity_valid_mask",
+                    "y_salinity_valid_mask",
+                ]
+            )
+
+        cached: dict[str, Any] = {}
+        for key in keys:
+            value = batch.get(key)
+            if value is None:
+                cached[key] = None
+            elif torch.is_tensor(value):
+                cached[key] = value[:n_cache].detach()
+            else:
+                cached[key] = value
+        self._cached_val_example = cached
+
     def _build_ambient_further_valid_mask(
         self,
         valid_mask: torch.Tensor | None,
@@ -1437,10 +1698,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             dict[str, Any]: Dictionary containing computed outputs.
         """
-        x = batch["x"]
+        model_batch = self._prepare_model_batch_tensors(batch, include_y=False)
+        x = model_batch["x"]
         eo = batch.get("eo")
-        valid_mask = batch["x_valid_mask"]
-        y_valid_mask = batch["y_valid_mask"]
+        valid_mask = model_batch["x_valid_mask"]
+        y_valid_mask = model_batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
@@ -1497,40 +1759,28 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
 
         # Keep all post-processing centralized in Lightning inference. The final returned
-        # field is the model prediction after optional sampler-time known-pixel clamping;
-        # do not overwrite it again here with observed x values.
-        generated_denorm = temperature_normalize(mode="denorm", tensor=y_hat)
-        generated_denorm = self._apply_postprocess_gaussian_blur(generated_denorm)
-        y_hat_denorm_for_plot = self._apply_postprocess_invalid_to_nan(
-            generated_denorm,
-            y_valid_mask,
+        # fields are split back into their physical units when joint mode is enabled.
+        prediction_outputs = self._build_prediction_outputs(
+            y_hat, batch, y_valid_mask=y_valid_mask, land_mask=land_mask
         )
-        y_hat_denorm = self._apply_postprocess_invalid_to_nan(
-            generated_denorm,
-            y_valid_mask,
+        prediction_outputs.update(
+            {
+                "denoise_samples": denoise_samples,
+                "x0_denoise_samples": x0_denoise_samples,
+                "sampler": sampler,
+                # Keep the ambient keep-mask available for downstream visualization.
+                "further_valid_mask": further_valid_mask,
+            }
         )
-        y_hat_denorm_for_plot = self._apply_postprocess_land_to_zero(
-            y_hat_denorm_for_plot,
-            land_mask,
-        )
-        y_hat_denorm = self._apply_postprocess_land_to_zero(
-            y_hat_denorm,
-            land_mask,
-        )
-
-        return {
-            "y_hat": y_hat,
-            "y_hat_denorm": y_hat_denorm,
-            "y_hat_denorm_for_plot": y_hat_denorm_for_plot,
-            "denoise_samples": denoise_samples,
-            "x0_denoise_samples": x0_denoise_samples,
-            "sampler": sampler,
-            # Keep the ambient keep-mask available for downstream visualization.
-            "further_valid_mask": further_valid_mask,
-        }
+        return prediction_outputs
 
     def _log_validation_triplet_stats(
-        self, x: torch.Tensor, y: torch.Tensor, y_hat: torch.Tensor
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        y_hat: torch.Tensor,
+        *,
+        prefix: str = "val_triplet",
     ) -> None:
         """Helper that computes log validation triplet stats.
 
@@ -1548,7 +1798,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         sync_dist = self._should_sync_dist()
 
         self.log(
-            "val_triplet/min_x",
+            f"{prefix}/min_x",
             x_min,
             on_step=False,
             on_epoch=True,
@@ -1557,7 +1807,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/min_y",
+            f"{prefix}/min_y",
             y_min,
             on_step=False,
             on_epoch=True,
@@ -1566,7 +1816,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/min_y_hat",
+            f"{prefix}/min_y_hat",
             y_hat_min,
             on_step=False,
             on_epoch=True,
@@ -1575,7 +1825,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/mean_x",
+            f"{prefix}/mean_x",
             x_mean,
             on_step=False,
             on_epoch=True,
@@ -1584,7 +1834,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/mean_y",
+            f"{prefix}/mean_y",
             y_mean,
             on_step=False,
             on_epoch=True,
@@ -1593,7 +1843,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/mean_y_hat",
+            f"{prefix}/mean_y_hat",
             y_hat_mean,
             on_step=False,
             on_epoch=True,
@@ -1602,7 +1852,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/std_x",
+            f"{prefix}/std_x",
             x_std,
             on_step=False,
             on_epoch=True,
@@ -1611,7 +1861,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/std_y",
+            f"{prefix}/std_y",
             y_std,
             on_step=False,
             on_epoch=True,
@@ -1620,7 +1870,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=y.size(0),
         )
         self.log(
-            "val_triplet/std_y_hat",
+            f"{prefix}/std_y_hat",
             y_hat_std,
             on_step=False,
             on_epoch=True,
@@ -1811,9 +2061,15 @@ class PixelDiffusionConditional(pl.LightningModule):
             return
 
         try:
-            x, y, eo, x_valid_mask, y_valid_mask, land_mask, coords, date = (
-                self._cached_val_example
-            )
+            cached = self._cached_val_example
+            x = cached["x"]
+            y = cached["y"]
+            eo = cached.get("eo")
+            x_valid_mask = cached.get("x_valid_mask")
+            y_valid_mask = cached.get("y_valid_mask")
+            land_mask = cached.get("land_mask")
+            coords = cached.get("coords")
+            date = cached.get("date")
             target = x if self.ambient_occlusion_enabled else y
             denoise_samples: list[tuple[int, torch.Tensor]] = []
             sampler_for_val = None
@@ -1828,6 +2084,14 @@ class PixelDiffusionConditional(pl.LightningModule):
                 "date": date,
                 "sampler": self.val_sampler,
             }
+            if self.predicts_salinity:
+                pred_batch.update(
+                    {
+                        "x_salinity": cached.get("x_salinity"),
+                        "x_salinity_valid_mask": cached.get("x_salinity_valid_mask"),
+                        "y_salinity_valid_mask": cached.get("y_salinity_valid_mask"),
+                    }
+                )
             if self.log_intermediates:
                 sampler_for_val = (
                     self.val_sampler
@@ -1844,12 +2108,23 @@ class PixelDiffusionConditional(pl.LightningModule):
 
             # Use Lightning's inference path for full-validation reconstruction.
             pred = self.predict_step(pred_batch, batch_idx=0)
-            y_hat = pred["y_hat"]
+            y_hat = pred.get("y_hat_temperature", pred["y_hat"])
             y_hat_denorm = pred["y_hat_denorm"]
             y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
             further_valid_mask = pred.get("further_valid_mask")
-            denoise_samples = pred["denoise_samples"]
-            x0_denoise_samples = pred.get("x0_denoise_samples", [])
+            salinity_further_valid_mask = further_valid_mask
+            if self.predicts_salinity and further_valid_mask is not None:
+                split_further_valid_mask = self._split_output_tensor(
+                    further_valid_mask, pred_batch
+                )
+                further_valid_mask = split_further_valid_mask["temperature"]
+                salinity_further_valid_mask = split_further_valid_mask["salinity"]
+            denoise_samples = self._split_prediction_samples(
+                pred["denoise_samples"], pred_batch
+            )
+            x0_denoise_samples = self._split_prediction_samples(
+                pred.get("x0_denoise_samples", []), pred_batch
+            )
 
             # Denormalize data channels only (masks stay in 0/1 space).
             x_denorm = temperature_normalize(mode="denorm", tensor=x)
@@ -1886,6 +2161,66 @@ class PixelDiffusionConditional(pl.LightningModule):
             target_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 target_denorm, eval_mask
             )
+            salinity_log_payload: dict[str, torch.Tensor | None] | None = None
+            if (
+                self.predicts_salinity
+                and pred.get("y_hat_salinity_denorm") is not None
+                and cached.get("x_salinity") is not None
+                and cached.get("y_salinity") is not None
+            ):
+                x_salinity = cached["x_salinity"]
+                y_salinity = cached["y_salinity"]
+                x_salinity_valid_mask = cached.get("x_salinity_valid_mask")
+                y_salinity_valid_mask = cached.get("y_salinity_valid_mask")
+                target_salinity = (
+                    x_salinity if self.ambient_occlusion_enabled else y_salinity
+                )
+                x_salinity_denorm = salinity_normalize(mode="denorm", tensor=x_salinity)
+                y_salinity_denorm = salinity_normalize(mode="denorm", tensor=y_salinity)
+                target_salinity_denorm = salinity_normalize(
+                    mode="denorm", tensor=target_salinity
+                )
+                salinity_eval_mask = self._build_task_supervision_mask(
+                    reference=target_salinity_denorm,
+                    x_valid_mask=x_salinity_valid_mask,
+                    y_valid_mask=y_salinity_valid_mask,
+                )
+                y_salinity_denorm_masked = self._apply_postprocess_invalid_to_nan(
+                    y_salinity_denorm, y_salinity_valid_mask
+                )
+                target_salinity_denorm_masked = self._apply_postprocess_invalid_to_nan(
+                    target_salinity_denorm, salinity_eval_mask
+                )
+                generated_salinity_profile_mask: torch.Tensor | None = None
+                if (
+                    x_salinity_valid_mask is not None
+                    and y_salinity_valid_mask is not None
+                ):
+                    x_salinity_mask_bool = x_salinity_valid_mask > 0.5
+                    y_salinity_mask_bool = y_salinity_valid_mask > 0.5
+                    if self.ambient_occlusion_enabled:
+                        if salinity_further_valid_mask is not None:
+                            generated_salinity_profile_mask = (
+                                x_salinity_mask_bool
+                                & y_salinity_mask_bool
+                                & ~(salinity_further_valid_mask > 0.5)
+                            )
+                    else:
+                        generated_salinity_profile_mask = (
+                            y_salinity_mask_bool & ~x_salinity_mask_bool
+                        )
+                salinity_log_payload = {
+                    "x_denorm": x_salinity_denorm,
+                    "y_denorm_masked": y_salinity_denorm_masked,
+                    "target_denorm_masked": target_salinity_denorm_masked,
+                    "y_hat_denorm": pred["y_hat_salinity_denorm"],
+                    "y_hat_denorm_for_plot": pred.get(
+                        "y_hat_salinity_denorm_for_plot",
+                        pred["y_hat_salinity_denorm"],
+                    ),
+                    "valid_mask": x_salinity_valid_mask,
+                    "candidate_mask": generated_salinity_profile_mask,
+                }
 
             recon_batch_size = int(target_denorm.size(0))
             if eval_mask is None:
@@ -2033,6 +2368,27 @@ class PixelDiffusionConditional(pl.LightningModule):
                 on_step=False,
                 on_epoch=True,
             )
+            if salinity_log_payload is not None:
+                self._log_validation_triplet_stats(
+                    x=salinity_log_payload["x_denorm"],
+                    y=salinity_log_payload["target_denorm_masked"],
+                    y_hat=salinity_log_payload["y_hat_denorm"],
+                    prefix="val_salinity_triplet",
+                )
+                self._log_common_batch_stats(
+                    salinity_log_payload["y_hat_denorm"],
+                    prefix="val_salinity_pred",
+                    batch_size=recon_batch_size,
+                    on_step=False,
+                    on_epoch=True,
+                )
+                self._log_common_batch_stats(
+                    salinity_log_payload["target_denorm_masked"],
+                    prefix="val_salinity_target",
+                    batch_size=recon_batch_size,
+                    on_step=False,
+                    on_epoch=True,
+                )
         # This is the one expensive full reconstruction for this validation run.
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
@@ -2051,6 +2407,28 @@ class PixelDiffusionConditional(pl.LightningModule):
             cmap=PLOT_CMAP,
             show_valid_mask_panel=False,
         )
+        if salinity_log_payload is not None:
+            log_wandb_conditional_reconstruction_grid(
+                logger=self.logger,
+                x=salinity_log_payload["x_denorm"],
+                y=salinity_log_payload["y_denorm_masked"],
+                y_hat=salinity_log_payload["y_hat_denorm_for_plot"],
+                y_target=salinity_log_payload["target_denorm_masked"],
+                valid_mask=salinity_log_payload["valid_mask"],
+                land_mask=land_mask,
+                prefix="val_salinity_imgs",
+                image_key=self._suffixed_validation_image_key(
+                    "salinity_full_reconstruction",
+                    image_key_suffix,
+                ),
+                cmap=PLOT_SALINITY_CMAP,
+                show_valid_mask_panel=False,
+                plot_unit="salinity",
+                error_metric_prefix="val_salinity_absolute_band_error",
+                error_metric_unit="psu",
+                error_metric_label="L1 (PSU)",
+                error_metric_title="Generated-Pixel Salinity L1 by Band",
+            )
         if log_profile:
             log_wandb_glorys_profile_comparison(
                 logger=self.logger,
@@ -2159,11 +2537,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        x = batch["x"]
-        y = batch["y"]
+        model_batch = self._prepare_model_batch_tensors(batch, include_y=True)
+        x = model_batch["x"]
+        y = model_batch["y"]
         eo = batch.get("eo")
-        valid_mask = batch["x_valid_mask"]
-        y_valid_mask = batch["y_valid_mask"]
+        valid_mask = model_batch["x_valid_mask"]
+        y_valid_mask = model_batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
@@ -2205,6 +2584,21 @@ class PixelDiffusionConditional(pl.LightningModule):
         self._log_pre_diffusion_stats(
             model_condition, prefix="train_condition", batch_size=int(target.size(0))
         )
+        if self.predicts_salinity:
+            salinity_target = self._split_output_tensor(target, batch)["salinity"]
+            salinity_condition = self._split_output_tensor(condition_x, batch)[
+                "salinity"
+            ]
+            self._log_pre_diffusion_stats(
+                salinity_target,
+                prefix="train_salinity_target",
+                batch_size=int(target.size(0)),
+            )
+            self._log_pre_diffusion_stats(
+                salinity_condition,
+                prefix="train_salinity_condition",
+                batch_size=int(target.size(0)),
+            )
         # Conditional p_loss uses x as context while learning selected denoising target.
         loss = self.model.p_loss(
             target_t,
@@ -2292,6 +2686,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         self._log_common_batch_stats(
             target, prefix="train", batch_size=int(target.size(0))
         )
+        if self.predicts_salinity:
+            self._log_common_batch_stats(
+                self._split_output_tensor(target, batch)["salinity"],
+                prefix="train_salinity",
+                batch_size=int(target.size(0)),
+            )
         return loss
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -2304,11 +2704,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        x = batch["x"]
-        y = batch["y"]
+        model_batch = self._prepare_model_batch_tensors(batch, include_y=True)
+        x = model_batch["x"]
+        y = model_batch["y"]
         eo = batch.get("eo")
-        valid_mask = batch["x_valid_mask"]
-        y_valid_mask = batch["y_valid_mask"]
+        valid_mask = model_batch["x_valid_mask"]
+        y_valid_mask = model_batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
@@ -2350,6 +2751,21 @@ class PixelDiffusionConditional(pl.LightningModule):
         self._log_pre_diffusion_stats(
             model_condition, prefix="val_condition", batch_size=int(target.size(0))
         )
+        if self.predicts_salinity:
+            salinity_target = self._split_output_tensor(target, batch)["salinity"]
+            salinity_condition = self._split_output_tensor(condition_x, batch)[
+                "salinity"
+            ]
+            self._log_pre_diffusion_stats(
+                salinity_target,
+                prefix="val_salinity_target",
+                batch_size=int(target.size(0)),
+            )
+            self._log_pre_diffusion_stats(
+                salinity_condition,
+                prefix="val_salinity_condition",
+                batch_size=int(target.size(0)),
+            )
         # Same training objective for validation; full reverse-chain recon is logged once
         # at validation end.
         loss = self.model.p_loss(
@@ -2449,31 +2865,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
 
         if batch_idx == 0 and self._cached_val_example is None:
-            # Cache up to N validation samples from the first val batch for one
-            # validation-end full reverse-diffusion reconstruction pass.
-            n_cache = min(self.max_full_reconstruction_samples, int(x.size(0)))
-            cached_x_valid_mask = (
-                valid_mask[:n_cache].detach() if valid_mask is not None else None
-            )
-            cached_y_valid_mask = (
-                y_valid_mask[:n_cache].detach() if y_valid_mask is not None else None
-            )
-            cached_land_mask = (
-                land_mask[:n_cache].detach() if land_mask is not None else None
-            )
-            cached_eo = eo[:n_cache].detach() if eo is not None else None
-            cached_coords = coords[:n_cache].detach() if coords is not None else None
-            cached_date = date[:n_cache].detach() if date is not None else None
-            self._cached_val_example = (
-                x[:n_cache].detach(),
-                y[:n_cache].detach(),
-                cached_eo,
-                cached_x_valid_mask,
-                cached_y_valid_mask,
-                cached_land_mask,
-                cached_coords,
-                cached_date,
-            )
+            # Cache raw batch fields so validation-end prediction can re-apply the same
+            # temperature/salinity stacking path used by training and validation loss.
+            n_cache = min(self.max_full_reconstruction_samples, int(batch["x"].size(0)))
+            self._cache_validation_batch(batch, n_cache=n_cache)
 
         return loss
 

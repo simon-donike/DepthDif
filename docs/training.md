@@ -50,11 +50,34 @@ See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full d
 Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask`.  
 For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enabled=false`.  
 
+## Joint Temperature + Salinity Training
+
+Temperature-only training is the default. For joint pixel training, enable both
+sides of the contract:
+
+- `data.dataset.output.include_salinity=true` makes the GeoTIFF loader return the normalized salinity side-channel tensors and masks.
+- `model.output_fields=["temperature", "salinity"]` makes `PixelDiffusionConditional` stack temperature and salinity inside the model path.
+
+Example:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config_joint_temp_salinity.yaml \
+  --set data.dataset.output.include_salinity=true
+```
+
+The joint preset predicts 100 output channels: 50 normalized temperature channels followed by 50 normalized salinity channels. Conditioning is 102 channels with EO enabled: one OSTIA channel, 100 stacked sparse ARGO channels, and one collapsed spatial support mask. `train.py` fails early if the model asks for salinity but the data config does not enable `include_salinity`, because the model requires `x_salinity`/`y_salinity` batch keys.
+
+Start from scratch or from a checkpoint trained with the same 100-channel architecture; existing 50-channel temperature checkpoints are not compatible.
+
 ## Important Config Notes  
 - `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.  
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion.  
 - `model.model_type="latent_cond_dif"` runs latent diffusion with the autoencoder bridge.  
-- dataset variant is selected by `dataset.core.dataset_variant`; the active value is `"argo_netcdf_gridded"`.  
+- dataset variant is selected by `dataset.core.dataset_variant`; use `"argo_geotiff_gridded"` for the active GeoTIFF workflow. `"argo_netcdf_gridded"` is legacy.  
+- `dataset.output.include_salinity` is `false` by default; set it to `true` only when the model config consumes salinity.  
 - parser defaults in `train.py` now point to `src/depth_recon/configs/px_space/*.yaml`; explicit CLI paths are still recommended for reproducibility  
 
 ## Autoencoder and Latent Workflow  

@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from depth_recon.utils.normalizations import (
+    salinity_to_plot_unit,
     temperature_normalize,
     temperature_to_plot_unit,
 )
@@ -586,6 +587,7 @@ def _mask_for_sample(
 
     Args:
         mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
         sample_idx (int): Input value.
 
     Returns:
@@ -612,6 +614,7 @@ def _plot_band_image(
     *,
     band_idx: int = 0,
     mask: torch.Tensor | None = None,
+    plot_unit: str = "temperature",
 ) -> np.ndarray:
     """Helper that computes plot band image.
 
@@ -620,6 +623,7 @@ def _plot_band_image(
         sample_idx (int): Input value.
         band_idx (int): Input value.
         mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
 
     Returns:
         np.ndarray: Computed output value.
@@ -635,21 +639,25 @@ def _plot_band_image(
         raise RuntimeError(
             f"Expected tensor ndim in {{2,3,4}} for plotting, got {int(tensor.ndim)}."
         )
-    return _temperature_band_to_plot_image(image_t, mask=mask)
+    return _physical_band_to_plot_image(image_t, mask=mask, plot_unit=plot_unit)
 
 
-def _temperature_band_to_plot_image(
+def _physical_band_to_plot_image(
     image_t: torch.Tensor,
     *,
     mask: torch.Tensor | None = None,
+    plot_unit: str = "temperature",
 ) -> np.ndarray:
-    """Convert one denormalized temperature band into the shared plot color scale."""
+    """Convert one denormalized physical band into a shared plot color scale."""
     image_t = image_t.detach().float()
     finite_mask = torch.isfinite(image_t)
     if mask is not None:
         finite_mask = finite_mask & (mask > 0.5).to(device=image_t.device)
-    # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
-    image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
+    if str(plot_unit).lower() == "salinity":
+        image_plot = salinity_to_plot_unit(image_t, tensor_is_normalized=False)
+    else:
+        # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
+        image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
     image_plot = torch.where(
         finite_mask,
         image_plot,
@@ -700,6 +708,11 @@ def log_wandb_conditional_reconstruction_grid(
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
     show_valid_mask_panel: bool = True,
+    plot_unit: str = "temperature",
+    error_metric_prefix: str = "val_absolute_band_error",
+    error_metric_unit: str = "deg",
+    error_metric_label: str = "L1 (deg)",
+    error_metric_title: str = "Generated-Pixel L1 by Band",
 ) -> None:
     """Log wandb conditional reconstruction grid for monitoring.
 
@@ -716,6 +729,11 @@ def log_wandb_conditional_reconstruction_grid(
         image_key (str): Input value.
         cmap (str): Input value.
         show_valid_mask_panel (bool): Controls whether valid mask is shown as a panel.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
+        error_metric_prefix (str): W&B namespace for per-band error metrics.
+        error_metric_unit (str): Unit suffix used in per-band metric names.
+        error_metric_label (str): Series label for the compact W&B line chart.
+        error_metric_title (str): Title for the compact W&B line chart.
 
     Returns:
         None: No value is returned.
@@ -784,19 +802,27 @@ def log_wandb_conditional_reconstruction_grid(
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=land_band)
+                x_img = _plot_band_image(
+                    x, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
+                )
                 y_hat_img = _plot_band_image(
-                    y_hat, i, band_idx=band_idx, mask=land_band
+                    y_hat, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
                 )
                 y_target_img = _plot_band_image(
-                    y_target, i, band_idx=band_idx, mask=land_band
+                    y_target,
+                    i,
+                    band_idx=band_idx,
+                    mask=land_band,
+                    plot_unit=plot_unit,
                 )
                 if valid_band is not None:
                     # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
                     valid_np = valid_band.detach().cpu().numpy() > 0.5
                     x_img[~valid_np] = 0.0
                 if y is not None:
-                    y_img = _plot_band_image(y, i, band_idx=band_idx, mask=land_band)
+                    y_img = _plot_band_image(
+                        y, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
+                    )
                 else:
                     y_img = None
                 if land_band is not None:
@@ -944,7 +970,8 @@ def log_wandb_conditional_reconstruction_grid(
         )
 
         # Keep per-band error metrics out of the image namespace in W&B.
-        metric_prefix = "val_absolute_band_error"
+        metric_prefix = str(error_metric_prefix)
+        metric_unit = str(error_metric_unit).strip().lower() or "unit"
         l1_logs: dict[str, float] = {}
         band_x: list[int] = []
         band_y: list[float] = []
@@ -952,9 +979,9 @@ def log_wandb_conditional_reconstruction_grid(
             if not bool(valid_bands[band_idx].item()):
                 continue
             band_val = float(l1_per_band[band_idx].item())
-            l1_logs[f"{metric_prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = (
-                band_val
-            )
+            l1_logs[
+                f"{metric_prefix}/recon_l1_generated_{metric_unit}_band_{int(band_idx)}"
+            ] = band_val
             band_x.append(int(band_idx))
             band_y.append(band_val)
 
@@ -965,11 +992,11 @@ def log_wandb_conditional_reconstruction_grid(
         # Optional compact view: all bands in a single plot panel for this validation pass.
         experiment.log(
             {
-                f"{metric_prefix}/recon_l1_generated_deg_by_band": wandb.plot.line_series(
+                f"{metric_prefix}/recon_l1_generated_{metric_unit}_by_band": wandb.plot.line_series(
                     xs=band_x,
                     ys=[band_y],
-                    keys=["L1 (deg)"],
-                    title="Generated-Pixel L1 by Band",
+                    keys=[str(error_metric_label)],
+                    title=str(error_metric_title),
                     xname="Band index",
                 )
             }

@@ -50,6 +50,7 @@ dataset:
   output:
     return_info: false # Keep training batches lean; enable only for debugging source metadata.
     return_coords: true # Required by the coord/date-conditioning model preset.
+    include_salinity: false # Set true only for joint temperature+salinity workflows.
   runtime:
     random_seed: 7 # Seed used for deterministic dataset-side sampling.
     cache_size: 8 # Maximum open GeoTIFF files per worker.

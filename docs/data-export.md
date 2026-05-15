@@ -40,6 +40,11 @@ Output files:
 Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share  
 the same CRS, transform, width, height, pixel centers, and nodata convention.  
 
+The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the  
+same on-disk dataset can support joint temperature/salinity experiments. The  
+GeoTIFF dataloader only reads and returns those salinity fields when  
+`dataset.output.include_salinity=true`.  
+
 ## Spatial Grid  
 
 The land-mask GeoTIFF is the authoritative grid:  

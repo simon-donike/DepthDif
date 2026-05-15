@@ -11,7 +11,10 @@ SALINITY_STD = 1.158266487751096
 PLOT_STD_MULTIPLIER = 2.5
 PLOT_TEMP_MIN = -10.740821939496481
 PLOT_TEMP_MAX = 43.92616549843217
+PLOT_SALINITY_MIN = 30.0
+PLOT_SALINITY_MAX = 40.0
 PLOT_CMAP = "turbo"
+PLOT_SALINITY_CMAP = "winter"
 
 
 def temperature_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
@@ -60,6 +63,35 @@ def salinity_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
     if mode == "norm":
         return (tensor - mean) / std
     return tensor * std + mean
+
+
+def salinity_to_plot_unit(
+    tensor: torch.Tensor,
+    *,
+    tensor_is_normalized: bool = True,
+) -> torch.Tensor:
+    """Compute salinity plot unit and return the result.
+
+    Args:
+        tensor (torch.Tensor): Tensor input for the computation.
+        tensor_is_normalized (bool): Boolean flag controlling behavior.
+
+    Returns:
+        torch.Tensor: Tensor output produced by this call.
+    """
+    salinity = (
+        salinity_normalize(mode="denorm", tensor=tensor)
+        if tensor_is_normalized
+        else tensor
+    )
+    s_min = torch.as_tensor(
+        PLOT_SALINITY_MIN, dtype=salinity.dtype, device=salinity.device
+    )
+    s_max = torch.as_tensor(
+        PLOT_SALINITY_MAX, dtype=salinity.dtype, device=salinity.device
+    )
+    denom = torch.clamp(s_max - s_min, min=torch.finfo(salinity.dtype).eps)
+    return ((salinity - s_min) / denom).clamp(0.0, 1.0)
 
 
 def temperature_to_plot_unit(

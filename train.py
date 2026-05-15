@@ -612,6 +612,26 @@ def main(
         raise ValueError(
             f"Only 'light' dataloader_type is supported in this runner; got '{dataloader_type}'."
         )
+    raw_output_fields = model_cfg.get("model", {}).get("output_fields", ["temperature"])
+    output_fields = (
+        [raw_output_fields]
+        if isinstance(raw_output_fields, str)
+        else list(raw_output_fields or ["temperature"])
+    )
+    include_salinity = bool(
+        ds_cfg_value(
+            ds_cfg,
+            "output.include_salinity",
+            "include_salinity",
+            default=False,
+        )
+    )
+    if "salinity" in output_fields and not include_salinity:
+        raise ValueError(
+            "Joint temperature+salinity training requires "
+            "data.dataset.output.include_salinity=true so the dataloader returns "
+            "x_salinity/y_salinity tensors."
+        )
     # Instantiate dataset variant and inject EO dropout probability from data config.
     # Train/val datasets are instantiated separately so dataset split labels are respected.
     train_dataset = build_dataset(

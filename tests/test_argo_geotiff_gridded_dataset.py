@@ -202,6 +202,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                 require_argo_for_train=True,
                 return_info=True,
                 return_coords=True,
+                include_salinity=True,
             )
 
             self.assertEqual(len(dataset), 1)
@@ -272,6 +273,36 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
 
+    def test_salinity_side_channels_are_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+            )
+
+            sample = dataset[0]
+
+            self.assertFalse(dataset.include_salinity)
+            self.assertEqual(sample["x"].shape, (2, 2, 2))
+            self.assertEqual(sample["y"].shape, (2, 2, 2))
+            for key in (
+                "x_salinity",
+                "y_salinity",
+                "x_salinity_valid_mask",
+                "y_salinity_valid_mask",
+                "x_salinity_valid_mask_1d",
+            ):
+                self.assertNotIn(key, sample)
+
     def test_train_builder_wires_argo_geotiff_gridded_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -302,7 +333,11 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                         "require_argo_for_all": False,
                     },
                     "synthetic": {"enabled": False, "pixel_count": 1},
-                    "output": {"return_info": True, "return_coords": False},
+                    "output": {
+                        "return_info": True,
+                        "return_coords": False,
+                        "include_salinity": True,
+                    },
                     "runtime": {"random_seed": 7, "cache_size": 2},
                 },
                 "split": {"val_fraction": 0.0, "val_year": 2018},
@@ -315,6 +350,8 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(dataset.return_info)
             self.assertFalse(dataset.return_coords)
             self.assertFalse(dataset.synthetic_mode)
+            self.assertTrue(dataset.include_salinity)
+            self.assertIn("x_salinity", dataset[0])
             self.assertTrue(
                 torch.equal(
                     dataset[0]["land_mask"],
@@ -345,4 +382,5 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "great_lakes"],
         )
+        self.assertFalse(payload["dataset"]["output"]["include_salinity"])
         self.assertEqual(payload["split"]["val_year"], 2018)

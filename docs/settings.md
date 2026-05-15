@@ -187,10 +187,16 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 | `dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels copied from GLORYS `y` into sparse `x` per patch. |  
 | `dataset.output.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |  
 | `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |  
+| `dataset.output.include_salinity` | `false` | GeoTIFF-only opt-in that returns normalized `x_salinity`/`y_salinity` side-channel tensors and masks for joint training. |  
 | `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |  
 | `dataset.runtime.cache_size` | `8` | Maximum number of open NetCDF files cached per source store. |  
 | `split.val_year` | `2018` | Calendar year assigned to validation rows; all other years become training rows. Required when `patch_stride < tile_size` to avoid overlapping spatial train/val leakage. |  
 | `split.val_fraction` | `0.2` | Patch fraction reserved for validation when `split.val_year` is null. |  
+
+`dataset.output.include_salinity` affects only the active GeoTIFF dataset. Leave  
+it `false` for temperature-only runs; set it to `true` when a model config uses  
+`model.output_fields=["temperature", "salinity"]`. The training runner validates  
+that these two settings agree before constructing the dataloaders.  
 
 ### `src/depth_recon/configs/px_space/model_config.yaml`  
 | Config key | Default value | Explanation |  
@@ -199,6 +205,7 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 | `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path loads checkpoint state. |  
 | `model.load_checkpoint_only` | `false` | When `true`, loads model `state_dict` only; when `false`, resumes optimizer/scheduler/trainer state too. |  
 | `model.generated_channels` | `50` | Number of predicted GLORYS depth channels. |  
+| `model.output_fields` | `["temperature"]` | Set to `["temperature", "salinity"]` for joint output mode; pair with `dataset.output.include_salinity=true`, `generated_channels: 100`, and `condition_channels: 102`. |  
 | `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`). |  
 | `model.condition_mask_channels` | `1` | Number of `x_valid_mask` condition channels. |  
 | `model.condition_include_eo` | `true` | Includes `batch["eo"]` as condition input. |  

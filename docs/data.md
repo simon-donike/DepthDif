@@ -1,7 +1,9 @@
 # Data Overview  
 
 DepthDif learns to densify sparse in-situ ocean profiles into gridded  
-temperature fields. The training data combines satellite surface context,  
+temperature fields. The active GeoTIFF workflow can also train a joint  
+temperature + salinity pixel model when salinity is explicitly enabled in the  
+data and model configs. The training data combines satellite surface context,  
 profile observations, ocean reanalysis targets, and auxiliary sea-surface  
 height on one shared global grid.  
 
@@ -26,7 +28,9 @@ The current training workflow is built around these modalities:
 | Land/ocean mask | Rasterized world polygons | `land_mask` | Defines patch candidates and excludes land-heavy regions. |  
 
 Temperature is kept physically in Kelvin in the exported GeoTIFF dataset, then  
-converted or normalized by the loader as needed for model training.  
+converted or normalized by the loader as needed for model training. Salinity is  
+stored in PSU and normalized only when the GeoTIFF dataloader is configured with  
+`dataset.output.include_salinity=true`.  
 
 ## Shared Axes  
 
@@ -53,10 +57,14 @@ GLORYS weekly dates define the training timeline. For every GLORYS target date:
 
 ## Training View  
 
-The model-facing training sample is a patch cut from the shared grid. It  
-contains sparse ARGO temperature observations, dense OSTIA surface temperature,  
-the dense GLORYS temperature target, and masks that tell the model which values  
-are observed, supervised, ocean, or missing.  
+The model-facing training sample is a patch cut from the shared grid. By  
+default it contains sparse ARGO temperature observations, dense OSTIA surface  
+temperature, the dense GLORYS temperature target, and masks that tell the model  
+which values are observed, supervised, ocean, or missing. When  
+`dataset.output.include_salinity=true`, the sample also includes normalized  
+`x_salinity` and `y_salinity` tensors plus salinity-specific masks. Those keys  
+remain separate at the dataloader boundary; `PixelDiffusionConditional` stacks  
+them with temperature only when `model.output_fields=["temperature", "salinity"]`.  
 
 The precise tensor contract is intentionally separated from this overview. See  
 [Data Contract](data-contract.md) for shapes, normalization, masks, and loader  

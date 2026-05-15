@@ -114,6 +114,16 @@ Ambient-occlusion objective example:
   --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
 ```
 
+Joint temperature + salinity GeoTIFF training:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --data-config src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml \
+  --train-config src/depth_recon/configs/px_space/training_config.yaml \
+  --model-config src/depth_recon/configs/px_space/model_config_joint_temp_salinity.yaml \
+  --set data.dataset.output.include_salinity=true
+```
+
 Notes:
 - `--train-config` and `--training-config` are equivalent.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.

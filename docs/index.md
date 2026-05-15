@@ -36,7 +36,9 @@ DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fi
 
 In the GeoTIFF training workflow, EO surface conditioning comes from OSTIA,  
 subsurface targets come from GLORYS, and sparse inputs come from ARGO/EN4  
-profiles after depth alignment.  
+profiles after depth alignment. Temperature is always present; salinity is an  
+opt-in side channel enabled with `dataset.output.include_salinity=true` and  
+trained jointly with `model.output_fields=["temperature", "salinity"]`.  
 
 Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.  
 For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize  
