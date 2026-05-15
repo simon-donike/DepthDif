@@ -884,6 +884,9 @@ def export_cesium_globe_assets(
                 "requested_depth_m": float(depth_export["requested_depth_m"]),
                 "actual_depth_m": float(depth_export["actual_depth_m"]),
                 "channel_index": int(depth_export["channel_index"]),
+                "value_units": "degree_Celsius",
+                "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
+                "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
                 "prediction_tiles_url": _resolve_layer_url(
                     prediction_tiles_dir_for_depth.name,
                     public_base_url=public_base_url,

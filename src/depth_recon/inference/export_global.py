@@ -51,6 +51,8 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_netcdf_gridded import DEFAULT_LAND_MASK_PATH
 from depth_recon.inference.export_cesium_globe_assets import (
+    DEFAULT_COLOR_SCALE_MAX_C,
+    DEFAULT_COLOR_SCALE_MIN_C,
     DEFAULT_EXTRA_ZOOM_LEVELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_assets,
@@ -1446,6 +1448,37 @@ def _cleanup_accumulator(accumulator: RasterAccumulator) -> None:
     accumulator.count_path.unlink(missing_ok=True)
 
 
+def _prediction_zeros_to_nan(patch: np.ndarray) -> np.ndarray:
+    """Return a prediction patch with exact zero values masked as NaN."""
+    patch_array = np.asarray(patch, dtype=np.float32).copy()
+    # Prediction zeros come from model land-mask post-processing, not plausible ocean values.
+    patch_array[np.isclose(patch_array, 0.0, atol=0.0, rtol=0.0)] = np.nan
+    return patch_array
+
+
+def _load_ground_truth_patch_celsius(
+    dataset: Any, row: dict[str, Any]
+) -> np.ndarray | None:
+    """Load one decoded GLORYS patch in degrees Celsius when the dataset exposes it."""
+    load_y_patch = getattr(dataset, "_load_y_patch", None)
+    if load_y_patch is None:
+        return None
+
+    # NetCDF-backed datasets need explicit patch axes; GeoTIFF-backed datasets
+    # decode stretched uint8 rasters internally and only need the row metadata.
+    if hasattr(dataset, "_patch_axes"):
+        patch = load_y_patch(row, dataset._patch_axes(row))
+    else:
+        patch = load_y_patch(row)
+    patch_array = np.asarray(patch, dtype=np.float32)
+    if patch_array.ndim != 3:
+        raise RuntimeError(
+            "Expected decoded GLORYS patch shape (D,H,W), "
+            f"got {tuple(patch_array.shape)}."
+        )
+    return patch_array
+
+
 def write_global_top_band_geotiff(
     *,
     output_path: Path,
@@ -1456,6 +1489,7 @@ def write_global_top_band_geotiff(
     tags: dict[str, str],
     extra_gaussian_blur_sigma: float = 0.0,
     land_mask: np.ndarray | None = None,
+    prediction_zero_masked_to_nodata: bool = True,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     land_mask_bool: np.ndarray | None = None
@@ -1536,7 +1570,13 @@ def write_global_top_band_geotiff(
             # Land is masked after all averaging/repair/blur steps so it does
             # not affect neighboring ocean pixels during post-processing.
             final_band[land_mask_bool] = float(nodata)
-        if np.any(repaired_mask) or land_mask_bool is not None:
+        zero_mask = np.zeros(final_band.shape, dtype=bool)
+        if prediction_zero_masked_to_nodata:
+            # Exact prediction zeros are residual land-mask artifacts that should
+            # not survive into GeoTIFFs or Cesium color relief.
+            zero_mask = np.isclose(final_band, 0.0, atol=0.0, rtol=0.0)
+            final_band[zero_mask] = float(nodata)
+        if np.any(repaired_mask) or land_mask_bool is not None or np.any(zero_mask):
             ds.write(final_band, 1)
         elif float(extra_gaussian_blur_sigma) > 0.0:
             ds.write(final_band, 1)
@@ -2099,22 +2139,34 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             patch_split_feature = _patch_split_feature_for_row(row)
             if patch_split_feature is not None:
                 patch_splits_writer.write_feature(patch_split_feature)
+            ground_truth_patch_c = (
+                _load_ground_truth_patch_celsius(dataset, row)
+                if ground_truth_batch is not None
+                else None
+            )
             for depth_idx, level in enumerate(depth_export_levels):
                 pred_accumulator = pred_accumulators[level.suffix]
                 _accumulate_patch_into_arrays(
                     pred_accumulator.sum_array,
                     pred_accumulator.count_array,
                     row=row,
-                    patch_values=prediction_depth_batch[local_idx, depth_idx],
+                    patch_values=_prediction_zeros_to_nan(
+                        prediction_depth_batch[local_idx, depth_idx]
+                    ),
                     layout=layout,
                 )
                 if ground_truth_batch is not None and level.suffix in gt_accumulators:
                     gt_accumulator = gt_accumulators[level.suffix]
+                    gt_patch_values = (
+                        ground_truth_patch_c[int(level.channel_index)]
+                        if ground_truth_patch_c is not None
+                        else ground_truth_batch[local_idx, depth_idx]
+                    )
                     _accumulate_patch_into_arrays(
                         gt_accumulator.sum_array,
                         gt_accumulator.count_array,
                         row=row,
-                        patch_values=ground_truth_batch[local_idx, depth_idx],
+                        patch_values=gt_patch_values,
                         layout=layout,
                     )
             if argo_points_writer is not None:
@@ -2280,6 +2332,10 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "land_mask_path": str(effective_land_mask_path),
             "land_zeroed": "false",
             "land_masked_to_nodata": "true",
+            "value_units": "degree_Celsius",
+            "value_space": "denormalized_dequantized_celsius",
+            "globe_color_scale_min_c": f"{float(DEFAULT_COLOR_SCALE_MIN_C):.3f}",
+            "globe_color_scale_max_c": f"{float(DEFAULT_COLOR_SCALE_MAX_C):.3f}",
         }
         write_global_top_band_geotiff(
             output_path=prediction_tif_path_for_level,
@@ -2297,9 +2353,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 "extra_gaussian_blur_kernel_size": str(
                     int(DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE)
                 ),
+                "prediction_zero_masked_to_nodata": "true",
+                "source_value_transform": "model_prediction_denormalized_to_celsius",
             },
             extra_gaussian_blur_sigma=float(args.sigma),
             land_mask=land_mask,
+            prediction_zero_masked_to_nodata=True,
         )
         print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
 
@@ -2318,8 +2377,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     **common_depth_tags,
                     "source": "DepthDif global weekly ground-truth export",
                     "kind": "ground_truth",
+                    "source_value_transform": (
+                        "source_glorys_decoded_dequantized_to_celsius"
+                    ),
                 },
                 land_mask=land_mask,
+                prediction_zero_masked_to_nodata=False,
             )
             print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
 

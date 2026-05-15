@@ -31,6 +31,8 @@ from depth_recon.inference.export_global import (
     _profile_graph_figure_title,
     _prepare_run_directory,
     _promote_production_run,
+    _load_ground_truth_patch_celsius,
+    _prediction_zeros_to_nan,
     _repair_small_nodata_gaps_2d,
     create_raster_accumulator,
     build_global_mosaic,
@@ -39,6 +41,7 @@ from depth_recon.inference.export_global import (
     select_export_indices,
     write_global_top_band_geotiff,
 )
+from depth_recon.utils.normalizations import temperature_normalize
 
 
 class _TinyInferenceDataset:
@@ -77,6 +80,18 @@ class _IncrementingPredictModel(nn.Module):
         return {"y_hat_denorm": y_hat_denorm}
 
 
+class _DecodedGlorysDataset:
+    def _load_y_patch(self, row: dict[str, int]) -> np.ndarray:
+        """Return one already decoded Celsius GLORYS patch."""
+        return np.asarray(
+            [
+                [[float(row["date"] % 100), 11.0]],
+                [[20.0, 21.0]],
+            ],
+            dtype=np.float32,
+        )
+
+
 class TestGlobalInferenceExport(unittest.TestCase):
     def test_export_inference_wrapper_runs_one_prediction_per_batch(self) -> None:
         model = _IncrementingPredictModel()
@@ -97,6 +112,46 @@ class TestGlobalInferenceExport(unittest.TestCase):
         torch.testing.assert_close(
             outputs["prediction_full_stack"],
             torch.tensor([[[[1.0]], [[11.0]], [[21.0]]]], dtype=torch.float32),
+        )
+
+    def test_export_inference_wrapper_denormalizes_ground_truth_to_celsius(
+        self,
+    ) -> None:
+        model = _IncrementingPredictModel()
+        wrapper = ExportInferenceWrapper(
+            model,
+            export_ground_truth=True,
+            export_full_prediction_stack=False,
+            depth_channel_indices=(0, 2),
+        )
+        y_celsius = torch.tensor(
+            [[[[4.0]], [[12.0]], [[18.0]]]],
+            dtype=torch.float32,
+        )
+        y_norm = temperature_normalize(mode="norm", tensor=y_celsius)
+
+        outputs = wrapper(
+            {
+                "y": y_norm,
+                "y_valid_mask": torch.ones_like(y_norm, dtype=torch.bool),
+            }
+        )
+
+        torch.testing.assert_close(
+            outputs["ground_truth_depth_stack"],
+            torch.tensor([[[[4.0]], [[18.0]]]], dtype=torch.float32),
+        )
+
+    def test_load_ground_truth_patch_celsius_uses_decoded_dataset_values(self) -> None:
+        patch = _load_ground_truth_patch_celsius(
+            _DecodedGlorysDataset(),
+            {"date": 20260105},
+        )
+
+        assert patch is not None
+        np.testing.assert_allclose(
+            patch,
+            np.asarray([[[5.0, 11.0]], [[20.0, 21.0]]], dtype=np.float32),
         )
 
     def test_default_full_sample_count_exports_all_locations(self) -> None:
@@ -476,7 +531,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
                 self.assertLess(band[8, 8], 9.0)
                 self.assertGreater(band[8, 7], 0.0)
-                self.assertEqual(band[0, 0], 0.0)
+                self.assertEqual(band[0, 0], -9999.0)
             finally:
                 _cleanup_accumulator(accumulator)
 
@@ -523,7 +578,111 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     band = ds.read(1)
 
                 self.assertEqual(band[8, 8], 9.0)
-                self.assertEqual(band[8, 7], 0.0)
+                self.assertEqual(band[8, 7], -9999.0)
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_prediction_zeros_to_nan_masks_exact_zero_values(self) -> None:
+        patch = np.asarray([[0.0, 1.0], [-0.0, 0.0001]], dtype=np.float32)
+
+        masked = _prediction_zeros_to_nan(patch)
+
+        self.assertTrue(np.isnan(masked[0, 0]))
+        self.assertTrue(np.isnan(masked[1, 0]))
+        self.assertEqual(masked[0, 1], 1.0)
+        self.assertEqual(masked[1, 1], np.float32(0.0001))
+
+    def test_write_global_top_band_geotiff_keeps_zero_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=16.0,
+                top=16.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=16,
+                height=16,
+                patch_width=16,
+                patch_height=16,
+                transform=from_origin(0.0, 16.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="default_zero",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 1.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[4, 4] = 0.0
+
+                tif_path = tmp_path / "default_zero.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="glorys_surface_celsius",
+                    tags={"kind": "ground_truth"},
+                    prediction_zero_masked_to_nodata=False,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+
+                self.assertEqual(band[4, 4], 0.0)
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_masks_prediction_zero_to_nodata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=16.0,
+                top=16.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=16,
+                height=16,
+                patch_width=16,
+                patch_height=16,
+                transform=from_origin(0.0, 16.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_zero",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 2.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[4, 4] = 0.0
+
+                tif_path = tmp_path / "prediction_zero.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={
+                        "kind": "prediction",
+                        "prediction_zero_masked_to_nodata": "true",
+                    },
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+                    tags = ds.tags()
+
+                self.assertEqual(band[4, 4], -9999.0)
+                self.assertEqual(tags["prediction_zero_masked_to_nodata"], "true")
             finally:
                 _cleanup_accumulator(accumulator)
 
@@ -661,6 +820,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
                         "requested_depth_m": "100.000",
                         "actual_depth_m": "97.000",
                         "channel_index": "1",
+                        "value_units": "degree_Celsius",
+                        "value_space": "denormalized_dequantized_celsius",
                     },
                 )
 
@@ -671,6 +832,10 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     self.assertEqual(tags["requested_depth_m"], "100.000")
                     self.assertEqual(tags["actual_depth_m"], "97.000")
                     self.assertEqual(tags["channel_index"], "1")
+                    self.assertEqual(tags["value_units"], "degree_Celsius")
+                    self.assertEqual(
+                        tags["value_space"], "denormalized_dequantized_celsius"
+                    )
             finally:
                 _cleanup_accumulator(accumulator)
 
