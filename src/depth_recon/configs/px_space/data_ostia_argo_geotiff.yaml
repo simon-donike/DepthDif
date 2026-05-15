@@ -18,6 +18,24 @@ dataset:
         lat_min: 30.0
         lat_max: 46.0
         max_land_fraction: 0.60
+      - name: "baltic"
+        lon_min: 9.0
+        lon_max: 31.0
+        lat_min: 53.0
+        lat_max: 66.0
+        max_land_fraction: 0.85
+      - name: "red_sea"
+        lon_min: 32.0
+        lon_max: 44.0
+        lat_min: 12.0
+        lat_max: 30.0
+        max_land_fraction: 0.85
+      - name: "great_lakes"
+        lon_min: -93.0
+        lon_max: -75.0
+        lat_min: 41.0
+        lat_max: 49.0
+        max_land_fraction: 0.95
   sampling:
     temporal_window_days: 7
     glorys_var_name: "thetao"

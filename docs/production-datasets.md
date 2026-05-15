@@ -62,9 +62,17 @@ dataset computes the fraction of land pixels and keeps the patch when
 `land_fraction <= dataset.grid.max_land_fraction`.  
 
 The default cap is `0.30`, so normal retained patches are at least 70% ocean.  
-Mediterranean-centered patches are force-included with a relaxed land cap through  
-`dataset.grid.force_include_regions`, because that basin is narrow and would  
+Patches centered on the Mediterranean, Baltic, Red Sea, and Great Lakes are force-included with a relaxed land cap through  
+`dataset.grid.force_include_regions`, because those water bodies are narrow or coastline-heavy and would  
 otherwise lose useful ocean context around coastlines.  
+The figure labels show the current region-specific land caps and retained patch counts.
+The overview marks the configured bounding boxes and retained force-include patch centers for
+the stride-32 GeoTIFF preset. The regional panel shows the corresponding 128-pixel
+patch footprints over the committed land mask.
+
+![Force-include region overview](assets/data/patch_grid/force_include_regions_overview.png)
+
+![Force-included patch footprints by region](assets/data/patch_grid/force_include_regions_detail.png)
 
 ![Land fraction filter examples](assets/data/patch_grid/land_fraction_filter_examples.png)  
 
@@ -119,8 +127,8 @@ masks.
   require `split.val_year`.  
 - `dataset.grid.max_land_fraction` filters land-heavy patches from the  
   committed GLORYS-aligned world mask.  
-- `dataset.grid.force_include_regions` keeps Mediterranean-centered patches up  
-  to a relaxed land fraction so the training registry retains that basin.  
+- `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Great Lakes up  
+  to a relaxed land fraction so the training registry retains those water bodies.  
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile  
   search window for each patch date.  
 - `dataset.selection.require_argo_for_train` and  

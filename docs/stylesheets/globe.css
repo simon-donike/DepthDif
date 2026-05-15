@@ -78,6 +78,7 @@
   margin: 0;
   max-width: 54rem;
   color: rgba(215, 233, 247, 0.82);
+  white-space: pre-line;
 }
 
 .standalone-globe-back-link {

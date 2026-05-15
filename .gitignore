@@ -15,6 +15,7 @@ docs/assets/ambient_diffusion.pdf
 data/glorys_argo_alignment
 outputs/*
 inference/outputs/*
+inference/
 src/depth_recon/inference/outputs/*
 src/depth_recon/inference/outputs_v1_backup.zip
 TODO

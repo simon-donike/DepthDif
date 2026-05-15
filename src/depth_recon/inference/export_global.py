@@ -9,7 +9,7 @@ Typical CLI:
 /work/envs/depth/bin/python -m depth_recon.inference.export_global \
   --data-config src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml \
   --year 2018 \
-  --iso-week <ISO_WEEK> \
+  --iso-week 25 \
   --split all \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \

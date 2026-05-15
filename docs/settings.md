@@ -174,7 +174,7 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 | `dataset.grid.land_mask_path` | `"src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"` | GeoTIFF used when `patch_grid_source="land_mask"`; value `1` is land and `0` is water. |  
 | `dataset.grid.patch_stride` | `64` NetCDF; `32` GeoTIFF | Pixel stride between patch origins. Values smaller than `tile_size` create overlapping patch views. |  
 | `dataset.grid.max_land_fraction` | `0.30` | Maximum allowed fraction of land pixels in a land-mask-derived patch. |  
-| `dataset.grid.force_include_regions` | Mediterranean bbox, max land `0.60` | Optional named lat/lon regions that keep patches whose centers fall inside the region using that region's relaxed `max_land_fraction`. |  
+| `dataset.grid.force_include_regions` | Region-specific bboxes and max-land caps | Optional named lat/lon regions that keep patches whose centers fall inside the region using that region's relaxed `max_land_fraction`. |  
 | `dataset.sampling.glorys_var_name` | `"thetao"` | GLORYS target variable. |  
 | `dataset.sampling.ostia_var_name` | `"analysed_sst"` | OSTIA EO variable. |  
 | `dataset.sampling.temporal_window_days` | `7` | Total date window centered on each patch date for Argo profile selection. |  

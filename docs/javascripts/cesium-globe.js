@@ -267,10 +267,10 @@
       : "";
     const titleText = compactWeekLabel ? "DepthDif " + compactWeekLabel : "DepthDif";
     const descriptionText = selectedDateParts
-      ? "Densifies deep sea measurements using diffusion. This 3D globe shows the export for ISO week " +
+      ? "Densifying ocean variables based on sparse ARGO submarine measurements.\nShowing ISO week " +
         weekLabel +
-        (selectedDateParts.dateLabel ? ", selected date " + selectedDateParts.dateLabel + "." : ".")
-      : "Densifies deep sea measurements using diffusion.";
+        "."
+      : "Densifying ocean variables based on sparse ARGO submarine measurements.";
 
     document.title = compactWeekLabel ? titleText + " Globe" : "DepthDif Globe";
     const metaDescription = document.querySelector('meta[name="description"]');
