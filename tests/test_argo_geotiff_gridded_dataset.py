@@ -271,6 +271,58 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
 
+    def test_land_mask_fallback_uses_ostia_then_on_disk_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+            )
+            row = dataset.rows[0]
+            eo_np = np.asarray(
+                [[[1.0, np.nan], [2.0, 3.0]]],
+                dtype=np.float32,
+            )
+
+            ostia_mask = dataset._build_land_mask_patch(
+                row,
+                y_valid_mask_np=None,
+                eo_np=eo_np,
+            )
+            disk_mask = dataset._build_land_mask_patch(
+                row,
+                y_valid_mask_np=None,
+                eo_np=None,
+            )
+            dataset.land_mask_path = Path(tmpdir) / "missing_land_mask.tif"
+
+            self.assertTrue(
+                torch.equal(
+                    torch.from_numpy(ostia_mask),
+                    torch.tensor([[[1.0, 0.0], [1.0, 1.0]]], dtype=torch.float32),
+                )
+            )
+            self.assertTrue(
+                torch.equal(
+                    torch.from_numpy(disk_mask),
+                    torch.tensor([[[1.0, 1.0], [1.0, 0.0]]], dtype=torch.float32),
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "Could not build land_mask"):
+                dataset._build_land_mask_patch(
+                    row,
+                    y_valid_mask_np=None,
+                    eo_np=None,
+                )
+
     def test_salinity_side_channels_are_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))

@@ -1066,6 +1066,57 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return eo_np.astype(np.float32, copy=False)[None, ...]
 
+    def _spatial_support_from_valid_mask(
+        self,
+        valid_mask_np: np.ndarray,
+        *,
+        source_name: str,
+    ) -> np.ndarray:
+        """Collapse a per-band validity mask into one spatial ocean-support mask."""
+        valid_np = np.asarray(valid_mask_np, dtype=bool)
+        if valid_np.ndim == 3:
+            spatial_mask = valid_np.any(axis=0, keepdims=True)
+        elif valid_np.ndim == 2:
+            spatial_mask = valid_np[None, ...]
+        else:
+            raise RuntimeError(
+                f"{source_name} support must be shaped as (C,H,W) or (H,W), "
+                f"got {tuple(valid_np.shape)}."
+            )
+        expected_shape = (1, int(self.tile_size), int(self.tile_size))
+        if tuple(spatial_mask.shape) != expected_shape:
+            raise RuntimeError(
+                f"{source_name} support shape does not match dataset tile_size: "
+                f"{tuple(spatial_mask.shape)} != {expected_shape}."
+            )
+        return spatial_mask.astype(np.float32, copy=False)
+
+    def _build_land_mask_patch(
+        self,
+        row: dict[str, Any],
+        *,
+        y_valid_mask_np: np.ndarray | None,
+        eo_np: np.ndarray | None,
+    ) -> np.ndarray:
+        """Build one spatial ocean mask from GLORYS, OSTIA, or the on-disk mask."""
+        if y_valid_mask_np is not None:
+            return self._spatial_support_from_valid_mask(
+                y_valid_mask_np,
+                source_name="GLORYS target",
+            )
+        if eo_np is not None:
+            return self._spatial_support_from_valid_mask(
+                np.isfinite(eo_np),
+                source_name="OSTIA surface context",
+            )
+        if self.land_mask_path.exists():
+            return self._load_land_mask_patch(row)
+        raise RuntimeError(
+            "Could not build land_mask: GLORYS target support was unavailable, "
+            "OSTIA support was unavailable, and the configured on-disk land mask "
+            f"does not exist: {self.land_mask_path}"
+        )
+
     def _empty_sparse_patch(self) -> tuple[np.ndarray, np.ndarray]:
         """Return an empty sparse profile patch and validity mask."""
         depth_size = int(self._depth_axis_m.size)
@@ -1229,9 +1280,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         else:
             x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
 
-        land_mask_np = y_valid_mask_np.any(axis=0, keepdims=True).astype(
-            np.float32,
-            copy=False,
+        land_mask_np = self._build_land_mask_patch(
+            row,
+            y_valid_mask_np=y_valid_mask_np,
+            eo_np=eo_np,
         )
         eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
         x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))

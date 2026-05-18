@@ -197,7 +197,7 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 `dataset.output.include_salinity` affects only the active GeoTIFF dataset. Leave  
 it `false` for temperature-only runs; set it to `true` when a model config uses  
 `model.output_fields=["temperature", "salinity"]`. The training runner validates  
-that these two settings agree before constructing the dataloaders. `x_valid_mask` remains ARGO observation support, while `land_mask` is GLORYS spatial support. `output_land_mask` is predict-time final cleanup support, not a train/validation dataloader key.  
+that these two settings agree before constructing the dataloaders. `x_valid_mask` remains ARGO observation support, while `land_mask` is GLORYS spatial support. `output_land_mask` is predict-time final cleanup support, not a train/validation dataloader key. If GLORYS support cannot be built for `land_mask`, the GeoTIFF loader falls back to OSTIA finite support and then the configured on-disk mask before raising.  
 
 ### `src/depth_recon/configs/px_space/model_config.yaml`  
 | Config key | Default value | Explanation |  

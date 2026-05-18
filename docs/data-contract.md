@@ -45,7 +45,7 @@ temperature/salinity training.
 | `coords` | `(2,)` | `(B, 2)` | `float32` | Optional patch-center latitude and longitude. |  
 | `info` | dictionary | list-like | metadata | Optional debugging metadata, not part of the training model input. |  
 
-`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is GLORYS-derived spatial ocean/domain support and gates the diffusion loss together with the task-valid mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.  
+`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is GLORYS-derived spatial ocean/domain support and gates the diffusion loss together with the task-valid mask; if GLORYS support is unavailable for mask construction, the loader falls back to finite OSTIA support and then the configured on-disk mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.  
 
 ## Salinity Opt-In  
 
@@ -88,7 +88,7 @@ For each selected `(patch, date)` row, the GeoTIFF loader should:
    using precomputed `grid_row` and `grid_col`; average duplicate observations  
    in the same depth/pixel cell.  
 7. Build validity masks from GeoTIFF nodata codes and ARGO valid flags.  
-8. Derive `land_mask` from finite GLORYS temperature support.  
+8. Derive `land_mask` from finite GLORYS temperature support, with fallback to finite OSTIA support and then the configured on-disk mask.  
 9. Normalize temperature, plus salinity when enabled, and replace NaN or  
    infinite normalized values with `0.0`.  
 
