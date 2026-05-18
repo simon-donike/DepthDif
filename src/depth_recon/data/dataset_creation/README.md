@@ -69,8 +69,7 @@ START_DATE=2010-01-01 END_DATE=2024-07-31 \
   /data1/datasets/depth_v2/sss_daily
 ```
 
-The active dataset reads these NetCDF files directly and creates only compact
-metadata caches under `dataset.core.metadata_cache_dir`.
+The current pixel training path first exports these sources into the GeoTIFF store used by `training_super_config.yaml`. Legacy NetCDF dataset code can still read the raw files directly for tests and older experiments.
 
 ## Export GeoTIFF Raster Training Stores
 
@@ -78,13 +77,12 @@ The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
 variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
 salinity, and validity masks. Temperature stretches decode to Kelvin.
-The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys. When
-`dataset.output.include_salinity=true`, it returns salinity separately as
-normalized side-channel tensors: `x_salinity`, `y_salinity`, and their validity
-masks. Use `salinity_normalize(..., mode="denorm")` to recover physical PSU
-values. The dataloader does not concatenate variables; joint training stacks
-these keys inside `PixelDiffusionConditional` when
-`model.output_fields=["temperature", "salinity"]`.
+The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys. The pixel
+scenario resolver enables salinity for `--scenario salinity` and `--scenario joint`,
+which returns `x_salinity`, `y_salinity`, and their validity masks. Use
+`salinity_normalize(..., mode="denorm")` to recover physical PSU values. The
+dataloader does not concatenate variables; `PixelDiffusionConditional` selects or
+stacks fields according to the resolved scenario.
 The authoritative land-mask GeoTIFF is copied into `masks/` in the export root
 and recorded in `manifest.yaml`.
 Dense raster dates are exported with process workers by default; use `--workers`

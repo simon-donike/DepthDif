@@ -40,11 +40,8 @@ from depth_recon.inference.core import (
     resolve_checkpoint_path,
 )
 from depth_recon.inference.export_global import (
-    DEFAULT_DATA_CONFIG,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
-    DEFAULT_MODEL_CONFIG,
     DEFAULT_OUTPUT_ROOT,
-    DEFAULT_TRAIN_CONFIG,
     ExportRunResult,
     ExportSelection,
     GeoJSONPointWriter,
@@ -1072,6 +1069,54 @@ def _write_public_data_config(
     return public_config
 
 
+
+def _write_public_inference_super_config(
+    *,
+    assets: InferenceAssets,
+    output_root: Path,
+    land_mask_path: str | Path,
+    min_ocean_fraction: float,
+    batch_size: int | None,
+) -> Path:
+    """Materialize public split assets as one inference super-config."""
+    model_cfg = (
+        load_yaml(assets.model_config).get("model", {})
+        if Path(assets.model_config).is_file()
+        else {"model_type": "cond_px_dif", "depth_channels": 50}
+    )
+    data_cfg = (
+        load_yaml(assets.data_config)
+        if Path(assets.data_config).is_file()
+        else {"dataset": {}, "dataloader": {}}
+    )
+    train_cfg = (
+        load_yaml(assets.train_config)
+        if Path(assets.train_config).is_file()
+        else {"training": {}, "dataloader": {}}
+    )
+    dataloader_cfg = {"batch_size": 64, "num_workers": 6, "prefetch_factor": 2}
+    if batch_size is not None:
+        dataloader_cfg["batch_size"] = int(batch_size)
+    super_cfg = {
+        "scenario": model_cfg.get("scenario", "temperature"),
+        "data": data_cfg,
+        "model": model_cfg,
+        "training": train_cfg,
+        "inference": {
+            "grid": {
+                "patch_stride": None,
+                "min_ocean_fraction": float(min_ocean_fraction),
+                "land_mask_path": str(land_mask_path),
+            },
+            "dataloader": dataloader_cfg,
+        },
+    }
+    output_path = Path(output_root) / "depthdif_public_inference_super_config.yaml"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(super_cfg, f, sort_keys=False)
+    return output_path
+
 def _export_args_from_public_api(
     *,
     assets: InferenceAssets,
@@ -1093,6 +1138,16 @@ def _export_args_from_public_api(
     args = parser.parse_args(
         ["--year", str(int(year)), "--iso-week", str(int(iso_week))]
     )
+    super_config = _write_public_inference_super_config(
+        assets=assets,
+        output_root=Path(output_root),
+        land_mask_path=land_mask_path,
+        min_ocean_fraction=min_ocean_fraction,
+        batch_size=batch_size,
+    )
+    args.config_path = str(super_config)
+    args.config_overrides = []
+    args.scenario = None
     args.model_config = str(assets.model_config)
     args.data_config = str(assets.data_config)
     args.train_config = str(assets.train_config)

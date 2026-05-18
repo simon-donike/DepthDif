@@ -214,7 +214,7 @@ def project_argo_profile_to_glorys_depths(
     depths: np.ndarray,
     glorys_depths: np.ndarray,
 ) -> np.ndarray:
-    # Keep the export projection identical to the active NetCDF patch dataset.
+    # Keep the export projection identical to the dataset patch alignment logic.
     return _align_argo_profile_to_glorys_depths(
         temperature=np.asarray(values, dtype=np.float32),
         depth=np.asarray(depths, dtype=np.float32),

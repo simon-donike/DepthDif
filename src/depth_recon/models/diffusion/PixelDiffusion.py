@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import tempfile
 import warnings
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,8 @@ from .DenoisingDiffusionProcess import (
     DDIM_Sampler,
     DenoisingDiffusionConditionalProcess,
 )
-from depth_recon.paths import config_path, resolve_config_path
+from depth_recon.configs.config_resolver_pixel import load_pixel_training_config
+from depth_recon.paths import resolve_config_path
 from depth_recon.utils.normalizations import (
     PLOT_CMAP,
     PLOT_SALINITY_CMAP,
@@ -293,13 +295,9 @@ class PixelDiffusionConditional(pl.LightningModule):
     @classmethod
     def from_config(
         cls,
-        model_config_path: str = str(config_path("px_space", "model_config.yaml")),
-        data_config_path: str = str(
-            config_path("px_space", "data_ostia_argo_netcdf.yaml")
-        ),
-        training_config_path: str = str(
-            config_path("px_space", "training_config.yaml")
-        ),
+        model_config_path: str | None = None,
+        data_config_path: str | None = None,
+        training_config_path: str | None = None,
         datamodule: pl.LightningDataModule | None = None,
     ) -> "PixelDiffusionConditional":
         """Compute from config and return the result.
@@ -313,6 +311,19 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             'PixelDiffusionConditional': Computed output value.
         """
+        if (
+            model_config_path is None
+            or data_config_path is None
+            or training_config_path is None
+        ):
+            bundle = load_pixel_training_config(
+                runtime_config_dir=Path(tempfile.mkdtemp(prefix="depthdif_model_cfg_")),
+                write_snapshots=False,
+            )
+            model_config_path = bundle.effective_model_config_path
+            data_config_path = bundle.effective_data_config_path
+            training_config_path = bundle.effective_training_config_path
+
         model_cfg = cls._load_yaml(model_config_path)
         data_cfg = cls._load_yaml(data_config_path)
         training_cfg = cls._load_yaml(training_config_path)
@@ -468,10 +479,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         if len(set(fields)) != len(fields):
             raise ValueError("model.output_fields cannot contain duplicates.")
-        if fields not in (("temperature",), ("temperature", "salinity")):
+        if fields not in (("temperature",), ("salinity",), ("temperature", "salinity")):
             raise ValueError(
-                "model.output_fields currently supports only [temperature] or "
-                "[temperature, salinity]."
+                "model.output_fields currently supports only [temperature], "
+                "[salinity], or [temperature, salinity]."
             )
         return fields
 
@@ -1062,6 +1073,14 @@ class PixelDiffusionConditional(pl.LightningModule):
                 f"batch[{key}] spatial shape does not match batch[{reference_key}]."
             )
 
+    def _field_batch_key(self, field: str, *, role: str) -> str:
+        """Return the dataset batch key for a configured output field."""
+        if field == "temperature":
+            return role
+        if field == "salinity":
+            return f"{role}_salinity"
+        raise RuntimeError(f"Unsupported output field: {field}.")
+
     def _stack_output_tensor(
         self,
         batch: dict[str, Any],
@@ -1070,20 +1089,29 @@ class PixelDiffusionConditional(pl.LightningModule):
         salinity_key: str,
     ) -> torch.Tensor:
         """Stack configured output fields along the channel dimension."""
-        temperature = self._require_batch_tensor(batch, temperature_key)
-        if not self.predicts_salinity:
-            return temperature
-
-        salinity = self._require_batch_tensor(batch, salinity_key)
-        # Temperature and salinity stay separate in the dataset and are joined only
-        # for the channel-agnostic diffusion model.
-        self._validate_stack_shape(
-            temperature,
-            salinity,
-            reference_key=temperature_key,
-            key=salinity_key,
-        )
-        return torch.cat([temperature, salinity], dim=1)
+        key_by_field = {"temperature": temperature_key, "salinity": salinity_key}
+        tensors: list[torch.Tensor] = []
+        reference: torch.Tensor | None = None
+        reference_key: str | None = None
+        for field in self.output_fields:
+            key = key_by_field[field]
+            tensor = self._require_batch_tensor(batch, key)
+            if reference is None:
+                reference = tensor
+                reference_key = key
+            else:
+                # Temperature and salinity stay separate in the dataset and are joined
+                # only for the channel-agnostic diffusion model.
+                self._validate_stack_shape(
+                    reference,
+                    tensor,
+                    reference_key=str(reference_key),
+                    key=key,
+                )
+            tensors.append(tensor)
+        if len(tensors) == 1:
+            return tensors[0]
+        return torch.cat(tensors, dim=1)
 
     def _prepare_model_batch_tensors(
         self, batch: dict[str, Any], *, include_y: bool
@@ -1114,27 +1142,30 @@ class PixelDiffusionConditional(pl.LightningModule):
         self, tensor: torch.Tensor, batch: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
         """Split a model output tensor back into configured output fields."""
-        if not self.predicts_salinity:
-            return {"temperature": tensor}
         if int(tensor.ndim) < 2:
-            raise RuntimeError("Joint output tensors must include channel dimension.")
+            raise RuntimeError("Output tensors must include channel dimension.")
 
-        temperature = self._require_batch_tensor(batch, "x")
-        salinity = self._require_batch_tensor(batch, "x_salinity")
-        temperature_channels = int(temperature.size(1))
-        salinity_channels = int(salinity.size(1))
-        expected_channels = temperature_channels + salinity_channels
+        channels_by_field: dict[str, int] = {}
+        expected_channels = 0
+        for field in self.output_fields:
+            key = self._field_batch_key(field, role="x")
+            field_tensor = self._require_batch_tensor(batch, key)
+            channels_by_field[field] = int(field_tensor.size(1))
+            expected_channels += channels_by_field[field]
+
         if int(tensor.size(1)) != expected_channels:
             raise RuntimeError(
-                "Joint output channel mismatch: "
+                "Output channel mismatch: "
                 f"got {int(tensor.size(1))}, expected {expected_channels}."
             )
 
-        split_at = temperature_channels
-        return {
-            "temperature": tensor[:, :split_at],
-            "salinity": tensor[:, split_at : split_at + salinity_channels],
-        }
+        split: dict[str, torch.Tensor] = {}
+        start = 0
+        for field in self.output_fields:
+            end = start + channels_by_field[field]
+            split[field] = tensor[:, start:end]
+            start = end
+        return split
 
     def _postprocess_prediction_field(
         self,
@@ -1170,16 +1201,24 @@ class PixelDiffusionConditional(pl.LightningModule):
         output_land_mask: torch.Tensor | None,
     ) -> dict[str, torch.Tensor]:
         """Build predict_step output tensors in normalized and physical units."""
-        if not self.predicts_salinity:
+        normalize_by_field = {
+            "temperature": temperature_normalize,
+            "salinity": salinity_normalize,
+        }
+        if len(self.output_fields) == 1:
+            field = self.output_fields[0]
             y_hat_denorm, y_hat_denorm_for_plot = self._postprocess_prediction_field(
                 y_hat,
                 y_valid_mask,
                 land_mask,
                 output_land_mask,
-                normalize_fn=temperature_normalize,
+                normalize_fn=normalize_by_field[field],
             )
             return {
                 "y_hat": y_hat,
+                f"y_hat_{field}": y_hat,
+                f"y_hat_{field}_denorm": y_hat_denorm,
+                f"y_hat_{field}_denorm_for_plot": y_hat_denorm_for_plot,
                 "y_hat_denorm": y_hat_denorm,
                 "y_hat_denorm_for_plot": y_hat_denorm_for_plot,
             }
@@ -1188,46 +1227,50 @@ class PixelDiffusionConditional(pl.LightningModule):
         mask_by_field = (
             self._split_output_tensor(y_valid_mask, batch)
             if y_valid_mask is not None
-            else {"temperature": None, "salinity": None}
+            else {field: None for field in self.output_fields}
         )
-        temperature_denorm, temperature_denorm_for_plot = (
-            self._postprocess_prediction_field(
-                y_hat_by_field["temperature"],
-                mask_by_field["temperature"],
+
+        outputs: dict[str, torch.Tensor] = {"y_hat": y_hat}
+        denorm_by_field: dict[str, torch.Tensor] = {}
+        denorm_for_plot_by_field: dict[str, torch.Tensor] = {}
+        for field in self.output_fields:
+            field_denorm, field_denorm_for_plot = self._postprocess_prediction_field(
+                y_hat_by_field[field],
+                mask_by_field[field],
                 land_mask,
                 output_land_mask,
-                normalize_fn=temperature_normalize,
+                normalize_fn=normalize_by_field[field],
             )
+            outputs[f"y_hat_{field}"] = y_hat_by_field[field]
+            outputs[f"y_hat_{field}_denorm"] = field_denorm
+            outputs[f"y_hat_{field}_denorm_for_plot"] = field_denorm_for_plot
+            denorm_by_field[field] = field_denorm
+            denorm_for_plot_by_field[field] = field_denorm_for_plot
+
+        # Historical aliases point to temperature in joint mode; single-field runs point
+        # to their active physical variable.
+        alias_field = (
+            "temperature"
+            if "temperature" in self.output_fields
+            else self.output_fields[0]
         )
-        salinity_denorm, salinity_denorm_for_plot = self._postprocess_prediction_field(
-            y_hat_by_field["salinity"],
-            mask_by_field["salinity"],
-            land_mask,
-            output_land_mask,
-            normalize_fn=salinity_normalize,
-        )
-        return {
-            "y_hat": y_hat,
-            "y_hat_temperature": y_hat_by_field["temperature"],
-            "y_hat_salinity": y_hat_by_field["salinity"],
-            "y_hat_temperature_denorm": temperature_denorm,
-            "y_hat_temperature_denorm_for_plot": temperature_denorm_for_plot,
-            "y_hat_salinity_denorm": salinity_denorm,
-            "y_hat_salinity_denorm_for_plot": salinity_denorm_for_plot,
-            # Legacy aliases remain temperature-only so existing consumers do not see
-            # mixed Celsius/PSU tensors under the historical key.
-            "y_hat_denorm": temperature_denorm,
-            "y_hat_denorm_for_plot": temperature_denorm_for_plot,
-        }
+        outputs["y_hat_denorm"] = denorm_by_field[alias_field]
+        outputs["y_hat_denorm_for_plot"] = denorm_for_plot_by_field[alias_field]
+        return outputs
 
     def _split_prediction_samples(
         self, samples: list[tuple[int, torch.Tensor]], batch: dict[str, Any]
     ) -> list[tuple[int, torch.Tensor]]:
-        """Return temperature samples for legacy validation diagnostics."""
-        if not self.predicts_salinity:
+        """Return the primary field samples for legacy validation diagnostics."""
+        if len(self.output_fields) == 1:
             return samples
+        primary_field = (
+            "temperature"
+            if "temperature" in self.output_fields
+            else self.output_fields[0]
+        )
         return [
-            (step, self._split_output_tensor(sample, batch)["temperature"])
+            (step, self._split_output_tensor(sample, batch)[primary_field])
             for step, sample in samples
         ]
 
@@ -2325,7 +2368,12 @@ class PixelDiffusionConditional(pl.LightningModule):
 
             # Use Lightning's inference path for full-validation reconstruction.
             pred = self.predict_step(pred_batch, batch_idx=0)
-            y_hat = pred.get("y_hat_temperature", pred["y_hat"])
+            primary_field = (
+                "temperature"
+                if "temperature" in self.output_fields
+                else self.output_fields[0]
+            )
+            y_hat = pred.get(f"y_hat_{primary_field}", pred["y_hat"])
             y_hat_denorm = pred["y_hat_denorm"]
             y_hat_denorm_for_plot = pred.get("y_hat_denorm_for_plot", y_hat_denorm)
             further_valid_mask = pred.get("further_valid_mask")
@@ -2334,8 +2382,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                 split_further_valid_mask = self._split_output_tensor(
                     further_valid_mask, pred_batch
                 )
-                further_valid_mask = split_further_valid_mask["temperature"]
-                salinity_further_valid_mask = split_further_valid_mask["salinity"]
+                further_valid_mask = split_further_valid_mask[primary_field]
+                salinity_further_valid_mask = split_further_valid_mask.get("salinity")
             denoise_samples = self._split_prediction_samples(
                 pred["denoise_samples"], pred_batch
             )
@@ -2344,9 +2392,19 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
 
             # Denormalize data channels only (masks stay in 0/1 space).
-            x_denorm = temperature_normalize(mode="denorm", tensor=x)
-            y_denorm = temperature_normalize(mode="denorm", tensor=y)
-            target_denorm = temperature_normalize(mode="denorm", tensor=target)
+            if primary_field == "salinity":
+                x = cached["x_salinity"]
+                y = cached["y_salinity"]
+                x_valid_mask = cached.get("x_salinity_valid_mask")
+                y_valid_mask = cached.get("y_salinity_valid_mask")
+                target = x if self.ambient_occlusion_enabled else y
+                x_denorm = salinity_normalize(mode="denorm", tensor=x)
+                y_denorm = salinity_normalize(mode="denorm", tensor=y)
+                target_denorm = salinity_normalize(mode="denorm", tensor=target)
+            else:
+                x_denorm = temperature_normalize(mode="denorm", tensor=x)
+                y_denorm = temperature_normalize(mode="denorm", tensor=y)
+                target_denorm = temperature_normalize(mode="denorm", tensor=target)
             eo_denorm = (
                 temperature_normalize(mode="denorm", tensor=eo)
                 if eo is not None
@@ -2381,6 +2439,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             salinity_log_payload: dict[str, torch.Tensor | None] | None = None
             if (
                 self.predicts_salinity
+                and "temperature" in self.output_fields
                 and pred.get("y_hat_salinity_denorm") is not None
                 and cached.get("x_salinity") is not None
                 and cached.get("y_salinity") is not None

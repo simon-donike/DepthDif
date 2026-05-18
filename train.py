@@ -5,7 +5,7 @@ or latent diffusion model, restores checkpoints when requested, and launches the
 PyTorch Lightning training run.
 
 Typical CLI:
-    /work/envs/depth/bin/python train.py --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml --train-config src/depth_recon/configs/px_space/training_config.yaml --model-config src/depth_recon/configs/px_space/model_config.yaml
+    /work/envs/depth/bin/python train.py --scenario temperature
 """
 
 from __future__ import annotations
@@ -14,14 +14,12 @@ import argparse
 from datetime import datetime
 import os
 from pathlib import Path
-import shutil
 import sys
 from typing import Any
 import warnings
 
 import pytorch_lightning as pl
 import torch
-import yaml
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
@@ -34,100 +32,16 @@ from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatc
 from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
-from depth_recon.models.latent import LatentDiffusionConditional
-from depth_recon.paths import config_path, resolve_config_path
+from depth_recon.configs.config_resolver_pixel import (
+    DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
+    PIXEL_SCENARIOS,
+    load_pixel_training_config,
+    load_yaml,
+)
 
-PX_MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
-PX_DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
-PX_TRAINING_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
-
-
-# Centralized YAML loader for config files.
-def load_yaml(path: str) -> dict[str, Any]:
-    """Load and return yaml data.
-
-    Args:
-        path (str): Path to an input or output file.
-
-    Returns:
-        dict[str, Any]: Dictionary containing computed outputs.
-    """
-    with resolve_config_path(path).open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+PIXEL_TRAINING_CONFIG_PATH = DEFAULT_PIXEL_TRAINING_CONFIG_PATH
 
 
-def dump_yaml(path: str | Path, payload: dict[str, Any]) -> None:
-    """Write yaml data to disk preserving key order."""
-    with Path(path).open("w", encoding="utf-8") as f:
-        yaml.safe_dump(payload, f, sort_keys=False)
-
-
-def parse_config_override(raw_override: str) -> tuple[str, list[str], Any]:
-    """Parse one CLI config override expression.
-
-    Expected format: <config_root>.<nested.path>=<yaml_value>
-    where config_root is one of: data, training, model.
-    """
-    if "=" not in raw_override:
-        raise ValueError(
-            f"Invalid override '{raw_override}'. Expected format: "
-            "<data|training|model>.<path>=<yaml_value>."
-        )
-
-    lhs, rhs = raw_override.split("=", 1)
-    lhs = lhs.strip()
-    rhs = rhs.strip()
-    if "." not in lhs:
-        raise ValueError(
-            f"Invalid override '{raw_override}'. Missing nested key path after root."
-        )
-
-    root, *keys = [part.strip() for part in lhs.split(".")]
-    if root not in {"data", "training", "model"}:
-        raise ValueError(
-            f"Invalid override root '{root}' in '{raw_override}'. "
-            "Allowed roots: data, training, model."
-        )
-    if any(not key for key in keys):
-        raise ValueError(
-            f"Invalid override '{raw_override}'. Key path contains empty segment(s)."
-        )
-
-    return root, keys, yaml.safe_load(rhs)
-
-
-def apply_config_overrides(
-    overrides: list[str],
-    configs_by_root: dict[str, dict[str, Any]],
-) -> None:
-    """Apply strict nested config overrides in-place.
-
-    All path segments must already exist; this prevents silent typos.
-    """
-    for raw_override in overrides:
-        root, keys, value = parse_config_override(raw_override)
-        target: dict[str, Any] = configs_by_root[root]
-        for key in keys[:-1]:
-            if key not in target:
-                raise KeyError(
-                    f"Invalid override '{raw_override}': key '{key}' does not exist."
-                )
-            nested = target[key]
-            if not isinstance(nested, dict):
-                raise TypeError(
-                    f"Invalid override '{raw_override}': '{key}' is not a mapping."
-                )
-            target = nested
-
-        leaf_key = keys[-1]
-        if leaf_key not in target:
-            raise KeyError(
-                f"Invalid override '{raw_override}': key '{leaf_key}' does not exist."
-            )
-        target[leaf_key] = value
-
-
-# Resolve an optional resume checkpoint path and validate it early.
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     # Accept false/null to start fresh; otherwise require a valid checkpoint path string.
     """Resolve and validate resume ckpt path.
@@ -451,33 +365,27 @@ def build_ema_callback(model_cfg: dict[str, Any]) -> EMA | None:
 
 
 def main(
-    model_config_path: str = PX_MODEL_CONFIG_PATH,
-    data_config_path: str = PX_DATA_CONFIG_PATH,
-    training_config_path: str = PX_TRAINING_CONFIG_PATH,
+    config_path_value: str = PIXEL_TRAINING_CONFIG_PATH,
     overrides: list[str] | None = None,
     fast_dev_run: int = 0,
+    scenario: str | None = None,
 ) -> None:
     """Run the script entry point.
 
     Args:
-        model_config_path (str): Path to an input or output file.
-        data_config_path (str): Path to an input or output file.
-        training_config_path (str): Path to an input or output file.
+        config_path_value (str): Path to the pixel training super-config.
         overrides (list[str] | None): Optional config overrides from CLI.
+        fast_dev_run (int): Number of fast-dev-run batches.
+        scenario (str | None): Optional high-level training scenario.
 
     Returns:
         None: No value is returned.
     """
-    model_config_path = str(resolve_config_path(model_config_path))
-    data_config_path = str(resolve_config_path(data_config_path))
-    training_config_path = str(resolve_config_path(training_config_path))
-
     # Determine rank before creating any run-scoped folders/files.
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
     # Create one run directory per launch; non-zero ranks reuse the resolved path.
-    # Use one timestamped run directory; only global rank 0 creates it.
     run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_dir = Path("logs") / run_stamp
     if is_global_zero:
@@ -487,88 +395,25 @@ def main(
             suffix += 1
         run_dir.mkdir(parents=True, exist_ok=False)
 
-        # Snapshot the exact configs used for reproducibility.
-        shutil.copy2(model_config_path, run_dir / Path(model_config_path).name)
-        shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
-        shutil.copy2(training_config_path, run_dir / Path(training_config_path).name)
-
-    # Load configuration and validate model settings.
-    model_cfg = load_yaml(model_config_path)
-    training_cfg = load_yaml(training_config_path)
-    data_cfg = load_yaml(data_config_path)
-    override_list = list(overrides or [])
-    apply_config_overrides(
-        overrides=override_list,
-        configs_by_root={
-            "model": model_cfg,
-            "training": training_cfg,
-            "data": data_cfg,
-        },
+    runtime_cfg_dir = (
+        Path("/tmp/depthdif_runtime_configs")
+        / f"{run_stamp}_{os.getpid()}_{global_rank}"
     )
-    latent_ae_config_path: str | None = None
-    if (
-        str(model_cfg.get("model", {}).get("model_type", "")).strip()
-        == "latent_cond_dif"
-    ):
-        ae_cfg_value = (
-            model_cfg.get("model", {}).get("latent", {}).get("ae_config_path", None)
-        )
-        if ae_cfg_value is None or str(ae_cfg_value).strip() == "":
-            raise ValueError(
-                "model.latent.ae_config_path is required for model.model_type='latent_cond_dif'."
-            )
-        ae_cfg_path = resolve_config_path(str(ae_cfg_value))
-        if not ae_cfg_path.is_file():
-            raise FileNotFoundError(f"AE config not found: {ae_cfg_path}")
-        latent_ae_config_path = str(ae_cfg_path)
-        if is_global_zero:
-            shutil.copy2(ae_cfg_path, run_dir / ae_cfg_path.name)
-
-    # Model/dataset builders load YAML files from paths, so write effective runtime
-    # configs when overrides are present and route all path-based constructors there.
-    effective_model_config_path = model_config_path
-    effective_data_config_path = data_config_path
-    effective_training_config_path = training_config_path
-    if override_list:
-        runtime_cfg_dir = (
-            Path("/tmp/depthdif_runtime_configs")
-            / f"{run_stamp}_{os.getpid()}_{global_rank}"
-        )
-        runtime_cfg_dir.mkdir(parents=True, exist_ok=True)
-        effective_model_config_path = str(
-            runtime_cfg_dir / Path(model_config_path).name
-        )
-        effective_data_config_path = str(runtime_cfg_dir / Path(data_config_path).name)
-        effective_training_config_path = str(
-            runtime_cfg_dir / Path(training_config_path).name
-        )
-        dump_yaml(effective_model_config_path, model_cfg)
-        dump_yaml(effective_data_config_path, data_cfg)
-        dump_yaml(effective_training_config_path, training_cfg)
-
-    uploaded_config_paths = [model_config_path, data_config_path, training_config_path]
-    if latent_ae_config_path is not None:
-        uploaded_config_paths.append(latent_ae_config_path)
-    if is_global_zero and override_list:
-        model_effective_snapshot = (
-            run_dir / f"{Path(model_config_path).stem}_effective.yaml"
-        )
-        data_effective_snapshot = (
-            run_dir / f"{Path(data_config_path).stem}_effective.yaml"
-        )
-        training_effective_snapshot = (
-            run_dir / f"{Path(training_config_path).stem}_effective.yaml"
-        )
-        dump_yaml(model_effective_snapshot, model_cfg)
-        dump_yaml(data_effective_snapshot, data_cfg)
-        dump_yaml(training_effective_snapshot, training_cfg)
-        uploaded_config_paths = [
-            str(model_effective_snapshot),
-            str(data_effective_snapshot),
-            str(training_effective_snapshot),
-        ]
-        if latent_ae_config_path is not None:
-            uploaded_config_paths.append(latent_ae_config_path)
+    config_bundle = load_pixel_training_config(
+        config_path_value=config_path_value,
+        scenario_override=scenario,
+        overrides=list(overrides or []),
+        runtime_config_dir=runtime_cfg_dir,
+        snapshot_dir=run_dir,
+        write_snapshots=is_global_zero,
+    )
+    model_cfg = config_bundle.model_cfg
+    training_cfg = config_bundle.training_cfg
+    data_cfg = config_bundle.data_cfg
+    effective_model_config_path = config_bundle.effective_model_config_path
+    effective_data_config_path = config_bundle.effective_data_config_path
+    effective_training_config_path = config_bundle.effective_training_config_path
+    uploaded_config_paths = config_bundle.uploaded_config_paths
 
     # Resolve checkpoint paths once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
@@ -671,21 +516,16 @@ def main(
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
 
-    # Instantiate the requested model type from config.
-    if model_type == "latent_cond_dif":
-        model = LatentDiffusionConditional.from_config(
-            model_config_path=effective_model_config_path,
-            data_config_path=effective_data_config_path,
-            training_config_path=effective_training_config_path,
-            datamodule=datamodule,
-        )
-    else:
-        model = PixelDiffusionConditional.from_config(
-            model_config_path=effective_model_config_path,
-            data_config_path=effective_data_config_path,
-            training_config_path=effective_training_config_path,
-            datamodule=datamodule,
-        )
+    if model_type != "cond_px_dif":
+        raise ValueError("train.py supports only pixel model_type='cond_px_dif'.")
+
+    # Instantiate the pixel model from the effective super-config materialization.
+    model = PixelDiffusionConditional.from_config(
+        model_config_path=effective_model_config_path,
+        data_config_path=effective_data_config_path,
+        training_config_path=effective_training_config_path,
+        datamodule=datamodule,
+    )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
         weight_source = load_weights_only_checkpoint(model, resume_ckpt_path)
@@ -760,7 +600,7 @@ def main(
         # Lightning-native value: float fraction (0-1] or int batch count.
         limit_val_batches = trainer_cfg.get("limit_val_batches", 1.0)
 
-    # Trainer configuration is fully driven from training_config.yaml.
+    # Trainer configuration is fully driven from the resolved super-config.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
         accelerator=accelerator,
@@ -804,23 +644,10 @@ def parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
-        "--data-config",
-        default=PX_DATA_CONFIG_PATH,
-        help="Path to data config yaml.",
-    )
-    parser.add_argument(
-        "--train-config",
-        "--training-config",
-        default=PX_TRAINING_CONFIG_PATH,
-        dest="training_config",
-        help="Path to training config yaml.",
-    )
-    parser.add_argument(
-        "--model-config",
-        "--mdoel-config",
-        default=PX_MODEL_CONFIG_PATH,
-        dest="model_config",
-        help="Path to model config yaml.",
+        "--config",
+        default=PIXEL_TRAINING_CONFIG_PATH,
+        dest="config_path",
+        help="Path to the pixel training super-config yaml.",
     )
     parser.add_argument(
         "--set",
@@ -842,24 +669,27 @@ def parse_args() -> argparse.Namespace:
         dest="fast_dev_run",
         help="Run N batches for debugging (0 disables it, 1 behaves like true).",
     )
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(PIXEL_SCENARIOS),
+        default=None,
+        help="High-level pixel training scenario; derives data/model channel settings.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     main(
-        model_config_path=args.model_config,
-        data_config_path=args.data_config,
-        training_config_path=args.training_config,
+        config_path_value=args.config_path,
         overrides=args.config_overrides,
         fast_dev_run=args.fast_dev_run,
+        scenario=args.scenario,
     )
 
 """
 # Training quick start (single command):
-python train.py --model-config src/depth_recon/configs/px_space/model_config.yaml \
-    --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
-    --training-config src/depth_recon/configs/px_space/training_config.yaml
+python train.py --scenario temperature
 
 # Sweep quick start (single command):
 ./src/depth_recon/scripts/start_occlusion_sweep.sh

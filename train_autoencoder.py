@@ -4,7 +4,7 @@ This script loads the configured dataset/datamodule, builds the autoencoder
 Lightning module, restores checkpoints if configured, and runs the training job.
 
 Typical CLI:
-    /work/envs/depth/bin/python train_autoencoder.py --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --ae-config src/depth_recon/configs/lat_space/ae_config.yaml
+    /work/envs/depth/bin/python train_autoencoder.py --data-config src/depth_recon/configs/px_space/training_super_config.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --ae-config src/depth_recon/configs/lat_space/ae_config.yaml
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from depth_recon.models.latent import DepthBandAutoencoderLightning
 from depth_recon.paths import config_path, resolve_config_path
 
 LAT_AE_CONFIG_PATH = str(config_path("lat_space", "ae_config.yaml"))
-PX_DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+PX_DATA_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
 LAT_TRAINING_CONFIG_PATH = str(config_path("lat_space", "training_config.yaml"))
 
 
@@ -219,6 +219,9 @@ def main(
 
     ae_cfg = load_yaml(ae_config_path)
     data_cfg = load_yaml(data_config_path)
+    if "data" in data_cfg and "dataset" not in data_cfg:
+        # Pixel super-configs wrap the dataset config under top-level data.
+        data_cfg = data_cfg["data"]
     training_cfg = load_yaml(training_config_path)
     _ = ae_cfg
 

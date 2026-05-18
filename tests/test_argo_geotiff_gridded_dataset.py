@@ -412,17 +412,17 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertNotIn("output_land_mask", sample)
 
     def test_active_geotiff_config_uses_land_mask_grid_defaults(self) -> None:
-        with packaged_config_path("px_space", "data_ostia_argo_geotiff.yaml").open(
+        with packaged_config_path("px_space", "training_super_config.yaml").open(
             "r",
             encoding="utf-8",
         ) as f:
             payload = yaml.safe_load(f)
 
         self.assertEqual(
-            payload["dataset"]["core"]["dataset_variant"],
+            payload["data"]["dataset"]["core"]["dataset_variant"],
             "argo_geotiff_gridded",
         )
-        grid = payload["dataset"]["grid"]
+        grid = payload["data"]["dataset"]["grid"]
         self.assertEqual(grid["patch_grid_source"], "land_mask")
         self.assertEqual(grid["patch_stride"], 32)
         self.assertEqual(float(grid["max_land_fraction"]), 0.30)
@@ -431,5 +431,5 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
-        self.assertFalse(payload["dataset"]["output"]["include_salinity"])
-        self.assertEqual(payload["split"]["val_year"], 2018)
+        self.assertNotIn("include_salinity", payload["data"]["dataset"]["output"])
+        self.assertEqual(payload["data"]["split"]["val_year"], 2018)

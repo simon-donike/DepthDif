@@ -7,7 +7,7 @@ Cesium assets.
 
 Typical CLI:
 /work/envs/depth/bin/python -m depth_recon.inference.export_global \
-  --data-config src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml \
+  --scenario temperature \
   --year 2018 \
   --iso-week 25 \
   --split all \
@@ -26,6 +26,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -59,6 +60,11 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_assets,
 )
+from depth_recon.configs.config_resolver_pixel import (
+    DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
+    PIXEL_SCENARIOS,
+    load_pixel_inference_config,
+)
 from depth_recon.inference.core import (
     build_dataset,
     build_model,
@@ -67,16 +73,11 @@ from depth_recon.inference.core import (
     load_yaml,
     resolve_checkpoint_path,
 )
-from depth_recon.paths import config_path, resolve_config_path
+from depth_recon.paths import resolve_config_path
 from depth_recon.utils.normalizations import temperature_normalize
 from depth_recon.utils.validation_denoise import save_glorys_profile_comparison_plot
 
-DEFAULT_MODEL_CONFIG = str(config_path("px_space", "model_config.yaml"))
-DEFAULT_DATA_CONFIG = str(config_path("px_space", "data_ostia_argo_geotiff.yaml"))
-DEFAULT_TRAIN_CONFIG = str(config_path("px_space", "training_config.yaml"))
-DEFAULT_INFERENCE_CONFIG = str(
-    Path(__file__).resolve().parent / "inference_config.yaml"
-)
+DEFAULT_INFERENCE_CONFIG = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
@@ -1704,14 +1705,30 @@ def _build_parser() -> argparse.ArgumentParser:
             "from the GeoTIFF patch dataset, then export configured depth rasters."
         )
     )
-    parser.add_argument("--model-config", type=str, default=DEFAULT_MODEL_CONFIG)
-    parser.add_argument("--data-config", type=str, default=DEFAULT_DATA_CONFIG)
-    parser.add_argument("--train-config", type=str, default=DEFAULT_TRAIN_CONFIG)
     parser.add_argument(
-        "--inference-config",
+        "--config",
         type=str,
         default=DEFAULT_INFERENCE_CONFIG,
-        help="YAML file controlling global inference grid and DataLoader settings.",
+        dest="config_path",
+        help="Path to the pixel inference super-config yaml.",
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(PIXEL_SCENARIOS),
+        default=None,
+        help="High-level pixel inference scenario; derives data/model channel settings.",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="config_overrides",
+        metavar="TARGET=VALUE",
+        help=(
+            "Override config values. Format: "
+            "<data|training|model|inference>.<nested.path>=<yaml_value>. "
+            "Repeat --set for multiple overrides."
+        ),
     )
     parser.add_argument(
         "--checkpoint-path",
@@ -1921,9 +1938,21 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "contains every spatial patch, not just train or val."
         )
 
-    training_cfg = _load_yaml(args.train_config)
-    data_cfg = load_yaml(args.data_config)
-    inference_cfg = _load_yaml(args.inference_config)
+    config_bundle = load_pixel_inference_config(
+        config_path_value=args.config_path,
+        scenario_override=args.scenario,
+        overrides=list(args.config_overrides or []),
+        runtime_config_dir=Path("/tmp/depthdif_inference_configs")
+        / f"global_{os.getpid()}",
+        write_snapshots=False,
+    )
+    training_cfg = config_bundle.training_cfg
+    data_cfg = config_bundle.data_cfg
+    inference_cfg = config_bundle.inference_cfg
+    args.model_config = config_bundle.effective_model_config_path
+    args.data_config = config_bundle.effective_data_config_path
+    args.train_config = config_bundle.effective_training_config_path
+    args.inference_config = config_bundle.effective_inference_config_path
     inference_section = _inference_section(inference_cfg)
     inference_grid_cfg = inference_section.get("grid", {})
     inference_dataloader_cfg = inference_section.get("dataloader", {})

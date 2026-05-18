@@ -521,6 +521,70 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(torch.isclose(loss, torch.tensor(1.5)))
 
+    def test_pixel_training_step_uses_salinity_only_fields(self) -> None:
+        model = _make_pixel_model(output_fields=("salinity",))
+        batch = _make_pixel_batch(include_salinity=True)
+        captured: dict[str, Any] = {}
+
+        def fake_p_loss(
+            output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
+        ) -> torch.Tensor:
+            captured["output"] = output.detach().clone()
+            captured["condition"] = condition.detach().clone()
+            captured["kwargs"] = kwargs
+            return torch.tensor(1.75, requires_grad=True)
+
+        with (
+            patch.object(model.model, "p_loss", fake_p_loss),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+        ):
+            loss = model.training_step(batch, batch_idx=0)
+
+        expected_condition = model._prepare_condition_for_model(
+            batch["x_salinity"], batch["x_salinity_valid_mask"]
+        )
+        expected_loss_mask = model._build_standard_loss_mask(
+            reference=batch["y_salinity"],
+            y_valid_mask=batch["y_salinity_valid_mask"],
+        )
+
+        self.assertTrue(torch.equal(captured["output"], batch["y_salinity"]))
+        self.assertTrue(torch.equal(captured["condition"], expected_condition))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask)
+        )
+        self.assertTrue(torch.isclose(loss, torch.tensor(1.75)))
+
+    def test_pixel_predict_step_returns_salinity_only_outputs(self) -> None:
+        model = _make_pixel_model(output_fields=("salinity",))
+        batch = _make_pixel_batch(include_salinity=True)
+        batch["y_salinity_valid_mask"] = torch.ones_like(batch["y_salinity_valid_mask"])
+        batch["land_mask"] = torch.ones_like(batch["land_mask"])
+        generated_salinity_psu = torch.full_like(batch["x_salinity"], 34.75)
+        generated_norm = salinity_normalize(mode="norm", tensor=generated_salinity_psu)
+
+        with patch.object(model, "forward", lambda *args, **kwargs: generated_norm):
+            pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertTrue(torch.equal(pred["y_hat"], generated_norm))
+        self.assertTrue(torch.equal(pred["y_hat_salinity"], generated_norm))
+        self.assertTrue(
+            torch.allclose(
+                pred["y_hat_salinity_denorm"], generated_salinity_psu, atol=1e-5
+            )
+        )
+        self.assertTrue(
+            torch.equal(pred["y_hat_denorm"], pred["y_hat_salinity_denorm"])
+        )
+        self.assertNotIn("y_hat_temperature", pred)
+
+    def test_salinity_only_requires_salinity_batch_keys(self) -> None:
+        model = _make_pixel_model(output_fields=("salinity",))
+        batch = _make_pixel_batch(include_salinity=False)
+
+        with self.assertRaisesRegex(RuntimeError, r"requires batch\[x_salinity\]"):
+            model.training_step(batch, batch_idx=0)
+
     def test_pixel_validation_step_stacks_joint_temperature_salinity_masks(
         self,
     ) -> None:

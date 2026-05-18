@@ -1,26 +1,26 @@
-# Data Export  
+# Data Export
 
-This page describes the GeoTIFF training dataset exported from the downloaded  
-raw products. Use [Dataset Downloads](data-download.md) for acquisition and  
-[Depth Alignment](depth-alignment.md) for the ARGO-to-GLORYS vertical  
-projection.  
+This page describes the GeoTIFF training dataset exported from the downloaded
+raw products. Use [Dataset Downloads](data-download.md) for acquisition and
+[Depth Alignment](depth-alignment.md) for the ARGO-to-GLORYS vertical
+projection.
 
-The export goal is a directory that can be shared or copied as one training  
-dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO  
-profiles are stored in a compact grid-indexed profile store.  
-Training can select this exported dataset with  
-`src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml`, which sets  
-`dataset.core.dataset_variant: argo_geotiff_gridded`.  
+The export goal is a directory that can be shared or copied as one training
+dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO
+profiles are stored in a compact grid-indexed profile store.
+Training can select this exported dataset with
+`src/depth_recon/configs/px_space/training_super_config.yaml`, which sets
+`data.dataset.core.dataset_variant: argo_geotiff_gridded`.
 
-## Output Layout  
+## Output Layout
 
-Default export root:  
+Default export root:
 
 ```text
 /work/data/depthdif
 ```
 
-Output files:  
+Output files:
 
 ```text
 /work/data/depthdif/
@@ -40,105 +40,105 @@ Output files:
     argo_profiles_on_grid.zarr
 ```
 
-Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share  
-the same CRS, transform, width, height, pixel centers, and nodata convention.  
+Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share
+the same CRS, transform, width, height, pixel centers, and nodata convention.
 
-The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the  
-same on-disk dataset can support joint temperature/salinity experiments. The
-GeoTIFF dataloader only reads and returns those salinity fields when  
-`dataset.output.include_salinity=true`. Daily SSS `sos` and `dos` rasters
+The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the
+same on-disk dataset can support salinity-only and joint temperature/salinity experiments. The
+GeoTIFF dataloader reads and returns those salinity fields when the resolved
+scenario is `salinity` or `joint`. Daily SSS `sos` and `dos` rasters
 are also exported for auxiliary experiments.
 
-## Spatial Grid  
+## Spatial Grid
 
-The land-mask GeoTIFF is the authoritative grid:  
+The land-mask GeoTIFF is the authoritative grid:
 
 ```text
 src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
 ```
 
-The export uses that file for:  
+The export uses that file for:
 
-- CRS and affine transform  
-- raster width and height  
-- 0.1 degree pixel centers  
-- patch-grid compatibility with training and inference  
+- CRS and affine transform
+- raster width and height
+- 0.1 degree pixel centers
+- patch-grid compatibility with training and inference
 
 GLORYS, OSTIA, sea-level, and SSS data are read onto this exact grid before
 quantization. If source coordinates already match the requested pixel centers,
-the exporter uses exact nearest-coordinate selection; otherwise it interpolates  
-onto the target axes.  
+the exporter uses exact nearest-coordinate selection; otherwise it interpolates
+onto the target axes.
 
-## Dense Raster Products  
+## Dense Raster Products
 
-### GLORYS Temperature  
+### GLORYS Temperature
 
-Path:  
+Path:
 
 ```text
 rasters/glorys/thetao/thetao_YYYYMMDD.tif
 ```
 
-Contents:  
+Contents:
 
-- Source variable: `thetao`  
-- Source units: Celsius in GLORYS source files  
-- Stored physical units after decoding: Kelvin  
-- File structure: one multiband GeoTIFF per weekly date  
-- Bands: one band per GLORYS depth level  
-- Band metadata: `depth_m`, stretch information, clipped counts, nodata counts  
+- Source variable: `thetao`
+- Source units: Celsius in GLORYS source files
+- Stored physical units after decoding: Kelvin
+- File structure: one multiband GeoTIFF per weekly date
+- Bands: one band per GLORYS depth level
+- Band metadata: `depth_m`, stretch information, clipped counts, nodata counts
 
-GLORYS weekly files are exported as-is for their target date. They are not  
-averaged across the week.  
+GLORYS weekly files are exported as-is for their target date. They are not
+averaged across the week.
 
-### GLORYS Salinity  
+### GLORYS Salinity
 
-Path:  
+Path:
 
 ```text
 rasters/glorys/so/so_YYYYMMDD.tif
 ```
 
-Contents:  
+Contents:
 
-- Source variable: `so`  
-- Stored physical units after decoding: PSU  
-- File structure: one multiband GeoTIFF per weekly date  
-- Bands: one band per GLORYS depth level  
-- Band metadata: `depth_m`, stretch information, clipped counts, nodata counts  
+- Source variable: `so`
+- Stored physical units after decoding: PSU
+- File structure: one multiband GeoTIFF per weekly date
+- Bands: one band per GLORYS depth level
+- Band metadata: `depth_m`, stretch information, clipped counts, nodata counts
 
-### OSTIA Surface Temperature  
+### OSTIA Surface Temperature
 
-Path:  
+Path:
 
 ```text
 rasters/ostia/analysed_sst/analysed_sst_YYYYMMDD.tif
 ```
 
-Contents:  
+Contents:
 
-- Source variable: `analysed_sst`  
-- Stored physical units after decoding: Kelvin  
-- File structure: one single-band GeoTIFF per GLORYS weekly date  
-- Temporal aggregation: centered 7-day mean around the GLORYS date by default  
+- Source variable: `analysed_sst`
+- Stored physical units after decoding: Kelvin
+- File structure: one single-band GeoTIFF per GLORYS weekly date
+- Temporal aggregation: centered 7-day mean around the GLORYS date by default
 
-OSTIA values are normally Kelvin. The exporter preserves Kelvin values and only  
-adds `273.15` when the source values look Celsius-like.  
+OSTIA values are normally Kelvin. The exporter preserves Kelvin values and only
+adds `273.15` when the source values look Celsius-like.
 
-### Sea Level  
+### Sea Level
 
-Path:  
+Path:
 
 ```text
 rasters/sealevel/adt/adt_YYYYMMDD.tif
 ```
 
-Contents:  
+Contents:
 
-- Source variable: `adt`  
-- Stored physical units after decoding: meters  
-- File structure: one single-band GeoTIFF per GLORYS weekly date  
-- Temporal aggregation: centered 7-day mean around the GLORYS date by default  
+- Source variable: `adt`
+- Stored physical units after decoding: meters
+- File structure: one single-band GeoTIFF per GLORYS weekly date
+- Temporal aggregation: centered 7-day mean around the GLORYS date by default
 
 ### SSS Surface Salinity and Density
 
@@ -155,45 +155,45 @@ Contents:
 - File structure: one single-band GeoTIFF per variable and GLORYS weekly date
 - Temporal aggregation: centered 7-day mean around the GLORYS date by default
 
-## ARGO Profile Store  
+## ARGO Profile Store
 
-Path:  
+Path:
 
 ```text
 argo/argo_profiles_on_grid.zarr
 ```
 
-The exporter reads the enriched ARGO profile input by default:  
+The exporter reads the enriched ARGO profile input by default:
 
 ```text
 /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr
 ```
 
-The saved profile store contains the profile information needed by a GeoTIFF  
-loader without redoing expensive profile preprocessing:  
+The saved profile store contains the profile information needed by a GeoTIFF
+loader without redoing expensive profile preprocessing:
 
-- `profile_date`  
-- `target_date`  
-- `latitude`  
-- `longitude`  
-- `grid_row`  
-- `grid_col`  
-- `argo_temp_kelvin_uint8`  
-- `argo_psal_uint8`  
-- `argo_temp_valid`  
-- `argo_psal_valid`  
-- optional source profile identifiers  
+- `profile_date`
+- `target_date`
+- `latitude`
+- `longitude`
+- `grid_row`
+- `grid_col`
+- `argo_temp_kelvin_uint8`
+- `argo_psal_uint8`
+- `argo_temp_valid`
+- `argo_psal_valid`
+- optional source profile identifiers
 
-Profiles are assigned to the nearest GLORYS target date inside the centered  
-weekly window and to the nearest raster grid cell. Temperature is converted to  
+Profiles are assigned to the nearest GLORYS target date inside the centered
+weekly window and to the nearest raster grid cell. Temperature is converted to
 Kelvin before quantization.
 
-## Quantization  
+## Quantization
 
-All dense rasters are written as tiled `uint8` GeoTIFFs with ZSTD compression  
-when available, otherwise DEFLATE. `BIGTIFF=IF_SAFER` is enabled.  
+All dense rasters are written as tiled `uint8` GeoTIFFs with ZSTD compression
+when available, otherwise DEFLATE. `BIGTIFF=IF_SAFER` is enabled.
 
-Encoding:  
+Encoding:
 
 ```text
 0..254 = valid stretched values
@@ -201,42 +201,42 @@ Encoding:
 decoded = minimum + code / 254 * (maximum - minimum)
 ```
 
-The transform, units, valid range, clipped-low count, clipped-high count,  
-nodata count, quantization step, and worst-case rounding error are written to  
-GeoTIFF tags and to `manifest.yaml`.  
+The transform, units, valid range, clipped-low count, clipped-high count,
+nodata count, quantization step, and worst-case rounding error are written to
+GeoTIFF tags and to `manifest.yaml`.
 
-| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |  
-| --- | --- | ---: | ---: | ---: | ---: |  
-| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |  
-| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |  
+| Variable family | Stretch | uint8 step | uint8 max error | int8 nonnegative step | int8 nonnegative max error |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
+| Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
 | Density | `[1000, 1035] kg/m3` | `0.1378 kg/m3` | `0.0689 kg/m3` | `0.2778 kg/m3` | `0.1389 kg/m3` |
-| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |  
+| Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
 
-The int8 comparison assumes a signed-byte encoding that uses only `0..126` as  
-valid values and `127` as nodata. A signed int8 layout remapped across all 255  
-non-nodata codes would have the same quantization error as `uint8`, but `uint8`  
-keeps byte values and nodata handling explicit for raster readers.  
+The int8 comparison assumes a signed-byte encoding that uses only `0..126` as
+valid values and `127` as nodata. A signed int8 layout remapped across all 255
+non-nodata codes would have the same quantization error as `uint8`, but `uint8`
+keeps byte values and nodata handling explicit for raster readers.
 
-## Manifest  
+## Manifest
 
-`manifest.yaml` records the export configuration and output metadata:  
+`manifest.yaml` records the export configuration and output metadata:
 
-- creation script and UTC timestamp  
-- requested date range  
-- land-mask grid source, CRS, transform, shape, and resolution  
-- target weekly dates  
-- GLORYS depth axis  
-- per-variable stretch metadata  
-- per-file paths, source files, compression, and encode statistics  
-- ARGO profile count and ARGO stretch metadata  
+- creation script and UTC timestamp
+- requested date range
+- land-mask grid source, CRS, transform, shape, and resolution
+- target weekly dates
+- GLORYS depth axis
+- per-variable stretch metadata
+- per-file paths, source files, compression, and encode statistics
+- ARGO profile count and ARGO stretch metadata
 
-The manifest is the stable entry point for downstream loaders: it tells the  
+The manifest is the stable entry point for downstream loaders: it tells the
 loader which dates exist, how to decode each byte raster, which SSS rasters are
 present, and which grid/depth axes the exported arrays use.
 
-## Command  
+## Command
 
-Run from the repository root:  
+Run from the repository root:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \

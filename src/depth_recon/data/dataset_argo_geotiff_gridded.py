@@ -546,7 +546,7 @@ class GeoTIFFPatchIndex:
 class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     """Dataset that lazily reads training patches from exported GeoTIFF stores."""
 
-    DEFAULT_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_geotiff.yaml"))
+    DEFAULT_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
     DEFAULT_GEOTIFF_ROOT_DIR = "/work/data/depthdif"
     DEFAULT_METADATA_CACHE_DIR = "/work/data/depthdif/depthdif_cache"
 
@@ -781,7 +781,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         with resolve_config_path(config_path).open("r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
-        ds_cfg = cfg.get("dataset", {})
+        ds_cfg = cfg.get("data", cfg).get("dataset", {})
         if dataset_overrides:
             ds_cfg = _deep_update_config(ds_cfg, dataset_overrides)
         return cls(

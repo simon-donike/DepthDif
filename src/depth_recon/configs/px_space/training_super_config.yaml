@@ -1,0 +1,190 @@
+scenario: temperature  # default pixel task; CLI --scenario overrides
+
+data:  # dataset, split, and loader inputs
+  dataset:  # dataset constructor settings
+    core:  # dataset implementation and paths
+      dataset_variant: argo_geotiff_gridded  # active GeoTIFF dataset class
+      dataloader_type: light  # lightweight dataloader path
+      geotiff_root_dir: /work/data/depthdif  # exported GeoTIFF store root
+      metadata_cache_dir: /work/data/depthdif/depthdif_cache  # patch metadata cache
+    grid:  # spatial patch grid
+      tile_size: 128  # patch height and width
+      resolution_deg: 0.1  # grid resolution in degrees
+      patch_grid_source: land_mask  # source for patch origins
+      land_mask_path: src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif  # land/ocean mask raster
+      patch_stride: 32  # training patch stride
+      max_land_fraction: 0.3  # default land fraction cap
+      force_include_regions:  # regional relaxed land caps
+      - name: mediterranean  # region label
+        lon_min: -6.0  # west bound
+        lon_max: 37.0  # east bound
+        lat_min: 30.0  # south bound
+        lat_max: 46.0  # north bound
+        max_land_fraction: 0.6  # region land cap
+      - name: baltic  # region label
+        lon_min: 9.0  # west bound
+        lon_max: 31.0  # east bound
+        lat_min: 53.0  # south bound
+        lat_max: 66.0  # north bound
+        max_land_fraction: 0.85  # region land cap
+      - name: red_sea  # region label
+        lon_min: 32.0  # west bound
+        lon_max: 44.0  # east bound
+        lat_min: 12.0  # south bound
+        lat_max: 30.0  # north bound
+        max_land_fraction: 0.85  # region land cap
+      - name: hudson_bay  # region label
+        lon_min: -96.0  # west bound
+        lon_max: -74.0  # east bound
+        lat_min: 50.0  # south bound
+        lat_max: 65.0  # north bound
+        max_land_fraction: 0.95  # region land cap
+    sampling:  # time and variable selection
+      temporal_window_days: 7  # ARGO/EO date window
+      glorys_var_name: thetao  # GLORYS temperature variable
+      ostia_var_name: analysed_sst  # OSTIA SST variable
+    selection:  # row filtering by split
+      require_argo_for_train: true  # keep train rows with ARGO
+      require_argo_for_val: true  # keep val rows with ARGO
+      require_argo_for_all: false  # allow no-ARGO inference rows
+    synthetic:  # synthetic sparse-input mode
+      enabled: false  # sample x from y instead of ARGO
+      pixel_count: 250  # synthetic observed pixels
+    output:  # optional batch outputs
+      return_info: false  # include metadata dictionaries
+      return_coords: true  # include patch center coords
+    runtime:  # dataset runtime knobs
+      random_seed: 7  # deterministic split/sampling seed
+      cache_size: 8  # open raster/source cache size
+  split:  # train/validation split
+    val_year: 2018  # year reserved for validation
+    val_fraction: 0.2  # fallback random val fraction
+  dataloader:  # dataset-side loader defaults
+    num_workers: 6  # worker process count
+    prefetch_factor: 2  # batches prefetched per worker
+    val_shuffle: true  # intentionally shuffle validation
+
+model:  # pixel diffusion model settings
+  model_type: cond_px_dif  # model factory selector
+  depth_channels: 50  # depth bands per field
+  resume_checkpoint: false  # checkpoint path or false
+  load_checkpoint_only: false  # weights-only checkpoint load
+  condition_mask_channels: 1  # valid-mask condition channels
+  condition_include_eo: true  # add OSTIA EO channel
+  condition_use_valid_mask: true  # add ARGO support mask
+  condition_use_land_mask: true  # add GLORYS land mask
+  clamp_known_pixels: false  # clamp known pixels while sampling
+  mask_loss_with_valid_pixels: true  # mask loss to valid support
+  parameterization: x0  # diffusion target parameterization
+  log_intermediates: false  # log reverse-chain images
+  ema:  # exponential moving average
+    enabled: true  # enable EMA callback
+    decay: 0.9999  # EMA decay factor
+    apply_every_n_steps: 1  # EMA update cadence
+    start_step: 0  # first EMA step
+    save_ema_weights_in_callback_state: true  # save EMA in checkpoints
+    evaluate_ema_weights_instead: true  # validate using EMA weights
+  ambient_occlusion:  # ambient objective controls
+    enabled: false  # enable occlusion objective
+    further_drop_prob: 0.1  # additional observed-pixel drop
+    apply_to_noisy_branch: true  # mask noisy target branch
+    shared_spatial_mask: true  # share mask across channels
+    min_kept_observed_pixels: 50  # minimum kept observations
+    require_x0_parameterization: true  # require x0 objective
+  post_process:  # prediction post-processing
+    gaussian_blur:  # optional output blur
+      enabled: false  # enable Gaussian blur
+      sigma: 0.75  # blur sigma in pixels
+      kernel_size: 5  # blur kernel size
+  coord_conditioning:  # coordinate/date FiLM inputs
+    enabled: true  # enable coordinate conditioning
+    encoding: unit_sphere  # coordinate encoding type
+    include_date: true  # include day-of-year signal
+    date_encoding: day_of_year_sincos  # date encoding type
+    embed_dim: null  # FiLM embedding size override
+  unet:  # denoiser architecture
+    dim: 64  # base channel width
+    dim_mults:  # U-Net width multipliers
+    - 1  # stage multiplier
+    - 2  # stage multiplier
+    - 4  # stage multiplier
+    - 8  # stage multiplier
+    with_time_emb: true  # include timestep embedding
+    output_mean_scale: false  # scale output mean
+    residual: false  # predict residual output
+
+training:  # optimizer, trainer, and logging
+  training:  # diffusion training hyperparameters
+    lr: 0.0001  # optimizer learning rate
+    batch_size: 4  # informational batch size
+    noise:  # diffusion noise schedule
+      num_timesteps: 1000  # training diffusion steps
+      schedule: cosine  # beta schedule type
+      beta_start: 0.0001  # starting beta
+      beta_end: 0.02  # ending beta
+    validation_sampling:  # validation sampler settings
+      sampler: ddpm  # validation sampler type
+      ddim_num_timesteps: 100  # DDIM validation steps
+      ddim_eta: 0.0  # DDIM stochasticity
+      ddim_temperature: 1.0  # sampler noise scale
+      log_intermediates: false  # log denoising intermediates
+      skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
+      max_full_reconstruction_samples: 5  # max full recon samples
+  trainer:  # PyTorch Lightning trainer
+    max_epochs: 1500  # epoch limit
+    accelerator: auto  # accelerator selection
+    devices: auto  # device selection
+    num_gpus: null  # legacy GPU count override
+    strategy: auto  # distributed strategy
+    precision: 16-mixed  # numeric precision
+    matmul_precision: high  # torch matmul precision
+    suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
+    suppress_lightning_pytree_warning: true  # hide Lightning warning
+    ckpt_monitor: val/loss_ckpt  # best-checkpoint metric
+    lr_logging_interval: step  # LR log cadence
+    log_every_n_steps: 25  # trainer log cadence
+    num_sanity_val_steps: 1  # startup val batches
+    val_check_interval: 0.1  # validation cadence
+    limit_val_batches: 64  # validation batch cap
+    enable_model_summary: true  # print model summary
+    gradient_clip_val: 1.0  # gradient clip value
+  wandb:  # Weights & Biases logging
+    project: DepthDif_Simon  # W&B project
+    entity: esa-phi-lab  # W&B entity
+    run_name: ostia_argo_geotiff_px  # run display name
+    log_model: 'false'  # W&B model logging policy
+    verbose: true  # enable extra logging
+    watch_gradients: false  # watch gradients
+    watch_parameters: false  # watch parameters
+    watch_log_freq: 100  # watch log cadence
+    watch_log_graph: false  # log computation graph
+    log_stats_every_n_steps: 200  # scalar stats cadence
+    log_images_every_n_steps: 200  # image log cadence
+  dataloader:  # Lightning dataloader settings
+    batch_size: 4  # train batch size
+    val_batch_size: 2  # validation batch size
+    num_workers: 6  # train loader workers
+    val_num_workers: 0  # validation loader workers
+    persistent_workers: true  # keep train workers alive
+    val_persistent_workers: false  # keep val workers alive
+    prefetch_factor: 2  # batches prefetched per worker
+    shuffle: true  # shuffle train loader
+    val_shuffle: true  # intentionally shuffle validation
+    pin_memory: true  # use pinned host memory
+  scheduler:  # learning-rate scheduling
+    warmup:  # linear warmup
+      enabled: false  # enable warmup
+      steps: 2000  # warmup step count
+      start_ratio: 0.2  # starting LR ratio
+    reduce_on_plateau:  # plateau LR scheduler
+      enabled: true  # enable plateau schedule
+      monitor: val/loss_ckpt  # monitored metric
+      interval: step  # scheduler interval unit
+      mode: min  # optimize lower metric
+      factor: 0.5  # LR decay factor
+      patience: 25000  # plateau patience
+      threshold: 0.0001  # improvement threshold
+      threshold_mode: rel  # threshold mode
+      cooldown: 0  # cooldown intervals
+      min_lr: 1.0e-06  # LR floor
+      eps: 1.0e-08  # minimum LR change

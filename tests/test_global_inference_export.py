@@ -12,7 +12,7 @@ from rasterio.transform import from_origin
 from torch import nn
 
 from depth_recon.inference.export_global import (
-    DEFAULT_DATA_CONFIG,
+    DEFAULT_INFERENCE_CONFIG,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     DEFAULT_INFERENCE_CONFIG,
@@ -158,8 +158,10 @@ class TestGlobalInferenceExport(unittest.TestCase):
     def test_default_full_sample_count_exports_all_locations(self) -> None:
         self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, -1)
 
-    def test_default_data_config_uses_geotiff_dataset(self) -> None:
-        self.assertTrue(DEFAULT_DATA_CONFIG.endswith("data_ostia_argo_geotiff.yaml"))
+    def test_default_inference_config_uses_super_config(self) -> None:
+        self.assertTrue(
+            DEFAULT_INFERENCE_CONFIG.endswith("inference_super_config.yaml")
+        )
 
     def test_default_export_gaussian_blur_sigma_is_zero(self) -> None:
         self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 0.0)
@@ -169,8 +171,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
         args = parser.parse_args(["--year", "2026", "--iso-week", "2"])
 
-        self.assertTrue(DEFAULT_INFERENCE_CONFIG.endswith("inference_config.yaml"))
-        self.assertEqual(args.inference_config, DEFAULT_INFERENCE_CONFIG)
+        self.assertEqual(args.config_path, DEFAULT_INFERENCE_CONFIG)
+        self.assertIsNone(args.scenario)
+        self.assertEqual(args.config_overrides, [])
         self.assertIsNone(args.inference_num_workers)
         self.assertIsNone(args.inference_prefetch_factor)
 

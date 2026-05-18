@@ -435,16 +435,16 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
                 {0.5},
             )
 
-    def test_active_netcdf_config_uses_land_mask_grid_defaults(self) -> None:
-        with config_path("px_space", "data_ostia_argo_netcdf.yaml").open(
+    def test_active_super_config_uses_land_mask_grid_defaults(self) -> None:
+        with config_path("px_space", "training_super_config.yaml").open(
             "r",
             encoding="utf-8",
         ) as f:
             payload = yaml.safe_load(f)
 
-        grid = payload["dataset"]["grid"]
+        grid = payload["data"]["dataset"]["grid"]
         self.assertEqual(grid["patch_grid_source"], "land_mask")
-        self.assertEqual(grid["patch_stride"], 64)
+        self.assertEqual(grid["patch_stride"], 32)
         self.assertEqual(float(grid["max_land_fraction"]), 0.30)
         self.assertTrue(Path(grid["land_mask_path"]).exists())
         self.assertEqual(

@@ -85,7 +85,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         cls,
         model_config_path: str = str(config_path("lat_space", "model_config.yaml")),
         data_config_path: str = str(
-            config_path("px_space", "data_ostia_argo_netcdf.yaml")
+            config_path("px_space", "training_super_config.yaml")
         ),
         training_config_path: str = str(
             config_path("lat_space", "training_config.yaml")
