@@ -63,6 +63,7 @@ _ARGO_SECTION = _section(_SOURCE_VARIABLE_CONFIG, "argo")
 _GLORYS_SECTION = _section(_SOURCE_VARIABLE_CONFIG, "glorys")
 _OSTIA_SECTION = _section(_SOURCE_VARIABLE_CONFIG, "ostia")
 _SEALEVEL_SECTION = _section(_SOURCE_VARIABLE_CONFIG, "sealevel")
+_SSS_SECTION = _section(_SOURCE_VARIABLE_CONFIG, "sss")
 
 # Keep configured variable groups as tuples because downstream dataset code
 # concatenates them into fixed ordered variable lists.
@@ -82,11 +83,13 @@ GLORYS_3D_VARS = _string_tuple(_GLORYS_SECTION, "vars_3d", "glorys.vars_3d")
 GLORYS_2D_VARS = _string_tuple(_GLORYS_SECTION, "vars_2d", "glorys.vars_2d")
 OSTIA_VARS = _string_tuple(_OSTIA_SECTION, "vars", "ostia.vars")
 SEALEVEL_VARS = _string_tuple(_SEALEVEL_SECTION, "vars", "sealevel.vars")
+SSS_VARS = _string_tuple(_SSS_SECTION, "vars", "sss.vars")
 SOURCE_VARIABLES = {
     "argo": ("JULD", "LATITUDE", "LONGITUDE", ARGO_DEPTH_VAR) + ARGO_PROFILE_VARS,
     "glorys": GLORYS_3D_VARS + GLORYS_2D_VARS,
     "ostia": OSTIA_VARS,
     "sealevel": SEALEVEL_VARS,
+    "sss": SSS_VARS,
 }
 
 

@@ -33,6 +33,9 @@ Output files:
       analysed_sst/analysed_sst_YYYYMMDD.tif
     sealevel/
       adt/adt_YYYYMMDD.tif
+    sss/
+      sos/sos_YYYYMMDD.tif
+      dos/dos_YYYYMMDD.tif
   argo/
     argo_profiles_on_grid.zarr
 ```
@@ -41,9 +44,10 @@ Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share
 the same CRS, transform, width, height, pixel centers, and nodata convention.  
 
 The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the  
-same on-disk dataset can support joint temperature/salinity experiments. The  
+same on-disk dataset can support joint temperature/salinity experiments. The
 GeoTIFF dataloader only reads and returns those salinity fields when  
-`dataset.output.include_salinity=true`.  
+`dataset.output.include_salinity=true`. Daily SSS `sos` and `dos` rasters
+are also exported for auxiliary experiments.
 
 ## Spatial Grid  
 
@@ -60,8 +64,8 @@ The export uses that file for:
 - 0.1 degree pixel centers  
 - patch-grid compatibility with training and inference  
 
-GLORYS, OSTIA, and sea-level data are read onto this exact grid before  
-quantization. If source coordinates already match the requested pixel centers,  
+GLORYS, OSTIA, sea-level, and SSS data are read onto this exact grid before
+quantization. If source coordinates already match the requested pixel centers,
 the exporter uses exact nearest-coordinate selection; otherwise it interpolates  
 onto the target axes.  
 
@@ -136,6 +140,21 @@ Contents:
 - File structure: one single-band GeoTIFF per GLORYS weekly date  
 - Temporal aggregation: centered 7-day mean around the GLORYS date by default  
 
+### SSS Surface Salinity and Density
+
+Path:
+
+```text
+rasters/sss/<variable>/<variable>_YYYYMMDD.tif
+```
+
+Contents:
+
+- Source variables: `sos`, `dos`
+- Stored physical units after decoding: PSU for `sos`, kg/m3 for `dos`
+- File structure: one single-band GeoTIFF per variable and GLORYS weekly date
+- Temporal aggregation: centered 7-day mean around the GLORYS date by default
+
 ## ARGO Profile Store  
 
 Path:  
@@ -167,7 +186,7 @@ loader without redoing expensive profile preprocessing:
 
 Profiles are assigned to the nearest GLORYS target date inside the centered  
 weekly window and to the nearest raster grid cell. Temperature is converted to  
-Kelvin before quantization.  
+Kelvin before quantization.
 
 ## Quantization  
 
@@ -190,6 +209,7 @@ GeoTIFF tags and to `manifest.yaml`.
 | --- | --- | ---: | ---: | ---: | ---: |  
 | Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |  
 | Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |  
+| Density | `[1000, 1035] kg/m3` | `0.1378 kg/m3` | `0.0689 kg/m3` | `0.2778 kg/m3` | `0.1389 kg/m3` |
 | Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |  
 
 The int8 comparison assumes a signed-byte encoding that uses only `0..126` as  
@@ -211,8 +231,8 @@ keeps byte values and nodata handling explicit for raster readers.
 - ARGO profile count and ARGO stretch metadata  
 
 The manifest is the stable entry point for downstream loaders: it tells the  
-loader which dates exist, how to decode each byte raster, and which grid/depth  
-axes the exported arrays use.  
+loader which dates exist, how to decode each byte raster, which SSS rasters are
+present, and which grid/depth axes the exported arrays use.
 
 ## Command  
 
@@ -223,6 +243,7 @@ Run from the repository root:
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
   --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
@@ -233,5 +254,7 @@ Run from the repository root:
   --overwrite
 ```
 
-`--workers` controls process-level parallelism for dense raster dates. Lower it  
-if source-disk contention or memory pressure becomes the bottleneck.  
+`--workers` controls process-level parallelism for dense raster dates. Lower it
+if source-disk contention or memory pressure becomes the bottleneck. Use
+`--skip-existing` instead of `--overwrite` to resume a partial export: existing
+modality/date rasters are validated and reused, and missing rasters are written.

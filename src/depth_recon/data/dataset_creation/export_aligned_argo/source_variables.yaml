@@ -94,3 +94,12 @@ sealevel:
     - flag_ice
     # TOPEX-A instrumental drift correction; units: m.
     - tpa_correction
+
+sss:
+  vars:
+    # Analysed sea-surface salinity; source units: 0.001 / practical salinity unit.
+    - sos
+    # Analysed sea-surface density; units: kg/m3.
+    - dos
+    # Sea ice fraction; source metadata reports percent, source values are 0..1.
+    - sea_ice_fraction

@@ -14,12 +14,14 @@ from depth_recon.data.dataset_creation.export_dataset_geotiff import (
     export_training_geotiff_dataset,
 )
 from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
+    DENSITY_STRETCH,
     SEA_HEIGHT_STRETCH,
     SALINITY_STRETCH,
     STRETCH_SPECS,
     TEMPERATURE_KELVIN_STRETCH,
     decode_stretched_uint8,
 )
+from depth_recon.data.dataset_creation.export_aligned_argo.source_files import SSS_VARS
 
 
 def _write_land_mask(path: Path) -> Path:
@@ -121,6 +123,43 @@ def _write_sealevel(root_dir: Path, *, date_value: int, base: float) -> None:
     ds.to_netcdf(root_dir / f"sealevel_{int(date_value)}.nc", engine="h5netcdf")
 
 
+def _write_sss(
+    root_dir: Path,
+    *,
+    date_value: int,
+    salinity_base: float,
+    density_base: float,
+) -> None:
+    """Write a tiny SSS source file with all product variables."""
+    lat = np.asarray([0.5, 1.5], dtype=np.float32)
+    lon = np.asarray([10.5, 11.5], dtype=np.float32)
+    offsets = np.asarray([[0.0, 1.0], [2.0, 3.0]], dtype=np.float32)
+    fields = {
+        "sos": salinity_base + offsets,
+        "dos": density_base + (offsets * np.float32(0.1)),
+        "sos_error": np.float32(1.0) + (offsets * np.float32(0.1)),
+        "dos_error": np.float32(2.0) + (offsets * np.float32(0.1)),
+        "sea_ice_fraction": offsets / np.float32(10.0),
+    }
+    ds = xr.Dataset(
+        {
+            name: (("time", "depth", "lat", "lon"), values[None, None, ...])
+            for name, values in fields.items()
+        },
+        coords={
+            "time": np.asarray([0.0], dtype=np.float64),
+            "depth": np.asarray([0.0], dtype=np.float32),
+            "lat": lat,
+            "lon": lon,
+        },
+    )
+    self_check = set(SSS_VARS) - set(ds.data_vars)
+    if self_check:
+        raise RuntimeError(f"synthetic SSS source is missing: {sorted(self_check)}")
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ds.to_netcdf(root_dir / f"sss_{int(date_value)}.nc", engine="h5netcdf")
+
+
 def _write_enriched_argo_zarr(path: Path) -> None:
     """Write a tiny enriched ARGO profile zarr matching the aligned export schema."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,23 +186,30 @@ def _write_enriched_argo_zarr(path: Path) -> None:
     ds.to_zarr(path, mode="w", zarr_format=2)
 
 
-def _make_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+def _make_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
     """Create all synthetic source roots for a GeoTIFF export."""
     glorys_dir = tmp_path / "glorys"
     ostia_dir = tmp_path / "ostia"
     sealevel_dir = tmp_path / "sealevel"
+    sss_dir = tmp_path / "sss"
     land_mask_path = _write_land_mask(tmp_path / "land_mask.tif")
     enriched_argo = tmp_path / "aligned_argo" / "enriched_argo_profiles.zarr"
     _write_glorys(glorys_dir / "ignored.nc", date_value=20240108)
-    for date_value, ostia_base, sea_base in (
-        (20240105, 280.0, 0.0),
-        (20240108, 290.0, 1.0),
-        (20240111, 300.0, 2.0),
+    for date_value, ostia_base, sea_base, sss_base, density_base in (
+        (20240105, 280.0, 0.0, 32.0, 1020.0),
+        (20240108, 290.0, 1.0, 34.0, 1021.0),
+        (20240111, 300.0, 2.0, 36.0, 1022.0),
     ):
         _write_ostia(ostia_dir, date_value=date_value, base=ostia_base)
         _write_sealevel(sealevel_dir, date_value=date_value, base=sea_base)
+        _write_sss(
+            sss_dir,
+            date_value=date_value,
+            salinity_base=sss_base,
+            density_base=density_base,
+        )
     _write_enriched_argo_zarr(enriched_argo)
-    return glorys_dir, ostia_dir, sealevel_dir, land_mask_path, enriched_argo
+    return glorys_dir, ostia_dir, sealevel_dir, sss_dir, land_mask_path, enriched_argo
 
 
 class TestExportDatasetGeoTiff(unittest.TestCase):
@@ -171,13 +217,19 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
         """Dense rasters share a grid and ARGO profiles are grid indexed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            glorys_dir, ostia_dir, sealevel_dir, land_mask_path, enriched_argo = (
-                _make_sources(tmp_path)
-            )
+            (
+                glorys_dir,
+                ostia_dir,
+                sealevel_dir,
+                sss_dir,
+                land_mask_path,
+                enriched_argo,
+            ) = _make_sources(tmp_path)
             output_dir = export_training_geotiff_dataset(
                 glorys_dir=glorys_dir,
                 ostia_dir=ostia_dir,
                 sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
                 enriched_argo_zarr=enriched_argo,
                 land_mask_path=land_mask_path,
                 output_dir=tmp_path / "geotiff_training",
@@ -194,12 +246,16 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 output_dir / "rasters/ostia/analysed_sst/analysed_sst_20240108.tif"
             )
             adt_path = output_dir / "rasters/sealevel/adt/adt_20240108.tif"
+            sss_sos_path = output_dir / "rasters/sss/sos/sos_20240108.tif"
+            sss_dos_path = output_dir / "rasters/sss/dos/dos_20240108.tif"
 
             with (
                 rasterio.open(thetao_path) as thetao,
                 rasterio.open(so_path) as salinity,
                 rasterio.open(ostia_path) as ostia,
                 rasterio.open(adt_path) as adt,
+                rasterio.open(sss_sos_path) as sss_sos,
+                rasterio.open(sss_dos_path) as sss_dos,
             ):
                 self.assertEqual(thetao.dtypes, ("uint8", "uint8"))
                 self.assertEqual(thetao.nodata, 255.0)
@@ -207,8 +263,11 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 self.assertEqual(thetao.descriptions[0], "depth_0_m")
                 self.assertEqual(thetao.transform, ostia.transform)
                 self.assertEqual(thetao.transform, adt.transform)
+                self.assertEqual(thetao.transform, sss_sos.transform)
                 self.assertEqual(thetao.crs, ostia.crs)
                 self.assertEqual(thetao.crs, adt.crs)
+                self.assertEqual(thetao.crs, sss_sos.crs)
+                self.assertEqual(sss_sos.count, 1)
 
                 thetao_k = decode_stretched_uint8(
                     thetao.read(1),
@@ -242,6 +301,17 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                     STRETCH_SPECS[SEA_HEIGHT_STRETCH],
                 )
                 self.assertAlmostEqual(float(adt_m[0, 0]), 1.2, delta=0.03)
+
+                sss_psu = decode_stretched_uint8(
+                    sss_sos.read(1),
+                    STRETCH_SPECS[SALINITY_STRETCH],
+                )
+                self.assertAlmostEqual(float(sss_psu[0, 0]), 36.0, delta=0.05)
+                density = decode_stretched_uint8(
+                    sss_dos.read(1),
+                    STRETCH_SPECS[DENSITY_STRETCH],
+                )
+                self.assertAlmostEqual(float(density[0, 0]), 1021.2, delta=0.1)
 
             argo = xr.open_zarr(
                 output_dir / "argo/argo_profiles_on_grid.zarr",
@@ -281,6 +351,75 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
             )
             self.assertEqual(manifest["parallelism"]["raster_workers"], 2)
             self.assertEqual(manifest["argo"]["profile_count"], 1)
+            self.assertEqual(set(manifest["rasters"]["sss"]), {"sos", "dos"})
+            for var_name in ("sos", "dos"):
+                self.assertEqual(len(manifest["rasters"]["sss"][var_name]), 1)
+            for var_name in ("sos_error", "dos_error", "sea_ice_fraction"):
+                self.assertFalse((output_dir / f"rasters/sss/{var_name}").exists())
+
+    def test_skip_existing_reuses_present_rasters_and_writes_missing(self) -> None:
+        """Resume mode keeps existing modality/date rasters and fills gaps."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            (
+                glorys_dir,
+                ostia_dir,
+                sealevel_dir,
+                sss_dir,
+                land_mask_path,
+                enriched_argo,
+            ) = _make_sources(tmp_path)
+            output_dir = tmp_path / "geotiff_training"
+            export_training_geotiff_dataset(
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
+                enriched_argo_zarr=enriched_argo,
+                land_mask_path=land_mask_path,
+                output_dir=output_dir,
+                start_date=20240105,
+                end_date=20240111,
+                surface_aggregate_days=7,
+                argo_source="none",
+                workers=1,
+                overwrite=True,
+                show_progress=False,
+            )
+
+            thetao_path = output_dir / "rasters/glorys/thetao/thetao_20240108.tif"
+            missing_path = output_dir / "rasters/sss/dos/dos_20240108.tif"
+            thetao_mtime = thetao_path.stat().st_mtime_ns
+            missing_path.unlink()
+
+            export_training_geotiff_dataset(
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
+                enriched_argo_zarr=enriched_argo,
+                land_mask_path=land_mask_path,
+                output_dir=output_dir,
+                start_date=20240105,
+                end_date=20240111,
+                surface_aggregate_days=7,
+                argo_source="none",
+                workers=1,
+                skip_existing=True,
+                show_progress=False,
+            )
+
+            self.assertEqual(thetao_path.stat().st_mtime_ns, thetao_mtime)
+            self.assertTrue(missing_path.exists())
+            manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
+            self.assertTrue(manifest["resume"]["skip_existing"])
+            self.assertTrue(
+                manifest["rasters"]["glorys"]["thetao"][0]["skipped_existing"]
+            )
+            self.assertNotIn(
+                "skipped_existing",
+                manifest["rasters"]["sss"]["dos"][0],
+            )
 
     def test_ostia_celsius_values_are_saved_as_kelvin(self) -> None:
         """Celsius-looking OSTIA values are converted before uint8 stretching."""
@@ -303,6 +442,7 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 glorys_dir=glorys_dir,
                 ostia_dir=ostia_dir,
                 sealevel_dir=sealevel_dir,
+                sss_dir=tmp_path / "sss",
                 land_mask_path=land_mask_path,
                 output_dir=tmp_path / "geotiff_training",
                 start_date=20240108,

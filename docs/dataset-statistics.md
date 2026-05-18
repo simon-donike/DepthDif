@@ -6,6 +6,11 @@ These statistics were measured from the local dataset root at
 1. the exported enriched ARGO Zarr profile dataset  
 2. the saved GeoTIFF ML dataset used by the patch dataloader  
 
+Note: the exporter now also writes SSS fields. The measured counts below
+predate a full local re-export with those fields unless the corresponding Zarr
+or manifest timestamp has been regenerated after the SSS change. Schema tables
+list the current expected outputs.
+
 ## 1. Exported ARGO Zarr Dataset  
 
 Path:  
@@ -16,8 +21,8 @@ Path:
 
 This Zarr is the profile-level export. Each row is one EN4/ARGO profile that  
 passed the date and coordinate filters. ARGO values are projected onto the  
-GLORYS depth axis, and GLORYS, OSTIA, and sea-level fields are sampled at the  
-same profile location and date.  
+GLORYS depth axis, and GLORYS, OSTIA, sea-level, and SSS fields are sampled at
+the same profile location and date.
 
 The export was created at `2026-05-10T17:54:01+00:00` for the requested date  
 range `20100101` to `20240731`.  
@@ -46,6 +51,7 @@ range `20100101` to `20240731`.
 | GLORYS | 843 | 20100101 | 20260220 |  
 | OSTIA | 5,326 | 20100101 | 20240731 |  
 | Sea level | 5,326 | 20100101 | 20240731 |  
+| SSS | 5,326 expected after full re-export | 20100101 | 20240731 |
 
 ### Dimensions  
 
@@ -113,9 +119,21 @@ profile.
 | `sealevel_flag_ice` | Sea-level product ice flag. | `profile` | `float32` |  
 | `sealevel_tpa_correction` | TOPEX-A instrumental drift correction field. | `profile` | `float32` |  
 | `sealevel_temporal_status` | Status of sea-level temporal matching. | `profile` | `int8` |  
+| `sss_sos` | SSS analysed sea-surface salinity sampled at the profile point. | `profile` | `float32` |
+| `sss_dos` | SSS analysed sea-surface density sampled at the profile point. | `profile` | `float32` |
+| `sss_sea_ice_fraction` | SSS sea-ice fraction sampled at the profile point. | `profile` | `float32` |
+| `sss_temporal_status` | Status of SSS temporal matching. | `profile` | `int8` |
 
-Temporal status codes use `0 = nearest_or_exact`, `1 = nearest_edge`, and  
-`2 = missing`.  
+The raw SSS error variables `sos_error` and `dos_error` are intentionally not
+exported to the enriched ARGO Zarr. Temporal status fields describe how the
+exporter chose the source file for each profile date; they do not describe
+spatial missingness, land masks, ice masks, or source QC flags.
+
+| Code | Meaning | Interpretation |
+| ---: | --- | --- |
+| `0` | `nearest_or_exact` | The exporter found an exact source date, or the target date was inside the source time range and the nearest available file was used. This is the normal status. |
+| `1` | `nearest_edge` | The target date was outside the available source time range, so the exporter used the first or last available source file. Treat this as an edge extrapolation warning. |
+| `2` | `missing` | No usable source file existed for that modality, so the sampled values for that source were written as missing values. |
 
 ## 2. Saved GeoTIFF ML Dataset  
 
@@ -195,6 +213,8 @@ All raster files share the same grid: 3600 x 1800 pixels, EPSG:4326, stored as
 | GLORYS | `so` | 761 | 50 | 20100101 | 20240726 |  
 | OSTIA | `analysed_sst` | 761 | 1 | 20100101 | 20240726 |  
 | Sea level | `adt` | 761 | 1 | 20100101 | 20240726 |  
+| SSS | `sos` | 761 expected after full re-export | 1 | 20100101 | 20240726 |
+| SSS | `dos` | 761 expected after full re-export | 1 | 20100101 | 20240726 |
 
 ### Patch Dataset  
 

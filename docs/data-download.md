@@ -2,7 +2,7 @@
 
 This page is split between two download paths:  
 
-- **Raw upstream data**: original GLORYS, OSTIA, sea-level, EN4/ARGO, and land  
+- **Raw upstream data**: original GLORYS, OSTIA, sea-level, SSS, EN4/ARGO, and land
   mask inputs used to build DepthDif training stores.  
 - **Packaged DepthDif datasets**: prebuilt archives that can be downloaded and  
   extracted without rebuilding every intermediate from the upstream sources.  
@@ -30,7 +30,7 @@ Raw download scripts write one CSV log in each output directory. Set
 
 ### Copernicus Marine Inputs  
 
-GLORYS, OSTIA, and sea-level files are downloaded with the  
+GLORYS, OSTIA, sea-level, and SSS files are downloaded with the
 `copernicusmarine get` CLI. The scripts first run a dry query for each date and  
 then download only matching NetCDF files.  
 
@@ -96,6 +96,22 @@ Dataset ID:
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh \
   /data1/datasets/depth_v2/sealevel_daily
+```
+
+#### Sea-Surface Salinity
+
+Role: daily auxiliary sea-surface salinity, density, and ice fields.
+
+Provider: Copernicus Marine Service / CNR.
+
+Product ID: `MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013`.
+
+Default dataset ID: `cmems_obs-mob_glo_phy-sss_my_multi_P1D`.
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
+  /data1/datasets/depth_v2/sss_daily
 ```
 
 ### EN4 / ARGO Profiles  

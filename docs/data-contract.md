@@ -92,9 +92,10 @@ For each selected `(patch, date)` row, the GeoTIFF loader should:
 9. Normalize temperature, plus salinity when enabled, and replace NaN or  
    infinite normalized values with `0.0`.  
 
-Sea-level `adt` is exported on the same grid for auxiliary experiments. It  
-should only be added to model inputs with an explicit model/config change that  
-defines its channels and normalization.  
+Sea-level `adt` and SSS `sos`/`dos` are exported on the same grid for
+auxiliary experiments.
+They should only be added to model inputs with an explicit model/config change
+that defines channels and normalization.
 
 ## Decoding  
 
@@ -121,6 +122,8 @@ Other exported variables decode to their physical units:
 | GLORYS | `so` | PSU | `[30, 40]` |  
 | ARGO | salinity | PSU | `[30, 40]` |  
 | Sea Level L4 | `adt` | meters | `[-2, 2]` |  
+| SSS | `sos` | PSU | `[30, 40]` |
+| SSS | `dos` | kg/m3 | `[1000, 1035]` |
 
 The loader must treat code `255` as missing before normalization. Valid code  
 `0` is a real clipped value, not missing.  
@@ -168,6 +171,7 @@ for every exported date:
 - `thetao` is the GLORYS weekly target for that date.  
 - `analysed_sst` is the centered 7-day OSTIA mean around that date.  
 - `adt` is the centered 7-day sea-level mean around that date.  
+- SSS `sos` and `dos` are centered 7-day means around that date.
 - ARGO profiles are assigned to the nearest GLORYS weekly date inside the same  
   temporal window.  
 

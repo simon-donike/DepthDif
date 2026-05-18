@@ -6,14 +6,14 @@ metadata used by the active patch dataset.
 Folder layout:
 
 - `data_download_raw/`: source-specific scripts for downloading upstream
-  EN4/ARGO, GLORYS, OSTIA, and sea-level NetCDF files.
+  EN4/ARGO, GLORYS, OSTIA, SSS, and sea-level NetCDF files.
 - `data_download_packaged/`: packaged dataset download and extraction helpers.
 - `export_aligned_argo/`: aligned ARGO export workflow scripts, source variable
   names, and NetCDF source-file utilities used by
   `ArgoNetCDFGriddedPatchDataset`.
 - `export_dataset_geotiff/`: aligned uint8 GeoTIFF export workflow for dense
-  GLORYS, OSTIA, and sea-level rasters plus a compact grid-indexed ARGO profile
-  zarr.
+  GLORYS, OSTIA, sea-level, and SSS rasters plus a compact grid-indexed ARGO
+  profile zarr.
 
 The current default source root is:
 
@@ -61,6 +61,14 @@ START_DATE=2010-01-01 END_DATE=2024-07-31 \
   /data1/datasets/depth_v2/sealevel_daily
 ```
 
+Download daily sea-surface salinity files:
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
+  /data1/datasets/depth_v2/sss_daily
+```
+
 The active dataset reads these NetCDF files directly and creates only compact
 metadata caches under `dataset.core.metadata_cache_dir`.
 
@@ -92,6 +100,7 @@ worst-case rounding error.
 | --- | --- | ---: | ---: | ---: | ---: |
 | Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
 | Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
+| Density | `[1000, 1035] kg/m3` | `0.1378 kg/m3` | `0.0689 kg/m3` | `0.2778 kg/m3` | `0.1389 kg/m3` |
 | Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
 
 The int8 comparison assumes a signed-byte layout that only uses nonnegative
@@ -107,6 +116,7 @@ is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
   --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
@@ -116,3 +126,6 @@ is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
   --workers 4 \
   --overwrite
 ```
+
+Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
+without rewriting existing modality/date rasters.

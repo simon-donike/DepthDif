@@ -4,6 +4,7 @@ Example:
    --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
    --ostia-dir /data1/datasets/depth_v2/ostia \
    --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+   --sss-dir /data1/datasets/depth_v2/sss_daily \
    --enriched-argo-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
    --argo-dir /data1/datasets/depth_v2/en4_profiles \
    --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
@@ -15,6 +16,8 @@ Example:
    --chunk-profile 50000 \
    --workers 12 \
    --overwrite
+
+Resume a partial export by replacing --overwrite with --skip-existing.
 
 Export aligned uint8 GeoTIFF rasters and preprocessed ARGO profile inputs.
 """
@@ -64,6 +67,7 @@ DEFAULT_LAND_MASK_PATH = (
 DEFAULT_GLORYS_DIR = Path("/data1/datasets/depth_v2/glorys_weekly")
 DEFAULT_OSTIA_DIR = Path("/data1/datasets/depth_v2/ostia")
 DEFAULT_SEALEVEL_DIR = Path("/data1/datasets/depth_v2/sealevel_daily")
+DEFAULT_SSS_DIR = Path("/data1/datasets/depth_v2/sss_daily")
 DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
 DEFAULT_START_DATE = 20100101
 DEFAULT_END_DATE = 20240731
@@ -78,6 +82,7 @@ VALID_CODE_MAX = np.float32(254.0)
 TEMPERATURE_KELVIN_STRETCH = "temperature_kelvin"
 SALINITY_STRETCH = "salinity"
 SEA_HEIGHT_STRETCH = "sea_height"
+DENSITY_STRETCH = "density"
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,12 @@ STRETCH_SPECS = {
     ),
     SALINITY_STRETCH: StretchSpec(SALINITY_STRETCH, 30.0, 40.0, "PSU"),
     SEA_HEIGHT_STRETCH: StretchSpec(SEA_HEIGHT_STRETCH, -2.0, 2.0, "m"),
+    DENSITY_STRETCH: StretchSpec(DENSITY_STRETCH, 1000.0, 1035.0, "kg/m3"),
+}
+SSS_RASTER_VARS = ("sos", "dos")
+SSS_SURFACE_STRETCHES = {
+    "sos": SALINITY_STRETCH,
+    "dos": DENSITY_STRETCH,
 }
 
 
@@ -394,6 +405,13 @@ def _read_dataarray_on_grid(
         if "depth" not in da.dims:
             raise RuntimeError(f"Variable {var_name!r} has no depth dimension.")
         da = da.isel(depth=int(depth_index))
+    elif "depth" in da.dims:
+        if int(da.sizes["depth"]) != 1:
+            raise RuntimeError(
+                f"Variable {var_name!r} has a depth dimension; pass depth_index."
+            )
+        # SSS surface products keep a singleton depth axis; raster export is 2D.
+        da = da.isel(depth=0)
 
     lat_name = _first_present_name(da.dims, ("latitude", "lat"))
     lon_name = _first_present_name(da.dims, ("longitude", "lon"))
@@ -522,8 +540,55 @@ def _output_relative(path: Path, output_dir: Path) -> str:
     return str(Path(path).relative_to(output_dir)).replace("\\", "/")
 
 
+def _raster_stats_from_tags(tag_groups: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """Read encode statistics from existing GeoTIFF dataset or band tags."""
+    stats = []
+    for tags in tag_groups:
+        if "valid_count" not in tags:
+            continue
+        stats.append(
+            EncodeStats(
+                valid_count=int(tags.get("valid_count", 0)),
+                nodata_count=int(tags.get("nodata_count", 0)),
+                clipped_low_count=int(tags.get("clipped_low_count", 0)),
+                clipped_high_count=int(tags.get("clipped_high_count", 0)),
+            )
+        )
+    return _merge_stats(stats)
+
+
+def _existing_raster_metadata(
+    path: Path,
+    *,
+    count: int,
+    grid: TargetGrid,
+) -> tuple[str, dict[str, int]]:
+    """Validate and summarize an existing raster used by resume mode."""
+    with rasterio.open(path) as src:
+        if int(src.width) != int(grid.width) or int(src.height) != int(grid.height):
+            raise RuntimeError(f"Existing raster has the wrong grid shape: {path}")
+        if int(src.count) != int(count):
+            raise RuntimeError(f"Existing raster has the wrong band count: {path}")
+        if tuple(src.dtypes) != tuple([RASTER_DTYPE] * int(count)):
+            raise RuntimeError(f"Existing raster has the wrong dtype: {path}")
+        if src.nodata is None or int(src.nodata) != int(NODATA_CODE):
+            raise RuntimeError(f"Existing raster has the wrong nodata value: {path}")
+        if src.crs != grid.crs:
+            raise RuntimeError(f"Existing raster has the wrong CRS: {path}")
+        if not np.allclose(src.transform.to_gdal(), grid.transform.to_gdal()):
+            raise RuntimeError(f"Existing raster has the wrong transform: {path}")
+
+        compression = getattr(src, "compression", None)
+        compression_name = getattr(compression, "value", None) or src.profile.get(
+            "compress",
+            "existing",
+        )
+        tag_groups = [src.tags()] + [src.tags(i) for i in range(1, src.count + 1)]
+        return str(compression_name).upper(), _raster_stats_from_tags(tag_groups)
+
+
 def _copy_land_mask_to_output(
-    *, land_mask_path: Path, output_dir: Path, overwrite: bool
+    *, land_mask_path: Path, output_dir: Path, overwrite: bool, skip_existing: bool
 ) -> Path:
     """Copy the authoritative land-mask GeoTIFF into the export folder."""
     source_path = Path(land_mask_path)
@@ -531,6 +596,8 @@ def _copy_land_mask_to_output(
     if source_path.resolve() == target_path.resolve():
         return target_path
     if target_path.exists() and not overwrite:
+        if skip_existing:
+            return target_path
         raise FileExistsError(f"Land-mask copy already exists: {target_path}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_path)
@@ -557,6 +624,7 @@ def _export_glorys_variable(
     var_name: str,
     stretch: StretchSpec,
     source_is_temperature_celsius: bool,
+    skip_existing: bool = False,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     """Export one GLORYS variable/date to a multiband uint8 GeoTIFF."""
@@ -568,6 +636,21 @@ def _export_glorys_variable(
     out_path = (
         output_dir / "rasters" / "glorys" / var_name / f"{var_name}_{date_value}.tif"
     )
+    if skip_existing and out_path.exists():
+        compression, stats = _existing_raster_metadata(
+            out_path,
+            count=int(depth.size),
+            grid=grid,
+        )
+        return {
+            "date": int(date_value),
+            "path": _output_relative(out_path, output_dir),
+            "source_file": Path(item.path).name,
+            "compression": compression,
+            "band_count": int(depth.size),
+            "stats": stats,
+            "skipped_existing": True,
+        }
     per_band_stats: list[EncodeStats] = []
 
     def writer(dst: rasterio.io.DatasetWriter) -> None:
@@ -696,6 +779,7 @@ def _export_surface_variable(
     stretch: StretchSpec,
     aggregate_days: int,
     source_is_temperature: bool,
+    skip_existing: bool = False,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     """Export one surface variable/date to a single-band uint8 GeoTIFF."""
@@ -712,6 +796,16 @@ def _export_surface_variable(
         / var_name
         / f"{var_name}_{target_date}.tif"
     )
+    if skip_existing and out_path.exists():
+        compression, stats = _existing_raster_metadata(out_path, count=1, grid=grid)
+        return {
+            "date": int(target_date),
+            "path": _output_relative(out_path, output_dir),
+            "source_files": [Path(item.path).name for item in selected_items],
+            "compression": compression,
+            "stats": stats,
+            "skipped_existing": True,
+        }
     values = _read_surface_mean_on_grid(
         items=selected_items,
         cache=cache,
@@ -777,6 +871,7 @@ def _export_weekly_raster_date_worker(task: dict[str, Any]) -> dict[str, Any]:
             var_name="thetao",
             stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
             source_is_temperature_celsius=True,
+            skip_existing=bool(task.get("skip_existing", False)),
             show_progress=False,
         )
         result["so"] = _export_glorys_variable(
@@ -787,6 +882,7 @@ def _export_weekly_raster_date_worker(task: dict[str, Any]) -> dict[str, Any]:
             var_name="so",
             stretch=STRETCH_SPECS[SALINITY_STRETCH],
             source_is_temperature_celsius=False,
+            skip_existing=bool(task.get("skip_existing", False)),
             show_progress=False,
         )
         result["analysed_sst"] = _export_surface_variable(
@@ -800,6 +896,7 @@ def _export_weekly_raster_date_worker(task: dict[str, Any]) -> dict[str, Any]:
             stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
             aggregate_days=int(task["surface_aggregate_days"]),
             source_is_temperature=True,
+            skip_existing=bool(task.get("skip_existing", False)),
             show_progress=False,
         )
         result["adt"] = _export_surface_variable(
@@ -813,8 +910,25 @@ def _export_weekly_raster_date_worker(task: dict[str, Any]) -> dict[str, Any]:
             stretch=STRETCH_SPECS[SEA_HEIGHT_STRETCH],
             aggregate_days=int(task["surface_aggregate_days"]),
             source_is_temperature=False,
+            skip_existing=bool(task.get("skip_existing", False)),
             show_progress=False,
         )
+        result["sss"] = {}
+        for var_name in SSS_RASTER_VARS:
+            result["sss"][var_name] = _export_surface_variable(
+                source_name="sss",
+                source_items=task["sss_items"],
+                target_item=item,
+                cache=cache,
+                output_dir=output_root,
+                grid=grid,
+                var_name=var_name,
+                stretch=STRETCH_SPECS[SSS_SURFACE_STRETCHES[var_name]],
+                aggregate_days=int(task["surface_aggregate_days"]),
+                source_is_temperature=False,
+                skip_existing=bool(task.get("skip_existing", False)),
+                show_progress=False,
+            )
         return result
     finally:
         cache.close()
@@ -829,6 +943,8 @@ def _record_weekly_raster_result(
     manifest["rasters"]["glorys"]["so"].append(result["so"])
     manifest["rasters"]["ostia"]["analysed_sst"].append(result["analysed_sst"])
     manifest["rasters"]["sealevel"]["adt"].append(result["adt"])
+    for var_name in SSS_RASTER_VARS:
+        manifest["rasters"]["sss"][var_name].append(result["sss"][var_name])
 
 
 def _nearest_target_dates(
@@ -1131,6 +1247,24 @@ def _open_raw_argo_as_projected_dataset(
     )
 
 
+def _existing_argo_profile_store_metadata(
+    output_zarr: Path,
+    *,
+    source_kind: str,
+) -> dict[str, Any]:
+    """Return manifest metadata for an existing ARGO profile store."""
+    ds = xr.open_zarr(output_zarr, consolidated=None)
+    try:
+        return {
+            "path": _output_relative(output_zarr, output_zarr.parent.parent),
+            "profile_count": int(ds.sizes.get("profile", 0)),
+            "source_kind": str(ds.attrs.get("source_kind", source_kind)),
+            "skipped_existing": True,
+        }
+    finally:
+        ds.close()
+
+
 def _write_argo_profile_store(
     *,
     input_ds: xr.Dataset,
@@ -1141,9 +1275,15 @@ def _write_argo_profile_store(
     source_kind: str,
     chunk_profile: int,
     overwrite: bool,
+    skip_existing: bool = False,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     """Write compact grid-indexed ARGO profile tensors from enriched/raw input."""
+    if output_zarr.exists() and skip_existing and not overwrite:
+        return _existing_argo_profile_store_metadata(
+            output_zarr,
+            source_kind=source_kind,
+        )
     if output_zarr.exists() and not overwrite:
         raise FileExistsError(f"ARGO output zarr already exists: {output_zarr}")
     if output_zarr.exists():
@@ -1430,6 +1570,7 @@ def export_training_geotiff_dataset(
     glorys_dir: str | Path = DEFAULT_GLORYS_DIR,
     ostia_dir: str | Path = DEFAULT_OSTIA_DIR,
     sealevel_dir: str | Path = DEFAULT_SEALEVEL_DIR,
+    sss_dir: str | Path = DEFAULT_SSS_DIR,
     enriched_argo_zarr: str | Path = DEFAULT_ENRICHED_ARGO_ZARR,
     argo_dir: str | Path = DEFAULT_ARGO_DIR,
     land_mask_path: str | Path = DEFAULT_LAND_MASK_PATH,
@@ -1441,12 +1582,14 @@ def export_training_geotiff_dataset(
     chunk_profile: int = DEFAULT_CHUNK_PROFILE,
     workers: int = DEFAULT_RASTER_WORKERS,
     overwrite: bool = False,
+    skip_existing: bool = False,
     show_progress: bool = True,
 ) -> Path:
     """Export aligned uint8 raster training sources and preprocessed ARGO profiles."""
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     raster_workers = max(1, int(workers))
+    skip_existing = bool(skip_existing and not overwrite)
     with tqdm(
         total=1,
         desc="Loading target grid",
@@ -1474,12 +1617,18 @@ def export_training_geotiff_dataset(
         start_date=start_date,
         end_date=end_date,
     )
+    sss_items = _filter_timed_files(
+        scan_timed_files(Path(sss_dir), show_progress=show_progress),
+        start_date=start_date,
+        end_date=end_date,
+    )
     if show_progress:
         tqdm.write(
             "Selected source files: "
             f"{len(glorys_items)} GLORYS weekly, "
             f"{len(ostia_items)} OSTIA daily, "
-            f"{len(sealevel_items)} sea-level daily."
+            f"{len(sealevel_items)} sea-level daily, "
+            f"{len(sss_items)} SSS daily."
         )
 
     cache = DatasetCache(max_open=8)
@@ -1496,6 +1645,7 @@ def export_training_geotiff_dataset(
             land_mask_path=Path(land_mask_path),
             output_dir=output_root,
             overwrite=overwrite,
+            skip_existing=skip_existing,
         )
         target_date_values = [
             _date_int_from_days_since_1950(float(item.day)) for item in glorys_items
@@ -1531,16 +1681,19 @@ def export_training_geotiff_dataset(
                 "window_days": int(surface_aggregate_days),
             },
             "parallelism": {"raster_workers": int(raster_workers)},
+            "resume": {"skip_existing": bool(skip_existing)},
             "depth_axis_m": [float(value) for value in depth_axis.tolist()],
             "target_dates": target_date_values,
             "rasters": {
                 "glorys": {"thetao": [], "so": []},
                 "ostia": {"analysed_sst": []},
                 "sealevel": {"adt": []},
+                "sss": {var_name: [] for var_name in SSS_RASTER_VARS},
             },
         }
 
-        total_steps = (len(glorys_items) * 4) + 2
+        raster_steps_per_date = 4 + len(SSS_RASTER_VARS)
+        total_steps = (len(glorys_items) * raster_steps_per_date) + 2
         if str(argo_source) == "none":
             total_steps -= 1
         with tqdm(
@@ -1569,6 +1722,7 @@ def export_training_geotiff_dataset(
                         var_name="thetao",
                         stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
                         source_is_temperature_celsius=True,
+                        skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
                     export_progress.update(1)
@@ -1582,6 +1736,7 @@ def export_training_geotiff_dataset(
                         var_name="so",
                         stretch=STRETCH_SPECS[SALINITY_STRETCH],
                         source_is_temperature_celsius=False,
+                        skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
                     export_progress.update(1)
@@ -1601,6 +1756,7 @@ def export_training_geotiff_dataset(
                         stretch=STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
                         aggregate_days=surface_aggregate_days,
                         source_is_temperature=True,
+                        skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
                     export_progress.update(1)
@@ -1617,9 +1773,32 @@ def export_training_geotiff_dataset(
                         stretch=STRETCH_SPECS[SEA_HEIGHT_STRETCH],
                         aggregate_days=surface_aggregate_days,
                         source_is_temperature=False,
+                        skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
                     export_progress.update(1)
+
+                    result["sss"] = {}
+                    for var_name in SSS_RASTER_VARS:
+                        export_progress.set_postfix(
+                            date=str(date_value),
+                            variable=f"sss_{var_name}",
+                        )
+                        result["sss"][var_name] = _export_surface_variable(
+                            source_name="sss",
+                            source_items=sss_items,
+                            target_item=item,
+                            cache=cache,
+                            output_dir=output_root,
+                            grid=grid,
+                            var_name=var_name,
+                            stretch=STRETCH_SPECS[SSS_SURFACE_STRETCHES[var_name]],
+                            aggregate_days=surface_aggregate_days,
+                            source_is_temperature=False,
+                            skip_existing=skip_existing,
+                            show_progress=show_progress,
+                        )
+                        export_progress.update(1)
                     _record_weekly_raster_result(manifest, result)
             else:
                 results_by_date: dict[int, dict[str, Any]] = {}
@@ -1633,9 +1812,11 @@ def export_training_geotiff_dataset(
                                 "item": item,
                                 "ostia_items": ostia_items,
                                 "sealevel_items": sealevel_items,
+                                "sss_items": sss_items,
                                 "land_mask_path": str(land_mask_path),
                                 "output_dir": str(output_root),
                                 "surface_aggregate_days": int(surface_aggregate_days),
+                                "skip_existing": bool(skip_existing),
                             },
                         ): int(date_value)
                         for item, date_value in zip(glorys_items, target_date_values)
@@ -1655,34 +1836,42 @@ def export_training_geotiff_dataset(
                         )
                         result = future.result()
                         results_by_date[int(result["date"])] = result
-                        export_progress.update(4)
+                        export_progress.update(raster_steps_per_date)
                 for date_value in target_date_values:
                     _record_weekly_raster_result(
                         manifest,
                         results_by_date[int(date_value)],
                     )
 
-            argo_input = _open_argo_input_dataset(
-                argo_source=str(argo_source),
-                enriched_argo_zarr=Path(enriched_argo_zarr),
-                argo_dir=Path(argo_dir),
-                start_date=start_date,
-                end_date=end_date,
-                target_depths=depth_axis,
-                chunk_profile=chunk_profile,
-            )
-            try:
-                if str(argo_source) == "none":
-                    manifest["argo"] = {
-                        "path": None,
-                        "profile_count": 0,
-                        "source_kind": "none",
-                    }
-                else:
+            argo_output_zarr = output_root / "argo" / "argo_profiles_on_grid.zarr"
+            if str(argo_source) == "none":
+                manifest["argo"] = {
+                    "path": None,
+                    "profile_count": 0,
+                    "source_kind": "none",
+                }
+            elif skip_existing and not overwrite and argo_output_zarr.exists():
+                export_progress.set_postfix(date="", variable="argo")
+                manifest["argo"] = _existing_argo_profile_store_metadata(
+                    argo_output_zarr,
+                    source_kind=str(argo_source),
+                )
+                export_progress.update(1)
+            else:
+                argo_input = _open_argo_input_dataset(
+                    argo_source=str(argo_source),
+                    enriched_argo_zarr=Path(enriched_argo_zarr),
+                    argo_dir=Path(argo_dir),
+                    start_date=start_date,
+                    end_date=end_date,
+                    target_depths=depth_axis,
+                    chunk_profile=chunk_profile,
+                )
+                try:
                     export_progress.set_postfix(date="", variable="argo")
                     manifest["argo"] = _write_argo_profile_store(
                         input_ds=argo_input,
-                        output_zarr=output_root / "argo" / "argo_profiles_on_grid.zarr",
+                        output_zarr=argo_output_zarr,
                         grid=grid,
                         target_dates=np.asarray(
                             manifest["target_dates"], dtype=np.int32
@@ -1691,15 +1880,16 @@ def export_training_geotiff_dataset(
                         source_kind=str(argo_source),
                         chunk_profile=int(chunk_profile),
                         overwrite=overwrite,
+                        skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
                     export_progress.update(1)
-            finally:
-                argo_input.close()
+                finally:
+                    argo_input.close()
 
             export_progress.set_postfix(date="", variable="manifest")
             manifest_path = output_root / "manifest.yaml"
-            if manifest_path.exists() and not overwrite:
+            if manifest_path.exists() and not overwrite and not skip_existing:
                 raise FileExistsError(f"Manifest already exists: {manifest_path}")
             with manifest_path.open("w", encoding="utf-8") as f:
                 yaml.safe_dump(_yaml_safe(manifest), f, sort_keys=False)
@@ -1722,6 +1912,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--glorys-dir", type=Path, default=DEFAULT_GLORYS_DIR)
     parser.add_argument("--ostia-dir", type=Path, default=DEFAULT_OSTIA_DIR)
     parser.add_argument("--sealevel-dir", type=Path, default=DEFAULT_SEALEVEL_DIR)
+    parser.add_argument("--sss-dir", type=Path, default=DEFAULT_SSS_DIR)
     parser.add_argument(
         "--enriched-argo-zarr",
         type=Path,
@@ -1751,6 +1942,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Parallel worker processes for dense raster exports.",
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Reuse existing raster/date outputs and write only missing files. Ignored when --overwrite is set.",
+    )
     return parser
 
 
@@ -1761,6 +1957,7 @@ def main() -> None:
         glorys_dir=args.glorys_dir,
         ostia_dir=args.ostia_dir,
         sealevel_dir=args.sealevel_dir,
+        sss_dir=args.sss_dir,
         enriched_argo_zarr=args.enriched_argo_zarr,
         argo_dir=args.argo_dir,
         land_mask_path=args.land_mask_path,
@@ -1772,6 +1969,7 @@ def main() -> None:
         chunk_profile=args.chunk_profile,
         workers=args.workers,
         overwrite=args.overwrite,
+        skip_existing=args.skip_existing,
     )
     print(f"Wrote GeoTIFF training dataset: {output}")
 
