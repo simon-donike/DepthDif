@@ -1029,7 +1029,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return salinity_np.astype(np.float32, copy=False)
 
     def _load_land_mask_patch(self, row: dict[str, Any]) -> np.ndarray:
-        """Load the exported world-mask patch as a model ocean mask."""
+        """Load the configured on-disk world-mask patch as an ocean mask."""
         src = self.raster_cache.get(self.land_mask_path)
         window = Window(
             col_off=int(row["grid_x0"]),
@@ -1044,8 +1044,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "Land-mask patch shape does not match dataset tile_size: "
                 f"{tuple(land_np.shape)} != {expected_shape}"
             )
-        # The world raster stores 1 for land, while the training loss expects
-        # this sample field to be 1 for valid ocean pixels.
+        # The world raster stores 1 for land, while model masks use 1 for ocean.
         return (np.asarray(land_np, dtype=np.float32) <= 0.5).astype(
             np.float32,
             copy=False,
@@ -1230,7 +1229,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         else:
             x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
 
-        land_mask_np = self._load_land_mask_patch(row)
+        land_mask_np = y_valid_mask_np.any(axis=0, keepdims=True).astype(
+            np.float32,
+            copy=False,
+        )
         eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
         x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
         y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))

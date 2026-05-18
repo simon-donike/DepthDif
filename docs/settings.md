@@ -22,9 +22,10 @@ Config (`model_config_*`):
 - `model.condition_mask_channels`  
 - `model.condition_include_eo`  
 - `model.condition_use_valid_mask`  
+- `model.condition_use_land_mask`  
 
 Runtime effect:  
-- controls how `condition = [eo?, x, x_valid_mask?]` is assembled  
+- controls how `condition = [eo?, x, x_valid_mask?, land_mask?]` is assembled  
 - channel count is validated against expected `condition_channels`  
 
 ### Diffusion target parameterization  
@@ -41,15 +42,15 @@ Config:
 
 Runtime effect:  
 - if enabled, loss uses the task-valid support instead of the old missing-pixel mask  
-- standard mode: `y_valid_mask` over the full `y` target  
-- ambient mode: `x_valid_mask ∩ y_valid_mask` over the `x` target  
+- standard mode: `y_valid_mask ∩ land_mask` over the full `y` target  
+- ambient mode: `x_valid_mask ∩ y_valid_mask ∩ land_mask` over the `x` target  
 - mask alignment preserves per-band semantics (`B x C x H x W`) unless a single shared mask channel is explicitly used  
 
 ### Inference output composition  
 Runtime effect:  
 - direct `y` prediction keeps the generated field and masks invalid `y_valid_mask` support to `NaN`  
 - ambient `x` completion leaves known-pixel enforcement to `clamp_known_pixels` during sampling  
-- both modes then mask invalid `y_valid_mask` support to `NaN`  
+- both modes then mask invalid `y_valid_mask` support to `NaN`, apply GLORYS `land_mask`, and apply optional predict-time `output_land_mask` when inference supplies a final cleanup overlay  
 
 ### Known-pixel clamping during sampling  
 Config:  
@@ -196,7 +197,7 @@ Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf
 `dataset.output.include_salinity` affects only the active GeoTIFF dataset. Leave  
 it `false` for temperature-only runs; set it to `true` when a model config uses  
 `model.output_fields=["temperature", "salinity"]`. The training runner validates  
-that these two settings agree before constructing the dataloaders.  
+that these two settings agree before constructing the dataloaders. `x_valid_mask` remains ARGO observation support, while `land_mask` is GLORYS spatial support. `output_land_mask` is predict-time final cleanup support, not a train/validation dataloader key.  
 
 ### `src/depth_recon/configs/px_space/model_config.yaml`  
 | Config key | Default value | Explanation |  
@@ -205,16 +206,17 @@ that these two settings agree before constructing the dataloaders.
 | `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path loads checkpoint state. |  
 | `model.load_checkpoint_only` | `false` | When `true`, loads model `state_dict` only; when `false`, resumes optimizer/scheduler/trainer state too. |  
 | `model.generated_channels` | `50` | Number of predicted GLORYS depth channels. |  
-| `model.output_fields` | `["temperature"]` | Set to `["temperature", "salinity"]` for joint output mode; pair with `dataset.output.include_salinity=true`, `generated_channels: 100`, and `condition_channels: 102`. |  
-| `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`). |  
+| `model.output_fields` | `["temperature"]` | Set to `["temperature", "salinity"]` for joint output mode; pair with `dataset.output.include_salinity=true`, `generated_channels: 100`, and `condition_channels: 103`. |  
+| `model.condition_channels` | `53` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`) + GLORYS `land_mask` (`1`). |  
 | `model.condition_mask_channels` | `1` | Number of `x_valid_mask` condition channels. |  
 | `model.condition_include_eo` | `true` | Includes `batch["eo"]` as condition input. |  
-| `model.condition_use_valid_mask` | `true` | Includes `x_valid_mask` in condition input. |  
+| `model.condition_use_valid_mask` | `true` | Includes ARGO observation support `x_valid_mask` in condition input. |  
+| `model.condition_use_land_mask` | `true` | Includes GLORYS spatial ocean/domain support `land_mask` in condition input. |  
 | `model.clamp_known_pixels` | `false` | Clamps known pixels each reverse step for inpainting-style stability. |  
-| `model.mask_loss_with_valid_pixels` | `true` | Computes loss on the task-valid supervision mask (`y_valid_mask` in standard mode, `x_valid_mask ∩ y_valid_mask` in ambient mode). |  
+| `model.mask_loss_with_valid_pixels` | `true` | Computes loss on the task-valid supervision mask intersected with GLORYS `land_mask` (`y_valid_mask ∩ land_mask` in standard mode, `x_valid_mask ∩ y_valid_mask ∩ land_mask` in ambient mode). |  
 | `model.parameterization` | `"x0"` | Diffusion training target (`"epsilon"` or `"x0"`). |  
 | `model.log_intermediates` | `true` | Default validation intermediate logging behavior. |  
-| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise `x` on `x_valid_mask ∩ y_valid_mask`). |  
+| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise `x` on `x_valid_mask ∩ y_valid_mask ∩ land_mask`). |  
 | `model.ambient_occlusion.further_drop_prob` | `0.1` | Additional drop probability `delta` applied on already observed pixels during training. |  
 | `model.ambient_occlusion.apply_to_noisy_branch` | `true` | Applies the further mask to the noisy target branch in `p_loss` (`~A x_t`). |  
 | `model.ambient_occlusion.shared_spatial_mask` | `true` | Uses one spatial further-mask per sample and shares it across channels. |  

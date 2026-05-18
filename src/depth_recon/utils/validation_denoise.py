@@ -642,6 +642,21 @@ def _plot_band_image(
     return _physical_band_to_plot_image(image_t, mask=mask, plot_unit=plot_unit)
 
 
+def _invalid_plot_fill_value(plot_unit: str) -> float:
+    """Return the plotted fill value for invalid pixels."""
+    if str(plot_unit).lower() == "salinity":
+        return -1.0
+    return 0.0
+
+
+def _plot_cmap_with_black_invalid(cmap: str) -> Any:
+    """Return a colormap that renders under-range invalid pixels as black."""
+    cmap_obj = cm.get_cmap(cmap).copy()
+    cmap_obj.set_under("black")
+    cmap_obj.set_bad("black")
+    return cmap_obj
+
+
 def _physical_band_to_plot_image(
     image_t: torch.Tensor,
     *,
@@ -658,10 +673,11 @@ def _physical_band_to_plot_image(
     else:
         # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
         image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
+    invalid_value = _invalid_plot_fill_value(plot_unit)
     image_plot = torch.where(
         finite_mask,
         image_plot,
-        torch.zeros_like(image_plot),
+        torch.full_like(image_plot, float(invalid_value)),
     )
     return image_plot.cpu().numpy().astype(np.float32)
 
@@ -789,6 +805,8 @@ def log_wandb_conditional_reconstruction_grid(
         fig, axes = plt.subplots(
             total_rows, ncols, figsize=(4 * ncols, 2.8 * total_rows), squeeze=False
         )
+        image_cmap = _plot_cmap_with_black_invalid(cmap)
+        invalid_value = _invalid_plot_fill_value(plot_unit)
 
         for i in range(num_to_plot):
             valid_mask_i = _mask_for_sample(valid_mask, i)
@@ -818,7 +836,7 @@ def log_wandb_conditional_reconstruction_grid(
                 if valid_band is not None:
                     # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
                     valid_np = valid_band.detach().cpu().numpy() > 0.5
-                    x_img[~valid_np] = 0.0
+                    x_img[~valid_np] = invalid_value
                 if y is not None:
                     y_img = _plot_band_image(
                         y, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
@@ -826,17 +844,17 @@ def log_wandb_conditional_reconstruction_grid(
                 else:
                     y_img = None
                 if land_band is not None:
-                    # Zero land pixels right before rendering full reconstruction panels.
+                    # Fill land pixels right before rendering full reconstruction panels.
                     ocean_np = land_band.detach().cpu().numpy() > 0.5
-                    x_img[~ocean_np] = 0.0
+                    x_img[~ocean_np] = invalid_value
                     if y_img is not None:
-                        y_img[~ocean_np] = 0.0
-                    y_hat_img[~ocean_np] = 0.0
-                    y_target_img[~ocean_np] = 0.0
+                        y_img[~ocean_np] = invalid_value
+                    y_hat_img[~ocean_np] = invalid_value
+                    y_target_img[~ocean_np] = invalid_value
 
                 col = 0
                 x_img = _resize_input_plot_image(x_img)
-                axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].imshow(x_img, cmap=image_cmap, vmin=0.0, vmax=1.0)
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
                     title = "Input"
@@ -846,7 +864,9 @@ def log_wandb_conditional_reconstruction_grid(
                 col += 1
 
                 if y_img is not None:
-                    axes[row_idx, col].imshow(y_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].imshow(
+                        y_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                    )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
                         axes[row_idx, col].set_title("GLORYS")
@@ -856,14 +876,18 @@ def log_wandb_conditional_reconstruction_grid(
                     eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=land_band)
                     if land_band is not None:
                         ocean_np = land_band.detach().cpu().numpy() > 0.5
-                        eo_img[~ocean_np] = 0.0
-                    axes[row_idx, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                        eo_img[~ocean_np] = invalid_value
+                    axes[row_idx, col].imshow(
+                        eo_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                    )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
                         axes[row_idx, col].set_title("EO condition")
                     col += 1
 
-                axes[row_idx, col].imshow(y_hat_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].imshow(
+                    y_hat_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                )
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
                     axes[row_idx, col].set_title("Reconstruction")
@@ -871,7 +895,7 @@ def log_wandb_conditional_reconstruction_grid(
 
                 if show_target_panel:
                     axes[row_idx, col].imshow(
-                        y_target_img, cmap=cmap, vmin=0.0, vmax=1.0
+                        y_target_img, cmap=image_cmap, vmin=0.0, vmax=1.0
                     )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:

@@ -149,6 +149,6 @@ masks.
 ## Output Contract  
 
 Each sample returns `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`,  
-`x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`.  
+`x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`. `x_valid_mask` is ARGO observation support and `land_mask` is GLORYS spatial support for conditioning/loss. The common on-disk mask is loaded only by prediction/export paths when final cleanup is needed.  
 
 See [Data Contract](data-contract.md) for the full tensor contract.  

@@ -9,19 +9,20 @@ Core stack:
 - diffusion core: `DenoisingDiffusionConditionalProcess`  
 - denoiser backbone: `UnetConvNextBlock` (ConvNeXt-style U-Net)  
   
-The model learns to generate `y` while conditioning on observed channels (`x`, optional `eo`, optional mask channels).  
+The model learns to generate `y` while conditioning on observed channels (`x`), optional `eo`, ARGO observation support (`x_valid_mask`), and GLORYS spatial support (`land_mask`).  
   
 ## Conditioning Setup  
 Three conditioning layouts are supported by code/config:  
   
 - Single-band task: `x -> y`  
-- EO multiband task: `[eo, x, x_valid_mask] -> y`  
-- Joint temperature/salinity task: `[eo, cat(x, x_salinity), collapsed_support] -> cat(y, y_salinity)` when `model.output_fields=["temperature", "salinity"]` and the dataloader includes salinity keys.  
+- EO multiband task: `[eo, x, x_valid_mask, land_mask] -> y`  
+- Joint temperature/salinity task: `[eo, cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)` when `model.output_fields=["temperature", "salinity"]` and the dataloader includes salinity keys.  
   
 Condition assembly happens in `_prepare_condition_for_model`:  
 - optionally prepend `eo` (`condition_include_eo=true`)  
 - append data channels from `x`  
-- optionally append `x_valid_mask` channels (`condition_use_valid_mask=true`)  
+- optionally append ARGO observation-support `x_valid_mask` channels (`condition_use_valid_mask=true`)  
+- optionally append GLORYS spatial-support `land_mask` (`condition_use_land_mask=true`)  
 - enforce channel count equals `model.condition_channels`  
   
 ## Architecture Summary  
@@ -33,7 +34,7 @@ With default `dim_mults=[1,2,4,8]`:
 - 3 upsampling stages with skip connections  
 - final ConvNeXt block + `1x1` output conv to `generated_channels`  
 
-For the ambient EO preset in `src/depth_recon/configs/px_space/model_config_ambient.yaml`, the U-Net base width is increased to `dim: 96`. This keeps the same depth (`dim_mults=[1,2,4,8]`) but gives the denoiser more capacity when moving from earlier low-channel setups to the current 50 generated channels + 52 condition channels.  
+For the ambient EO preset in `src/depth_recon/configs/px_space/model_config_ambient.yaml`, the U-Net base width is `dim: 64`. This keeps the same depth (`dim_mults=[1,2,4,8]`) while matching the current 50 generated channels + 53 condition channels.  
   
 Time conditioning:  
 - sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks  
@@ -55,16 +56,16 @@ Behavior:
 Loss options:  
 - unmasked MSE (default behavior when masking disabled)  
 - masked MSE with mode-specific supervision support:  
-  - standard mode: over `y_valid_mask` on the full `y` target  
-  - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` on the degraded `x` target  
-  - the horizontal `land_mask` remains available in the batch contract, but the task-valid masks already define the supervised support  
+  - standard mode: over `y_valid_mask` intersected with GLORYS `land_mask` on the full `y` target  
+  - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` and GLORYS `land_mask` on the degraded `x` target  
+  - the common on-disk mask is not loaded by train/validation dataloaders; optional `output_land_mask` is only final prediction cleanup support  
   
 Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):  
 - sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)  
 - feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask  
 - switch the diffusion target from `y` to the original sparse-observation tensor `x`  
 - optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)  
-- compute masked MSE on the originally valid `x` support intersected with valid `y` support (`A ∩ Y`, not `~A`)  
+- compute masked MSE on the originally valid `x` support intersected with valid `y` support and GLORYS `land_mask` (`A ∩ Y ∩ land_mask`, not `~A`)  
 - detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)  
   
 Current EO config (`src/depth_recon/configs/px_space/model_config.yaml`) uses:  
@@ -85,7 +86,7 @@ configuration error instead of failing later inside a training step.
 The preset is `src/depth_recon/configs/px_space/model_config_joint_temp_salinity.yaml`:  
 
 - `generated_channels: 100` for 50 temperature + 50 salinity target channels  
-- `condition_channels: 102` for OSTIA + 100 stacked sparse ARGO channels + one collapsed support mask  
+- `condition_channels: 103` for OSTIA + 100 stacked sparse ARGO channels + one collapsed `x_valid_mask` support channel + one GLORYS `land_mask` channel  
 - `condition_mask_channels: 1`, so the stacked 100-channel support mask is collapsed with `amax` into one spatial support channel  
 - existing 50-channel temperature checkpoints are not shape-compatible with this preset  
 
@@ -100,12 +101,12 @@ y_valid_mask_model = cat([y_valid_mask, y_salinity_valid_mask], dim=1)
 
 The diffusion core remains channel-agnostic and sees one 100-channel normalized  
 target. The loss is the existing unweighted diffusion MSE over the stacked  
-normalized channels, masked by the stacked task-valid support when mask-based  
+normalized channels, masked by the stacked task-valid support intersected with GLORYS `land_mask` when mask-based  
 loss is enabled. `predict_step` splits sampled outputs back into temperature and  
 salinity fields and denormalizes them with their own normalization helpers.  
 
 For non-ambient training, the loss is pulled over all valid target pixels via  
-`y_valid_mask`, or the stacked target-valid mask in joint temperature/salinity mode.  
+`y_valid_mask ∩ land_mask`, or the stacked target-valid mask intersected with `land_mask` in joint temperature/salinity mode.  
 
 Latent model workflow is configured via `src/depth_recon/configs/lat_space/model_config.yaml` with AE controls in `src/depth_recon/configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.  
   

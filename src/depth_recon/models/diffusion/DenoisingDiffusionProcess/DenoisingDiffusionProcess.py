@@ -617,7 +617,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         """Helper that computes build land mask.
 
         Args:
-            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            land_mask (torch.Tensor | None): GLORYS spatial ocean/domain support mask.
             reference (torch.Tensor): Tensor input for the computation.
 
         Returns:
@@ -652,7 +652,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             condition (torch.Tensor): Tensor input for the computation.
             loss_mask (torch.Tensor | None): Mask tensor selecting the supervised pixels.
             further_valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
-            land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+            land_mask (torch.Tensor | None): GLORYS spatial ocean/domain support mask.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
             apply_further_corruption_to_noisy_branch (bool): Boolean flag controlling behavior.
             coord (torch.Tensor | None): Coordinate conditioning values.

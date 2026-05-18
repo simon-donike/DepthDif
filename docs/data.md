@@ -25,7 +25,7 @@ The current training workflow is built around these modalities:
 | Target ocean temperature | GLORYS | `thetao` | Dense 3D supervision target. |  
 | Reanalysis salinity | GLORYS | `so` | Dense aligned ocean state variable stored alongside temperature. |  
 | Sea-surface height | Sea Level L4 | `adt` | Dense surface-height context stored on the same grid. |  
-| Land/ocean mask | Rasterized world polygons | `land_mask` | Defines patch candidates and excludes land-heavy regions. |  
+| Land/ocean mask | Rasterized world polygons | `output_land_mask` | Defines patch candidates and provides final output cleanup support; model-facing `land_mask` is derived from finite GLORYS target support. |  
 
 Temperature is kept physically in Kelvin in the exported GeoTIFF dataset, then  
 converted or normalized by the loader as needed for model training. Salinity is  

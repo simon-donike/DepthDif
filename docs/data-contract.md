@@ -40,15 +40,12 @@ temperature/salinity training.
 | `y_salinity_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Opt-in mask where the GLORYS salinity target is valid ocean data. |  
 | `x_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | True where any ARGO temperature depth is present in that horizontal pixel. |  
 | `x_salinity_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | Opt-in mask where any ARGO salinity depth is present in that horizontal pixel. |  
-| `land_mask` | `(1, H, W)` | `(B, 1, H, W)` | `float32` | Horizontal target support mask; `1` where the first target depth is valid and `0` elsewhere. |  
+| `land_mask` | `(1, H, W)` | `(B, 1, H, W)` | `float32` | GLORYS spatial ocean/domain support; `1` where any temperature target depth is finite and `0` elsewhere. |  
 | `date` | scalar | `(B,)` | integer | GLORYS target date as `YYYYMMDD`. |  
 | `coords` | `(2,)` | `(B, 2)` | `float32` | Optional patch-center latitude and longitude. |  
 | `info` | dictionary | list-like | metadata | Optional debugging metadata, not part of the training model input. |  
 
-Despite the historical name, `land_mask` is a model support mask derived from  
-target validity. Training code should use the matching valid masks for supervised losses  
-and should not infer missing values from zeros in `x`, `y`, optional  
-`x_salinity`, optional `y_salinity`, or `eo`.  
+`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is GLORYS-derived spatial ocean/domain support and gates the diffusion loss together with the task-valid mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.  
 
 ## Salinity Opt-In  
 
@@ -73,7 +70,7 @@ dataset:
 
 The data flag only controls the sample contract. Joint training also requires  
 `model.output_fields=["temperature", "salinity"]` and matching 100-output /  
-102-condition channel counts on the model side.  
+103-condition channel counts on the model side.  
 
 ## Loading Steps  
 
@@ -91,7 +88,8 @@ For each selected `(patch, date)` row, the GeoTIFF loader should:
    using precomputed `grid_row` and `grid_col`; average duplicate observations  
    in the same depth/pixel cell.  
 7. Build validity masks from GeoTIFF nodata codes and ARGO valid flags.  
-8. Normalize temperature, plus salinity when enabled, and replace NaN or  
+8. Derive `land_mask` from finite GLORYS temperature support.  
+9. Normalize temperature, plus salinity when enabled, and replace NaN or  
    infinite normalized values with `0.0`.  
 
 Sea-level `adt` is exported on the same grid for auxiliary experiments. It  

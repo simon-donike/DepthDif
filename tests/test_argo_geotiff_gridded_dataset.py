@@ -220,13 +220,11 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(sample["x_valid_mask_1d"].shape, (1, 2, 2))
             self.assertEqual(sample["x_salinity_valid_mask_1d"].shape, (1, 2, 2))
             self.assertEqual(sample["land_mask"].shape, (1, 2, 2))
+            self.assertNotIn("output_land_mask", sample)
             self.assertTrue(
                 torch.equal(
                     sample["land_mask"],
-                    torch.tensor(
-                        [[[1.0, 1.0], [1.0, 0.0]]],
-                        dtype=torch.float32,
-                    ),
+                    torch.ones((1, 2, 2), dtype=torch.float32),
                 )
             )
             self.assertEqual(sample["date"], 20240108)
@@ -352,15 +350,14 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertFalse(dataset.synthetic_mode)
             self.assertTrue(dataset.include_salinity)
             self.assertIn("x_salinity", dataset[0])
+            sample = dataset[0]
             self.assertTrue(
                 torch.equal(
-                    dataset[0]["land_mask"],
-                    torch.tensor(
-                        [[[1.0, 1.0], [1.0, 0.0]]],
-                        dtype=torch.float32,
-                    ),
+                    sample["land_mask"],
+                    torch.ones((1, 2, 2), dtype=torch.float32),
                 )
             )
+            self.assertNotIn("output_land_mask", sample)
 
     def test_active_geotiff_config_uses_land_mask_grid_defaults(self) -> None:
         with packaged_config_path("px_space", "data_ostia_argo_geotiff.yaml").open(

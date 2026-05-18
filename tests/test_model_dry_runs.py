@@ -213,10 +213,11 @@ class TestModelDryRuns(unittest.TestCase):
                 {
                     "model": {
                         "generated_channels": 2,
-                        "condition_channels": 3,
+                        "condition_channels": 4,
                         "condition_mask_channels": 1,
                         "condition_include_eo": False,
                         "condition_use_valid_mask": True,
+                        "condition_use_land_mask": True,
                         "mask_loss_with_valid_pixels": True,
                         "parameterization": "x0",
                         "ambient_occlusion": {
@@ -312,7 +313,8 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertEqual(model.postprocess_gaussian_blur_kernel_size, 5)
             self.assertEqual(model.model.forward_process.num_timesteps, 6)
             self.assertEqual(model.model.parameterization, "x0")
-            self.assertEqual(model.model.condition_channels, 3)
+            self.assertTrue(model.condition_use_land_mask)
+            self.assertEqual(model.model.condition_channels, 4)
             self.assertEqual(model.val_sampler.num_timesteps, 3)
             self.assertEqual(model.val_sampler.temperature, 0.5)
             self.assertIsInstance(optim_config, dict)
@@ -354,11 +356,85 @@ class TestModelDryRuns(unittest.TestCase):
             self.assertEqual(model.output_fields, ("temperature", "salinity"))
             self.assertTrue(model.predicts_salinity)
 
+    def test_latent_diffusion_from_config_wires_land_mask_conditioning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ae_config_path = tmp_path / "ae.yaml"
+            model_config_path = tmp_path / "model.yaml"
+            data_config_path = tmp_path / "data.yaml"
+            training_config_path = tmp_path / "training.yaml"
+            _write_yaml(
+                ae_config_path,
+                {
+                    "ae": {
+                        "in_channels": 2,
+                        "latent_channels": 1,
+                        "spatial_downsample": 1,
+                        "encoder": {"hidden_channels": [4]},
+                        "decoder": {"hidden_channels": [4]},
+                    }
+                },
+            )
+            _write_yaml(
+                model_config_path,
+                {
+                    "model": {
+                        "generated_channels": 1,
+                        "condition_channels": 3,
+                        "condition_mask_channels": 1,
+                        "condition_include_eo": False,
+                        "condition_use_valid_mask": True,
+                        "condition_use_land_mask": True,
+                        "mask_loss_with_valid_pixels": True,
+                        "parameterization": "x0",
+                        "latent": {
+                            "ae_config_path": str(ae_config_path),
+                            "ae_checkpoint": False,
+                            "freeze_autoencoder": True,
+                            "latent_channels": 1,
+                            "spatial_downsample": 1,
+                            "eo_in_pixel_space": True,
+                        },
+                        "unet": {"dim": 8, "dim_mults": [1]},
+                    }
+                },
+            )
+            _write_yaml(data_config_path, {"dataset": {}, "dataloader": {}})
+            _write_yaml(training_config_path, {"training": {}, "wandb": {}})
+
+            model = LatentDiffusionConditional.from_config(
+                str(model_config_path),
+                str(data_config_path),
+                str(training_config_path),
+            )
+
+            self.assertTrue(model.condition_use_land_mask)
+            self.assertEqual(model.model.condition_channels, 3)
+
+    def test_pixel_condition_includes_glorys_land_mask_when_enabled(self) -> None:
+        model = _make_pixel_model(
+            condition_channels=4,
+            condition_use_land_mask=True,
+        )
+        batch = _make_pixel_batch()
+
+        condition = model._prepare_condition_for_model(
+            batch["x"],
+            batch["x_valid_mask"],
+            land_mask=batch["land_mask"],
+        )
+
+        self.assertEqual(condition.shape[1], 4)
+        self.assertTrue(
+            torch.equal(condition[:, -1:], batch["land_mask"].to(condition.dtype))
+        )
+
     def test_pixel_training_step_uses_standard_target_and_passes_land_mask(
         self,
     ) -> None:
         model = _make_pixel_model(wandb_verbose=True)
         batch = _make_pixel_batch()
+        batch["output_land_mask"] = torch.zeros_like(batch["land_mask"])
         captured: dict[str, Any] = {}
         logged_names: list[str] = []
 
@@ -393,6 +469,9 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(
             torch.equal(captured["kwargs"]["land_mask"], batch["land_mask"])
+        )
+        self.assertFalse(
+            torch.equal(captured["kwargs"]["land_mask"], batch["output_land_mask"])
         )
         self.assertIn("train/argo_observed_pixels_per_image", logged_names)
         self.assertTrue(torch.isclose(loss, torch.tensor(1.25)))
@@ -489,6 +568,7 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertIsNotNone(model._cached_val_example)
         self.assertIn("x_salinity", model._cached_val_example)
+        self.assertNotIn("output_land_mask", model._cached_val_example)
         self.assertTrue(torch.isclose(loss, torch.tensor(0.5)))
 
     def test_pixel_validation_step_uses_ambient_target_and_intersection_mask(
@@ -558,8 +638,11 @@ class TestModelDryRuns(unittest.TestCase):
         batch = _make_pixel_batch()
         batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
         land_mask = torch.ones_like(batch["land_mask"])
-        land_mask[..., 0, 1] = 0.0
+        land_mask[..., 1, 0] = 0.0
+        output_land_mask = torch.ones_like(batch["land_mask"])
+        output_land_mask[..., 0, 1] = 0.0
         batch["land_mask"] = land_mask
+        batch["output_land_mask"] = output_land_mask
         generated_celsius = torch.full_like(batch["x"], 5.0)
         generated_norm = temperature_normalize(
             mode="norm",
@@ -570,20 +653,22 @@ class TestModelDryRuns(unittest.TestCase):
             masked = model.predict_step(batch, batch_idx=0)
             without_land_mask_batch = dict(batch)
             without_land_mask_batch.pop("land_mask")
+            without_land_mask_batch.pop("output_land_mask")
             unmasked = model.predict_step(without_land_mask_batch, batch_idx=0)
 
-        self.assertTrue(
-            torch.equal(
-                masked["y_hat_denorm"][:, :, 0, 1],
-                torch.zeros_like(masked["y_hat_denorm"][:, :, 0, 1]),
+        for row, col in ((1, 0), (0, 1)):
+            self.assertTrue(
+                torch.equal(
+                    masked["y_hat_denorm"][:, :, row, col],
+                    torch.zeros_like(masked["y_hat_denorm"][:, :, row, col]),
+                )
             )
-        )
-        self.assertTrue(
-            torch.equal(
-                masked["y_hat_denorm_for_plot"][:, :, 0, 1],
-                torch.zeros_like(masked["y_hat_denorm_for_plot"][:, :, 0, 1]),
+            self.assertTrue(
+                torch.equal(
+                    masked["y_hat_denorm_for_plot"][:, :, row, col],
+                    torch.zeros_like(masked["y_hat_denorm_for_plot"][:, :, row, col]),
+                )
             )
-        )
         self.assertTrue(
             torch.allclose(
                 masked["y_hat_denorm"][:, :, 0, 0],
@@ -611,6 +696,7 @@ class TestModelDryRuns(unittest.TestCase):
         batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
         batch["y_salinity_valid_mask"] = torch.ones_like(batch["y_salinity_valid_mask"])
         batch["land_mask"] = torch.ones_like(batch["land_mask"])
+        batch["output_land_mask"] = torch.ones_like(batch["land_mask"])
         generated_temperature_c = torch.full_like(batch["x"], 5.0)
         generated_salinity_psu = torch.full_like(batch["x_salinity"], 34.75)
         temperature_norm = temperature_normalize(
@@ -644,6 +730,49 @@ class TestModelDryRuns(unittest.TestCase):
                 pred["y_hat_temperature_denorm_for_plot"],
             )
         )
+
+    def test_full_reconstruction_metrics_use_glorys_land_mask_support(self) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+        batch["land_mask"] = torch.ones_like(batch["land_mask"])
+        batch["land_mask"][..., 0, 1] = 0.0
+        batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
+        batch["y_valid_mask"][:, :, 1, 0] = False
+        model._cache_validation_batch(batch, n_cache=1)
+        temperature_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
+        pred = {
+            "y_hat": batch["y"],
+            "y_hat_denorm": temperature_denorm,
+            "y_hat_denorm_for_plot": temperature_denorm,
+            "further_valid_mask": None,
+            "denoise_samples": [],
+            "x0_denoise_samples": [],
+        }
+        metric_masks: list[torch.Tensor] = []
+
+        def capture_metrics(**kwargs: Any) -> tuple[torch.Tensor, ...]:
+            metric_masks.append(kwargs["eval_mask"].detach().clone())
+            return tuple(torch.zeros((), dtype=torch.float32) for _ in range(4))
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch.object(
+                model, "_compute_full_reconstruction_metrics", capture_metrics
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: None,
+            ),
+        ):
+            model._run_single_image_full_reconstruction_for_current_weights(
+                log_profile=False, log_denoise=False
+            )
+
+        self.assertEqual(len(metric_masks), 1)
+        self.assertTrue(torch.equal(metric_masks[0][:, :, 0, 1], torch.zeros(1, 2)))
+        self.assertTrue(torch.equal(metric_masks[0][:, :, 1, 0], torch.zeros(1, 2)))
+        self.assertTrue(torch.equal(metric_masks[0][:, :, 0, 0], torch.ones(1, 2)))
 
     def test_full_reconstruction_logs_separate_salinity_grid(self) -> None:
         model = _make_pixel_model(
@@ -701,6 +830,7 @@ class TestModelDryRuns(unittest.TestCase):
                 salinity_normalize(mode="denorm", tensor=batch["x_salinity"]),
             )
         )
+        self.assertTrue(torch.equal(salinity_call["land_mask"], batch["land_mask"]))
         self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
 
     def test_full_reconstruction_logs_salinity_scalar_metrics(self) -> None:

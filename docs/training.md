@@ -47,7 +47,7 @@ When enabled, training logs:
 
 See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full derivation, figure walkthrough, and paper citation.  
 
-Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask`.  
+Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask ∩ land_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask ∩ land_mask`. `x_valid_mask` is ARGO observation support; `land_mask` is GLORYS spatial support.  
 For CLI overrides, the corresponding path is `model.model.ambient_occlusion.enabled=false`.  
 
 ## Joint Temperature + Salinity Training
@@ -68,7 +68,7 @@ Example:
   --set data.dataset.output.include_salinity=true
 ```
 
-The joint preset predicts 100 output channels: 50 normalized temperature channels followed by 50 normalized salinity channels. Conditioning is 102 channels with EO enabled: one OSTIA channel, 100 stacked sparse ARGO channels, and one collapsed spatial support mask. `train.py` fails early if the model asks for salinity but the data config does not enable `include_salinity`, because the model requires `x_salinity`/`y_salinity` batch keys.
+The joint preset predicts 100 output channels: 50 normalized temperature channels followed by 50 normalized salinity channels. Conditioning is 103 channels with EO enabled: one OSTIA channel, 100 stacked sparse ARGO channels, one collapsed `x_valid_mask` ARGO-observation support channel, and one GLORYS `land_mask` support channel. `train.py` fails early if the model asks for salinity but the data config does not enable `include_salinity`, because the model requires `x_salinity`/`y_salinity` batch keys.
 
 Start from scratch or from a checkpoint trained with the same 100-channel architecture; existing 50-channel temperature checkpoints are not compatible.
 

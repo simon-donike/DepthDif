@@ -45,7 +45,7 @@ The new procedure adds a second stochastic corruption stage during training:
 2. Sample an additional random keep/drop operator \(B\).  
 3. Form a further-corrupted mask \(\tilde{A} = B \odot A\).  
 4. Feed the model condition built from \(\tilde{A}\)-corrupted input.  
-5. Supervise the prediction on the ambient support mask \(S = A \odot Y\), where \(A\) is `x_valid_mask` and \(Y\) is `y_valid_mask`.  
+5. Supervise the prediction on the ambient support mask \(S = A \odot Y \odot G\), where \(A\) is `x_valid_mask`, \(Y\) is `y_valid_mask`, and \(G\) is the GLORYS-derived `land_mask`.  
 
 Intuition: the model is forced to reconstruct original observed `x` values from a stricter subset of those same observations.  
 
@@ -55,6 +55,7 @@ For one sample:
 
 - \(x_0 \in \mathbb{R}^{C \times H \times W}\): clean diffusion target (in ambient mode in this repo: normalized `x`).  
 - \(A \in \{0,1\}^{C \times H \times W}\): original validity/observation mask (`x_valid_mask`).  
+- \(G \in \{0,1\}^{1 \times H \times W}\): GLORYS spatial ocean/domain support (`land_mask`).  
 - \(x = A \odot x_0\): original sparse observed input (in this repo, `x` already carries this structure).  
 - \(t \sim \mathrm{Unif}\{0,\dots,T-1\}\): diffusion timestep.  
 - \(x_t = \sqrt{\bar{\alpha}_t}\,x_0 + \sqrt{1-\bar{\alpha}_t}\,\epsilon,\ \epsilon\sim\mathcal{N}(0,I)\): noisy target branch sample.  
@@ -107,10 +108,10 @@ Optionally (enabled by default), the noisy branch is also masked:
 The implemented ambient mode uses the degraded input target `x`, and supervises it only where the input and target supports both make sense. The ambient supervision mask is:  
 
 \[  
-S = A \odot Y,  
+S = A \odot Y \odot G,  
 \]  
 
-where \(A\) is `x_valid_mask` and \(Y\) is `y_valid_mask`. This means ambient supervision stays on the valid observed ARGO pixels after degradation.  
+where \(A\) is `x_valid_mask`, \(Y\) is `y_valid_mask`, and \(G\) is the GLORYS-derived `land_mask`. This means ambient supervision stays on valid observed ARGO pixels inside the GLORYS ocean/domain support after degradation.  
 
 \[  
 \mathcal{L}_{\text{ambient}}(\theta)  
@@ -122,7 +123,7 @@ where \(A\) is `x_valid_mask` and \(Y\) is `y_valid_mask`. This means ambient su
 }.  
 \]  
 
-`land_mask` no longer changes the diffusion loss support in the current training path; the implemented loss mask is exactly the task-valid mask \(S = A \odot Y\).  
+The common on-disk mask does not change diffusion loss support. The implemented loss mask is the task-valid mask intersected with the GLORYS-derived `land_mask`; optional `output_land_mask` cleanup happens only in `predict_step` when provided by inference code.  
 
 ### 4.3 Relation to Paper Objective  
 
@@ -141,7 +142,7 @@ up to the repository’s existing normalization/parameterization conventions and
 1. **Two-stage masking during training** (\(A \rightarrow \tilde{A}\)).  
 2. **Condition path uses \(\tilde{A}\)** and \(\tilde{x}\).  
 3. **Diffusion target switches to original `x`** in ambient mode.  
-4. **Loss region switches to the valid ambient support mask \(A \odot Y\)** in ambient mode.  
+4. **Loss region switches to the valid ambient support mask \(A \odot Y \odot G\)** in ambient mode.  
 5. New ambient metrics are logged:  
    - `train/ambient_further_drop_fraction`  
    - `train/ambient_observed_fraction_original`  
@@ -152,7 +153,7 @@ up to the repository’s existing normalization/parameterization conventions and
 
 1. Inference/sampler algorithms (DDPM/DDIM) are unchanged.  
 2. Dataset generation of original corruption mask \(A\) is unchanged.  
-3. The dataset still returns the horizontal `land_mask` in the batch contract, but the diffusion loss is driven by task-valid masks instead of land-mask gating.  
+3. The dataset returns `land_mask` as GLORYS spatial support for conditioning/loss; inference code may pass `output_land_mask` as common on-disk cleanup support for final predictions.  
 4. If ambient mode is disabled, the model and samplers stay the same while the objective reverts to direct `y` reconstruction over `y_valid_mask`.  
 
 ## 6. Implemented Safety and Constraints  
@@ -177,7 +178,7 @@ up to the repository’s existing normalization/parameterization conventions and
 - Ambient loss execution:  
   - `src/depth_recon/models/diffusion/DenoisingDiffusionProcess/DenoisingDiffusionProcess.py`  
     - `DenoisingDiffusionConditionalProcess.p_loss(...)`  
-    - ambient loss mask = `x_valid_mask` intersected with `y_valid_mask`  
+    - ambient loss mask = `x_valid_mask` intersected with `y_valid_mask` and GLORYS `land_mask`  
     - optional `apply_further_corruption_to_noisy_branch`  
 
 ## 8. Practical Interpretation  

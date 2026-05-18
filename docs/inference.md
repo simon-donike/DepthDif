@@ -253,6 +253,7 @@ Common optional keys:
 - `eo`  
 - `x_valid_mask_1d`  
 - `land_mask`  
+- `output_land_mask`  
 - `coords`  
 - `date`  
 - `sampler`  

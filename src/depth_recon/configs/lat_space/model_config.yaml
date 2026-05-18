@@ -4,12 +4,13 @@ model: # Model Settings
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to load checkpoint state.
   load_checkpoint_only: false # true loads model weights only; false resumes optimizer/scheduler/trainer state too.
   generated_channels: 12 # Predict latent z_y channels.
-  condition_channels: 14 # z_x (12) + EO (1) + collapsed x_valid_mask (1).
+  condition_channels: 15 # z_x (12) + EO (1) + collapsed x_valid_mask (1) + GLORYS land_mask (1).
   condition_mask_channels: 1 # One x_valid_mask channel is concatenated to the model condition.
   condition_include_eo: true # Include batch["eo"] as extra condition channel.
   condition_use_valid_mask: true # Use x_valid_mask as conditioning input in addition to EO + z_x.
+  condition_use_land_mask: true # Concatenate GLORYS-derived spatial ocean/domain mask to the condition tensor.
   clamp_known_pixels: false # If true, inpainting-style sampling clamps known pixels each diffusion step for generation stability.
-  mask_loss_with_valid_pixels: true # Uses task-valid supervision masks: y_valid_mask in standard mode, x_valid_mask ∩ y_valid_mask in ambient mode.
+  mask_loss_with_valid_pixels: true # Uses task-valid supervision masks intersected with GLORYS land_mask.
   parameterization: "x0" # Diffusion training target: "epsilon" (noise) or "x0" (clean sample).
   log_intermediates: true # Default for validation denoising intermediate logging; training.validation_sampling.log_intermediates overrides this.
   ema:
@@ -29,7 +30,7 @@ model: # Model Settings
     eo_in_pixel_space: true # Keep EO conditioning in pixel space and concatenate directly.
 
   ambient_occlusion:
-    enabled: false # Enables ambient x-reconstruction on x_valid_mask ∩ y_valid_mask with further-corrupted input.
+    enabled: false # Enables ambient x-reconstruction on x_valid_mask ∩ y_valid_mask ∩ land_mask with further-corrupted input.
     further_drop_prob: 0.1 # Additional drop probability delta applied to already observed pixels.
     apply_to_noisy_branch: true # If true, applies the further mask to the noisy target branch (~A x_t).
     shared_spatial_mask: true # If true, samples one spatial further-mask per sample and shares it across channels.

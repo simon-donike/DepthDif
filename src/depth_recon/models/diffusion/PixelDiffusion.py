@@ -49,6 +49,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_mask_channels: int = 1,
         condition_include_eo: bool = False,
         condition_use_valid_mask: bool = True,
+        condition_use_land_mask: bool = False,
         clamp_known_pixels: bool = True,
         mask_loss_with_valid_pixels: bool = False,
         parameterization: str = "epsilon",
@@ -114,6 +115,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_mask_channels (int): Mask tensor controlling valid or known pixels.
             condition_include_eo (bool): Boolean flag controlling behavior.
             condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
+            condition_use_land_mask (bool): Include GLORYS spatial support as conditioning.
             clamp_known_pixels (bool): Boolean flag controlling behavior.
             mask_loss_with_valid_pixels (bool): Mask tensor controlling valid or known pixels.
             parameterization (str): Input value.
@@ -238,6 +240,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.condition_include_eo = bool(condition_include_eo)
         self.condition_use_valid_mask = bool(condition_use_valid_mask)
+        self.condition_use_land_mask = bool(condition_use_land_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
         self.output_fields = self._normalize_output_fields(output_fields)
@@ -344,6 +347,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             condition_include_eo=bool(m.get("condition_include_eo", False)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
+            condition_use_land_mask=bool(m.get("condition_use_land_mask", False)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
@@ -956,6 +960,36 @@ class PixelDiffusionConditional(pl.LightningModule):
             f"(mask={int(mask.size(1))}, expected={int(self.condition_mask_channels)})."
         )
 
+    def _prepare_land_condition_mask(
+        self,
+        land_mask: torch.Tensor | None,
+        *,
+        batch_size: int,
+        height: int,
+        width: int,
+    ) -> torch.Tensor | None:
+        """Return one GLORYS spatial-support condition channel when enabled."""
+        if not self.condition_use_land_mask:
+            return None
+        if land_mask is None:
+            raise RuntimeError(
+                "condition_use_land_mask=true requires batch['land_mask']."
+            )
+
+        mask = land_mask
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        if mask.ndim != 4:
+            raise RuntimeError("land_mask must be shaped as (B,C,H,W) or (B,H,W).")
+        if int(mask.size(0)) != int(batch_size):
+            raise RuntimeError("land_mask batch size does not match x batch size.")
+        if int(mask.size(-2)) != int(height) or int(mask.size(-1)) != int(width):
+            raise RuntimeError("land_mask spatial shape does not match x.")
+        if int(mask.size(1)) != 1:
+            # Condition on a single spatial domain channel even if a caller passes bands.
+            mask = mask.amax(dim=1, keepdim=True)
+        return mask
+
     @staticmethod
     def _align_valid_mask_to_reference(
         valid_mask: torch.Tensor,
@@ -1107,6 +1141,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         normalized: torch.Tensor,
         valid_mask: torch.Tensor | None,
         land_mask: torch.Tensor | None,
+        output_land_mask: torch.Tensor | None,
         *,
         normalize_fn: Any,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1119,6 +1154,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             denorm_for_plot, land_mask
         )
         denorm = self._apply_postprocess_land_to_zero(denorm, land_mask)
+        denorm_for_plot = self._apply_postprocess_land_to_zero(
+            denorm_for_plot, output_land_mask
+        )
+        denorm = self._apply_postprocess_land_to_zero(denorm, output_land_mask)
         return denorm, denorm_for_plot
 
     def _build_prediction_outputs(
@@ -1128,6 +1167,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         *,
         y_valid_mask: torch.Tensor | None,
         land_mask: torch.Tensor | None,
+        output_land_mask: torch.Tensor | None,
     ) -> dict[str, torch.Tensor]:
         """Build predict_step output tensors in normalized and physical units."""
         if not self.predicts_salinity:
@@ -1135,6 +1175,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 y_hat,
                 y_valid_mask,
                 land_mask,
+                output_land_mask,
                 normalize_fn=temperature_normalize,
             )
             return {
@@ -1154,6 +1195,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 y_hat_by_field["temperature"],
                 mask_by_field["temperature"],
                 land_mask,
+                output_land_mask,
                 normalize_fn=temperature_normalize,
             )
         )
@@ -1161,6 +1203,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_hat_by_field["salinity"],
             mask_by_field["salinity"],
             land_mask,
+            output_land_mask,
             normalize_fn=salinity_normalize,
         )
         return {
@@ -1351,6 +1394,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         valid_mask: torch.Tensor | None,
         *,
         eo: torch.Tensor | None = None,
+        land_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # Keep conditioning data in the same normalized range as diffusion targets.
         """Helper that computes prepare condition for model.
@@ -1359,6 +1403,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             x (torch.Tensor): Tensor input for the computation.
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             eo (torch.Tensor | None): Tensor input for the computation.
+            land_mask (torch.Tensor | None): GLORYS spatial-support mask.
 
         Returns:
             torch.Tensor: Tensor output produced by this call.
@@ -1384,6 +1429,17 @@ class PixelDiffusionConditional(pl.LightningModule):
             # Mask channel remains as-is; it is a semantic conditioning signal.
             condition_parts.append(mask_t)
 
+        land_t = self._prepare_land_condition_mask(
+            land_mask,
+            batch_size=int(data_t.size(0)),
+            height=int(data_t.size(-2)),
+            width=int(data_t.size(-1)),
+        )
+        if land_t is not None:
+            # This channel marks the GLORYS model domain, not ARGO observation support.
+            land_t = land_t.to(device=data_t.device, dtype=data_t.dtype)
+            condition_parts.append(land_t)
+
         condition = torch.cat(condition_parts, dim=1)
         expected_channels = int(getattr(self.model, "condition_channels", 0))
         if expected_channels > 0 and int(condition.size(1)) != expected_channels:
@@ -1391,7 +1447,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                 "Conditioning channel mismatch: "
                 f"built={int(condition.size(1))}, expected={expected_channels}. "
                 "Check condition_channels / condition_mask_channels / "
-                "condition_include_eo / condition_use_valid_mask."
+                "condition_include_eo / condition_use_valid_mask / "
+                "condition_use_land_mask."
             )
         return condition
 
@@ -1623,6 +1680,31 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Dataset samples keep ocean pixels as 1 and land pixels as 0.
         return torch.where(ocean_mask > 0.5, tensor, torch.zeros_like(tensor))
 
+    def _mask_eval_support_with_land(
+        self,
+        eval_mask: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+        *,
+        reference: torch.Tensor,
+        mask_name: str = "land_mask",
+    ) -> torch.Tensor | None:
+        """Intersect an evaluation mask with a spatial ocean mask."""
+        if land_mask is None:
+            return eval_mask
+        ocean_mask = (land_mask > 0.5).to(
+            dtype=reference.dtype, device=reference.device
+        )
+        ocean_mask = self._align_valid_mask_to_reference(
+            ocean_mask, reference, mask_name=mask_name
+        )
+        if eval_mask is None:
+            return ocean_mask
+        eval_mask_t = eval_mask.to(dtype=reference.dtype, device=reference.device)
+        eval_mask_t = self._align_valid_mask_to_reference(
+            eval_mask_t, reference, mask_name="eval_mask"
+        )
+        return eval_mask_t * ocean_mask
+
     def _apply_postprocess_merge_observed_pixels(
         self,
         generated: torch.Tensor,
@@ -1704,6 +1786,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         valid_mask = model_batch["x_valid_mask"]
         y_valid_mask = model_batch["y_valid_mask"]
         land_mask = batch.get("land_mask")
+        output_land_mask = batch.get("output_land_mask")
         coords = batch.get("coords")
         date = batch.get("date")
         sampler = batch.get("sampler", self.val_sampler)
@@ -1726,7 +1809,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_valid_mask = further_valid_mask
 
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo
+            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
         )
         known_values, known_mask = self._extract_known_values_and_mask(
             condition_x, condition_valid_mask
@@ -1761,7 +1844,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Keep all post-processing centralized in Lightning inference. The final returned
         # fields are split back into their physical units when joint mode is enabled.
         prediction_outputs = self._build_prediction_outputs(
-            y_hat, batch, y_valid_mask=y_valid_mask, land_mask=land_mask
+            y_hat,
+            batch,
+            y_valid_mask=y_valid_mask,
+            land_mask=land_mask,
+            output_land_mask=output_land_mask,
         )
         prediction_outputs.update(
             {
@@ -2355,19 +2442,31 @@ class PixelDiffusionConditional(pl.LightningModule):
                 }
 
             recon_batch_size = int(target_denorm.size(0))
+            metric_eval_mask = self._mask_eval_support_with_land(
+                eval_mask,
+                land_mask,
+                reference=target_denorm,
+                mask_name="land_mask",
+            )
             recon_mse, recon_l1, recon_psnr, recon_ssim = (
                 self._compute_full_reconstruction_metrics(
                     prediction_denorm=y_hat_denorm,
                     target_denorm=target_denorm,
-                    eval_mask=eval_mask,
+                    eval_mask=metric_eval_mask,
                 )
             )
             salinity_recon_metrics = None
             if salinity_log_payload is not None:
+                salinity_metric_eval_mask = self._mask_eval_support_with_land(
+                    salinity_log_payload["eval_mask"],
+                    land_mask,
+                    reference=salinity_log_payload["target_denorm"],
+                    mask_name="land_mask",
+                )
                 salinity_recon_metrics = self._compute_full_reconstruction_metrics(
                     prediction_denorm=salinity_log_payload["y_hat_denorm"],
                     target_denorm=salinity_log_payload["target_denorm"],
-                    eval_mask=salinity_log_payload["eval_mask"],
+                    eval_mask=salinity_metric_eval_mask,
                 )
         except Exception as exc:
             warnings.warn(
@@ -2639,7 +2738,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_valid_mask=y_valid_mask,
         )
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo
+            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
         )
         target_t = self.input_T(target)
         # Log target and condition stats in the exact space seen by diffusion.
@@ -2806,7 +2905,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_valid_mask=y_valid_mask,
         )
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo
+            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
         )
         target_t = self.input_T(target)
         # Log target and condition stats in the exact space seen by diffusion.

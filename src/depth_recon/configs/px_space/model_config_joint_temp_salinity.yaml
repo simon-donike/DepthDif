@@ -5,12 +5,13 @@ model:
   load_checkpoint_only: false # No checkpoint is loaded by this preset.
   output_fields: ["temperature", "salinity"] # Stack temperature and salinity targets; pair with data.dataset.output.include_salinity=true.
   generated_channels: 100 # Predict 50 temperature + 50 salinity channels.
-  condition_channels: 102 # OSTIA (1) + stacked Argo temp/salinity (100) + collapsed support mask (1).
+  condition_channels: 103 # OSTIA (1) + stacked Argo temp/salinity (100) + collapsed x_valid_mask (1) + GLORYS land_mask (1).
   condition_mask_channels: 1 # Collapse stacked x_valid_mask across depth/variable to keep conditioning light.
   condition_include_eo: true # Include batch["eo"] as an extra condition channel.
   condition_use_valid_mask: true # Concatenate x_valid_mask to the condition tensor.
+  condition_use_land_mask: true # Concatenate GLORYS-derived spatial ocean/domain mask to the condition tensor.
   clamp_known_pixels: false # Sampling-time clamping is optional; leave it off for the default training preset.
-  mask_loss_with_valid_pixels: true # Uses task-valid supervision masks: y_valid_mask in standard mode, x_valid_mask ∩ y_valid_mask in ambient mode.
+  mask_loss_with_valid_pixels: true # Uses task-valid supervision masks intersected with GLORYS land_mask.
   parameterization: "x0" # Keeps the base preset compatible with the ambient objective.
   log_intermediates: false # Training config can still override validation logging behavior.
   ema:
@@ -21,7 +22,7 @@ model:
     save_ema_weights_in_callback_state: true # Store EMA state in Lightning checkpoints for resume.
     evaluate_ema_weights_instead: true # Swap EMA weights in for validation/test, then restore training weights.
   ambient_occlusion:
-    enabled: false # Base model preset keeps standard y-reconstruction over y_valid_mask.
+    enabled: false # Base model preset keeps standard y-reconstruction over y_valid_mask ∩ land_mask.
     further_drop_prob: 0.1 # Mild extra corruption over already-observed Argo pixels.
     apply_to_noisy_branch: true # Applies the further-corrupted mask to the noisy target branch.
     shared_spatial_mask: true # Shares one spatial further-mask across all depth channels.
@@ -41,7 +42,7 @@ model:
     embed_dim: null # Defaults to unet.dim when left null.
 
   unet:
-    dim: 64 # Baseline width for the 100-output / 102-condition joint setup; tune in follow-up experiments if needed.
+    dim: 64 # Baseline width for the 100-output / 103-condition joint setup; tune in follow-up experiments if needed.
     dim_mults: [1, 2, 4, 8] # Keep the established U-Net depth while reducing width.
     with_time_emb: true # Enable timestep embeddings in the denoiser.
     output_mean_scale: false # Optional output mean correction remains disabled.
