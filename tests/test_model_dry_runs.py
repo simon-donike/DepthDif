@@ -703,6 +703,50 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
 
+    def test_full_reconstruction_logs_salinity_scalar_metrics(self) -> None:
+        model = _make_pixel_model(
+            generated_channels=4,
+            condition_channels=5,
+            output_fields=("temperature", "salinity"),
+        )
+        batch = _make_pixel_batch(include_salinity=True)
+        model._cache_validation_batch(batch, n_cache=1)
+        temperature_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
+        salinity_denorm = salinity_normalize(mode="denorm", tensor=batch["y_salinity"])
+        pred = {
+            "y_hat": torch.cat([batch["y"], batch["y_salinity"]], dim=1),
+            "y_hat_temperature": batch["y"],
+            "y_hat_salinity": batch["y_salinity"],
+            "y_hat_denorm": temperature_denorm,
+            "y_hat_denorm_for_plot": temperature_denorm,
+            "y_hat_salinity_denorm": salinity_denorm,
+            "y_hat_salinity_denorm_for_plot": salinity_denorm,
+            "further_valid_mask": None,
+            "denoise_samples": [],
+            "x0_denoise_samples": [],
+        }
+        logged_names: list[str] = []
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(
+                model, "log", lambda name, *args, **kwargs: logged_names.append(name)
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: None,
+            ),
+        ):
+            model._run_single_image_full_reconstruction_for_current_weights(
+                log_profile=False, log_denoise=False
+            )
+
+        self.assertIn("val/recon_l1_full_recon", logged_names)
+        self.assertIn("val_salinity/recon_mse_full_recon", logged_names)
+        self.assertIn("val_salinity/recon_l1_full_recon", logged_names)
+        self.assertIn("val_salinity/recon_psnr_full_recon", logged_names)
+        self.assertIn("val_salinity/recon_ssim_full_recon", logged_names)
+
     def test_pixel_diffusion_completes_one_training_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

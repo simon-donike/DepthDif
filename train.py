@@ -701,23 +701,43 @@ def main(
             logger,
             uploaded_config_paths,
         )
-    # Save the best checkpoint by monitored validation metric and always keep the latest checkpoint.
+    # Save the best checkpoint by monitored validation metric.
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="best-epoch{epoch:03d}",
         monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss")),
         mode="min",
         save_top_k=1,
-        save_last=True,
+        save_last=False,
+    )
+    # Keep last.ckpt independent of top-k improvements and save it on failures.
+    latest_checkpoint_callback = ModelCheckpoint(
+        dirpath=str(run_dir),
+        filename="last",
+        monitor=None,
+        save_top_k=1,
+        save_last=False,
+        save_on_exception=True,
+        save_on_train_epoch_end=True,
+        enable_version_counter=False,
     )
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
     ema_callback = build_ema_callback(model_cfg)
-    callbacks: list[pl.Callback] = [checkpoint_callback, lr_monitor_callback]
+    callbacks: list[pl.Callback] = [
+        checkpoint_callback,
+        latest_checkpoint_callback,
+        lr_monitor_callback,
+    ]
     if ema_callback is not None:
         # Restore raw training weights before ModelCheckpoint writes resume state.
-        callbacks = [ema_callback, checkpoint_callback, lr_monitor_callback]
+        callbacks = [
+            ema_callback,
+            checkpoint_callback,
+            latest_checkpoint_callback,
+            lr_monitor_callback,
+        ]
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)

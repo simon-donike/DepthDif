@@ -1896,6 +1896,16 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=1,
         )
         self.log(
+            "val/recon_l1_full_recon",
+            placeholder_scalar,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True,
+            batch_size=1,
+        )
+        self.log(
             "val/recon_psnr_full_recon",
             placeholder_scalar,
             on_step=False,
@@ -1991,21 +2001,33 @@ class PixelDiffusionConditional(pl.LightningModule):
         self,
         *,
         recon_mse: torch.Tensor,
+        recon_l1: torch.Tensor,
         recon_psnr: torch.Tensor,
         recon_ssim: torch.Tensor,
         batch_size: int,
         metric_prefix: str,
         log_default_metrics: bool,
+        default_metric_prefix: str = "val",
     ) -> None:
         """Log validation reconstruction metrics under configured prefixes."""
         metric_prefixes = [metric_prefix]
-        if log_default_metrics and metric_prefix != "val":
-            metric_prefixes.append("val")
+        if log_default_metrics and metric_prefix != default_metric_prefix:
+            metric_prefixes.append(default_metric_prefix)
 
         for prefix in metric_prefixes:
             self.log(
                 f"{prefix}/recon_mse_full_recon",
                 recon_mse,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=(prefix == "val"),
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+            self.log(
+                f"{prefix}/recon_l1_full_recon",
+                recon_l1,
                 on_step=False,
                 on_epoch=True,
                 prog_bar=(prefix == "val"),
@@ -2033,6 +2055,114 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sync_dist=True,
                 batch_size=batch_size,
             )
+
+    def _compute_full_reconstruction_metrics(
+        self,
+        *,
+        prediction_denorm: torch.Tensor,
+        target_denorm: torch.Tensor,
+        eval_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute full-reconstruction MSE, L1, PSNR, and SSIM scalars."""
+        metric_zero = torch.zeros(
+            (), device=target_denorm.device, dtype=target_denorm.dtype
+        )
+        if eval_mask is None:
+            eval_support = torch.isfinite(prediction_denorm) & torch.isfinite(
+                target_denorm
+            )
+        else:
+            eval_support = (
+                (eval_mask > 0.5)
+                & torch.isfinite(prediction_denorm)
+                & torch.isfinite(target_denorm)
+            )
+
+        if bool(eval_support.any().item()):
+            diff = prediction_denorm - target_denorm
+            recon_mse = (diff.pow(2))[eval_support].mean()
+            recon_l1 = torch.abs(diff)[eval_support].mean()
+        else:
+            recon_mse = metric_zero
+            recon_l1 = metric_zero
+        recon_psnr = metric_zero
+        recon_ssim = metric_zero
+        # Calculate PSNR over the same supervised support as the loss. SSIM is only
+        # computed when an entire band is valid because masked irregular subsets do
+        # not define a stable structural-similarity window.
+        try:
+            from skimage.metrics import (
+                peak_signal_noise_ratio,
+                structural_similarity,
+            )
+
+            y_np = target_denorm.detach().float().cpu().numpy()
+            y_hat_np = prediction_denorm.detach().float().cpu().numpy()
+            eval_mask_np = (
+                (eval_mask > 0.5).detach().cpu().numpy()
+                if eval_mask is not None
+                else None
+            )
+            if y_np.ndim == 2:
+                y_np = y_np[None, None, ...]
+                y_hat_np = y_hat_np[None, None, ...]
+                if eval_mask_np is not None:
+                    eval_mask_np = eval_mask_np[None, None, ...]
+            elif y_np.ndim == 3:
+                y_np = y_np[:, None, ...]
+                y_hat_np = y_hat_np[:, None, ...]
+                if eval_mask_np is not None:
+                    eval_mask_np = eval_mask_np[:, None, ...]
+            psnr_vals: list[float] = []
+            ssim_vals: list[float] = []
+            for sample_idx in range(y_np.shape[0]):
+                for band_idx in range(y_np.shape[1]):
+                    y_band = y_np[sample_idx, band_idx]
+                    y_hat_band = y_hat_np[sample_idx, band_idx]
+                    if eval_mask_np is not None:
+                        band_mask = eval_mask_np[sample_idx, band_idx] > 0.5
+                    else:
+                        band_mask = np.isfinite(y_band) & np.isfinite(y_hat_band)
+                    if not np.any(band_mask):
+                        continue
+                    y_band_valid = y_band[band_mask]
+                    y_hat_band_valid = y_hat_band[band_mask]
+                    data_range = float(y_band_valid.max() - y_band_valid.min())
+                    if data_range <= 0.0:
+                        continue
+                    psnr_vals.append(
+                        float(
+                            peak_signal_noise_ratio(
+                                y_band_valid,
+                                y_hat_band_valid,
+                                data_range=data_range,
+                            )
+                        )
+                    )
+                    if bool(np.all(band_mask)):
+                        ssim_vals.append(
+                            float(
+                                structural_similarity(
+                                    y_band, y_hat_band, data_range=data_range
+                                )
+                            )
+                        )
+            if psnr_vals:
+                recon_psnr = torch.tensor(
+                    float(sum(psnr_vals) / len(psnr_vals)),
+                    device=target_denorm.device,
+                    dtype=target_denorm.dtype,
+                )
+            if ssim_vals:
+                recon_ssim = torch.tensor(
+                    float(sum(ssim_vals) / len(ssim_vals)),
+                    device=target_denorm.device,
+                    dtype=target_denorm.dtype,
+                )
+        except Exception:
+            # Keep placeholder zeros so every rank still emits the same metric keys.
+            pass
+        return recon_mse, recon_l1, recon_psnr, recon_ssim
 
     @torch.no_grad()
     def _run_single_image_full_reconstruction_for_current_weights(
@@ -2212,7 +2342,9 @@ class PixelDiffusionConditional(pl.LightningModule):
                 salinity_log_payload = {
                     "x_denorm": x_salinity_denorm,
                     "y_denorm_masked": y_salinity_denorm_masked,
+                    "target_denorm": target_salinity_denorm,
                     "target_denorm_masked": target_salinity_denorm_masked,
+                    "eval_mask": salinity_eval_mask,
                     "y_hat_denorm": pred["y_hat_salinity_denorm"],
                     "y_hat_denorm_for_plot": pred.get(
                         "y_hat_salinity_denorm_for_plot",
@@ -2223,103 +2355,20 @@ class PixelDiffusionConditional(pl.LightningModule):
                 }
 
             recon_batch_size = int(target_denorm.size(0))
-            if eval_mask is None:
-                eval_support = torch.isfinite(y_hat_denorm) & torch.isfinite(
-                    target_denorm
+            recon_mse, recon_l1, recon_psnr, recon_ssim = (
+                self._compute_full_reconstruction_metrics(
+                    prediction_denorm=y_hat_denorm,
+                    target_denorm=target_denorm,
+                    eval_mask=eval_mask,
                 )
-            else:
-                eval_support = (
-                    (eval_mask > 0.5)
-                    & torch.isfinite(y_hat_denorm)
-                    & torch.isfinite(target_denorm)
-                )
-            if bool(eval_support.any().item()):
-                recon_mse = ((y_hat_denorm - target_denorm) ** 2)[eval_support].mean()
-            else:
-                recon_mse = torch.zeros(
-                    (), device=target_denorm.device, dtype=target_denorm.dtype
-                )
-            recon_psnr = torch.zeros(
-                (), device=target_denorm.device, dtype=target_denorm.dtype
             )
-            recon_ssim = torch.zeros(
-                (), device=target_denorm.device, dtype=target_denorm.dtype
-            )
-            # Calculate PSNR over the same supervised support as the loss. SSIM is only
-            # computed when an entire band is valid because masked irregular subsets do
-            # not define a stable structural-similarity window.
-            try:
-                from skimage.metrics import (
-                    peak_signal_noise_ratio,
-                    structural_similarity,
+            salinity_recon_metrics = None
+            if salinity_log_payload is not None:
+                salinity_recon_metrics = self._compute_full_reconstruction_metrics(
+                    prediction_denorm=salinity_log_payload["y_hat_denorm"],
+                    target_denorm=salinity_log_payload["target_denorm"],
+                    eval_mask=salinity_log_payload["eval_mask"],
                 )
-
-                y_np = target_denorm.detach().float().cpu().numpy()
-                y_hat_np = y_hat_denorm.detach().float().cpu().numpy()
-                eval_mask_np = (
-                    (eval_mask > 0.5).detach().cpu().numpy()
-                    if eval_mask is not None
-                    else None
-                )
-                if y_np.ndim == 2:
-                    y_np = y_np[None, None, ...]
-                    y_hat_np = y_hat_np[None, None, ...]
-                    if eval_mask_np is not None:
-                        eval_mask_np = eval_mask_np[None, None, ...]
-                elif y_np.ndim == 3:
-                    y_np = y_np[:, None, ...]
-                    y_hat_np = y_hat_np[:, None, ...]
-                    if eval_mask_np is not None:
-                        eval_mask_np = eval_mask_np[:, None, ...]
-                psnr_vals: list[float] = []
-                ssim_vals: list[float] = []
-                for sample_idx in range(y_np.shape[0]):
-                    for band_idx in range(y_np.shape[1]):
-                        y_band = y_np[sample_idx, band_idx]
-                        y_hat_band = y_hat_np[sample_idx, band_idx]
-                        if eval_mask_np is not None:
-                            band_mask = eval_mask_np[sample_idx, band_idx] > 0.5
-                        else:
-                            band_mask = np.isfinite(y_band) & np.isfinite(y_hat_band)
-                        if not np.any(band_mask):
-                            continue
-                        y_band_valid = y_band[band_mask]
-                        y_hat_band_valid = y_hat_band[band_mask]
-                        data_range = float(y_band_valid.max() - y_band_valid.min())
-                        if data_range <= 0.0:
-                            continue
-                        psnr_vals.append(
-                            float(
-                                peak_signal_noise_ratio(
-                                    y_band_valid,
-                                    y_hat_band_valid,
-                                    data_range=data_range,
-                                )
-                            )
-                        )
-                        if bool(np.all(band_mask)):
-                            ssim_vals.append(
-                                float(
-                                    structural_similarity(
-                                        y_band, y_hat_band, data_range=data_range
-                                    )
-                                )
-                            )
-                if psnr_vals:
-                    recon_psnr = torch.tensor(
-                        float(sum(psnr_vals) / len(psnr_vals)),
-                        device=target_denorm.device,
-                        dtype=target_denorm.dtype,
-                    )
-                if ssim_vals:
-                    recon_ssim = torch.tensor(
-                        float(sum(ssim_vals) / len(ssim_vals)),
-                        device=target_denorm.device,
-                        dtype=target_denorm.dtype,
-                    )
-            except Exception:
-                # Keep placeholder zeros so every rank still emits the same metric keys.
-                pass
         except Exception as exc:
             warnings.warn(
                 "Full validation reconstruction failed; logging placeholder metrics "
@@ -2334,6 +2383,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 )
                 self._log_full_reconstruction_metrics(
                     recon_mse=placeholder_scalar,
+                    recon_l1=placeholder_scalar,
                     recon_psnr=placeholder_scalar,
                     recon_ssim=placeholder_scalar,
                     batch_size=1,
@@ -2344,12 +2394,27 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         self._log_full_reconstruction_metrics(
             recon_mse=recon_mse,
+            recon_l1=recon_l1,
             recon_psnr=recon_psnr,
             recon_ssim=recon_ssim,
             batch_size=recon_batch_size,
             metric_prefix=metric_prefix,
             log_default_metrics=log_default_metrics,
         )
+        if salinity_recon_metrics is not None:
+            salinity_metric_prefix = "val_salinity"
+            if image_key_suffix:
+                salinity_metric_prefix = f"val_salinity_{image_key_suffix}"
+            self._log_full_reconstruction_metrics(
+                recon_mse=salinity_recon_metrics[0],
+                recon_l1=salinity_recon_metrics[1],
+                recon_psnr=salinity_recon_metrics[2],
+                recon_ssim=salinity_recon_metrics[3],
+                batch_size=recon_batch_size,
+                metric_prefix=salinity_metric_prefix,
+                log_default_metrics=log_default_metrics,
+                default_metric_prefix="val_salinity",
+            )
         if log_common_metrics:
             self._log_validation_triplet_stats(
                 x=x_denorm, y=target_denorm_masked, y_hat=y_hat_denorm
