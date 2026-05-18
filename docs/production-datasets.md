@@ -62,7 +62,7 @@ dataset computes the fraction of land pixels and keeps the patch when
 `land_fraction <= dataset.grid.max_land_fraction`.  
 
 The default cap is `0.30`, so normal retained patches are at least 70% ocean.  
-Patches centered on the Mediterranean, Baltic, Red Sea, and Great Lakes are force-included with a relaxed land cap through  
+Patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay are force-included with a relaxed land cap through
 `dataset.grid.force_include_regions`, because those water bodies are narrow or coastline-heavy and would  
 otherwise lose useful ocean context around coastlines.  
 The figure labels show the current region-specific land caps and retained patch counts.
@@ -127,7 +127,7 @@ masks.
   require `split.val_year`.  
 - `dataset.grid.max_land_fraction` filters land-heavy patches from the  
   committed GLORYS-aligned world mask.  
-- `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Great Lakes up  
+- `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay up
   to a relaxed land fraction so the training registry retains those water bodies.  
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile  
   search window for each patch date.  

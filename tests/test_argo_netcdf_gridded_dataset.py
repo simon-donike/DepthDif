@@ -449,7 +449,7 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
         self.assertTrue(Path(grid["land_mask_path"]).exists())
         self.assertEqual(
             [region["name"] for region in grid["force_include_regions"]],
-            ["mediterranean", "baltic", "red_sea", "great_lakes"],
+            ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
 
     def test_synthetic_mode_samples_sparse_x_from_glorys_y(self) -> None:
