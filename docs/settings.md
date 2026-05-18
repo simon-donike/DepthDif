@@ -281,7 +281,7 @@ Detailed objective math, implementation mapping, visualization, and citation: [A
 | `wandb.log_stats_every_n_steps` | `200` | Step interval for scalar debug stats. |  
 | `wandb.log_images_every_n_steps` | `200` | Step interval for validation preview images. |  
 | `dataloader.batch_size` | `4` | Training dataloader batch size. |  
-| `dataloader.val_batch_size` | `5` | Validation batch size (falls back to `batch_size` if omitted). |  
+| `dataloader.val_batch_size` | `2` | Validation batch size (falls back to `batch_size` if omitted). |
 | `dataloader.num_workers` | `4` | Number of training dataloader workers. |  
 | `dataloader.val_num_workers` | `0` | Validation workers (`0` avoids h5netcdf sanity-check instability). |  
 | `dataloader.persistent_workers` | `true` | Keeps train workers alive across epochs when true. |  
