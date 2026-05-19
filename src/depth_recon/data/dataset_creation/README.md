@@ -78,11 +78,11 @@ variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
 salinity, and validity masks. Temperature stretches decode to Kelvin.
 The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys. The pixel
-scenario resolver enables salinity for `--scenario salinity` and `--scenario joint`,
-which returns `x_salinity`, `y_salinity`, and their validity masks. Use
-`salinity_normalize(..., mode="denorm")` to recover physical PSU values. The
-dataloader does not concatenate variables; `PixelDiffusionConditional` selects or
-stacks fields according to the resolved scenario.
+scenario resolver sets `output.fields`; `--scenario salinity` skips temperature and
+returns `x_salinity`, `y_salinity`, and their validity masks, while `--scenario joint`
+returns both field groups. Use `salinity_normalize(..., mode="denorm")` to recover
+physical PSU values. The dataloader does not concatenate variables;
+`PixelDiffusionConditional` selects or stacks fields according to the resolved scenario.
 The authoritative land-mask GeoTIFF is copied into `masks/` in the export root
 and recorded in `manifest.yaml`.
 Dense raster dates are exported with process workers by default; use `--workers`

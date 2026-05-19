@@ -116,7 +116,7 @@ Ambient-occlusion objective example:
 
 Notes:
 - Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.include_salinity`, `model.generated_channels`, and `model.condition_channels`.
+- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `model.generated_channels`, and `model.condition_channels`.
 - `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
 - `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.
@@ -194,7 +194,7 @@ Use `src/depth_recon/inference/run_single.py` for a local smoke test. Set `CONFI
 /work/envs/depth/bin/python -m depth_recon.inference.run_single
 ```
 
-For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects the nearest available dataset snapshot inside the requested ISO week, runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction, decoded/dequantized GLORYS, and absolute prediction-vs-GLORYS error GeoTIFFs in degrees Celsius for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and patch squares. The exporter defaults to the GeoTIFF-backed dataset, reads its dedicated inference grid from `src/depth_recon/configs/px_space/inference_super_config.yaml`, stitches overlaps with deterministic spatial weights, and masks final land pixels to the GeoTIFF nodata value. Extra export-time Gaussian blur is disabled by default; pass a positive `--sigma` only when explicitly needed.
+For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects the nearest available dataset snapshot inside the requested ISO week, runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction, decoded/dequantized GLORYS, and absolute prediction-vs-GLORYS error GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Temperature exports are in degrees Celsius; salinity exports are in PSU. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and patch squares. The exporter defaults to the GeoTIFF-backed dataset, reads its dedicated inference grid from `src/depth_recon/configs/px_space/inference_super_config.yaml`, stitches overlaps with deterministic spatial weights, and masks final land pixels to the GeoTIFF nodata value. Extra export-time Gaussian blur is disabled by default; pass a positive `--sigma` only when explicitly needed.
 
 For a pooled validation-set depth summary, use `src/depth_recon/inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
 
@@ -219,6 +219,20 @@ To package one exported run for the Cesium globe viewer in the docs, use:
 ```
 
 The globe packager tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready folders and uploads those tiled assets, GeoJSON, graph PNGs, and `globe-config.json` when `--rclone-sync-scope globe` is used. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
+
+For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
+  --year 2018 \
+  --iso-week 25 \
+  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
+  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
+  --device cuda \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production/globe \
+  --rclone-sync-scope globe
+```
 
 ## Experiment Script
 

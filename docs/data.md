@@ -60,11 +60,11 @@ GLORYS weekly dates define the training timeline. For every GLORYS target date:
 The model-facing training sample is a patch cut from the shared grid. By
 default it contains sparse ARGO temperature observations, dense OSTIA surface
 temperature, the dense GLORYS temperature target, and masks that tell the model
-which values are observed, supervised, ocean, or missing. When
-`--scenario salinity` or `--scenario joint`, the sample also includes normalized
-`x_salinity` and `y_salinity` tensors plus salinity-specific masks. Those keys
-remain separate at the dataloader boundary; `PixelDiffusionConditional` stacks
-them with temperature only for `--scenario joint`.
+which values are observed, supervised, ocean, or missing. With
+`--scenario salinity`, the loader skips temperature tensors and returns normalized
+`x_salinity` and `y_salinity` plus salinity-specific masks. With
+`--scenario joint`, it returns both temperature and salinity tensors, and
+`PixelDiffusionConditional` stacks them at the model boundary.
 
 The precise tensor contract is intentionally separated from this overview. See
 [Data Contract](data-contract.md) for shapes, normalization, masks, and loader

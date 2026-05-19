@@ -37,6 +37,10 @@ dist
 *.tiff
 *.geotiff
 !src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
+!src/depth_recon/inference/
+!src/depth_recon/inference/export_global_variables.py
+!src/depth_recon/inference/transforms/
+!src/depth_recon/inference/transforms/salinity_blue_green_ramp.txt
 !src/depth_recon/inference/transforms/globe-config.template.json
 
 # Ckpts

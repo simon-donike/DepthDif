@@ -152,6 +152,7 @@ class TestPixelConfig(unittest.TestCase):
         self.assertEqual(bundle.model_cfg["model"]["output_fields"], ["salinity"])
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 50)
         self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 53)
+        self.assertEqual(bundle.data_cfg["dataset"]["output"]["fields"], ["salinity"])
         self.assertTrue(bundle.data_cfg["dataset"]["output"]["include_salinity"])
 
     def test_super_config_derives_joint_contract(self) -> None:
@@ -171,6 +172,10 @@ class TestPixelConfig(unittest.TestCase):
         )
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 100)
         self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 103)
+        self.assertEqual(
+            bundle.data_cfg["dataset"]["output"]["fields"],
+            ["temperature", "salinity"],
+        )
         self.assertTrue(bundle.data_cfg["dataset"]["output"]["include_salinity"])
 
     def test_cli_scenario_overrides_super_config_scenario(self) -> None:
@@ -274,6 +279,7 @@ class TestPixelConfig(unittest.TestCase):
                             model_section["condition_channels"],
                             contract["condition_channels"],
                         )
+                        self.assertEqual(data_output["fields"], contract["fields"])
                         self.assertEqual(
                             data_output["include_salinity"],
                             contract["include_salinity"],
@@ -426,6 +432,9 @@ class TestPixelConfig(unittest.TestCase):
             self.assertEqual(effective_model["model"]["generated_channels"], 2)
             self.assertEqual(effective_model["model"]["condition_channels"], 5)
             self.assertEqual(effective_model["model"]["condition_mask_channels"], 3)
+            self.assertEqual(
+                effective_data["dataset"]["output"]["fields"], ["salinity"]
+            )
             self.assertTrue(effective_data["dataset"]["output"]["include_salinity"])
             self.assertEqual(effective_training["dataloader"]["batch_size"], 3)
             self.assertEqual(

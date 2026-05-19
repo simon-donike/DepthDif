@@ -139,8 +139,8 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
 - applies the configured land-mask GeoTIFF at the final write step so land pixels and uncovered water use the same GeoTIFF nodata value
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
-- exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized and written in degrees Celsius, matching the prediction rasters and globe color ramp
-- writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius on the finalized raster grid
+- exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized into the active variable unit
+- writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius for temperature or PSU for salinity on the finalized raster grid
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
 - exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
@@ -167,11 +167,48 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only
-- `graphs/`: one large PNG per sampled full-profile location with side-by-side temperature-vs-depth and absolute-error-vs-depth panels
+- `graphs/`: one large PNG per sampled full-profile location with side-by-side variable-vs-depth and absolute-error-vs-depth panels
 - `globe/`: Cesium tiles, hosted GeoJSON, copied graphs, and `globe-config.json` when `--public-base-url` or `--rclone-remote` is supplied
 - `selected_patches.csv`: the dataset rows used for the run
 - `run_summary.yaml`: checkpoint/config/date, forced inference-grid, land-mask, packaging, and upload metadata for traceability
 When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYYMMDD>` and the run directory matches that name under `inference/outputs/`.
+
+### Dual-Variable Production Globe Export
+Use `depth_recon.inference.export_global_variables` for the hosted production globe when both temperature and salinity should be available from one stable viewer manifest. It runs two independent single-variable exports with separate checkpoints, then packages both into one `globe/` directory whose `globe-config.json` contains `variables.temperature`, `variables.salinity`, and legacy top-level fields for the default temperature layer.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
+  --year 2018 \
+  --iso-week 25 \
+  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
+  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
+  --device cuda \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production/globe \
+  --rclone-sync-scope globe
+```
+
+Default output layout:
+
+```text
+inference/outputs/global_variables_<YYYY>_W<WW>/
+  temperature/
+    temperature_prediction_surface.tif
+    temperature_glorys_surface.tif
+    temperature_absolute_error_surface.tif
+    ...
+  salinity/
+    salinity_prediction_surface.tif
+    salinity_glorys_surface.tif
+    salinity_absolute_error_surface.tif
+    ...
+  globe/
+    globe-config.json
+    temperature/...
+    salinity/...
+```
+
+The salinity export uses `y_hat_salinity_denorm`, `y_salinity`, `y_salinity_valid_mask`, salinity normalization/denormalization, and decoded GLORYS salinity patches from `_load_y_salinity_patch`. Its GeoTIFFs are written in PSU, and salinity globe layers use the default 30-40 PSU fixed color scale.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
@@ -204,13 +241,13 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 ## Workflow 1d: Package One Run for the Cesium Globe
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
-- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the 0-30 C color ramp so true 0 C ocean remains visible, then tiles them with `gdal2tiles.py`
+- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them with `gdal2tiles.py`
 - colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth's 2nd-98th percentile range, then tiles them beside prediction and GLORYS
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
 - rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points
 - rewrites the patch GeoJSON with rounded coordinates for the viewer overlay
-- writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider
+- writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider; paired exports also write a `variables` object used by the Temperature/Salinity selector
 
 Typical run:
 ```bash

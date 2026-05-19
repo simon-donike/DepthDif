@@ -185,6 +185,7 @@ def apply_pixel_scenario(
     model_section["output_fields"] = list(output_fields)
     model_section["generated_channels"] = generated_channels
     model_section["condition_channels"] = condition_channels
+    output_section["fields"] = list(output_fields)
     output_section["include_salinity"] = "salinity" in output_fields
 
 

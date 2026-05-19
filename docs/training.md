@@ -12,7 +12,7 @@ Use `--scenario` for pixel-space GeoTIFF training so the data/model channel cont
 
 CLI controls:
 - `--config` defaults to `src/depth_recon/configs/px_space/training_super_config.yaml`
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `model.generated_channels`, `model.condition_channels`, and `data.dataset.output.include_salinity`
+- `--scenario temperature|salinity|joint` derives `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, and `data.dataset.output.include_salinity`
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`) after scenario resolution; inference helpers also accept `inference.*` overrides
 - because the super-config has top-level `data`, `model`, and `training` sections, model overrides use `model.*` paths
 
@@ -57,7 +57,7 @@ The scenario selector supports three pixel-space contracts and applies the coupl
 | `salinity` | `['salinity']` | enabled | `50` | `53` |
 | `joint` | `['temperature', 'salinity']` | enabled | `100` | `103` |
 
-`condition_channels` is derived from selected output channels plus the enabled conditioning inputs: OSTIA EO, collapsed valid mask, and GLORYS land mask. Do not maintain `model.output_fields`, `model.generated_channels`, `model.condition_channels`, or `data.dataset.output.include_salinity` manually in normal super-configs; use `--scenario` and let the resolver write effective configs. `--set` still runs after scenario resolution for intentional experiments.
+`condition_channels` is derived from selected output channels plus the enabled conditioning inputs: OSTIA EO, collapsed valid mask, and GLORYS land mask. Do not maintain `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, or `data.dataset.output.include_salinity` manually in normal super-configs; use `--scenario` and let the resolver write effective configs. `--set` still runs after scenario resolution for intentional experiments.
 
 Every run snapshots the original super-config plus resolved effective `data_config_effective.yaml`, `model_config_effective.yaml`, and `training_config_effective.yaml` under `logs/<timestamp>/`, and uploads those files to W&B. Validation shuffling stays enabled by default in the super-config for the current experimentation workflow.
 
@@ -68,7 +68,7 @@ Start from scratch or from a checkpoint trained with the same architecture; temp
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion.
 - `train.py` super-config workflow is pixel-space only; latent diffusion still uses the latent config files documented below.
 - dataset variant is selected by `dataset.core.dataset_variant`; use `"argo_geotiff_gridded"` for the active GeoTIFF workflow. `"argo_netcdf_gridded"` is legacy.
-- `dataset.output.include_salinity` is derived by `--scenario`; do not maintain it by hand in the super-config.
+- `dataset.output.fields` and `dataset.output.include_salinity` are derived by `--scenario`; do not maintain them by hand in the super-config.
 - Pixel split data/model/training YAML files were removed; use the super-configs for pixel training and inference.
 
 ## What `train.py` Does During Startup

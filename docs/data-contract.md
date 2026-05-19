@@ -24,7 +24,7 @@ training patch covers `12.8 x 12.8` degrees. The default GeoTIFF patch stride is
 ## Sample Keys
 
 Each dataset item is a dictionary. After collation, tensor keys gain a leading
-batch dimension. Salinity keys are enabled by the scenario resolver for salinity-only and joint training.
+batch dimension. `data.dataset.output.fields` controls which physical fields are loaded: temperature uses `x`/`y`, salinity-only uses only the salinity keys, and joint uses both groups.
 
 | Key | Item shape | Batch shape | Dtype | Meaning |
 | --- | ---: | ---: | --- | --- |
@@ -39,7 +39,7 @@ batch dimension. Salinity keys are enabled by the scenario resolver for salinity
 | `y_salinity_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Opt-in mask where the GLORYS salinity target is valid ocean data. |
 | `x_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | True where any ARGO temperature depth is present in that horizontal pixel. |
 | `x_salinity_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | Opt-in mask where any ARGO salinity depth is present in that horizontal pixel. |
-| `land_mask` | `(1, H, W)` | `(B, 1, H, W)` | `float32` | GLORYS spatial ocean/domain support; `1` where any temperature target depth is finite and `0` elsewhere. |
+| `land_mask` | `(1, H, W)` | `(B, 1, H, W)` | `float32` | GLORYS spatial ocean/domain support; `1` where any active target depth is finite and `0` elsewhere. |
 | `date` | scalar | `(B,)` | integer | GLORYS target date as `YYYYMMDD`. |
 | `coords` | `(2,)` | `(B, 2)` | `float32` | Optional patch-center latitude and longitude. |
 | `info` | dictionary | list-like | metadata | Optional debugging metadata, not part of the training model input. |
@@ -56,7 +56,7 @@ The active super-configs do not require users to maintain salinity flags by hand
 /work/envs/depth/bin/python train.py --scenario joint
 ```
 
-The resolver writes `dataset.output.include_salinity=false` for `temperature` and `true` for `salinity` and `joint`. It also derives `model.output_fields`, `model.generated_channels`, and `model.condition_channels`, so the GeoTIFF loader and model agree before batches are built.
+The resolver writes `dataset.output.fields` for the selected scenario and sets `dataset.output.include_salinity=false` for `temperature` and `true` for `salinity` and `joint`. It also derives `model.output_fields`, `model.generated_channels`, and `model.condition_channels`, so the GeoTIFF loader and model agree before batches are built.
 
 ## Loading Steps
 

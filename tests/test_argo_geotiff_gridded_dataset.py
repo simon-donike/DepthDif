@@ -271,6 +271,55 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
 
+    def test_salinity_only_output_fields_skip_temperature_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+                return_info=True,
+                return_coords=True,
+                include_salinity=True,
+                output_fields=("salinity",),
+            )
+
+            sample = dataset[0]
+
+            self.assertEqual(dataset.output_fields, ("salinity",))
+            self.assertNotIn("x", sample)
+            self.assertNotIn("y", sample)
+            self.assertNotIn("x_valid_mask", sample)
+            self.assertNotIn("y_valid_mask", sample)
+            self.assertEqual(sample["x_salinity"].shape, (2, 2, 2))
+            self.assertEqual(sample["y_salinity"].shape, (2, 2, 2))
+            self.assertEqual(sample["x_salinity_valid_mask"].shape, (2, 2, 2))
+            self.assertEqual(sample["y_salinity_valid_mask"].shape, (2, 2, 2))
+            self.assertEqual(sample["land_mask"].shape, (1, 2, 2))
+
+            x_salinity_psu = salinity_normalize(
+                mode="denorm", tensor=sample["x_salinity"]
+            )
+            y_salinity_psu = salinity_normalize(
+                mode="denorm", tensor=sample["y_salinity"]
+            )
+            self.assertTrue(
+                torch.allclose(
+                    x_salinity_psu[:, 0, 0],
+                    torch.tensor([35.0, 36.0], dtype=torch.float32),
+                    atol=0.05,
+                )
+            )
+            self.assertAlmostEqual(float(y_salinity_psu[0, 0, 0]), 35.2, delta=0.05)
+            self.assertAlmostEqual(float(y_salinity_psu[1, 0, 0]), 36.2, delta=0.05)
+
     def test_land_mask_fallback_uses_ostia_then_on_disk_mask(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))

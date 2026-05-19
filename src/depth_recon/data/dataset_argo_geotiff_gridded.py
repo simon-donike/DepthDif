@@ -574,6 +574,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return_info: bool = True,
         return_coords: bool = True,
         include_salinity: bool = False,
+        output_fields: Sequence[str] | str | None = None,
         random_seed: int = 7,
         cache_size: int = 8,
         val_fraction: float = 0.2,
@@ -613,7 +614,11 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.ostia_var_name = str(ostia_var_name)
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
-        self.include_salinity = bool(include_salinity)
+        self.output_fields = self._normalize_output_fields(
+            output_fields, include_salinity=bool(include_salinity)
+        )
+        self.include_salinity = "salinity" in self.output_fields
+        self._loads_temperature = "temperature" in self.output_fields
         self.random_seed = int(random_seed)
         self.require_argo_for_train = bool(require_argo_for_train)
         self.require_argo_for_val = bool(require_argo_for_val)
@@ -921,6 +926,9 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     default=False,
                 )
             ),
+            output_fields=cls._cfg_get(
+                ds_cfg, "output.fields", "output_fields", default=None
+            ),
             random_seed=int(
                 cls._cfg_get(ds_cfg, "runtime.random_seed", "random_seed", default=7)
             ),
@@ -948,6 +956,32 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             return node
         _ = flat_key
         return default
+
+    @staticmethod
+    def _normalize_output_fields(
+        output_fields: Sequence[str] | str | None,
+        *,
+        include_salinity: bool,
+    ) -> tuple[str, ...]:
+        """Resolve physical fields loaded for each dataset sample."""
+        if output_fields is None:
+            return ("temperature", "salinity") if include_salinity else ("temperature",)
+        if isinstance(output_fields, str):
+            fields = (output_fields,)
+        else:
+            fields = tuple(str(field) for field in output_fields)
+        normalized = tuple(field.strip().lower() for field in fields if field.strip())
+        if not normalized:
+            raise ValueError("dataset.output.fields must contain at least one field.")
+        unsupported = sorted(set(normalized) - {"temperature", "salinity"})
+        if unsupported:
+            raise ValueError(
+                "dataset.output.fields contains unsupported fields: "
+                f"{unsupported}. Supported fields are: temperature, salinity."
+            )
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("dataset.output.fields cannot contain duplicates.")
+        return normalized
 
     @staticmethod
     def _optional_int(value: Any) -> int | None:
@@ -1268,44 +1302,42 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         """Return one model-ready training sample."""
         row = self._rows[int(idx)]
         eo_np = self._load_eo_patch(row)
-        y_np = self._load_y_patch(row)
-        y_valid_mask_np = np.isfinite(y_np)
-        if self.synthetic_mode:
-            x_np, x_valid_mask_np = self._build_synthetic_x_from_glorys(
-                y_np,
-                y_valid_mask_np,
-                row,
-                idx=int(idx),
+        temperature_payload: dict[str, torch.Tensor] | None = None
+        salinity_payload: dict[str, torch.Tensor] | None = None
+        land_support_np: np.ndarray | None = None
+
+        if self._loads_temperature:
+            y_np = self._load_y_patch(row)
+            y_valid_mask_np = np.isfinite(y_np)
+            if self.synthetic_mode:
+                x_np, x_valid_mask_np = self._build_synthetic_x_from_glorys(
+                    y_np,
+                    y_valid_mask_np,
+                    row,
+                    idx=int(idx),
+                )
+            else:
+                x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
+
+            x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
+            y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))
+            x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+            x_valid_mask = torch.from_numpy(
+                x_valid_mask_np.astype(np.bool_, copy=False)
             )
-        else:
-            x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
+            y_valid_mask = torch.from_numpy(
+                y_valid_mask_np.astype(np.bool_, copy=False)
+            )
+            temperature_payload = {
+                "x": x,
+                "y": y,
+                "x_valid_mask": x_valid_mask,
+                "y_valid_mask": y_valid_mask,
+                "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
+            }
+            land_support_np = y_valid_mask_np
 
-        land_mask_np = self._build_land_mask_patch(
-            row,
-            y_valid_mask_np=y_valid_mask_np,
-            eo_np=eo_np,
-        )
-        eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
-        x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
-        y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))
-        eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
-        x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-        y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-        x_valid_mask = torch.from_numpy(x_valid_mask_np.astype(np.bool_, copy=False))
-        y_valid_mask = torch.from_numpy(y_valid_mask_np.astype(np.bool_, copy=False))
-        land_mask = torch.from_numpy(land_mask_np)
-        x_valid_mask_1d = x_valid_mask.any(dim=0, keepdim=True)
-
-        sample: dict[str, Any] = {
-            "eo": eo,
-            "x": x,
-            "y": y,
-            "x_valid_mask": x_valid_mask,
-            "y_valid_mask": y_valid_mask,
-            "x_valid_mask_1d": x_valid_mask_1d,
-            "land_mask": land_mask,
-            "date": _parse_date_int(row.get("date", 19700115)),
-        }
         if self.include_salinity:
             y_salinity_np = self._load_y_salinity_patch(row)
             y_salinity_valid_mask_np = np.isfinite(y_salinity_np)
@@ -1336,16 +1368,35 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             y_salinity_valid_mask = torch.from_numpy(
                 y_salinity_valid_mask_np.astype(np.bool_, copy=False)
             )
-            x_salinity_valid_mask_1d = x_salinity_valid_mask.any(dim=0, keepdim=True)
-            sample.update(
-                {
-                    "x_salinity": x_salinity,
-                    "y_salinity": y_salinity,
-                    "x_salinity_valid_mask": x_salinity_valid_mask,
-                    "y_salinity_valid_mask": y_salinity_valid_mask,
-                    "x_salinity_valid_mask_1d": x_salinity_valid_mask_1d,
-                }
-            )
+            salinity_payload = {
+                "x_salinity": x_salinity,
+                "y_salinity": y_salinity,
+                "x_salinity_valid_mask": x_salinity_valid_mask,
+                "y_salinity_valid_mask": y_salinity_valid_mask,
+                "x_salinity_valid_mask_1d": x_salinity_valid_mask.any(
+                    dim=0, keepdim=True
+                ),
+            }
+            if land_support_np is None:
+                # Salinity-only runs should derive the spatial mask from salinity support.
+                land_support_np = y_salinity_valid_mask_np
+
+        land_mask_np = self._build_land_mask_patch(
+            row,
+            y_valid_mask_np=land_support_np,
+            eo_np=eo_np,
+        )
+        eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
+        eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        sample: dict[str, Any] = {
+            "eo": eo,
+            "land_mask": torch.from_numpy(land_mask_np),
+            "date": _parse_date_int(row.get("date", 19700115)),
+        }
+        if temperature_payload is not None:
+            sample.update(temperature_payload)
+        if salinity_payload is not None:
+            sample.update(salinity_payload)
         if self.return_coords:
             sample["coords"] = torch.tensor(
                 [

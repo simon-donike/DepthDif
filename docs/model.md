@@ -82,7 +82,7 @@ Pixel training and inference use `--scenario temperature|salinity|joint` or the 
 | `salinity` | `['salinity']` | enabled | `50` | `53` |
 | `joint` | `['temperature', 'salinity']` | enabled | `100` | `103` |
 
-For `salinity`, model-facing `x`, `y`, and validity masks are sourced from `x_salinity`, `y_salinity`, and their salinity masks. For `joint`, `PixelDiffusionConditional` stacks temperature first and salinity second. Existing 50-channel temperature checkpoints are not shape-compatible with joint 100-channel runs.
+For `salinity`, the dataloader returns only `x_salinity`, `y_salinity`, and their salinity masks, which become the single model-facing field. For `joint`, `PixelDiffusionConditional` stacks temperature first and salinity second. Existing 50-channel temperature checkpoints are not shape-compatible with joint 100-channel runs.
 
 Inside the model path, `_prepare_model_batch_tensors` builds:
 

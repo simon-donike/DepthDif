@@ -14,13 +14,13 @@ Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config
 
 Select the pixel task with `--scenario temperature|salinity|joint` or with the top-level `scenario` key in the super-config. CLI `--scenario` wins over the file. The resolver lives in `depth_recon.configs.config_resolver_pixel` and materializes effective split configs for existing dataset/model constructors.
 
-| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.include_salinity` | Derived `model.generated_channels` | Derived `model.condition_channels` |
-| --- | --- | ---: | ---: | ---: |
-| `temperature` | `['temperature']` | `false` | `50` | `53` |
-| `salinity` | `['salinity']` | `true` | `50` | `53` |
-| `joint` | `['temperature', 'salinity']` | `true` | `100` | `103` |
+| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Derived `model.generated_channels` | Derived `model.condition_channels` |
+| --- | --- | --- | ---: | ---: | ---: |
+| `temperature` | `['temperature']` | `['temperature']` | `false` | `50` | `53` |
+| `salinity` | `['salinity']` | `['salinity']` | `true` | `50` | `53` |
+| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `100` | `103` |
 
-`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `include_salinity`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
+`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
 
 Examples:
 
@@ -72,7 +72,8 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels sampled when synthetic mode is enabled. |
 | `data.dataset.output.return_info` | `false` | Adds metadata under `batch['info']`. |
 | `data.dataset.output.return_coords` | `true` | Adds patch-center coordinates under `batch['coords']`. Required for coordinate conditioning. |
-| `data.dataset.output.include_salinity` | scenario-derived | Enables `x_salinity`, `y_salinity`, and salinity masks. Derived from scenario. |
+| `data.dataset.output.fields` | scenario-derived | Physical fields loaded by the GeoTIFF dataset: `temperature`, `salinity`, or both. |
+| `data.dataset.output.include_salinity` | scenario-derived | Enables salinity raster/profile support. Derived from scenario. |
 | `data.dataset.runtime.random_seed` | `7` | Deterministic split/sampling seed. |
 | `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
 | `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
@@ -163,6 +164,6 @@ Export scripts may expose CLI flags such as `--patch-stride` or `--min-ocean-fra
 - `x_valid_mask` is ARGO observation support; it is collapsed to one conditioning channel when `condition_mask_channels=1`.
 - `land_mask` is GLORYS spatial/domain support and gates loss when mask-based loss is enabled.
 - `output_land_mask` is an optional predict-time cleanup overlay, not a training dataloader key.
-- For salinity-only runs, the model-facing `x`, `y`, and masks are taken from `x_salinity`, `y_salinity`, and their salinity masks.
+- For salinity-only runs, the dataloader skips temperature tensors and returns only `x_salinity`, `y_salinity`, and their salinity masks.
 - For joint runs, temperature channels come first, followed by salinity channels.
 - Existing checkpoints are only shape-compatible with runs that use the same scenario-derived channel counts.
