@@ -176,6 +176,8 @@ When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYY
 ### Dual-Variable Production Globe Export
 Use `depth_recon.inference.export_global_variables` for the hosted production globe when both temperature and salinity should be available from one stable viewer manifest. It runs two independent single-variable exports with separate checkpoints, then packages both into one `globe/` directory whose `globe-config.json` contains `variables.temperature`, `variables.salinity`, and legacy top-level fields for the default temperature layer.
 
+Run this wrapper once with two checkpoints: one checkpoint trained for `--scenario temperature` and one trained for `--scenario salinity`. The wrapper calls the single-variable exporter internally for each scenario, packages the combined Cesium bundle, and uploads it automatically when `--rclone-remote` is provided.
+
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
   --year 2018 \
@@ -187,6 +189,8 @@ Use `depth_recon.inference.export_global_variables` for the hosted production gl
   --rclone-remote r2:depth-data/inference_production/globe \
   --rclone-sync-scope globe
 ```
+
+With `--rclone-sync-scope globe`, only the combined hosted globe bundle is synced to `r2:depth-data/inference_production/globe`; the raw temperature and salinity GeoTIFF run folders remain local. Use `--rclone-sync-scope run` when the raw paired run directory should be uploaded too. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json`.
 
 Default output layout:
 
