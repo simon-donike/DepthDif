@@ -131,7 +131,7 @@ training:  # optimizer, trainer, and logging
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
       max_full_reconstruction_samples: 5  # max full recon samples
   trainer:  # PyTorch Lightning trainer
-    max_epochs: 1500  # epoch limit
+    max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection
     devices: auto  # device selection
     num_gpus: null  # legacy GPU count override
@@ -161,9 +161,9 @@ training:  # optimizer, trainer, and logging
     log_stats_every_n_steps: 200  # scalar stats cadence
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
-    batch_size: 4  # train batch size
-    val_batch_size: 2  # validation batch size
-    num_workers: 6  # train loader workers
+    batch_size: 48  # train batch size
+    val_batch_size: 6  # validation batch size
+    num_workers: 4  # train loader workers
     val_num_workers: 0  # validation loader workers
     persistent_workers: true  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive

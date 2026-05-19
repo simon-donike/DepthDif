@@ -16,6 +16,7 @@ from depth_recon.inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     DEFAULT_INFERENCE_CONFIG,
+    EXPORT_VARIABLE_SPECS,
     ExportInferenceWrapper,
     FullProfileSample,
     MosaicLayout,
@@ -32,6 +33,7 @@ from depth_recon.inference.export_global import (
     _prepare_run_directory,
     _promote_production_run,
     _load_ground_truth_patch_celsius,
+    _load_ground_truth_patch_for_variable,
     _prediction_zeros_to_nan,
     _repair_small_nodata_gaps_2d,
     create_raster_accumulator,
@@ -42,7 +44,7 @@ from depth_recon.inference.export_global import (
     write_absolute_error_geotiff,
     write_global_top_band_geotiff,
 )
-from depth_recon.utils.normalizations import temperature_normalize
+from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
 
 
 class _TinyInferenceDataset:
@@ -93,11 +95,39 @@ class _DecodedGlorysDataset:
         )
 
 
+class _DecodedSalinityDataset:
+    def _load_y_salinity_patch(self, row: dict[str, int]) -> np.ndarray:
+        """Return one already decoded PSU GLORYS salinity patch."""
+        return np.asarray(
+            [
+                [[float(row["date"] % 100) + 30.0, 34.0]],
+                [[35.0, 36.0]],
+            ],
+            dtype=np.float32,
+        )
+
+
+class _SalinityPredictModel(nn.Module):
+    def predict_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor]:
+        _ = batch, batch_idx
+        return {
+            "y_hat_denorm": torch.full((1, 3, 1, 1), -1.0, dtype=torch.float32),
+            "y_hat_salinity_denorm": torch.tensor(
+                [[[[34.0]], [[35.0]], [[36.0]]]], dtype=torch.float32
+            ),
+        }
+
+
 class TestGlobalInferenceExport(unittest.TestCase):
     def test_export_inference_wrapper_runs_one_prediction_per_batch(self) -> None:
         model = _IncrementingPredictModel()
         wrapper = ExportInferenceWrapper(
             model,
+            variable_spec=EXPORT_VARIABLE_SPECS["temperature"],
             export_ground_truth=False,
             export_full_prediction_stack=True,
             depth_channel_indices=(0, 2),
@@ -121,6 +151,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         model = _IncrementingPredictModel()
         wrapper = ExportInferenceWrapper(
             model,
+            variable_spec=EXPORT_VARIABLE_SPECS["temperature"],
             export_ground_truth=True,
             export_full_prediction_stack=False,
             depth_channel_indices=(0, 2),
@@ -143,6 +174,46 @@ class TestGlobalInferenceExport(unittest.TestCase):
             torch.tensor([[[[4.0]], [[18.0]]]], dtype=torch.float32),
         )
 
+    def test_export_inference_wrapper_uses_salinity_keys_and_denormalization(
+        self,
+    ) -> None:
+        wrapper = ExportInferenceWrapper(
+            _SalinityPredictModel(),
+            variable_spec=EXPORT_VARIABLE_SPECS["salinity"],
+            export_ground_truth=True,
+            export_full_prediction_stack=True,
+            depth_channel_indices=(0, 2),
+        )
+        y_salinity_psu = torch.tensor(
+            [[[[33.0]], [[34.0]], [[35.0]]]],
+            dtype=torch.float32,
+        )
+        y_salinity_norm = salinity_normalize(mode="norm", tensor=y_salinity_psu)
+
+        outputs = wrapper(
+            {
+                "y_salinity": y_salinity_norm,
+                "y_salinity_valid_mask": torch.tensor(
+                    [[[[True]], [[True]], [[False]]]],
+                    dtype=torch.bool,
+                ),
+            }
+        )
+
+        torch.testing.assert_close(
+            outputs["prediction_depth_stack"],
+            torch.tensor([[[[34.0]], [[36.0]]]], dtype=torch.float32),
+        )
+        torch.testing.assert_close(
+            outputs["prediction_full_stack"],
+            torch.tensor([[[[34.0]], [[35.0]], [[36.0]]]], dtype=torch.float32),
+        )
+        torch.testing.assert_close(
+            outputs["ground_truth_depth_stack"],
+            torch.tensor([[[[33.0]], [[float("nan")]]]], dtype=torch.float32),
+            equal_nan=True,
+        )
+
     def test_load_ground_truth_patch_celsius_uses_decoded_dataset_values(self) -> None:
         patch = _load_ground_truth_patch_celsius(
             _DecodedGlorysDataset(),
@@ -153,6 +224,19 @@ class TestGlobalInferenceExport(unittest.TestCase):
         np.testing.assert_allclose(
             patch,
             np.asarray([[[5.0, 11.0]], [[20.0, 21.0]]], dtype=np.float32),
+        )
+
+    def test_load_ground_truth_patch_for_salinity_uses_salinity_loader(self) -> None:
+        patch = _load_ground_truth_patch_for_variable(
+            _DecodedSalinityDataset(),
+            {"date": 20260105},
+            EXPORT_VARIABLE_SPECS["salinity"],
+        )
+
+        assert patch is not None
+        np.testing.assert_allclose(
+            patch,
+            np.asarray([[[35.0, 34.0]], [[35.0, 36.0]]], dtype=np.float32),
         )
 
     def test_default_full_sample_count_exports_all_locations(self) -> None:
@@ -899,6 +983,93 @@ class TestGlobalInferenceExport(unittest.TestCase):
             finally:
                 _cleanup_accumulator(accumulator)
 
+    def test_salinity_geotiff_metadata_records_units_and_error_transform(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=0.0,
+                bottom=0.0,
+                right=4.0,
+                top=4.0,
+                pixel_width=1.0,
+                pixel_height=1.0,
+                width=4,
+                height=4,
+                patch_width=4,
+                patch_height=4,
+                transform=from_origin(0.0, 4.0, 1.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="salinity_prediction",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 35.5
+                accumulator.count_array[:] = 1
+                prediction_path = tmp_path / "salinity_prediction_surface.tif"
+                write_global_top_band_geotiff(
+                    output_path=prediction_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_psu",
+                    tags={
+                        "kind": "prediction",
+                        "variable": "salinity",
+                        "value_units": "PSU",
+                        "value_unit_label": "PSU",
+                        "value_space": "denormalized_dequantized_psu",
+                        "source_value_transform": "model_prediction_denormalized_to_psu",
+                    },
+                )
+                ground_truth_path = tmp_path / "salinity_glorys_surface.tif"
+                with rasterio.open(prediction_path) as prediction_ds:
+                    profile = prediction_ds.profile
+                with rasterio.open(ground_truth_path, "w", **profile) as ds:
+                    ds.write(np.full((4, 4), 34.0, dtype=np.float32), 1)
+
+                error_path = tmp_path / "salinity_absolute_error_surface.tif"
+                write_absolute_error_geotiff(
+                    prediction_path=prediction_path,
+                    ground_truth_path=ground_truth_path,
+                    output_path=error_path,
+                    nodata=-9999.0,
+                    band_description="absolute_error_surface_psu",
+                    tags={
+                        "kind": "absolute_error",
+                        "variable": "salinity",
+                        "value_units": "PSU",
+                        "value_space": "absolute_error_psu",
+                        "source_value_transform": "abs(prediction_psu_minus_glorys_psu)",
+                    },
+                )
+
+                with rasterio.open(prediction_path) as ds:
+                    prediction_tags = ds.tags()
+                    self.assertEqual(ds.descriptions[0], "predicted_surface_psu")
+                with rasterio.open(error_path) as ds:
+                    error_tags = ds.tags()
+                    error_band = ds.read(1)
+                    self.assertEqual(ds.descriptions[0], "absolute_error_surface_psu")
+
+                self.assertEqual(prediction_tags["value_units"], "PSU")
+                self.assertEqual(
+                    prediction_tags["value_space"], "denormalized_dequantized_psu"
+                )
+                self.assertEqual(
+                    prediction_tags["source_value_transform"],
+                    "model_prediction_denormalized_to_psu",
+                )
+                self.assertEqual(error_tags["value_space"], "absolute_error_psu")
+                self.assertEqual(
+                    error_tags["source_value_transform"],
+                    "abs(prediction_psu_minus_glorys_psu)",
+                )
+                self.assertEqual(error_band[0, 0], 1.5)
+            finally:
+                _cleanup_accumulator(accumulator)
+
     def test_argo_point_features_use_pixel_centers(self) -> None:
         row = {
             "date": 20260105,
@@ -1009,6 +1180,13 @@ class TestGlobalInferenceExport(unittest.TestCase):
             feature["properties"]["prediction_profile_c"], [11.5, 12.5, None]
         )
         self.assertEqual(feature["properties"]["glorys_profile_c"], [10.5, 11.5, None])
+        self.assertEqual(feature["properties"]["variable"], "temperature")
+        self.assertEqual(feature["properties"]["value_units"], "degree_Celsius")
+        self.assertEqual(feature["properties"]["argo_profile"], [12.0, None, 14.0])
+        self.assertEqual(
+            feature["properties"]["prediction_profile"], [11.5, 12.5, None]
+        )
+        self.assertEqual(feature["properties"]["glorys_profile"], [10.5, 11.5, None])
 
     def test_profile_graph_title_uses_iso_week_and_geographic_coordinates_only(
         self,

@@ -17,6 +17,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
     DEFAULT_RCLONE_SYNC_SCOPE,
+    DEFAULT_SALINITY_COLOR_RAMP_PATH,
     DEFAULT_TEMPLATE_PATH,
     FULL_SAMPLE_PROPERTY_KEYS,
     _absolute_error_color_scale,
@@ -24,10 +25,13 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _build_parser,
     _build_gdal2tiles_command,
     _estimate_native_zoom_level,
+    _prefix_geojson_graph_paths,
+    _prefix_variable_config_asset_urls,
     _read_raster_metadata,
     _resolve_depth_export_artifacts,
     _resolve_rclone_sync_source,
     _rewrite_argo_sample_locations_geojson,
+    _run_variable_metadata,
     _rewrite_geojson,
     _sync_with_rclone,
     _validate_raster_transparency_contract,
@@ -191,6 +195,161 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             config["credits"]["full_sample_points"],
             "Random full-depth profile locations",
         )
+        self.assertEqual(config["variable"], "temperature")
+        self.assertEqual(config["value_units"], "degree_Celsius")
+        self.assertEqual(config["color_scale_min"], 0.0)
+        self.assertEqual(config["color_scale_max"], 30.0)
+
+    def test_build_globe_config_keeps_multivariable_config_and_legacy_fields(
+        self,
+    ) -> None:
+        template = {"credits": {}, "raster_transparency": {}}
+        bounds = {
+            "west": -10.0,
+            "south": -20.0,
+            "east": 10.0,
+            "north": 20.0,
+            "default_camera_destination": {"lon": 0.0, "lat": 0.0, "height": 1.0},
+        }
+        variables = {
+            "temperature": {
+                "variable": "temperature",
+                "prediction_tiles_url": "temperature/prediction_tiles_surface",
+                "depth_levels": [
+                    {"prediction_tiles_url": "temperature/prediction_tiles_surface"}
+                ],
+            },
+            "salinity": {
+                "variable": "salinity",
+                "prediction_tiles_url": "salinity/prediction_tiles_surface",
+                "value_unit_label": "PSU",
+                "depth_levels": [
+                    {"prediction_tiles_url": "salinity/prediction_tiles_surface"}
+                ],
+            },
+        }
+
+        config = build_globe_config(
+            selected_date=20260105,
+            target_date=20260105,
+            iso_year=2026,
+            iso_week=2,
+            prediction_tiles_url="temperature/prediction_tiles_surface",
+            ground_truth_tiles_url=None,
+            absolute_error_tiles_url=None,
+            depth_levels=variables["temperature"]["depth_levels"],
+            argo_sample_locations_url="temperature/argo_sample_locations.geojson",
+            argo_points_url=None,
+            patch_splits_url=None,
+            full_sample_points_url=None,
+            bounds=bounds,
+            prediction_credit="Prediction source",
+            ground_truth_credit=None,
+            absolute_error_credit=None,
+            points_credit=None,
+            patch_splits_credit=None,
+            full_sample_points_credit=None,
+            color_scale_min_c=0.0,
+            color_scale_max_c=30.0,
+            color_palette="temperature_blue_red",
+            raster_transparency={},
+            template=template,
+            variables=variables,
+            default_variable="temperature",
+        )
+
+        self.assertEqual(config["default_variable"], "temperature")
+        self.assertEqual(
+            config["variables"]["salinity"]["prediction_tiles_url"],
+            "salinity/prediction_tiles_surface",
+        )
+        self.assertEqual(config["color_scale_min"], 0.0)
+        self.assertEqual(config["color_scale_min_c"], 0.0)
+        self.assertEqual(config["prediction_tiles_url"], "temperature/prediction_tiles_surface")
+
+    def test_prefix_variable_config_asset_urls_rewrites_relative_tile_paths(
+        self,
+    ) -> None:
+        single_config = {
+            "prediction_tiles_url": "./prediction_tiles_surface",
+            "ground_truth_tiles_url": "./ground_truth_tiles_surface",
+            "absolute_error_tiles_url": None,
+            "argo_sample_locations_url": "./argo_sample_locations.geojson",
+            "depth_levels": [
+                {
+                    "prediction_tiles_url": "./prediction_tiles_surface",
+                    "ground_truth_tiles_url": "./ground_truth_tiles_surface",
+                    "absolute_error_tiles_url": "./absolute_error_tiles_surface",
+                }
+            ],
+        }
+
+        prefixed = _prefix_variable_config_asset_urls(
+            single_config,
+            variable="salinity",
+            public_base_url=None,
+        )
+        hosted = _prefix_variable_config_asset_urls(
+            single_config,
+            variable="salinity",
+            public_base_url="https://example.test/globe",
+        )
+
+        self.assertEqual(
+            prefixed["prediction_tiles_url"], "salinity/prediction_tiles_surface"
+        )
+        self.assertEqual(
+            prefixed["argo_sample_locations_url"],
+            "salinity/argo_sample_locations.geojson",
+        )
+        self.assertEqual(
+            prefixed["depth_levels"][0]["absolute_error_tiles_url"],
+            "salinity/absolute_error_tiles_surface",
+        )
+        self.assertEqual(
+            hosted["prediction_tiles_url"],
+            "https://example.test/globe/salinity/prediction_tiles_surface",
+        )
+
+    def test_prefix_geojson_graph_paths_rewrites_combined_profile_graphs(
+        self,
+    ) -> None:
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
+                    "properties": {"graph_png_path": "graphs/full_sample_001.png"},
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            geojson_path = Path(tmp_dir) / "samples.geojson"
+            geojson_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            _prefix_geojson_graph_paths(
+                geojson_path,
+                variable="salinity",
+                public_base_url=None,
+            )
+
+            rewritten = json.loads(geojson_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            rewritten["features"][0]["properties"]["graph_png_path"],
+            "salinity/graphs/full_sample_001.png",
+        )
+
+    def test_run_variable_metadata_uses_salinity_defaults(self) -> None:
+        metadata = _run_variable_metadata({"variable": "salinity"})
+
+        self.assertEqual(metadata["label"], "Salinity")
+        self.assertEqual(metadata["value_units"], "PSU")
+        self.assertEqual(metadata["value_unit_label"], "PSU")
+        self.assertEqual(metadata["color_scale_min"], 30.0)
+        self.assertEqual(metadata["color_scale_max"], 40.0)
+        self.assertEqual(metadata["color_ramp_path"], DEFAULT_SALINITY_COLOR_RAMP_PATH)
 
     def test_apply_alpha_mask_to_colorized_raster_hides_nodata(
         self,
@@ -305,7 +464,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
         self.assertIn("default_camera_destination", template)
+        self.assertIn("color_scale_min", template)
         self.assertIn("color_scale_min_c", template)
+        self.assertIn("default_variable", template)
+        self.assertIn("variables", template)
         self.assertIn("raster_transparency", template)
         self.assertEqual(
             template["raster_transparency"]["land_mask_applied_value"],
@@ -336,6 +498,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("Analysis", html)
         self.assertIn("Absolute Difference", html)
         self.assertIn("Depth Levels", html)
+        self.assertIn('id="globe-variable-control"', html)
+        self.assertIn('name="globe-variable"', html)
+        self.assertIn("Salinity", html)
         self.assertIn("Ocean Variable Reconstruction", html)
         self.assertIn("Patches", html)
         self.assertIn('id="globe-error-legend"', html)
@@ -345,6 +510,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn(".globe-toolbar__sections", css)
         self.assertIn("width: max-content;", css)
         self.assertIn("globe-legend__bar--error", css)
+        self.assertIn("globe-legend__bar--salinity", css)
         self.assertIn('document.querySelectorAll("script[src]")', loader)
         self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
         self.assertIn("function resolveConfigUrl()", globe_script)
@@ -353,12 +519,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             'const titleText = "Ocean Variable Reconstruction";', globe_script
         )
         self.assertIn("function addAbsoluteErrorLayer", globe_script)
+        self.assertIn("function activeVariableConfig", globe_script)
+        self.assertIn("function reloadVariableLayers", globe_script)
+        self.assertIn("selectedVariable", globe_script)
         self.assertIn('+ "k m"', globe_script)
         self.assertIn(
             "new URL(configParam, window.location.href).toString()", globe_script
         )
         self.assertIn("Full Sample #", globe_script)
         self.assertIn("depth_levels", default_config)
+        self.assertIn("default_variable", default_config)
+        self.assertIn("variables", default_config)
 
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch(

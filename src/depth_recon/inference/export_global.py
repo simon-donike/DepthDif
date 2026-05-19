@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -74,7 +74,7 @@ from depth_recon.inference.core import (
     resolve_checkpoint_path,
 )
 from depth_recon.paths import resolve_config_path
-from depth_recon.utils.normalizations import temperature_normalize
+from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
 from depth_recon.utils.validation_denoise import save_glorys_profile_comparison_plot
 
 DEFAULT_INFERENCE_CONFIG = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
@@ -116,6 +116,120 @@ MONTH_ABBREVIATIONS = (
     "Nov",
     "Dec",
 )
+DEFAULT_SALINITY_COLOR_SCALE_MIN = 30.0
+DEFAULT_SALINITY_COLOR_SCALE_MAX = 40.0
+
+
+@dataclass(frozen=True)
+class ExportVariableSpec:
+    """Export-time metadata for one predicted physical variable."""
+
+    name: str
+    label: str
+    prediction_denorm_key: str
+    x_key: str
+    y_key: str
+    x_valid_mask_key: str
+    y_valid_mask_key: str
+    x_valid_mask_1d_key: str
+    ground_truth_loader_name: str
+    normalize_fn: Callable[..., torch.Tensor]
+    value_units: str
+    value_unit_label: str
+    value_space: str
+    absolute_error_value_space: str
+    band_description_unit: str
+    color_scale_min: float
+    color_scale_max: float
+    color_palette: str
+    profile_x_label: str
+    error_x_label: str
+    include_surface_context_marker: bool
+    prediction_source_value_transform: str
+    ground_truth_source_value_transform: str
+    absolute_error_source_value_transform: str
+
+
+EXPORT_VARIABLE_SPECS: dict[str, ExportVariableSpec] = {
+    "temperature": ExportVariableSpec(
+        name="temperature",
+        label="Temperature",
+        prediction_denorm_key="y_hat_temperature_denorm",
+        x_key="x",
+        y_key="y",
+        x_valid_mask_key="x_valid_mask",
+        y_valid_mask_key="y_valid_mask",
+        x_valid_mask_1d_key="x_valid_mask_1d",
+        ground_truth_loader_name="_load_y_patch",
+        normalize_fn=temperature_normalize,
+        value_units="degree_Celsius",
+        value_unit_label="deg C",
+        value_space="denormalized_dequantized_celsius",
+        absolute_error_value_space="absolute_error_celsius",
+        band_description_unit="celsius",
+        color_scale_min=DEFAULT_COLOR_SCALE_MIN_C,
+        color_scale_max=DEFAULT_COLOR_SCALE_MAX_C,
+        color_palette="temperature_blue_red",
+        profile_x_label="Temperature (deg C)",
+        error_x_label="Absolute error (deg C)",
+        include_surface_context_marker=True,
+        prediction_source_value_transform="model_prediction_denormalized_to_celsius",
+        ground_truth_source_value_transform="source_glorys_decoded_dequantized_to_celsius",
+        absolute_error_source_value_transform="abs(prediction_celsius_minus_glorys_celsius)",
+    ),
+    "salinity": ExportVariableSpec(
+        name="salinity",
+        label="Salinity",
+        prediction_denorm_key="y_hat_salinity_denorm",
+        x_key="x_salinity",
+        y_key="y_salinity",
+        x_valid_mask_key="x_salinity_valid_mask",
+        y_valid_mask_key="y_salinity_valid_mask",
+        x_valid_mask_1d_key="x_salinity_valid_mask_1d",
+        ground_truth_loader_name="_load_y_salinity_patch",
+        normalize_fn=salinity_normalize,
+        value_units="PSU",
+        value_unit_label="PSU",
+        value_space="denormalized_dequantized_psu",
+        absolute_error_value_space="absolute_error_psu",
+        band_description_unit="psu",
+        color_scale_min=DEFAULT_SALINITY_COLOR_SCALE_MIN,
+        color_scale_max=DEFAULT_SALINITY_COLOR_SCALE_MAX,
+        color_palette="salinity_blue_green",
+        profile_x_label="Salinity (PSU)",
+        error_x_label="Absolute error (PSU)",
+        include_surface_context_marker=False,
+        prediction_source_value_transform="model_prediction_denormalized_to_psu",
+        ground_truth_source_value_transform="source_glorys_decoded_dequantized_to_psu",
+        absolute_error_source_value_transform="abs(prediction_psu_minus_glorys_psu)",
+    ),
+}
+
+
+def resolve_export_variable_spec(model_cfg: dict[str, Any]) -> ExportVariableSpec:
+    """Resolve the single physical variable exported by the configured model."""
+    model_section = model_cfg.get("model", {})
+    output_fields = model_section.get("output_fields")
+    if output_fields is None:
+        output_fields = [model_section.get("scenario", "temperature")]
+    if isinstance(output_fields, str):
+        output_field_list = [output_fields]
+    else:
+        output_field_list = list(output_fields)
+    output_field_list = [str(field).strip().lower() for field in output_field_list]
+    if len(output_field_list) != 1:
+        raise ValueError(
+            "Global single-variable export expects exactly one model.output_fields "
+            f"entry, got {output_field_list}. Run separate temperature/salinity "
+            "exports or use export_global_variables for production packaging."
+        )
+    field = output_field_list[0]
+    if field not in EXPORT_VARIABLE_SPECS:
+        supported = ", ".join(sorted(EXPORT_VARIABLE_SPECS))
+        raise ValueError(
+            f"Unsupported global export variable {field!r}. Supported variables: {supported}."
+        )
+    return EXPORT_VARIABLE_SPECS[field]
 
 
 @dataclass(frozen=True)
@@ -139,6 +253,7 @@ class ExportRunResult:
     iso_week: int
     selected_patch_count: int
     absolute_error_tif_path: Path | None = None
+    variable: str = "temperature"
 
 
 @dataclass(frozen=True)
@@ -231,29 +346,35 @@ class ExportInferenceWrapper(nn.Module):
         self,
         model: nn.Module,
         *,
+        variable_spec: ExportVariableSpec,
         export_ground_truth: bool,
         export_full_prediction_stack: bool,
         depth_channel_indices: Sequence[int],
     ) -> None:
         super().__init__()
         self.model = model
+        self.variable_spec = variable_spec
         self.export_ground_truth = bool(export_ground_truth)
         self.export_full_prediction_stack = bool(export_full_prediction_stack)
         self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         pred = self.model.predict_step(batch, batch_idx=0)
-        y_hat_denorm = pred["y_hat_denorm"]
+        prediction_denorm = pred.get(self.variable_spec.prediction_denorm_key)
+        if prediction_denorm is None:
+            prediction_denorm = pred["y_hat_denorm"]
         out: dict[str, torch.Tensor] = {
-            "prediction_depth_stack": y_hat_denorm[
+            "prediction_depth_stack": prediction_denorm[
                 :, self.depth_channel_indices
             ].contiguous(),
         }
         if self.export_full_prediction_stack:
-            out["prediction_full_stack"] = y_hat_denorm.contiguous()
+            out["prediction_full_stack"] = prediction_denorm.contiguous()
         if self.export_ground_truth:
-            target_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
-            y_valid_mask = batch["y_valid_mask"]
+            target_denorm = self.variable_spec.normalize_fn(
+                mode="denorm", tensor=batch[self.variable_spec.y_key]
+            )
+            y_valid_mask = batch[self.variable_spec.y_valid_mask_key]
             gt_depth_stack = target_denorm[:, self.depth_channel_indices]
             gt_depth_mask = y_valid_mask[:, self.depth_channel_indices]
             # Match the inference export mask semantics so both rasters share support.
@@ -1028,34 +1149,45 @@ def _full_profile_feature_for_sample(
     location_id: str,
     graph_png_path: str,
     depth_axis_m: np.ndarray,
+    variable_spec: ExportVariableSpec = EXPORT_VARIABLE_SPECS["temperature"],
 ) -> dict[str, Any]:
+    argo_profile = _profile_to_json_list(
+        sample.x_profile_c,
+        valid_mask=sample.observed_profile,
+    )
+    prediction_profile = _profile_to_json_list(
+        sample.y_hat_profile_c,
+        valid_mask=sample.target_valid_profile,
+    )
+    glorys_profile = _profile_to_json_list(
+        sample.y_target_profile_c,
+        valid_mask=sample.target_valid_profile,
+    )
+    properties = {
+        "location_id": str(location_id),
+        "graph_png_path": str(graph_png_path),
+        "variable": variable_spec.name,
+        "value_units": variable_spec.value_units,
+        "depth_m": _profile_to_json_list(depth_axis_m),
+        "ostia_sst_c": (
+            None
+            if not np.isfinite(float(sample.ostia_sst_c))
+            else float(sample.ostia_sst_c)
+        ),
+        "argo_profile": argo_profile,
+        "prediction_profile": prediction_profile,
+        "glorys_profile": glorys_profile,
+        # Retain legacy property names for downstream readers of existing exports.
+        "argo_profile_c": argo_profile,
+        "prediction_profile_c": prediction_profile,
+        "glorys_profile_c": glorys_profile,
+    }
     return _point_feature_for_pixel(
         row=sample.row,
         patch_shape=(int(sample.patch_height), int(sample.patch_width)),
         point_row=sample.point_row,
         point_col=sample.point_col,
-        extra_properties={
-            "location_id": str(location_id),
-            "graph_png_path": str(graph_png_path),
-            "depth_m": _profile_to_json_list(depth_axis_m),
-            "ostia_sst_c": (
-                None
-                if not np.isfinite(float(sample.ostia_sst_c))
-                else float(sample.ostia_sst_c)
-            ),
-            "argo_profile_c": _profile_to_json_list(
-                sample.x_profile_c,
-                valid_mask=sample.observed_profile,
-            ),
-            "prediction_profile_c": _profile_to_json_list(
-                sample.y_hat_profile_c,
-                valid_mask=sample.target_valid_profile,
-            ),
-            "glorys_profile_c": _profile_to_json_list(
-                sample.y_target_profile_c,
-                valid_mask=sample.target_valid_profile,
-            ),
-        },
+        extra_properties=properties,
     )
 
 
@@ -1066,6 +1198,7 @@ def _write_full_profile_sample_artifacts(
     writer: GeoJSONPointWriter,
     sample: FullProfileSample,
     location_id: str,
+    variable_spec: ExportVariableSpec = EXPORT_VARIABLE_SPECS["temperature"],
 ) -> None:
     graph_rel_path = Path("graphs") / f"{location_id}.png"
     depth_axis_m = _load_glorys_depth_axis_m(
@@ -1088,7 +1221,11 @@ def _write_full_profile_sample_artifacts(
         y_target_profile=y_target_profile_plot,
         observed_profile=sample.observed_profile,
         depth_axis=depth_axis_m,
-        ostia_sst_c=sample.ostia_sst_c,
+        ostia_sst_c=(
+            sample.ostia_sst_c if variable_spec.include_surface_context_marker else None
+        ),
+        profile_x_label=variable_spec.profile_x_label,
+        error_x_label=variable_spec.error_x_label,
         figure_title=_profile_graph_figure_title(
             sample_date=sample.row["date"],
             lat=sample.lat,
@@ -1101,6 +1238,7 @@ def _write_full_profile_sample_artifacts(
             location_id=location_id,
             graph_png_path=str(graph_rel_path).replace("\\", "/"),
             depth_axis_m=depth_axis_m,
+            variable_spec=variable_spec,
         )
     )
 
@@ -1474,27 +1612,36 @@ def _prediction_zeros_to_nan(patch: np.ndarray) -> np.ndarray:
     return patch_array
 
 
-def _load_ground_truth_patch_celsius(
-    dataset: Any, row: dict[str, Any]
+def _load_ground_truth_patch_for_variable(
+    dataset: Any, row: dict[str, Any], variable_spec: ExportVariableSpec
 ) -> np.ndarray | None:
-    """Load one decoded GLORYS patch in degrees Celsius when the dataset exposes it."""
-    load_y_patch = getattr(dataset, "_load_y_patch", None)
-    if load_y_patch is None:
+    """Load one decoded GLORYS patch for the requested export variable."""
+    loader = getattr(dataset, variable_spec.ground_truth_loader_name, None)
+    if loader is None:
         return None
 
-    # NetCDF-backed datasets need explicit patch axes; GeoTIFF-backed datasets
-    # decode stretched uint8 rasters internally and only need the row metadata.
-    if hasattr(dataset, "_patch_axes"):
-        patch = load_y_patch(row, dataset._patch_axes(row))
+    # NetCDF-backed temperature datasets need explicit patch axes; GeoTIFF-backed
+    # datasets decode stretched uint8 rasters internally and only need row metadata.
+    if variable_spec.name == "temperature" and hasattr(dataset, "_patch_axes"):
+        patch = loader(row, dataset._patch_axes(row))
     else:
-        patch = load_y_patch(row)
+        patch = loader(row)
     patch_array = np.asarray(patch, dtype=np.float32)
     if patch_array.ndim != 3:
         raise RuntimeError(
-            "Expected decoded GLORYS patch shape (D,H,W), "
+            f"Expected decoded GLORYS {variable_spec.name} patch shape (D,H,W), "
             f"got {tuple(patch_array.shape)}."
         )
     return patch_array
+
+
+def _load_ground_truth_patch_celsius(
+    dataset: Any, row: dict[str, Any]
+) -> np.ndarray | None:
+    """Load one decoded GLORYS temperature patch in degrees Celsius."""
+    return _load_ground_truth_patch_for_variable(
+        dataset, row, EXPORT_VARIABLE_SPECS["temperature"]
+    )
 
 
 def write_global_top_band_geotiff(
@@ -1632,7 +1779,7 @@ def write_absolute_error_geotiff(
     band_description: str,
     tags: dict[str, str],
 ) -> None:
-    """Write a GeoTIFF of per-pixel absolute prediction-vs-GLORYS error in Celsius."""
+    """Write a GeoTIFF of per-pixel absolute prediction-vs-GLORYS error."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(prediction_path) as prediction_ds, rasterio.open(
         ground_truth_path
@@ -1683,8 +1830,8 @@ def write_absolute_error_geotiff(
                     float(nodata),
                     dtype=np.float32,
                 )
-                # The source rasters are already denormalized Celsius values, so
-                # the absolute difference remains in degrees Celsius.
+                # Source rasters are already denormalized physical values, so
+                # the absolute difference remains in the active variable's unit.
                 out_block[valid_mask] = np.abs(
                     prediction_block[valid_mask].astype(np.float32, copy=False)
                     - ground_truth_block[valid_mask].astype(np.float32, copy=False)
@@ -2062,6 +2209,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     selected_patches.to_csv(run_dir / "selected_patches.csv", index=False)
 
     model_cfg = load_yaml(args.model_config)
+    variable_spec = resolve_export_variable_spec(model_cfg)
     export_all_full_samples = requested_full_sample_count < 0
     full_sample_count = int(max(0, requested_full_sample_count))
     export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
@@ -2154,6 +2302,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
         f"land_mask_path={effective_land_mask_path}, "
         f"rectangle={args.rectangle}, "
+        f"variable={variable_spec.name}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
@@ -2199,6 +2348,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
     inference_module = ExportInferenceWrapper(
         model,
+        variable_spec=variable_spec,
         export_ground_truth=bool(args.export_ground_truth),
         export_full_prediction_stack=export_full_profiles,
         depth_channel_indices=depth_channel_indices,
@@ -2253,7 +2403,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             else None
         )
         x_denorm_batch = (
-            temperature_normalize(mode="denorm", tensor=batch["x"])
+            variable_spec.normalize_fn(mode="denorm", tensor=batch[variable_spec.x_key])
             .detach()
             .float()
             .cpu()
@@ -2262,7 +2412,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             else None
         )
         y_denorm_batch = (
-            temperature_normalize(mode="denorm", tensor=batch["y"])
+            variable_spec.normalize_fn(mode="denorm", tensor=batch[variable_spec.y_key])
             .detach()
             .float()
             .cpu()
@@ -2277,8 +2427,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             patch_split_feature = _patch_split_feature_for_row(row)
             if patch_split_feature is not None:
                 patch_splits_writer.write_feature(patch_split_feature)
-            ground_truth_patch_c = (
-                _load_ground_truth_patch_celsius(dataset, row)
+            ground_truth_patch = (
+                _load_ground_truth_patch_for_variable(dataset, row, variable_spec)
                 if ground_truth_batch is not None
                 else None
             )
@@ -2296,8 +2446,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 if ground_truth_batch is not None and level.suffix in gt_accumulators:
                     gt_accumulator = gt_accumulators[level.suffix]
                     gt_patch_values = (
-                        ground_truth_patch_c[int(level.channel_index)]
-                        if ground_truth_patch_c is not None
+                        ground_truth_patch[int(level.channel_index)]
+                        if ground_truth_patch is not None
                         else ground_truth_batch[local_idx, depth_idx]
                     )
                     _accumulate_patch_into_arrays(
@@ -2311,7 +2461,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 # Use the dataset's horizontal support mask so the globe shows one
                 # marker per observed location instead of one marker per depth level.
                 observed_mask_2d = (
-                    batch["x_valid_mask_1d"][local_idx, 0]
+                    batch[variable_spec.x_valid_mask_1d_key][local_idx, 0]
                     .detach()
                     .cpu()
                     .numpy()
@@ -2324,7 +2474,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     argo_points_writer.write_feature(feature)
             else:
                 observed_mask_2d = (
-                    batch["x_valid_mask_1d"][local_idx, 0]
+                    batch[variable_spec.x_valid_mask_1d_key][local_idx, 0]
                     .detach()
                     .cpu()
                     .numpy()
@@ -2371,14 +2521,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                         ostia_sst_c=float(
                             eo_denorm_batch[local_idx, 0, point_row, point_col]
                         ),
-                        observed_profile=batch["x_valid_mask"][
+                        observed_profile=batch[variable_spec.x_valid_mask_key][
                             local_idx, :, point_row, point_col
                         ]
                         .detach()
                         .cpu()
                         .numpy()
                         .astype(bool, copy=False),
-                        target_valid_profile=batch["y_valid_mask"][
+                        target_valid_profile=batch[variable_spec.y_valid_mask_key][
                             local_idx, :, point_row, point_col
                         ]
                         .detach()
@@ -2397,6 +2547,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                             writer=full_sample_locations_writer,
                             sample=candidate,
                             location_id=f"full_sample_{observed_point_total:03d}",
+                            variable_spec=variable_spec,
                         )
                     else:
                         _maybe_store_full_profile_sample(
@@ -2449,6 +2600,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 writer=full_sample_locations_writer,
                 sample=sample,
                 location_id=f"full_sample_{sample_idx:03d}",
+                variable_spec=variable_spec,
             )
         full_sample_locations_writer.close()
     elif not export_all_full_samples:
@@ -2463,6 +2615,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         common_depth_tags = {
             "selected_date": str(int(selection.selected_date)),
             "selected_patch_count": str(int(len(selection.indices))),
+            "variable": variable_spec.name,
+            "variable_label": variable_spec.label,
             "depth_label": level.label,
             "requested_depth_m": f"{float(level.requested_depth_m):.3f}",
             "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
@@ -2470,20 +2624,34 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             "land_mask_path": str(effective_land_mask_path),
             "land_zeroed": "false",
             "land_masked_to_nodata": "true",
-            "value_units": "degree_Celsius",
-            "value_space": "denormalized_dequantized_celsius",
-            "globe_color_scale_min_c": f"{float(DEFAULT_COLOR_SCALE_MIN_C):.3f}",
-            "globe_color_scale_max_c": f"{float(DEFAULT_COLOR_SCALE_MAX_C):.3f}",
+            "value_units": variable_spec.value_units,
+            "value_unit_label": variable_spec.value_unit_label,
+            "value_space": variable_spec.value_space,
+            "globe_color_palette": variable_spec.color_palette,
+            "globe_color_scale_min": f"{float(variable_spec.color_scale_min):.3f}",
+            "globe_color_scale_max": f"{float(variable_spec.color_scale_max):.3f}",
         }
+        if variable_spec.name == "temperature":
+            common_depth_tags.update(
+                {
+                    "globe_color_scale_min_c": f"{float(variable_spec.color_scale_min):.3f}",
+                    "globe_color_scale_max_c": f"{float(variable_spec.color_scale_max):.3f}",
+                }
+            )
+
         write_global_top_band_geotiff(
             output_path=prediction_tif_path_for_level,
             accumulator=pred_accumulators[level.suffix],
             layout=layout,
             nodata=float(args.nodata),
-            band_description=f"predicted_{level.suffix}_celsius",
+            band_description=(
+                f"predicted_{level.suffix}_{variable_spec.band_description_unit}"
+            ),
             tags={
                 **common_depth_tags,
-                "source": "DepthDif global weekly inference export",
+                "source": (
+                    f"DepthDif global weekly {variable_spec.name} inference export"
+                ),
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
                 "prediction_runs_per_patch": "1",
@@ -2492,7 +2660,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     int(DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE)
                 ),
                 "prediction_zero_masked_to_nodata": "true",
-                "source_value_transform": "model_prediction_denormalized_to_celsius",
+                "source_value_transform": (
+                    variable_spec.prediction_source_value_transform
+                ),
             },
             extra_gaussian_blur_sigma=float(args.sigma),
             land_mask=land_mask,
@@ -2510,13 +2680,17 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 accumulator=gt_accumulators[level.suffix],
                 layout=layout,
                 nodata=float(args.nodata),
-                band_description=f"glorys_{level.suffix}_celsius",
+                band_description=(
+                    f"glorys_{level.suffix}_{variable_spec.band_description_unit}"
+                ),
                 tags={
                     **common_depth_tags,
-                    "source": "DepthDif global weekly ground-truth export",
+                    "source": (
+                        f"DepthDif global weekly {variable_spec.name} ground-truth export"
+                    ),
                     "kind": "ground_truth",
                     "source_value_transform": (
-                        "source_glorys_decoded_dequantized_to_celsius"
+                        variable_spec.ground_truth_source_value_transform
                     ),
                 },
                 land_mask=land_mask,
@@ -2534,15 +2708,21 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 ground_truth_path=ground_truth_tif_path_for_level,
                 output_path=absolute_error_tif_path_for_level,
                 nodata=float(args.nodata),
-                band_description=f"absolute_error_{level.suffix}_celsius",
+                band_description=(
+                    f"absolute_error_{level.suffix}_{variable_spec.band_description_unit}"
+                ),
                 tags={
                     **common_depth_tags,
-                    "source": "DepthDif global weekly absolute-error export",
+                    "source": (
+                        f"DepthDif global weekly {variable_spec.name} absolute-error export"
+                    ),
                     "kind": "absolute_error",
                     "source_prediction_tif_path": prediction_tif_path_for_level.name,
                     "source_ground_truth_tif_path": ground_truth_tif_path_for_level.name,
-                    "source_value_transform": "abs(prediction_celsius_minus_glorys_celsius)",
-                    "value_space": "absolute_error_celsius",
+                    "source_value_transform": (
+                        variable_spec.absolute_error_source_value_transform
+                    ),
+                    "value_space": variable_spec.absolute_error_value_space,
                     "globe_color_palette": "absolute_error_green_red",
                     "globe_color_scale_min_percentile": (
                         f"{float(DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE):.3f}"
@@ -2561,6 +2741,13 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             {
                 "suffix": level.suffix,
                 "label": level.label,
+                "variable": variable_spec.name,
+                "variable_label": variable_spec.label,
+                "value_units": variable_spec.value_units,
+                "value_unit_label": variable_spec.value_unit_label,
+                "color_scale_min": float(variable_spec.color_scale_min),
+                "color_scale_max": float(variable_spec.color_scale_max),
+                "color_palette": variable_spec.color_palette,
                 "requested_depth_m": float(level.requested_depth_m),
                 "actual_depth_m": float(level.actual_depth_m),
                 "channel_index": int(level.channel_index),
@@ -2606,6 +2793,13 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "iso_year": int(selection.iso_year),
         "iso_week": int(selection.iso_week),
         "selected_patch_count": int(len(selection.indices)),
+        "variable": variable_spec.name,
+        "variable_label": variable_spec.label,
+        "value_units": variable_spec.value_units,
+        "value_unit_label": variable_spec.value_unit_label,
+        "color_scale_min": float(variable_spec.color_scale_min),
+        "color_scale_max": float(variable_spec.color_scale_max),
+        "color_palette": variable_spec.color_palette,
         "rectangle": (
             None
             if args.rectangle is None
@@ -2737,6 +2931,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "Export complete: "
         f"date={selection.selected_date}, "
         f"iso_week={selection.iso_year}-W{selection.iso_week:02d}, "
+        f"variable={variable_spec.name}, "
         f"patches={len(selection.indices)}, "
         f"prediction={prediction_tif_path}, "
         f"ground_truth={ground_truth_tif_path}, "
@@ -2757,6 +2952,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         iso_week=int(selection.iso_week),
         selected_patch_count=int(len(selection.indices)),
         absolute_error_tif_path=absolute_error_tif_path,
+        variable=variable_spec.name,
     )
 
 

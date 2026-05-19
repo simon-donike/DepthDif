@@ -39,11 +39,16 @@ DEFAULT_TEMPLATE_PATH = (
 DEFAULT_COLOR_RAMP_PATH = (
     Path(__file__).resolve().parent / "transforms" / "temperature_blue_red_ramp.txt"
 )
+DEFAULT_SALINITY_COLOR_RAMP_PATH = (
+    Path(__file__).resolve().parent / "transforms" / "salinity_blue_green_ramp.txt"
+)
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TRANSPARENT_ALPHA = 0
 DEFAULT_OPAQUE_ALPHA = 255
 DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
+DEFAULT_SALINITY_COLOR_SCALE_MIN = 30.0
+DEFAULT_SALINITY_COLOR_SCALE_MAX = 40.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
 DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
@@ -78,6 +83,52 @@ ARGO_SAMPLE_LOCATION_PROPERTY_KEYS = tuple(
     )
 )
 PATCH_SPLIT_PROPERTY_KEYS = ("split",)
+
+
+VARIABLE_GLOBE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "temperature": {
+        "label": "Temperature",
+        "value_units": "degree_Celsius",
+        "value_unit_label": "°C",
+        "color_scale_min": DEFAULT_COLOR_SCALE_MIN_C,
+        "color_scale_max": DEFAULT_COLOR_SCALE_MAX_C,
+        "color_palette": "temperature_blue_red",
+        "color_ramp_path": DEFAULT_COLOR_RAMP_PATH,
+    },
+    "salinity": {
+        "label": "Salinity",
+        "value_units": "PSU",
+        "value_unit_label": "PSU",
+        "color_scale_min": DEFAULT_SALINITY_COLOR_SCALE_MIN,
+        "color_scale_max": DEFAULT_SALINITY_COLOR_SCALE_MAX,
+        "color_palette": "salinity_blue_green",
+        "color_ramp_path": DEFAULT_SALINITY_COLOR_RAMP_PATH,
+    },
+}
+
+
+def _run_variable_metadata(run_summary: dict[str, Any]) -> dict[str, Any]:
+    """Return display and color metadata for a single exported variable run."""
+    variable = str(run_summary.get("variable", "temperature")).strip().lower()
+    defaults = VARIABLE_GLOBE_DEFAULTS.get(variable, VARIABLE_GLOBE_DEFAULTS["temperature"])
+    return {
+        "name": variable,
+        "label": str(run_summary.get("variable_label", defaults["label"])),
+        "value_units": str(run_summary.get("value_units", defaults["value_units"])),
+        "value_unit_label": str(
+            run_summary.get("value_unit_label", defaults["value_unit_label"])
+        ),
+        "color_scale_min": float(
+            run_summary.get("color_scale_min", defaults["color_scale_min"])
+        ),
+        "color_scale_max": float(
+            run_summary.get("color_scale_max", defaults["color_scale_max"])
+        ),
+        "color_palette": str(
+            run_summary.get("color_palette", defaults["color_palette"])
+        ),
+        "color_ramp_path": Path(defaults["color_ramp_path"]),
+    }
 
 
 def _surface_depth_export(
@@ -744,6 +795,9 @@ def _raster_transparency_config(
     raster_path: Path,
     *,
     land_mask_path: Path | None,
+    color_scale_min: float = DEFAULT_COLOR_SCALE_MIN_C,
+    color_scale_max: float = DEFAULT_COLOR_SCALE_MAX_C,
+    value_unit_label: str = "°C",
 ) -> dict[str, Any]:
     """Describe how raster pixels are converted to transparent globe tiles."""
     with rasterio.open(raster_path) as ds:
@@ -765,11 +819,14 @@ def _raster_transparency_config(
         "land_mask_mode": land_mask_mode,
         "land_mask_alpha": DEFAULT_TRANSPARENT_ALPHA,
         "valid_alpha": DEFAULT_OPAQUE_ALPHA,
-        "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
-        "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
+        "color_scale_min": float(color_scale_min),
+        "color_scale_max": float(color_scale_max),
+        "color_scale_min_c": float(color_scale_min),
+        "color_scale_max_c": float(color_scale_max),
         "note": (
             "Land-masked source pixels use the GeoTIFF nodata value before "
-            "color relief so 0 C remains a valid ocean color in the globe tiles."
+            f"color relief so valid 0 {value_unit_label} ocean values remain visible "
+            "when present."
         ),
     }
 
@@ -800,6 +857,12 @@ def build_globe_config(
     color_palette: str,
     raster_transparency: dict[str, Any],
     template: dict[str, Any],
+    variable: str = "temperature",
+    variable_label: str = "Temperature",
+    value_units: str = "degree_Celsius",
+    value_unit_label: str = "°C",
+    variables: dict[str, Any] | None = None,
+    default_variable: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
     config.update(
@@ -808,6 +871,10 @@ def build_globe_config(
             "target_date": target_date,
             "iso_year": iso_year,
             "iso_week": iso_week,
+            "variable": str(variable),
+            "variable_label": str(variable_label),
+            "value_units": str(value_units),
+            "value_unit_label": str(value_unit_label),
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "absolute_error_tiles_url": absolute_error_tiles_url,
@@ -821,12 +888,19 @@ def build_globe_config(
             "east": float(bounds["east"]),
             "north": float(bounds["north"]),
             "default_camera_destination": dict(bounds["default_camera_destination"]),
+            "color_scale_min": float(color_scale_min_c),
+            "color_scale_max": float(color_scale_max_c),
             "color_scale_min_c": float(color_scale_min_c),
             "color_scale_max_c": float(color_scale_max_c),
             "color_palette": str(color_palette),
             "raster_transparency": dict(raster_transparency),
         }
     )
+    if variables is not None:
+        config["variables"] = dict(variables)
+        config["default_variable"] = (
+            str(default_variable) if default_variable is not None else str(variable)
+        )
     credits = dict(config.get("credits", {}))
     credits["prediction"] = prediction_credit
     if ground_truth_credit is not None:
@@ -941,11 +1015,17 @@ def export_cesium_globe_assets(
         run_summary,
     ) = _resolve_run_artifacts(run_dir)
 
+    variable_metadata = _run_variable_metadata(run_summary)
     globe_dir = run_dir / str(globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = globe_dir / ".tmp_colorized_rasters"
     _ensure_clean_directory(temp_dir)
     color_ramp_path = Path(color_ramp_path)
+    if (
+        variable_metadata["name"] != "temperature"
+        and color_ramp_path == DEFAULT_COLOR_RAMP_PATH
+    ):
+        color_ramp_path = Path(variable_metadata["color_ramp_path"])
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
     land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
@@ -1047,9 +1127,14 @@ def export_cesium_globe_assets(
                 "requested_depth_m": float(depth_export["requested_depth_m"]),
                 "actual_depth_m": float(depth_export["actual_depth_m"]),
                 "channel_index": int(depth_export["channel_index"]),
-                "value_units": "degree_Celsius",
-                "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
-                "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
+                "variable": str(variable_metadata["name"]),
+                "variable_label": str(variable_metadata["label"]),
+                "value_units": str(variable_metadata["value_units"]),
+                "value_unit_label": str(variable_metadata["value_unit_label"]),
+                "color_scale_min": float(variable_metadata["color_scale_min"]),
+                "color_scale_max": float(variable_metadata["color_scale_max"]),
+                "color_scale_min_c": float(variable_metadata["color_scale_min"]),
+                "color_scale_max_c": float(variable_metadata["color_scale_max"]),
                 "prediction_tiles_url": _resolve_layer_url(
                     prediction_tiles_dir_for_depth.name,
                     public_base_url=public_base_url,
@@ -1071,6 +1156,20 @@ def export_cesium_globe_assets(
                     )
                 ),
                 "absolute_error_color_palette": DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+                "absolute_error_value_units": str(variable_metadata["value_units"]),
+                "absolute_error_value_unit_label": str(
+                    variable_metadata["value_unit_label"]
+                ),
+                "absolute_error_color_scale_min": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_min_c"])
+                ),
+                "absolute_error_color_scale_max": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_max_c"])
+                ),
                 "absolute_error_color_scale_min_c": (
                     None
                     if absolute_error_scale is None
@@ -1081,11 +1180,22 @@ def export_cesium_globe_assets(
                     if absolute_error_scale is None
                     else float(absolute_error_scale["color_scale_max_c"])
                 ),
+                "absolute_error_legend_min": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+                "absolute_error_legend_max": (
+                    None
+                    if absolute_error_scale is None
+                    else int(absolute_error_scale["legend_max_c"])
+                ),
                 "absolute_error_legend_min_c": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
                 "absolute_error_legend_max_c": (
                     None
                     if absolute_error_scale is None
                     else int(absolute_error_scale["legend_max_c"])
+                ),
+                "absolute_error_valid_max": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["valid_max_c"])
                 ),
                 "absolute_error_valid_max_c": (
                     None
@@ -1161,6 +1271,9 @@ def export_cesium_globe_assets(
     raster_transparency = _raster_transparency_config(
         prediction_path,
         land_mask_path=land_mask_path,
+        color_scale_min=float(variable_metadata["color_scale_min"]),
+        color_scale_max=float(variable_metadata["color_scale_max"]),
+        value_unit_label=str(variable_metadata["value_unit_label"]),
     )
     template = _load_template(Path(template_path))
     config = build_globe_config(
@@ -1229,11 +1342,15 @@ def export_cesium_globe_assets(
             if copied_full_sample_points_path is None
             else "Random full-depth profile locations"
         ),
-        color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
-        color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
-        color_palette="temperature_blue_red",
+        color_scale_min_c=float(variable_metadata["color_scale_min"]),
+        color_scale_max_c=float(variable_metadata["color_scale_max"]),
+        color_palette=str(variable_metadata["color_palette"]),
         raster_transparency=raster_transparency,
         template=template,
+        variable=str(variable_metadata["name"]),
+        variable_label=str(variable_metadata["label"]),
+        value_units=str(variable_metadata["value_units"]),
+        value_unit_label=str(variable_metadata["value_unit_label"]),
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1264,8 +1381,10 @@ def export_cesium_globe_assets(
         print(f"- full-sample graphs: {copied_graphs_dir_path}")
     print(f"- config: {config_path}")
     print(
-        "- fixed Celsius color scale: "
-        f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
+        f"- fixed {variable_metadata['label']} color scale: "
+        f"[{float(variable_metadata['color_scale_min']):.1f}, "
+        f"{float(variable_metadata['color_scale_max']):.1f}] "
+        f"{variable_metadata['value_unit_label']}"
     )
     print(f"- color ramp: {color_ramp_path}")
     print(f"- transparent land mask: {land_mask_path}")
@@ -1298,6 +1417,7 @@ def export_cesium_globe_assets(
     return {
         "globe_dir": str(globe_dir),
         "config_path": str(config_path),
+        "variable": str(variable_metadata["name"]),
         "depth_tile_set_count": int(len(config_depth_levels)),
         "absolute_error_tile_set_count": int(
             sum(
@@ -1313,6 +1433,218 @@ def export_cesium_globe_assets(
         "upload_source": None if upload_source is None else str(upload_source),
     }
 
+
+
+ASSET_URL_KEYS = (
+    "prediction_tiles_url",
+    "ground_truth_tiles_url",
+    "absolute_error_tiles_url",
+    "argo_sample_locations_url",
+    "argo_points_url",
+    "patch_splits_url",
+    "full_sample_points_url",
+)
+
+
+def _is_absolute_asset_url(asset_url: str) -> bool:
+    """Return True when an asset URL should not be rewritten as relative."""
+    lowered = str(asset_url).strip().lower()
+    return (
+        lowered.startswith("http://")
+        or lowered.startswith("https://")
+        or lowered.startswith("data:")
+    )
+
+
+def _prefix_variable_asset_url(
+    asset_url: str | None,
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> str | None:
+    """Prefix a single-variable asset URL for the combined globe config."""
+    if asset_url is None:
+        return None
+    raw = str(asset_url).strip()
+    if raw == "" or _is_absolute_asset_url(raw):
+        return raw
+    clean = raw[2:] if raw.startswith("./") else raw
+    clean = clean.lstrip("/")
+    if public_base_url is not None:
+        return f"{public_base_url.rstrip('/')}/{variable}/{clean}"
+    return f"{variable}/{clean}"
+
+
+def _prefix_variable_config_asset_urls(
+    variable_config: dict[str, Any],
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> dict[str, Any]:
+    """Rewrite one variable config so URLs resolve from the combined config."""
+    rewritten = dict(variable_config)
+    for key in ASSET_URL_KEYS:
+        rewritten[key] = _prefix_variable_asset_url(
+            rewritten.get(key),
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+    depth_levels = []
+    for depth_level in rewritten.get("depth_levels", []):
+        if not isinstance(depth_level, dict):
+            continue
+        rewritten_depth = dict(depth_level)
+        for key in ASSET_URL_KEYS[:3]:
+            rewritten_depth[key] = _prefix_variable_asset_url(
+                rewritten_depth.get(key),
+                variable=variable,
+                public_base_url=public_base_url,
+            )
+        depth_levels.append(rewritten_depth)
+    rewritten["depth_levels"] = depth_levels
+    return rewritten
+
+
+def _prefix_geojson_graph_paths(
+    geojson_path: Path,
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> None:
+    """Rewrite graph PNG paths so popups work from the combined config URL."""
+    if not geojson_path.exists():
+        return
+    with geojson_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    changed = False
+    for feature in payload.get("features", []):
+        properties = feature.get("properties")
+        if not isinstance(properties, dict) or not properties.get("graph_png_path"):
+            continue
+        properties["graph_png_path"] = _prefix_variable_asset_url(
+            str(properties["graph_png_path"]),
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+        changed = True
+    if changed:
+        with geojson_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+            f.write("\n")
+
+
+def _ordered_variable_items(
+    variable_run_dirs: dict[str, Path],
+) -> list[tuple[str, Path]]:
+    """Return variable run directories in a stable viewer order."""
+    items = {str(key).strip().lower(): Path(value) for key, value in variable_run_dirs.items()}
+    ordered: list[tuple[str, Path]] = []
+    for key in ("temperature", "salinity"):
+        if key in items:
+            ordered.append((key, items.pop(key)))
+    ordered.extend(sorted(items.items(), key=lambda item: item[0]))
+    return ordered
+
+
+def export_cesium_globe_variable_assets(
+    *,
+    variable_run_dirs: dict[str, Path],
+    globe_dir: Path,
+    public_base_url: str | None = None,
+    rclone_remote: str | None = None,
+    rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
+    extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+) -> dict[str, Any]:
+    """Build one combined Cesium globe bundle from per-variable export runs."""
+    ordered_variables = _ordered_variable_items(variable_run_dirs)
+    if not ordered_variables:
+        raise ValueError("At least one variable run directory is required.")
+
+    globe_dir = Path(globe_dir).resolve()
+    _ensure_clean_directory(globe_dir)
+    variables: dict[str, Any] = {}
+    single_results: dict[str, Any] = {}
+    for variable, run_dir in ordered_variables:
+        run_dir = Path(run_dir).resolve()
+        single_result = export_cesium_globe_assets(
+            run_dir=run_dir,
+            public_base_url=None,
+            globe_dir_name="globe",
+            rclone_remote=None,
+            rclone_sync_scope=DEFAULT_RCLONE_SYNC_SCOPE,
+            extra_zoom_levels=extra_zoom_levels,
+        )
+        source_globe_dir = Path(str(single_result["globe_dir"])).resolve()
+        variable_globe_dir = globe_dir / variable
+        if variable_globe_dir.exists():
+            shutil.rmtree(variable_globe_dir)
+        if source_globe_dir != variable_globe_dir:
+            shutil.move(str(source_globe_dir), str(variable_globe_dir))
+        for geojson_name in (
+            "argo_sample_locations.geojson",
+            "full_sample_locations.geojson",
+        ):
+            _prefix_geojson_graph_paths(
+                variable_globe_dir / geojson_name,
+                variable=variable,
+                public_base_url=public_base_url,
+            )
+        with (variable_globe_dir / "globe-config.json").open(
+            "r", encoding="utf-8"
+        ) as f:
+            variable_config = json.load(f)
+        variables[variable] = _prefix_variable_config_asset_urls(
+            variable_config,
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+        single_results[variable] = single_result
+
+    default_variable = "temperature" if "temperature" in variables else next(iter(variables))
+    combined_config = dict(variables[default_variable])
+    combined_config["variables"] = variables
+    combined_config["default_variable"] = default_variable
+    combined_config["available_variables"] = list(variables.keys())
+    combined_config_path = globe_dir / "globe-config.json"
+    with combined_config_path.open("w", encoding="utf-8") as f:
+        json.dump(combined_config, f, indent=2)
+        f.write("\n")
+
+    upload_ok: bool | None = None
+    upload_message: str | None = None
+    upload_source: Path | None = None
+    if rclone_remote is not None:
+        if str(rclone_sync_scope) == "run":
+            upload_source = globe_dir.parent
+            sync_scope_label = "combined run directory"
+        else:
+            upload_source = globe_dir
+            sync_scope_label = "combined globe assets"
+        ok, message = _sync_with_rclone(upload_source, rclone_remote)
+        upload_ok = bool(ok)
+        upload_message = str(message)
+        if ok:
+            print(f"- rclone upload ({sync_scope_label}): {rclone_remote}")
+            print(f"  source: {upload_source}")
+            print(f"  {message}")
+        else:
+            print(f"WARNING: {message}")
+            print("WARNING: Combined globe assets were still created locally.")
+
+    print(f"Wrote combined globe config: {combined_config_path}")
+    print(f"- variables: {', '.join(variables.keys())}")
+    return {
+        "globe_dir": str(globe_dir),
+        "config_path": str(combined_config_path),
+        "variables": list(variables.keys()),
+        "default_variable": default_variable,
+        "single_results": single_results,
+        "upload_requested": rclone_remote is not None,
+        "upload_ok": upload_ok,
+        "upload_message": upload_message,
+        "upload_remote": rclone_remote,
+        "upload_source": None if upload_source is None else str(upload_source),
+    }
 
 def main() -> None:
     parser = _build_parser()

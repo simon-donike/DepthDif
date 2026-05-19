@@ -1217,6 +1217,8 @@ def plot_glorys_profile_comparison_axis(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     show_legend: bool = False,
+    profile_x_label: str = "Temperature (deg C)",
+    surface_context_label: str = "OSTIA SST",
 ) -> None:
     """Draw one validation-style profile comparison axis."""
     x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
@@ -1270,7 +1272,7 @@ def plot_glorys_profile_comparison_axis(
         ax.scatter(
             [float(ostia_sst_c)],
             [0.0],
-            label="OSTIA SST",
+            label=surface_context_label,
             color="tab:green",
             marker="D",
             s=42,
@@ -1279,7 +1281,7 @@ def plot_glorys_profile_comparison_axis(
     # Keep shallow water at the top regardless of any other subplot settings.
     ax.set_ylim(depth_bottom, depth_top)
     ax.margins(y=0.0)
-    ax.set_xlabel("Temperature (deg C)")
+    ax.set_xlabel(str(profile_x_label))
     ax.set_ylabel(depth_label)
     if title is not None:
         ax.set_title(title)
@@ -1298,6 +1300,7 @@ def plot_glorys_profile_error_axis(
     depth_axis: np.ndarray | None = None,
     title: str | None = None,
     show_legend: bool = False,
+    error_x_label: str = "Absolute error (deg C)",
 ) -> None:
     """Draw one absolute-error-vs-depth axis for prediction errors."""
     x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
@@ -1358,7 +1361,7 @@ def plot_glorys_profile_error_axis(
     # Match the main profile panel: 0 m stays at the top and deeper values go down.
     ax.set_ylim(depth_bottom, depth_top)
     ax.margins(y=0.0)
-    ax.set_xlabel("Absolute error (deg C)")
+    ax.set_xlabel(str(error_x_label))
     ax.set_ylabel(depth_label)
     if title is not None:
         ax.set_title(title)
@@ -1459,6 +1462,9 @@ def save_glorys_profile_comparison_plot(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     figure_title: str | None = None,
+    profile_x_label: str = "Temperature (deg C)",
+    error_x_label: str = "Absolute error (deg C)",
+    surface_context_label: str = "OSTIA SST",
     dpi: int = 180,
 ) -> Path:
     """Save one validation-style profile comparison plot to disk."""
@@ -1484,6 +1490,8 @@ def save_glorys_profile_comparison_plot(
             ostia_sst_c=ostia_sst_c,
             title=title,
             show_legend=True,
+            profile_x_label=profile_x_label,
+            surface_context_label=surface_context_label,
         )
         plot_glorys_profile_error_axis(
             ax[0, 1],
@@ -1494,6 +1502,7 @@ def save_glorys_profile_comparison_plot(
             depth_axis=depth_axis,
             title="Absolute error",
             show_legend=True,
+            error_x_label=error_x_label,
         )
         if figure_title is not None:
             fig.suptitle(figure_title, fontsize=13)
