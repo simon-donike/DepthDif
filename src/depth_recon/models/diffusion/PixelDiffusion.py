@@ -3090,7 +3090,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         if batch_idx == 0 and self._cached_val_example is None:
             # Cache raw batch fields so validation-end prediction can re-apply the same
             # temperature/salinity stacking path used by training and validation loss.
-            n_cache = min(self.max_full_reconstruction_samples, int(batch["x"].size(0)))
+            n_cache = min(self.max_full_reconstruction_samples, int(target.size(0)))
             self._cache_validation_batch(batch, n_cache=n_cache)
 
         return loss

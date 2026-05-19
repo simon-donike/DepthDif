@@ -163,7 +163,7 @@ training:  # optimizer, trainer, and logging
   dataloader:  # Lightning dataloader settings
     batch_size: 48  # train batch size
     val_batch_size: 6  # validation batch size
-    num_workers: 4  # train loader workers
+    num_workers: 6  # train loader workers
     val_num_workers: 0  # validation loader workers
     persistent_workers: true  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive

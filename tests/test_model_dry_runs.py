@@ -555,6 +555,48 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertTrue(torch.isclose(loss, torch.tensor(1.75)))
 
+    def test_pixel_validation_step_uses_salinity_only_batch_without_temperature_keys(
+        self,
+    ) -> None:
+        model = _make_pixel_model(output_fields=("salinity",))
+        batch = _make_pixel_batch(include_salinity=True)
+        for key in ("x", "y", "x_valid_mask", "y_valid_mask", "x_valid_mask_1d"):
+            batch.pop(key)
+        captured: dict[str, Any] = {}
+
+        def fake_p_loss(
+            output: torch.Tensor, condition: torch.Tensor, **kwargs: Any
+        ) -> torch.Tensor:
+            captured["output"] = output.detach().clone()
+            captured["condition"] = condition.detach().clone()
+            captured["kwargs"] = kwargs
+            return torch.tensor(1.25)
+
+        with (
+            patch.object(model.model, "p_loss", fake_p_loss),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+        ):
+            loss = model.validation_step(batch, batch_idx=0)
+
+        expected_condition = model._prepare_condition_for_model(
+            batch["x_salinity"], batch["x_salinity_valid_mask"]
+        )
+        expected_loss_mask = model._build_standard_loss_mask(
+            reference=batch["y_salinity"],
+            y_valid_mask=batch["y_salinity_valid_mask"],
+        )
+
+        self.assertTrue(torch.equal(captured["output"], batch["y_salinity"]))
+        self.assertTrue(torch.equal(captured["condition"], expected_condition))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask)
+        )
+        self.assertIsNotNone(model._cached_val_example)
+        self.assertIsNone(model._cached_val_example["x"])
+        self.assertIsNone(model._cached_val_example["y"])
+        self.assertIn("x_salinity", model._cached_val_example)
+        self.assertTrue(torch.isclose(loss, torch.tensor(1.25)))
+
     def test_pixel_predict_step_returns_salinity_only_outputs(self) -> None:
         model = _make_pixel_model(output_fields=("salinity",))
         batch = _make_pixel_batch(include_salinity=True)
