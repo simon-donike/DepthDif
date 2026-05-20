@@ -63,37 +63,56 @@
               <div class="globe-toolbar__sections" aria-label="Layer controls">
                 <section class="globe-layer-section" aria-labelledby="globe-raster-layer-heading">
                   <span id="globe-raster-layer-heading" class="globe-toolbar__label">Rasters</span>
-                  <div class="globe-layer-section__controls">
-                    <label class="globe-toggle">
-                      <input id="globe-toggle-prediction" type="checkbox" checked />
-                      <span>Reconstruction</span>
+                  <div class="globe-segmented-toggle" role="radiogroup" aria-label="Raster layer">
+                    <label class="globe-segmented-toggle__option">
+                      <input
+                        id="globe-toggle-prediction"
+                        name="globe-raster-layer"
+                        type="radio"
+                        value="prediction"
+                        checked
+                      />
+                      <span>Prediction</span>
                     </label>
-                    <label class="globe-toggle">
-                      <input id="globe-toggle-ground-truth" type="checkbox" />
+                    <label class="globe-segmented-toggle__option">
+                      <input id="globe-toggle-ground-truth" name="globe-raster-layer" type="radio" value="glorys" />
                       <span>GLORYS</span>
                     </label>
-                  </div>
-                </section>
-                <section class="globe-layer-section" aria-labelledby="globe-input-layer-heading">
-                  <span id="globe-input-layer-heading" class="globe-toolbar__label">Inputs</span>
-                  <div class="globe-layer-section__controls">
-                    <label class="globe-toggle">
-                      <input id="globe-toggle-points" type="checkbox" />
-                      <span>ARGO Locations</span>
-                    </label>
-                    <label class="globe-toggle">
-                      <input id="globe-toggle-patch-splits" type="checkbox" />
-                      <span>Patches</span>
+                    <label class="globe-segmented-toggle__option">
+                      <input id="globe-toggle-absolute-error" name="globe-raster-layer" type="radio" value="error" />
+                      <span>Error</span>
                     </label>
                   </div>
                 </section>
-                <section class="globe-layer-section" aria-labelledby="globe-analysis-layer-heading">
-                  <span id="globe-analysis-layer-heading" class="globe-toolbar__label">Analysis</span>
-                  <div class="globe-layer-section__controls">
-                    <label class="globe-toggle">
-                      <input id="globe-toggle-absolute-error" type="checkbox" />
-                      <span>Absolute Difference</span>
-                    </label>
+                <section class="globe-layer-section" aria-labelledby="globe-vector-layer-heading">
+                  <span id="globe-vector-layer-heading" class="globe-toolbar__label">Vector</span>
+                  <div class="globe-layer-section__controls globe-layer-section__controls--vector">
+                    <div class="globe-vector-toggle">
+                      <span class="globe-vector-toggle__name">ARGO Locations</span>
+                      <div class="globe-segmented-toggle globe-segmented-toggle--binary" role="radiogroup" aria-label="ARGO Locations">
+                        <label class="globe-segmented-toggle__option">
+                          <input name="globe-points-layer" type="radio" value="off" checked />
+                          <span>Off</span>
+                        </label>
+                        <label class="globe-segmented-toggle__option">
+                          <input id="globe-toggle-points" name="globe-points-layer" type="radio" value="on" />
+                          <span>On</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div class="globe-vector-toggle">
+                      <span class="globe-vector-toggle__name">Inference Patches</span>
+                      <div class="globe-segmented-toggle globe-segmented-toggle--binary" role="radiogroup" aria-label="Inference Patches">
+                        <label class="globe-segmented-toggle__option">
+                          <input name="globe-patch-splits-layer" type="radio" value="off" checked />
+                          <span>Off</span>
+                        </label>
+                        <label class="globe-segmented-toggle__option">
+                          <input id="globe-toggle-patch-splits" name="globe-patch-splits-layer" type="radio" value="on" />
+                          <span>On</span>
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </section>
               </div>

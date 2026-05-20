@@ -67,9 +67,11 @@
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
       absoluteErrorToggle: document.getElementById("globe-toggle-absolute-error"),
       pointsToggle: document.getElementById("globe-toggle-points"),
+      pointsRadios: document.querySelectorAll('input[name="globe-points-layer"]'),
       variableControl: document.getElementById("globe-variable-control"),
       variableRadios: document.querySelectorAll('input[name="globe-variable"]'),
       patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
+      patchSplitsRadios: document.querySelectorAll('input[name="globe-patch-splits-layer"]'),
       toolbar: document.querySelector(".globe-toolbar"),
       toolbarContent: document.getElementById("globe-toolbar-content"),
       toolbarToggle: document.getElementById("globe-toggle-toolbar"),
@@ -387,11 +389,23 @@
     return new URL(assetUrl, configUrl).toString();
   }
 
+  function selectOffRadioForToggle(toggle) {
+    if (!toggle || toggle.type !== "radio" || !toggle.name) {
+      return;
+    }
+    document.querySelectorAll('input[type="radio"]').forEach(function (radio) {
+      if (radio.name === toggle.name && radio.value === "off") {
+        radio.checked = true;
+      }
+    });
+  }
+
   function markToggleUnavailable(toggle) {
     if (!toggle) {
       return;
     }
     toggle.checked = false;
+    selectOffRadioForToggle(toggle);
     toggle.disabled = true;
     toggle.dataset.globeUnavailable = "true";
   }
@@ -501,6 +515,44 @@
     });
   }
 
+  function ensureRasterSelection(state) {
+    const toggles = [
+      state.elements.predictionToggle,
+      state.elements.groundTruthToggle,
+      state.elements.absoluteErrorToggle,
+    ].filter(Boolean);
+    const selectedToggle = toggles.find(function (toggle) {
+      return toggle.checked && !toggle.disabled;
+    });
+    if (selectedToggle) {
+      return;
+    }
+    const fallbackToggle = toggles.find(function (toggle) {
+      return !toggle.disabled;
+    });
+    if (fallbackToggle) {
+      fallbackToggle.checked = true;
+    }
+  }
+
+  function syncRasterLayerVisibility(state) {
+    const elements = state.elements;
+    const showPrediction = Boolean(elements.predictionToggle && elements.predictionToggle.checked);
+    const showGroundTruth = Boolean(elements.groundTruthToggle && elements.groundTruthToggle.checked);
+    const showAbsoluteError = Boolean(elements.absoluteErrorToggle && elements.absoluteErrorToggle.checked);
+    if (state.predictionLayer) {
+      state.predictionLayer.show = showPrediction;
+    }
+    if (state.groundTruthLayer) {
+      state.groundTruthLayer.show = showGroundTruth;
+    }
+    if (state.absoluteErrorLayer) {
+      state.absoluteErrorLayer.show = showAbsoluteError;
+    }
+    updateAbsoluteErrorLegend(state);
+    requestRender(state);
+  }
+
   function updateVariableControl(state) {
     const variables = getVariableConfigs(state.config);
     const elements = state.elements;
@@ -552,6 +604,7 @@
   function updateDepthControl(state) {
     const activeConfig = activeVariableConfig(state);
     const depthLevels = getDepthLevels(activeConfig);
+    const depthLevel = selectedDepthLevel(state);
     if (state.elements.depthSlider) {
       state.elements.depthSlider.min = "0";
       state.elements.depthSlider.max = String(Math.max(0, depthLevels.length - 1));
@@ -562,20 +615,18 @@
       state.elements.depthSlider.disabled = depthLevels.length <= 1;
     }
     if (state.elements.depthLabel) {
-      const depthLevel = selectedDepthLevel(state);
       state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
     }
     if (state.elements.predictionToggle) {
-      setToggleAvailable(state.elements.predictionToggle, Boolean(selectedDepthLevel(state).prediction_tiles_url));
+      setToggleAvailable(state.elements.predictionToggle, Boolean(depthLevel.prediction_tiles_url));
     }
     if (state.elements.groundTruthToggle) {
-      setToggleAvailable(state.elements.groundTruthToggle, depthLevels.some(function (depthLevel) {
-        return Boolean(depthLevel.ground_truth_tiles_url);
-      }));
+      setToggleAvailable(state.elements.groundTruthToggle, Boolean(depthLevel.ground_truth_tiles_url));
     }
     if (state.elements.absoluteErrorToggle) {
-      setToggleAvailable(state.elements.absoluteErrorToggle, depthLevels.some(hasAbsoluteErrorLayer));
+      setToggleAvailable(state.elements.absoluteErrorToggle, hasAbsoluteErrorLayer(depthLevel));
     }
+    ensureRasterSelection(state);
     updateValueLegend(state);
     updateDepthTicks(state, depthLevels);
   }
@@ -1456,6 +1507,32 @@
     });
   }
 
+  async function handleRasterLayerToggle(state, toggle, ensureLayer) {
+    if (!toggle || !toggle.checked) {
+      return;
+    }
+
+    syncRasterLayerVisibility(state);
+    if (!ensureLayer) {
+      return;
+    }
+
+    try {
+      const layer = await ensureLayer(state);
+      if (!layer) {
+        ensureRasterSelection(state);
+      }
+      syncRasterLayerVisibility(state);
+      enforceOverlayOrder(state);
+    } catch (error) {
+      toggle.checked = false;
+      setToggleLoading(toggle, false);
+      ensureRasterSelection(state);
+      syncRasterLayerVisibility(state);
+      console.error(error);
+    }
+  }
+
   async function handleOptionalLayerToggle(state, toggle, stateKey, ensureLayer) {
     if (!toggle) {
       return;
@@ -1489,6 +1566,7 @@
       }
     } catch (error) {
       toggle.checked = false;
+      selectOffRadioForToggle(toggle);
       setToggleLoading(toggle, false);
       if (stateKey === "absoluteErrorLayer") {
         updateAbsoluteErrorLegend(state);
@@ -1611,29 +1689,15 @@
     }
 
     elements.predictionToggle.addEventListener("change", function () {
-      if (state.predictionLayer) {
-        state.predictionLayer.show = elements.predictionToggle.checked;
-      }
-      requestRender(state);
+      handleRasterLayerToggle(state, elements.predictionToggle, null);
     });
 
     elements.groundTruthToggle.addEventListener("change", function () {
-      handleOptionalLayerToggle(
-        state,
-        elements.groundTruthToggle,
-        "groundTruthLayer",
-        ensureGroundTruthLayer
-      );
+      handleRasterLayerToggle(state, elements.groundTruthToggle, ensureGroundTruthLayer);
     });
 
     elements.absoluteErrorToggle.addEventListener("change", function () {
-      handleOptionalLayerToggle(
-        state,
-        elements.absoluteErrorToggle,
-        "absoluteErrorLayer",
-        ensureAbsoluteErrorLayer
-      );
-      updateAbsoluteErrorLegend(state);
+      handleRasterLayerToggle(state, elements.absoluteErrorToggle, ensureAbsoluteErrorLayer);
     });
 
     elements.pointsToggle.addEventListener("change", function () {

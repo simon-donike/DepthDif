@@ -48,6 +48,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         generated_channels: int = 1,
         condition_channels: int = 1,
         output_fields: tuple[str, ...] | list[str] | None = None,
+        variable_scenario: str | None = None,
         condition_mask_channels: int = 1,
         condition_include_eo: bool = False,
         condition_use_valid_mask: bool = True,
@@ -114,6 +115,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_channels (int): Input value.
             output_fields (tuple[str, ...] | list[str] | None): Output variables to
                 train/predict. Defaults to temperature only.
+            variable_scenario (str | None): Scenario label embedded in checkpoints.
             condition_mask_channels (int): Mask tensor controlling valid or known pixels.
             condition_include_eo (bool): Boolean flag controlling behavior.
             condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
@@ -176,7 +178,15 @@ class PixelDiffusionConditional(pl.LightningModule):
             None: No value is returned.
         """
         pl.LightningModule.__init__(self)
+        normalized_output_fields = self._normalize_output_fields(output_fields)
+        variable_scenario = self._normalize_variable_scenario(
+            variable_scenario,
+            normalized_output_fields,
+        )
         self.save_hyperparameters(ignore=["datamodule", "autoencoder"])
+        # Lightning hparam inference can be empty for this large constructor,
+        # so persist the scenario key explicitly for checkpoint validation.
+        self.hparams["variable_scenario"] = variable_scenario
 
         self.datamodule = datamodule
         self.lr = lr
@@ -245,7 +255,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.condition_use_land_mask = bool(condition_use_land_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
-        self.output_fields = self._normalize_output_fields(output_fields)
+        self.output_fields = normalized_output_fields
+        self.variable_scenario = variable_scenario
         self.predicts_salinity = "salinity" in self.output_fields
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
@@ -355,6 +366,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             generated_channels=int(m.get("generated_channels", 1)),
             condition_channels=int(m.get("condition_channels", m.get("bands", 1))),
             output_fields=m.get("output_fields", None),
+            variable_scenario=m.get("scenario", None),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             condition_include_eo=bool(m.get("condition_include_eo", False)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
@@ -485,6 +497,97 @@ class PixelDiffusionConditional(pl.LightningModule):
                 "[salinity], or [temperature, salinity]."
             )
         return fields
+
+    @staticmethod
+    def _scenario_from_output_fields(output_fields: tuple[str, ...]) -> str:
+        """Return the scenario name implied by normalized output fields."""
+        if output_fields == ("temperature",):
+            return "temperature"
+        if output_fields == ("salinity",):
+            return "salinity"
+        if output_fields == ("temperature", "salinity"):
+            return "joint"
+        raise ValueError(
+            "Cannot infer variable scenario from model.output_fields="
+            f"{list(output_fields)}."
+        )
+
+    @classmethod
+    def _normalize_variable_scenario(
+        cls,
+        variable_scenario: str | None,
+        output_fields: tuple[str, ...],
+    ) -> str:
+        """Normalize and validate the checkpoint scenario label."""
+        expected = cls._scenario_from_output_fields(output_fields)
+        if variable_scenario is None or variable_scenario is False:
+            return expected
+        scenario = str(variable_scenario).strip().lower()
+        if not scenario:
+            return expected
+        if scenario not in {"temperature", "salinity", "joint"}:
+            raise ValueError(
+                "model.scenario must be one of: temperature, salinity, joint "
+                f"(got {variable_scenario!r})."
+            )
+        if scenario != expected:
+            raise ValueError(
+                "model.scenario does not match model.output_fields: "
+                f"scenario={scenario!r}, output_fields={list(output_fields)}."
+            )
+        return scenario
+
+    @staticmethod
+    def _normalize_checkpoint_variable_scenario(value: Any) -> str | None:
+        """Normalize optional checkpoint scenario metadata."""
+        if value is None or value is False:
+            return None
+        scenario = str(value).strip().lower()
+        return scenario or None
+
+    @classmethod
+    def _checkpoint_variable_scenario(cls, checkpoint: dict[str, Any]) -> str | None:
+        """Read scenario metadata from top-level checkpoint or Lightning hparams."""
+        scenario = cls._normalize_checkpoint_variable_scenario(
+            checkpoint.get("variable_scenario")
+        )
+        if scenario is not None:
+            return scenario
+
+        hparams = checkpoint.get("hyper_parameters")
+        if isinstance(hparams, dict):
+            return cls._normalize_checkpoint_variable_scenario(
+                hparams.get("variable_scenario")
+            )
+        return None
+
+    def _validate_checkpoint_variable_scenario(
+        self, checkpoint: dict[str, Any]
+    ) -> None:
+        """Validate checkpoint metadata against this model scenario."""
+        checkpoint_scenario = self._checkpoint_variable_scenario(checkpoint)
+        if checkpoint_scenario is None:
+            warnings.warn(
+                "Checkpoint does not contain variable_scenario metadata; "
+                "loading legacy checkpoint without scenario validation.",
+                stacklevel=2,
+            )
+            return
+        if checkpoint_scenario != self.variable_scenario:
+            raise ValueError(
+                "Checkpoint variable_scenario mismatch: "
+                f"checkpoint has {checkpoint_scenario!r}, "
+                f"model expects {self.variable_scenario!r}. "
+                "Use the checkpoint trained for the selected scenario."
+            )
+
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Embed variable scenario metadata in Lightning checkpoints."""
+        checkpoint["variable_scenario"] = self.variable_scenario
+
+    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Validate variable scenario metadata before Lightning restores weights."""
+        self._validate_checkpoint_variable_scenario(checkpoint)
 
     @staticmethod
     def _parse_unet_dim_mults(value: Any) -> tuple[int, ...]:

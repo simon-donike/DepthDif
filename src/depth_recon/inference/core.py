@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import warnings
 
 import torch
 import yaml
@@ -14,6 +15,8 @@ from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchD
 from depth_recon.models.diffusion import PixelDiffusionConditional
 from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import resolve_config_path
+
+VARIABLE_SCENARIO_KEY = "variable_scenario"
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
@@ -193,6 +196,71 @@ def extract_ema_state_dict(checkpoint: Any) -> dict[str, torch.Tensor] | None:
     return fallback_ema
 
 
+def _normalize_variable_scenario_value(value: Any) -> str | None:
+    """Normalize optional variable scenario metadata."""
+    if value is None or value is False:
+        return None
+    scenario = str(value).strip().lower()
+    return scenario or None
+
+
+def _model_variable_scenario(model: torch.nn.Module) -> str | None:
+    """Return the scenario expected by a model when it exposes one."""
+    scenario = _normalize_variable_scenario_value(
+        getattr(model, VARIABLE_SCENARIO_KEY, None)
+    )
+    if scenario is not None:
+        return scenario
+
+    hparams = getattr(model, "hparams", None)
+    if isinstance(hparams, dict):
+        return _normalize_variable_scenario_value(hparams.get(VARIABLE_SCENARIO_KEY))
+    return _normalize_variable_scenario_value(
+        getattr(hparams, VARIABLE_SCENARIO_KEY, None)
+    )
+
+
+def _checkpoint_variable_scenario(checkpoint: Any) -> str | None:
+    """Read scenario metadata from top-level checkpoint or Lightning hparams."""
+    if not isinstance(checkpoint, dict):
+        return None
+
+    scenario = _normalize_variable_scenario_value(checkpoint.get(VARIABLE_SCENARIO_KEY))
+    if scenario is not None:
+        return scenario
+
+    hparams = checkpoint.get("hyper_parameters")
+    if isinstance(hparams, dict):
+        return _normalize_variable_scenario_value(hparams.get(VARIABLE_SCENARIO_KEY))
+    return None
+
+
+def _validate_checkpoint_variable_scenario(
+    model: torch.nn.Module, checkpoint: Any, checkpoint_path: str | Path
+) -> None:
+    """Validate that checkpoint scenario metadata matches the model."""
+    expected_scenario = _model_variable_scenario(model)
+    if expected_scenario is None:
+        return
+
+    checkpoint_scenario = _checkpoint_variable_scenario(checkpoint)
+    if checkpoint_scenario is None:
+        warnings.warn(
+            "Checkpoint does not contain variable_scenario metadata; "
+            f"loading legacy checkpoint without scenario validation: {checkpoint_path}",
+            stacklevel=2,
+        )
+        return
+
+    if checkpoint_scenario != expected_scenario:
+        raise ValueError(
+            "Checkpoint variable_scenario mismatch: "
+            f"checkpoint has {checkpoint_scenario!r}, "
+            f"model expects {expected_scenario!r}. "
+            "Use the checkpoint trained for the selected scenario."
+        )
+
+
 def load_checkpoint_weights(
     model: torch.nn.Module,
     checkpoint_path: str | Path,
@@ -202,6 +270,7 @@ def load_checkpoint_weights(
 ) -> str:
     """Load checkpoint weights into a model, preferring EMA weights when available."""
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+    _validate_checkpoint_variable_scenario(model, checkpoint, checkpoint_path)
     if prefer_ema:
         ema_state_dict = extract_ema_state_dict(checkpoint)
         if ema_state_dict is not None:
