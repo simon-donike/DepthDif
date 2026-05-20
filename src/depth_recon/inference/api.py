@@ -1069,7 +1069,6 @@ def _write_public_data_config(
     return public_config
 
 
-
 def _write_public_inference_super_config(
     *,
     assets: InferenceAssets,
@@ -1116,6 +1115,7 @@ def _write_public_inference_super_config(
     with output_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(super_cfg, f, sort_keys=False)
     return output_path
+
 
 def _export_args_from_public_api(
     *,

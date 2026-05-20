@@ -91,7 +91,9 @@ def main() -> None:
             f"LOADER_SPLIT must be 'train' or 'val' (got '{LOADER_SPLIT}')."
         )
 
-    dataset = build_dataset(config_bundle.effective_data_config_path, data_cfg.get("dataset", {}))
+    dataset = build_dataset(
+        config_bundle.effective_data_config_path, data_cfg.get("dataset", {})
+    )
     datamodule = build_datamodule(
         dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
     )

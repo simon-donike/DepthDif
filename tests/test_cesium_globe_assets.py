@@ -265,7 +265,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
         self.assertEqual(config["color_scale_min"], 0.0)
         self.assertEqual(config["color_scale_min_c"], 0.0)
-        self.assertEqual(config["prediction_tiles_url"], "temperature/prediction_tiles_surface")
+        self.assertEqual(
+            config["prediction_tiles_url"], "temperature/prediction_tiles_surface"
+        )
 
     def test_prefix_variable_config_asset_urls_rewrites_relative_tile_paths(
         self,

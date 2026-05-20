@@ -110,7 +110,9 @@ VARIABLE_GLOBE_DEFAULTS: dict[str, dict[str, Any]] = {
 def _run_variable_metadata(run_summary: dict[str, Any]) -> dict[str, Any]:
     """Return display and color metadata for a single exported variable run."""
     variable = str(run_summary.get("variable", "temperature")).strip().lower()
-    defaults = VARIABLE_GLOBE_DEFAULTS.get(variable, VARIABLE_GLOBE_DEFAULTS["temperature"])
+    defaults = VARIABLE_GLOBE_DEFAULTS.get(
+        variable, VARIABLE_GLOBE_DEFAULTS["temperature"]
+    )
     return {
         "name": variable,
         "label": str(run_summary.get("variable_label", defaults["label"])),
@@ -486,9 +488,7 @@ def _write_absolute_error_color_ramp(
         if previous_value is not None and np.isclose(value, previous_value):
             continue
         previous_value = float(value)
-        lines.append(
-            f"{float(value):.6f}    {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}"
-        )
+        lines.append(f"{float(value):.6f}    {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}")
     lines.append("nv   0 0 0 0")
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1091,7 +1091,9 @@ def export_cesium_globe_assets(
         if absolute_error_export_path is not None:
             absolute_error_export_path = Path(absolute_error_export_path)
             _validate_raster_transparency_contract(absolute_error_export_path)
-            absolute_error_scale = _absolute_error_color_scale(absolute_error_export_path)
+            absolute_error_scale = _absolute_error_color_scale(
+                absolute_error_export_path
+            )
             absolute_error_ramp_path = (
                 temp_dir / f"{absolute_error_export_path.stem}_green_red_ramp.txt"
             )
@@ -1434,7 +1436,6 @@ def export_cesium_globe_assets(
     }
 
 
-
 ASSET_URL_KEYS = (
     "prediction_tiles_url",
     "ground_truth_tiles_url",
@@ -1537,7 +1538,10 @@ def _ordered_variable_items(
     variable_run_dirs: dict[str, Path],
 ) -> list[tuple[str, Path]]:
     """Return variable run directories in a stable viewer order."""
-    items = {str(key).strip().lower(): Path(value) for key, value in variable_run_dirs.items()}
+    items = {
+        str(key).strip().lower(): Path(value)
+        for key, value in variable_run_dirs.items()
+    }
     ordered: list[tuple[str, Path]] = []
     for key in ("temperature", "salinity"):
         if key in items:
@@ -1600,7 +1604,9 @@ def export_cesium_globe_variable_assets(
         )
         single_results[variable] = single_result
 
-    default_variable = "temperature" if "temperature" in variables else next(iter(variables))
+    default_variable = (
+        "temperature" if "temperature" in variables else next(iter(variables))
+    )
     combined_config = dict(variables[default_variable])
     combined_config["variables"] = variables
     combined_config["default_variable"] = default_variable
@@ -1645,6 +1651,7 @@ def export_cesium_globe_variable_assets(
         "upload_remote": rclone_remote,
         "upload_source": None if upload_source is None else str(upload_source),
     }
+
 
 def main() -> None:
     parser = _build_parser()

@@ -1781,9 +1781,10 @@ def write_absolute_error_geotiff(
 ) -> None:
     """Write a GeoTIFF of per-pixel absolute prediction-vs-GLORYS error."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(prediction_path) as prediction_ds, rasterio.open(
-        ground_truth_path
-    ) as ground_truth_ds:
+    with (
+        rasterio.open(prediction_path) as prediction_ds,
+        rasterio.open(ground_truth_path) as ground_truth_ds,
+    ):
         if (
             prediction_ds.width != ground_truth_ds.width
             or prediction_ds.height != ground_truth_ds.height
@@ -1813,17 +1814,23 @@ def write_absolute_error_geotiff(
             output_ds.update_tags(**tags)
             for _block_index, window in prediction_ds.block_windows(1):
                 prediction_block = prediction_ds.read(1, window=window, masked=False)
-                ground_truth_block = ground_truth_ds.read(1, window=window, masked=False)
+                ground_truth_block = ground_truth_ds.read(
+                    1, window=window, masked=False
+                )
                 valid_mask = _valid_raster_mask(
                     prediction_block,
-                    None
-                    if prediction_ds.nodata is None
-                    else float(prediction_ds.nodata),
+                    (
+                        None
+                        if prediction_ds.nodata is None
+                        else float(prediction_ds.nodata)
+                    ),
                 ) & _valid_raster_mask(
                     ground_truth_block,
-                    None
-                    if ground_truth_ds.nodata is None
-                    else float(ground_truth_ds.nodata),
+                    (
+                        None
+                        if ground_truth_ds.nodata is None
+                        else float(ground_truth_ds.nodata)
+                    ),
                 )
                 out_block = np.full(
                     prediction_block.shape,
@@ -2733,8 +2740,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 },
             )
             print(
-                "Wrote absolute-error GeoTIFF: "
-                f"{absolute_error_tif_path_for_level}"
+                "Wrote absolute-error GeoTIFF: " f"{absolute_error_tif_path_for_level}"
             )
 
         depth_export_records.append(
