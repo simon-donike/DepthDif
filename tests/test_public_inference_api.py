@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import yaml
 
+from depth_recon.inference.export_global import DEFAULT_UNCERTAINTY_NUM_SAMPLES
 from depth_recon.inference.api import (
     InferenceAssets,
     _build_public_argo_sample,
@@ -220,6 +221,31 @@ class TestPublicInferenceApi(unittest.TestCase):
 
         kwargs = run_public.call_args.kwargs
         self.assertIs(kwargs["progress_callback"], record_progress)
+        self.assertFalse(kwargs["export_uncertainty"])
+        self.assertEqual(
+            kwargs["uncertainty_num_samples"], DEFAULT_UNCERTAINTY_NUM_SAMPLES
+        )
+
+    def test_run_week_inference_forwards_public_uncertainty_options(self) -> None:
+        with mock.patch(
+            "depth_recon.inference.api.run_argo_week_inference"
+        ) as run_public:
+            run_public.return_value = Path("outputs/public")
+
+            run_week_inference(
+                year=2024,
+                iso_week=2,
+                output_root="outputs",
+                device="cpu",
+                cache_dir="cache",
+                auto_download_ostia=False,
+                export_uncertainty=True,
+                uncertainty_num_samples=7,
+            )
+
+        kwargs = run_public.call_args.kwargs
+        self.assertTrue(kwargs["export_uncertainty"])
+        self.assertEqual(kwargs["uncertainty_num_samples"], 7)
 
     def test_export_args_from_public_api_keeps_cli_defaults(self) -> None:
         assets = InferenceAssets(
@@ -254,6 +280,8 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertFalse(args.export_ground_truth)
         self.assertEqual(args.full_sample_count, 0)
         self.assertEqual(args.min_ocean_fraction, 0.2)
+        self.assertFalse(args.export_uncertainty)
+        self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
         self.assertTrue(args.strict_load)
 
     def test_run_week_inference_uses_public_argo_ostia_path_without_glorys(

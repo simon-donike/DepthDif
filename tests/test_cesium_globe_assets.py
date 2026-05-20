@@ -88,6 +88,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "prediction_tiles_url": None,
             "ground_truth_tiles_url": None,
             "absolute_error_tiles_url": None,
+            "uncertainty_tiles_url": None,
             "depth_levels": [],
             "argo_sample_locations_url": None,
             "argo_points_url": None,
@@ -117,6 +118,11 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             prediction_tiles_url="./prediction_tiles",
             ground_truth_tiles_url="./ground_truth_tiles",
             absolute_error_tiles_url="./absolute_error_tiles",
+            uncertainty_tiles_url="./uncertainty_tiles",
+            uncertainty_credit="Uncertainty source",
+            uncertainty_color_scale_min=0.0,
+            uncertainty_color_scale_max=2.5,
+            uncertainty_legend_max=3,
             depth_levels=[
                 {
                     "label": "Surface",
@@ -160,6 +166,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["prediction_tiles_url"], "./prediction_tiles")
         self.assertEqual(config["ground_truth_tiles_url"], "./ground_truth_tiles")
         self.assertEqual(config["absolute_error_tiles_url"], "./absolute_error_tiles")
+        self.assertEqual(config["uncertainty_tiles_url"], "./uncertainty_tiles")
+        self.assertEqual(config["uncertainty_color_scale_min"], 0.0)
+        self.assertEqual(config["uncertainty_color_scale_max"], 2.5)
+        self.assertEqual(config["uncertainty_legend_max"], 3)
         self.assertEqual(config["depth_levels"][0]["label"], "Surface")
         self.assertEqual(
             config["depth_levels"][0]["prediction_tiles_url"],
@@ -189,6 +199,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
         self.assertEqual(config["credits"]["ground_truth"], "Ground truth source")
         self.assertEqual(config["credits"]["absolute_error"], "Absolute error source")
+        self.assertEqual(config["credits"]["uncertainty"], "Uncertainty source")
         self.assertEqual(config["credits"]["points"], "Observed Argo points")
         self.assertEqual(config["credits"]["patch_splits"], "Inference patch grid")
         self.assertEqual(
@@ -276,6 +287,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "prediction_tiles_url": "./prediction_tiles_surface",
             "ground_truth_tiles_url": "./ground_truth_tiles_surface",
             "absolute_error_tiles_url": None,
+            "uncertainty_tiles_url": "./uncertainty_tiles",
             "argo_sample_locations_url": "./argo_sample_locations.geojson",
             "depth_levels": [
                 {
@@ -305,12 +317,19 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "salinity/argo_sample_locations.geojson",
         )
         self.assertEqual(
+            prefixed["uncertainty_tiles_url"], "salinity/uncertainty_tiles"
+        )
+        self.assertEqual(
             prefixed["depth_levels"][0]["absolute_error_tiles_url"],
             "salinity/absolute_error_tiles_surface",
         )
         self.assertEqual(
             hosted["prediction_tiles_url"],
             "https://example.test/globe/salinity/prediction_tiles_surface",
+        )
+        self.assertEqual(
+            hosted["uncertainty_tiles_url"],
+            "https://example.test/globe/salinity/uncertainty_tiles",
         )
 
     def test_prefix_geojson_graph_paths_rewrites_combined_profile_graphs(
@@ -462,6 +481,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("prediction_tiles_url", template)
         self.assertIn("depth_levels", template)
         self.assertIn("absolute_error_tiles_url", template)
+        self.assertIn("uncertainty_tiles_url", template)
+        self.assertIn("uncertainty_color_scale_max", template)
         self.assertIn("argo_sample_locations_url", template)
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
@@ -497,6 +518,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("Prediction", html)
         self.assertIn("GLORYS", html)
         self.assertIn("Error", html)
+        self.assertIn("Uncertainty", html)
+        self.assertIn('id="globe-toggle-uncertainty"', html)
         self.assertIn("Vector", html)
         self.assertIn("ARGO Locations", html)
         self.assertIn("Inference Patches", html)
@@ -509,6 +532,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("Salinity", html)
         self.assertIn("Ocean Variable Reconstruction", html)
         self.assertIn('id="globe-error-legend"', html)
+        self.assertIn('id="globe-error-legend-title"', html)
         self.assertIn('loading="lazy"', html)
         self.assertIn(".standalone-globe-root,", css)
         self.assertIn("box-sizing: border-box;", css)
@@ -524,6 +548,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             'const titleText = "Ocean Variable Reconstruction";', globe_script
         )
         self.assertIn("function addAbsoluteErrorLayer", globe_script)
+        self.assertIn("function addUncertaintyLayer", globe_script)
+        self.assertIn("function hasUncertaintyLayer", globe_script)
         self.assertIn("function activeVariableConfig", globe_script)
         self.assertIn("function reloadVariableLayers", globe_script)
         self.assertIn("selectedVariable", globe_script)
@@ -535,6 +561,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("depth_levels", default_config)
         self.assertIn("default_variable", default_config)
         self.assertIn("variables", default_config)
+        self.assertIn("uncertainty_tiles_url", default_config)
 
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch(

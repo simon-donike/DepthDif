@@ -103,6 +103,31 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+.globe-cinematic-exit {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 3;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid rgba(124, 200, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(5, 20, 32, 0.82);
+  color: #f4fbff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(18px);
+}
+
+.globe-cinematic-exit:hover,
+.globe-cinematic-exit:focus {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.globe-cinematic-exit[hidden] {
+  display: none;
+}
+
 .standalone-globe-page .globe-page {
   min-height: 100vh;
   margin-top: 0;
@@ -115,6 +140,12 @@
   min-height: 100vh;
   margin: 0;
   overflow: hidden;
+}
+
+.globe-stage.is-cinematic .standalone-globe-header,
+.globe-stage.is-cinematic .globe-toolbar,
+.globe-stage.is-cinematic .globe-legend-stack {
+  display: none;
 }
 
 .globe-toolbar {
@@ -195,6 +226,7 @@
 
 .globe-toolbar__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.7rem;
   align-items: center;
   justify-content: flex-end;
@@ -521,6 +553,12 @@
 
 .globe-reset-button:hover {
   filter: brightness(1.08);
+}
+
+.globe-reset-button:disabled {
+  cursor: wait;
+  filter: saturate(0.72);
+  opacity: 0.78;
 }
 
 .globe-reset-button[aria-pressed="true"] {

@@ -15,7 +15,7 @@ from depth_recon.inference.export_global import (
     DEFAULT_INFERENCE_CONFIG,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
-    DEFAULT_INFERENCE_CONFIG,
+    DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     EXPORT_VARIABLE_SPECS,
     ExportInferenceWrapper,
     FullProfileSample,
@@ -81,6 +81,38 @@ class _IncrementingPredictModel(nn.Module):
             dtype=torch.float32,
         )
         return {"y_hat_denorm": y_hat_denorm}
+
+
+class _UncertaintyPredictModel(nn.Module):
+    """Small model double that records uncertainty export calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.uncertainty_calls: list[tuple[int, int]] = []
+
+    def predict_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, torch.Tensor]:
+        """Return a deterministic salinity prediction tensor."""
+        _ = batch, batch_idx
+        return {"y_hat_salinity_denorm": torch.ones((1, 3, 2, 2), dtype=torch.float32)}
+
+    def uncertainty_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+        num_samples: int,
+    ) -> dict[str, torch.Tensor]:
+        """Return one field-specific 1-channel uncertainty map."""
+        _ = batch
+        self.uncertainty_calls.append((int(batch_idx), int(num_samples)))
+        return {
+            "uncertainty_salinity": torch.tensor(
+                [[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32
+            )
+        }
 
 
 class _DecodedGlorysDataset:
@@ -214,6 +246,28 @@ class TestGlobalInferenceExport(unittest.TestCase):
             equal_nan=True,
         )
 
+    def test_export_inference_wrapper_exports_field_uncertainty_map(self) -> None:
+        model = _UncertaintyPredictModel()
+        wrapper = ExportInferenceWrapper(
+            model,
+            variable_spec=EXPORT_VARIABLE_SPECS["salinity"],
+            export_ground_truth=False,
+            export_full_prediction_stack=False,
+            export_uncertainty=True,
+            uncertainty_num_samples=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+            depth_channel_indices=(0,),
+        )
+
+        outputs = wrapper({})
+
+        self.assertEqual(
+            model.uncertainty_calls, [(0, DEFAULT_UNCERTAINTY_NUM_SAMPLES)]
+        )
+        torch.testing.assert_close(
+            outputs["uncertainty_map"],
+            torch.tensor([[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32),
+        )
+
     def test_load_ground_truth_patch_celsius_uses_decoded_dataset_values(self) -> None:
         patch = _load_ground_truth_patch_celsius(
             _DecodedGlorysDataset(),
@@ -260,6 +314,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(args.config_overrides, [])
         self.assertIsNone(args.inference_num_workers)
         self.assertIsNone(args.inference_prefetch_factor)
+        self.assertFalse(args.export_uncertainty)
+        self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
 
     def test_build_inference_loader_collates_selected_grid_rows(self) -> None:
         rows = [
@@ -453,6 +509,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(args.rclone_remote, "r2:bucket/globe")
         self.assertEqual(args.extra_zoom_levels, 1)
         self.assertEqual(args.min_ocean_fraction, 0.10)
+        self.assertFalse(args.export_uncertainty)
 
     def test_build_global_mosaic_places_adjacent_tiles_in_expected_grid(self) -> None:
         rows = [

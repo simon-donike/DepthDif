@@ -42,6 +42,7 @@ from depth_recon.inference.core import (
 from depth_recon.inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     ExportRunResult,
     ExportSelection,
     GeoJSONPointWriter,
@@ -1132,6 +1133,9 @@ def _export_args_from_public_api(
     min_ocean_fraction: float,
     sigma: float,
     strict_load: bool,
+    export_uncertainty: bool = False,
+    uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+    uncertainty_only: bool = False,
 ) -> argparse.Namespace:
     """Build exporter args using the same defaults as the global CLI parser."""
     parser = _build_export_parser()
@@ -1164,6 +1168,9 @@ def _export_args_from_public_api(
     args.min_ocean_fraction = float(min_ocean_fraction)
     args.sigma = float(sigma)
     args.strict_load = bool(strict_load)
+    args.export_uncertainty = bool(export_uncertainty) or bool(uncertainty_only)
+    args.uncertainty_num_samples = int(uncertainty_num_samples)
+    args.uncertainty_only = bool(uncertainty_only)
     return args
 
 
@@ -1194,6 +1201,9 @@ def run_week_inference(
     land_mask_path: str | Path = DEFAULT_LAND_MASK_PATH,
     min_ocean_fraction: float = 0.05,
     sigma: float = DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
+    export_uncertainty: bool = False,
+    uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+    uncertainty_only: bool = False,
     strict_load: bool = False,
     force_download: bool = False,
     downloader: Downloader | None = None,
@@ -1228,6 +1238,9 @@ def run_week_inference(
             land_mask_path=public_land_mask_path,
             min_ocean_fraction=min_ocean_fraction,
             sigma=sigma,
+            export_uncertainty=export_uncertainty,
+            uncertainty_num_samples=uncertainty_num_samples,
+            uncertainty_only=uncertainty_only,
             strict_load=strict_load,
             force_download=force_download,
             downloader=downloader,
@@ -1308,6 +1321,9 @@ def run_week_inference(
         min_ocean_fraction=min_ocean_fraction,
         sigma=sigma,
         strict_load=strict_load,
+        export_uncertainty=export_uncertainty,
+        uncertainty_num_samples=uncertainty_num_samples,
+        uncertainty_only=uncertainty_only,
     )
     result: ExportRunResult = run_global_inference(args)
     return result.run_dir
@@ -1335,6 +1351,9 @@ def run_argo_week_inference(
     land_mask_path: str | Path | None = None,
     min_ocean_fraction: float = 0.05,
     sigma: float = DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
+    export_uncertainty: bool = False,
+    uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+    uncertainty_only: bool = False,
     strict_load: bool = False,
     force_download: bool = False,
     downloader: Downloader | None = None,
@@ -1463,6 +1482,11 @@ def run_argo_week_inference(
     )
     if batch_size_value < 1:
         raise ValueError("batch_size must be >= 1.")
+    uncertainty_only = bool(uncertainty_only)
+    export_uncertainty = bool(export_uncertainty) or uncertainty_only
+    export_prediction = not uncertainty_only
+    if bool(export_uncertainty) and int(uncertainty_num_samples) < 2:
+        raise ValueError("uncertainty_num_samples must be at least 2.")
 
     selected_date = _selected_iso_week_date(year, iso_week)
     run_stem = f"depthdif_argo_{selected_date}"
@@ -1481,14 +1505,27 @@ def run_argo_week_inference(
         land_mask_path=Path(land_mask_path),
         layout=layout,
     )
-    pred_accumulators = {
-        level.suffix: create_raster_accumulator(
+    pred_accumulators = (
+        {
+            level.suffix: create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem=f"prediction_{level.suffix}",
+                layout=layout,
+            )
+            for level in depth_export_levels
+        }
+        if export_prediction
+        else {}
+    )
+    uncertainty_accumulator = (
+        create_raster_accumulator(
             root_dir=scratch_dir,
-            stem=f"prediction_{level.suffix}",
+            stem="uncertainty",
             layout=layout,
         )
-        for level in depth_export_levels
-    }
+        if bool(export_uncertainty)
+        else None
+    )
     argo_points_geojson_path = run_dir / f"{run_stem}_argo_points.geojson"
     patch_splits_geojson_path = run_dir / f"{run_stem}_patch_splits.geojson"
     argo_points_writer = GeoJSONPointWriter(argo_points_geojson_path)
@@ -1541,6 +1578,9 @@ def run_argo_week_inference(
         f"selected_patches={len(rows)}, "
         f"batch_size={batch_size_value}, "
         f"weights={weight_source}, "
+        f"uncertainty_only={bool(uncertainty_only)}, "
+        f"export_uncertainty={bool(export_uncertainty)}, "
+        f"uncertainty_num_samples={int(uncertainty_num_samples)}, "
         f"ostia_conditioning={'enabled' if use_ostia_conditioning else 'disabled'}, "
         f"rectangle={rectangle}"
     )
@@ -1575,7 +1615,21 @@ def run_argo_week_inference(
         if progress_callback is not None:
             progress_callback("inference_batch_start", batch_label, run_dir)
         with torch.no_grad():
-            outputs = model.predict_step(_to_device(batch, target_device), batch_idx=0)
+            model_batch = _to_device(batch, target_device)
+            outputs = (
+                model.predict_step(model_batch, batch_idx=0)
+                if export_prediction
+                else None
+            )
+            uncertainty_outputs = (
+                model.uncertainty_step(
+                    model_batch,
+                    batch_idx=0,
+                    num_samples=int(uncertainty_num_samples),
+                )
+                if uncertainty_accumulator is not None
+                else None
+            )
 
         prediction_depth_batch = (
             outputs["y_hat_denorm"][:, depth_channel_indices]
@@ -1583,6 +1637,13 @@ def run_argo_week_inference(
             .float()
             .cpu()
             .numpy()
+            if outputs is not None
+            else None
+        )
+        uncertainty_batch = (
+            uncertainty_outputs["uncertainty"].detach().float().cpu().numpy()
+            if uncertainty_outputs is not None
+            else None
         )
         for local_idx, row in enumerate(batch_rows):
             patch_splits_writer.write_feature(_public_patch_feature_for_row(row))
@@ -1598,13 +1659,22 @@ def run_argo_week_inference(
                 observed_mask_2d=observed_mask_2d,
             ):
                 argo_points_writer.write_feature(feature)
-            for depth_idx, level in enumerate(depth_export_levels):
-                accumulator = pred_accumulators[level.suffix]
+            if prediction_depth_batch is not None:
+                for depth_idx, level in enumerate(depth_export_levels):
+                    accumulator = pred_accumulators[level.suffix]
+                    _accumulate_patch_into_arrays(
+                        accumulator.sum_array,
+                        accumulator.count_array,
+                        row=row,
+                        patch_values=prediction_depth_batch[local_idx, depth_idx],
+                        layout=layout,
+                    )
+            if uncertainty_batch is not None and uncertainty_accumulator is not None:
                 _accumulate_patch_into_arrays(
-                    accumulator.sum_array,
-                    accumulator.count_array,
+                    uncertainty_accumulator.sum_array,
+                    uncertainty_accumulator.count_array,
                     row=row,
-                    patch_values=prediction_depth_batch[local_idx, depth_idx],
+                    patch_values=uncertainty_batch[local_idx, 0],
                     layout=layout,
                 )
         if progress_callback is not None:
@@ -1620,6 +1690,8 @@ def run_argo_week_inference(
         )
     for accumulator in pred_accumulators.values():
         _flush_accumulator(accumulator)
+    if uncertainty_accumulator is not None:
+        _flush_accumulator(uncertainty_accumulator)
     argo_points_writer.close()
     patch_splits_writer.close()
     pd.DataFrame.from_records(rows).to_csv(
@@ -1627,7 +1699,7 @@ def run_argo_week_inference(
     )
 
     depth_export_records: list[dict[str, object]] = []
-    for level in depth_export_levels:
+    for level in (depth_export_levels if export_prediction else ()): 
         prediction_tif_path = run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
         common_depth_tags = {
             "selected_date": str(int(selected_date)),
@@ -1672,6 +1744,40 @@ def run_argo_week_inference(
             }
         )
 
+    uncertainty_tif_path: Path | None = None
+    if uncertainty_accumulator is not None:
+        uncertainty_tif_path = run_dir / f"{run_stem}_uncertainty.tif"
+        write_global_top_band_geotiff(
+            output_path=uncertainty_tif_path,
+            accumulator=uncertainty_accumulator,
+            layout=layout,
+            nodata=-9999.0,
+            band_description="uncertainty_std_celsius",
+            tags={
+                "selected_date": str(int(selected_date)),
+                "selected_patch_count": str(int(len(rows))),
+                "variable": "temperature",
+                "variable_label": "Temperature",
+                "land_mask_path": str(land_mask_path),
+                "land_zeroed": "false",
+                "land_masked_to_nodata": "true",
+                "value_units": "degree_Celsius",
+                "value_unit_label": "deg C",
+                "value_space": "generation_uncertainty_std_celsius",
+                "source": "DepthDif public ARGO weekly uncertainty export",
+                "checkpoint_path": str(ckpt_path),
+                "kind": "uncertainty",
+                "uncertainty_stat": "std",
+                "uncertainty_num_samples": str(int(uncertainty_num_samples)),
+                "source_value_transform": (
+                    "std(model_prediction_denormalized_repeated_samples)"
+                ),
+                "prediction_zero_masked_to_nodata": "false",
+            },
+            land_mask=land_mask,
+            prediction_zero_masked_to_nodata=False,
+        )
+
     run_summary = {
         "selected_date": int(selected_date),
         "target_date": int(selected_date),
@@ -1691,8 +1797,17 @@ def run_argo_week_inference(
         "train_config": str(assets.train_config),
         "device": str(target_device),
         "run_dir": str(run_dir),
-        "prediction_tif_path": str(depth_export_records[0]["prediction_tif_path"]),
+        "prediction_tif_path": (
+            None
+            if not depth_export_records
+            else str(depth_export_records[0]["prediction_tif_path"])
+        ),
         "ground_truth_tif_path": None,
+        "uncertainty_tif_path": (
+            None
+            if uncertainty_tif_path is None
+            else _summary_artifact_path(uncertainty_tif_path)
+        ),
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": _summary_artifact_path(argo_points_geojson_path),
         "argo_point_count": int(argo_points_writer.feature_count),
@@ -1700,6 +1815,12 @@ def run_argo_week_inference(
         "patch_split_count": int(patch_splits_writer.feature_count),
         "ostia_dir": None if ostia_dir is None else str(ostia_dir),
         "ostia_conditioning": bool(use_ostia_conditioning),
+        "uncertainty_only": bool(uncertainty_only),
+        "prediction_runs_per_patch": 1 if export_prediction else 0,
+        "export_uncertainty": bool(export_uncertainty),
+        "uncertainty_num_samples": (
+            int(uncertainty_num_samples) if bool(export_uncertainty) else None
+        ),
         "argo_dir": str(argo_dir),
         "glorys_dir": None,
         "glorys_required": False,
@@ -1711,6 +1832,8 @@ def run_argo_week_inference(
 
     for accumulator in pred_accumulators.values():
         _cleanup_accumulator(accumulator)
+    if uncertainty_accumulator is not None:
+        _cleanup_accumulator(uncertainty_accumulator)
     scratch_dir.rmdir()
     return run_dir
 
@@ -1749,6 +1872,22 @@ def _build_public_parser() -> argparse.ArgumentParser:
     infer.add_argument("--min-ocean-fraction", type=float, default=0.05)
     infer.add_argument(
         "--sigma", type=float, default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA
+    )
+    infer.add_argument(
+        "--export-uncertainty",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Export one 5-sample uncertainty raster for the selected week.",
+    )
+    infer.add_argument(
+        "--uncertainty-num-samples",
+        type=int,
+        default=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+    )
+    infer.add_argument(
+        "--uncertainty-only",
+        action="store_true",
+        help="Only run and export the 5-sample uncertainty raster.",
     )
     infer.add_argument("--strict-load", action="store_true")
     infer.add_argument("--force-download", action="store_true")
@@ -1802,6 +1941,9 @@ def infer_week_cli(argv: Sequence[str] | None = None) -> None:
         land_mask_path=args.land_mask_path,
         min_ocean_fraction=args.min_ocean_fraction,
         sigma=args.sigma,
+        export_uncertainty=args.export_uncertainty,
+        uncertainty_num_samples=args.uncertainty_num_samples,
+        uncertainty_only=args.uncertainty_only,
         strict_load=args.strict_load,
         force_download=args.force_download,
     )
@@ -1874,6 +2016,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             land_mask_path=args.land_mask_path,
             min_ocean_fraction=args.min_ocean_fraction,
             sigma=args.sigma,
+            export_uncertainty=args.export_uncertainty,
+            uncertainty_num_samples=args.uncertainty_num_samples,
+            uncertainty_only=args.uncertainty_only,
             strict_load=args.strict_load,
             force_download=args.force_download,
         )

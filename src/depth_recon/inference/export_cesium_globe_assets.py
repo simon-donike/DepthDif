@@ -196,7 +196,8 @@ def _resolve_land_mask_path(
 def _resolve_run_artifacts(
     run_dir: Path,
 ) -> tuple[
-    Path,
+    Path | None,
+    Path | None,
     Path | None,
     Path | None,
     Path | None,
@@ -214,12 +215,7 @@ def _resolve_run_artifacts(
     )
     if prediction_path is None:
         matches = sorted(run_dir.glob("*_prediction.tif"))
-        if not matches:
-            raise FileNotFoundError(
-                "Could not locate the prediction GeoTIFF. "
-                "Expected run_summary.yaml or one '*_prediction.tif' inside the run directory."
-            )
-        prediction_path = matches[0]
+        prediction_path = matches[0] if matches else None
 
     ground_truth_path = _coerce_existing_path(
         run_summary.get("ground_truth_tif_path"),
@@ -233,6 +229,20 @@ def _resolve_run_artifacts(
         run_summary.get("absolute_error_tif_path"),
         run_dir=run_dir,
     )
+
+    uncertainty_path = _coerce_existing_path(
+        run_summary.get("uncertainty_tif_path"),
+        run_dir=run_dir,
+    )
+    if uncertainty_path is None:
+        matches = sorted(run_dir.glob("*_uncertainty.tif"))
+        uncertainty_path = matches[0] if matches else None
+    if prediction_path is None and uncertainty_path is None:
+        raise FileNotFoundError(
+            "Could not locate prediction or uncertainty GeoTIFFs. Expected "
+            "run_summary.yaml, '*_prediction.tif', or '*_uncertainty.tif' inside "
+            "the run directory."
+        )
 
     points_path = _coerce_existing_path(
         run_summary.get("argo_points_geojson_path"),
@@ -280,6 +290,7 @@ def _resolve_run_artifacts(
         patch_splits_path,
         full_sample_points_path,
         graphs_dir_path,
+        uncertainty_path,
         run_summary,
     )
 
@@ -288,9 +299,11 @@ def _resolve_depth_export_artifacts(
     *,
     run_dir: Path,
     run_summary: dict[str, Any],
-    prediction_path: Path,
+    prediction_path: Path | None,
     ground_truth_path: Path | None,
 ) -> list[dict[str, Any]]:
+    if prediction_path is None:
+        return []
     raw_exports = run_summary.get("depth_exports")
     if not isinstance(raw_exports, list) or not raw_exports:
         return [
@@ -837,7 +850,7 @@ def build_globe_config(
     target_date: int | None,
     iso_year: int | None,
     iso_week: int | None,
-    prediction_tiles_url: str,
+    prediction_tiles_url: str | None,
     ground_truth_tiles_url: str | None,
     absolute_error_tiles_url: str | None,
     depth_levels: list[dict[str, Any]],
@@ -863,8 +876,25 @@ def build_globe_config(
     value_unit_label: str = "°C",
     variables: dict[str, Any] | None = None,
     default_variable: str | None = None,
+    uncertainty_tiles_url: str | None = None,
+    uncertainty_credit: str | None = None,
+    uncertainty_color_palette: str = DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+    uncertainty_color_scale_min: float | None = None,
+    uncertainty_color_scale_max: float | None = None,
+    uncertainty_legend_min: float = DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+    uncertainty_legend_max: int | None = None,
+    uncertainty_value_units: str | None = None,
+    uncertainty_value_unit_label: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
+    uncertainty_units = (
+        value_units if uncertainty_value_units is None else uncertainty_value_units
+    )
+    uncertainty_unit_label = (
+        value_unit_label
+        if uncertainty_value_unit_label is None
+        else uncertainty_value_unit_label
+    )
     config.update(
         {
             "selected_date": selected_date,
@@ -878,6 +908,24 @@ def build_globe_config(
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "absolute_error_tiles_url": absolute_error_tiles_url,
+            "uncertainty_tiles_url": uncertainty_tiles_url,
+            "uncertainty_color_palette": str(uncertainty_color_palette),
+            "uncertainty_value_units": str(uncertainty_units),
+            "uncertainty_value_unit_label": str(uncertainty_unit_label),
+            "uncertainty_color_scale_min": (
+                None
+                if uncertainty_color_scale_min is None
+                else float(uncertainty_color_scale_min)
+            ),
+            "uncertainty_color_scale_max": (
+                None
+                if uncertainty_color_scale_max is None
+                else float(uncertainty_color_scale_max)
+            ),
+            "uncertainty_legend_min": float(uncertainty_legend_min),
+            "uncertainty_legend_max": (
+                None if uncertainty_legend_max is None else int(uncertainty_legend_max)
+            ),
             "depth_levels": depth_levels,
             "argo_sample_locations_url": argo_sample_locations_url,
             "argo_points_url": argo_points_url,
@@ -907,6 +955,8 @@ def build_globe_config(
         credits["ground_truth"] = ground_truth_credit
     if absolute_error_credit is not None:
         credits["absolute_error"] = absolute_error_credit
+    if uncertainty_credit is not None:
+        credits["uncertainty"] = uncertainty_credit
     if points_credit is not None:
         credits["points"] = points_credit
     if patch_splits_credit is not None:
@@ -1012,6 +1062,7 @@ def export_cesium_globe_assets(
         patch_splits_path,
         full_sample_points_path,
         graphs_dir_path,
+        uncertainty_path,
         run_summary,
     ) = _resolve_run_artifacts(run_dir)
 
@@ -1040,6 +1091,8 @@ def export_cesium_globe_assets(
     prediction_tiles_dir: Path | None = None
     ground_truth_tiles_dir: Path | None = None
     absolute_error_tiles_dir: Path | None = None
+    uncertainty_tiles_dir: Path | None = None
+    uncertainty_scale: dict[str, float | int] | None = None
     for depth_export in depth_exports:
         suffix = str(depth_export["suffix"])
         prediction_export_path = Path(depth_export["prediction_path"])
@@ -1213,8 +1266,32 @@ def export_cesium_globe_assets(
             }
         )
 
-    if prediction_tiles_dir is None:
-        raise RuntimeError("No prediction depth tiles were generated.")
+    if uncertainty_path is not None:
+        _validate_raster_transparency_contract(uncertainty_path)
+        uncertainty_scale = _absolute_error_color_scale(uncertainty_path)
+        uncertainty_ramp_path = temp_dir / f"{uncertainty_path.stem}_green_red_ramp.txt"
+        _write_absolute_error_color_ramp(
+            uncertainty_ramp_path,
+            color_scale_min_c=float(uncertainty_scale["color_scale_min_c"]),
+            color_scale_max_c=float(uncertainty_scale["color_scale_max_c"]),
+            valid_max_c=float(uncertainty_scale["valid_max_c"]),
+        )
+        uncertainty_colorized_path = temp_dir / f"{uncertainty_path.stem}_colorized.tif"
+        _colorize_raster(
+            uncertainty_path,
+            uncertainty_colorized_path,
+            color_ramp_path=uncertainty_ramp_path,
+        )
+        uncertainty_tiles_dir = globe_dir / "uncertainty_tiles"
+        _run_gdal2tiles(
+            uncertainty_colorized_path,
+            uncertainty_tiles_dir,
+            extra_zoom_levels=extra_zoom_levels,
+        )
+
+    if prediction_tiles_dir is None and uncertainty_tiles_dir is None:
+        raise RuntimeError("No prediction or uncertainty tiles were generated.")
+
     copied_points_path: Path | None = None
     if points_path is not None:
         copied_points_path = globe_dir / "argo_points.geojson"
@@ -1259,7 +1336,10 @@ def export_cesium_globe_assets(
                 shutil.rmtree(copied_graphs_dir_path)
             shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
 
-    prediction_meta = _read_raster_metadata(prediction_path)
+    bounds_source_path = prediction_path if prediction_path is not None else uncertainty_path
+    if bounds_source_path is None:
+        raise RuntimeError("No raster was available for globe bounds metadata.")
+    prediction_meta = _read_raster_metadata(bounds_source_path)
     ground_truth_meta = (
         _read_raster_metadata(ground_truth_path)
         if ground_truth_path is not None
@@ -1270,8 +1350,13 @@ def export_cesium_globe_assets(
         if absolute_error_path is not None
         else None
     )
+    uncertainty_meta = (
+        _read_raster_metadata(uncertainty_path)
+        if uncertainty_path is not None
+        else None
+    )
     raster_transparency = _raster_transparency_config(
-        prediction_path,
+        bounds_source_path,
         land_mask_path=land_mask_path,
         color_scale_min=float(variable_metadata["color_scale_min"]),
         color_scale_max=float(variable_metadata["color_scale_max"]),
@@ -1283,15 +1368,19 @@ def export_cesium_globe_assets(
         target_date=run_summary.get("target_date", run_summary.get("selected_date")),
         iso_year=run_summary.get("iso_year"),
         iso_week=run_summary.get("iso_week"),
-        prediction_tiles_url=str(config_depth_levels[0]["prediction_tiles_url"]),
+        prediction_tiles_url=(
+            None
+            if not config_depth_levels
+            else str(config_depth_levels[0]["prediction_tiles_url"])
+        ),
         ground_truth_tiles_url=(
             None
-            if ground_truth_tiles_dir is None
+            if ground_truth_tiles_dir is None or not config_depth_levels
             else config_depth_levels[0]["ground_truth_tiles_url"]
         ),
         absolute_error_tiles_url=(
             None
-            if absolute_error_tiles_dir is None
+            if absolute_error_tiles_dir is None or not config_depth_levels
             else config_depth_levels[0]["absolute_error_tiles_url"]
         ),
         depth_levels=config_depth_levels,
@@ -1335,6 +1424,9 @@ def export_cesium_globe_assets(
         absolute_error_credit=(
             None if absolute_error_meta is None else absolute_error_meta["credit"]
         ),
+        uncertainty_credit=(
+            None if uncertainty_meta is None else uncertainty_meta["credit"]
+        ),
         points_credit=None if copied_points_path is None else "Observed Argo points",
         patch_splits_credit=(
             None if copied_patch_splits_path is None else "Inference patch grid"
@@ -1353,6 +1445,29 @@ def export_cesium_globe_assets(
         variable_label=str(variable_metadata["label"]),
         value_units=str(variable_metadata["value_units"]),
         value_unit_label=str(variable_metadata["value_unit_label"]),
+        uncertainty_tiles_url=(
+            None
+            if uncertainty_tiles_dir is None
+            else _resolve_layer_url(
+                uncertainty_tiles_dir.name,
+                public_base_url=public_base_url,
+            )
+        ),
+        uncertainty_color_scale_min=(
+            None
+            if uncertainty_scale is None
+            else float(uncertainty_scale["color_scale_min_c"])
+        ),
+        uncertainty_color_scale_max=(
+            None
+            if uncertainty_scale is None
+            else float(uncertainty_scale["color_scale_max_c"])
+        ),
+        uncertainty_legend_max=(
+            None
+            if uncertainty_scale is None
+            else int(uncertainty_scale["legend_max_c"])
+        ),
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1363,11 +1478,14 @@ def export_cesium_globe_assets(
 
     print(f"Wrote globe assets to: {globe_dir}")
     print(f"- prediction depth tile sets: {len(config_depth_levels)}")
-    print(f"- first prediction tiles: {prediction_tiles_dir}")
+    if prediction_tiles_dir is not None:
+        print(f"- first prediction tiles: {prediction_tiles_dir}")
     if ground_truth_tiles_dir is not None:
         print(f"- first ground-truth tiles: {ground_truth_tiles_dir}")
     if absolute_error_tiles_dir is not None:
         print(f"- first absolute-error tiles: {absolute_error_tiles_dir}")
+    if uncertainty_tiles_dir is not None:
+        print(f"- uncertainty tiles: {uncertainty_tiles_dir}")
     if copied_argo_sample_locations_path is not None:
         print(
             "- combined ARGO sample locations GeoJSON: "
@@ -1428,6 +1546,7 @@ def export_cesium_globe_assets(
                 if depth_level.get("absolute_error_tiles_url") is not None
             )
         ),
+        "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
@@ -1440,6 +1559,7 @@ ASSET_URL_KEYS = (
     "prediction_tiles_url",
     "ground_truth_tiles_url",
     "absolute_error_tiles_url",
+    "uncertainty_tiles_url",
     "argo_sample_locations_url",
     "argo_points_url",
     "patch_splits_url",

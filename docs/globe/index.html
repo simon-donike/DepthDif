@@ -33,6 +33,14 @@
             </div>
             <a class="standalone-globe-back-link" href="../">Back to Docs</a>
           </header>
+          <button
+            id="globe-exit-cinematic"
+            class="globe-cinematic-exit"
+            type="button"
+            hidden
+          >
+            Exit cinematic
+          </button>
           <div class="globe-toolbar">
             <div class="globe-toolbar__header">
               <span class="globe-toolbar__label">Settings</span>
@@ -81,6 +89,10 @@
                     <label class="globe-segmented-toggle__option">
                       <input id="globe-toggle-absolute-error" name="globe-raster-layer" type="radio" value="error" />
                       <span>Error</span>
+                    </label>
+                    <label class="globe-segmented-toggle__option">
+                      <input id="globe-toggle-uncertainty" name="globe-raster-layer" type="radio" value="uncertainty" />
+                      <span>Uncertainty</span>
                     </label>
                   </div>
                 </section>
@@ -132,6 +144,10 @@
                     Spin Globe
                   </button>
                   <button id="globe-reset-camera" class="globe-reset-button" type="button">Reset View</button>
+                  <button id="globe-export-picture" class="globe-reset-button" type="button">Export PNG</button>
+                  <button id="globe-toggle-cinematic" class="globe-reset-button" type="button" aria-pressed="false">
+                    Cinematic
+                  </button>
                 </div>
               </div>
             </div>
@@ -151,7 +167,7 @@
               aria-label="Absolute error color scale"
               hidden
             >
-              <span class="globe-legend__title">Absolute Error</span>
+              <span id="globe-error-legend-title" class="globe-legend__title">Absolute Error</span>
               <div class="globe-legend__bar globe-legend__bar--error"></div>
               <div class="globe-legend__labels">
                 <span id="globe-error-legend-min">0°C</span>

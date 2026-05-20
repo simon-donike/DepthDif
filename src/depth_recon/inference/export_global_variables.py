@@ -21,6 +21,7 @@ from depth_recon.inference.export_global import (
     DEFAULT_FULL_SAMPLE_COUNT,
     DEFAULT_INFERENCE_CONFIG,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     _build_parser as _build_single_export_parser,
     run_global_inference,
 )
@@ -82,6 +83,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--export-uncertainty",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Run and export one stitched uncertainty raster for both "
+            "temperature and salinity."
+        ),
+    )
+    parser.add_argument(
+        "--uncertainty-num-samples",
+        type=int,
+        default=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+        help="Repeated generations per variable uncertainty map.",
+    )
     parser.add_argument(
         "--sigma",
         type=float,
@@ -162,7 +178,14 @@ def _single_export_args(
         "--seed",
         str(int(args.seed)),
         "--export-ground-truth",
+        "--uncertainty-num-samples",
+        str(int(args.uncertainty_num_samples)),
     ]
+    argv.append(
+        "--export-uncertainty"
+        if bool(args.export_uncertainty)
+        else "--no-export-uncertainty"
+    )
     if not bool(args.multi_gpu):
         argv.append("--no-multi-gpu")
     if bool(args.strict_load):
@@ -228,12 +251,26 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
             "temperature": {
                 "run_dir": str(temperature_result.run_dir),
                 "summary_path": str(temperature_result.summary_path),
+                "uncertainty_tif_path": (
+                    None
+                    if temperature_result.uncertainty_tif_path is None
+                    else str(temperature_result.uncertainty_tif_path)
+                ),
             },
             "salinity": {
                 "run_dir": str(salinity_result.run_dir),
                 "summary_path": str(salinity_result.summary_path),
+                "uncertainty_tif_path": (
+                    None
+                    if salinity_result.uncertainty_tif_path is None
+                    else str(salinity_result.uncertainty_tif_path)
+                ),
             },
         },
+        "export_uncertainty": bool(args.export_uncertainty),
+        "uncertainty_num_samples": (
+            int(args.uncertainty_num_samples) if bool(args.export_uncertainty) else None
+        ),
         "globe_packaging": packaging_result,
     }
     summary_path = paired_run_dir / "run_summary.yaml"

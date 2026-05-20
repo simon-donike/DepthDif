@@ -89,6 +89,7 @@ DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
 DEFAULT_INFERENCE_NUM_WORKERS = 8
 DEFAULT_INFERENCE_PREFETCH_FACTOR = 2
+DEFAULT_UNCERTAINTY_NUM_SAMPLES = 5
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
     ("10m", "10m", 10.0),
@@ -246,13 +247,14 @@ class ExportRunResult:
 
     run_dir: Path
     summary_path: Path
-    prediction_tif_path: Path
+    prediction_tif_path: Path | None
     ground_truth_tif_path: Path | None
     selected_date: int
     iso_year: int
     iso_week: int
     selected_patch_count: int
     absolute_error_tif_path: Path | None = None
+    uncertainty_tif_path: Path | None = None
     variable: str = "temperature"
 
 
@@ -349,27 +351,34 @@ class ExportInferenceWrapper(nn.Module):
         variable_spec: ExportVariableSpec,
         export_ground_truth: bool,
         export_full_prediction_stack: bool,
-        depth_channel_indices: Sequence[int],
+        export_prediction: bool = True,
+        export_uncertainty: bool = False,
+        uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+        depth_channel_indices: Sequence[int] = (),
     ) -> None:
         super().__init__()
         self.model = model
         self.variable_spec = variable_spec
         self.export_ground_truth = bool(export_ground_truth)
         self.export_full_prediction_stack = bool(export_full_prediction_stack)
+        self.export_prediction = bool(export_prediction)
+        self.export_uncertainty = bool(export_uncertainty)
+        self.uncertainty_num_samples = int(uncertainty_num_samples)
         self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        pred = self.model.predict_step(batch, batch_idx=0)
-        prediction_denorm = pred.get(self.variable_spec.prediction_denorm_key)
-        if prediction_denorm is None:
-            prediction_denorm = pred["y_hat_denorm"]
-        out: dict[str, torch.Tensor] = {
-            "prediction_depth_stack": prediction_denorm[
-                :, self.depth_channel_indices
-            ].contiguous(),
-        }
-        if self.export_full_prediction_stack:
-            out["prediction_full_stack"] = prediction_denorm.contiguous()
+        out: dict[str, torch.Tensor] = {}
+        if self.export_prediction or self.export_full_prediction_stack:
+            pred = self.model.predict_step(batch, batch_idx=0)
+            prediction_denorm = pred.get(self.variable_spec.prediction_denorm_key)
+            if prediction_denorm is None:
+                prediction_denorm = pred["y_hat_denorm"]
+            if self.export_prediction:
+                out["prediction_depth_stack"] = prediction_denorm[
+                    :, self.depth_channel_indices
+                ].contiguous()
+            if self.export_full_prediction_stack:
+                out["prediction_full_stack"] = prediction_denorm.contiguous()
         if self.export_ground_truth:
             target_denorm = self.variable_spec.normalize_fn(
                 mode="denorm", tensor=batch[self.variable_spec.y_key]
@@ -384,6 +393,22 @@ class ExportInferenceWrapper(nn.Module):
                 torch.full_like(gt_depth_stack, float("nan")),
             )
             out["ground_truth_depth_stack"] = gt_depth_stack.contiguous()
+        if self.export_uncertainty:
+            uncertainty = self.model.uncertainty_step(
+                batch,
+                batch_idx=0,
+                num_samples=int(self.uncertainty_num_samples),
+            )
+            uncertainty_map = uncertainty.get(
+                f"uncertainty_{self.variable_spec.name}",
+                uncertainty.get("uncertainty"),
+            )
+            if uncertainty_map is None:
+                raise RuntimeError(
+                    "Model uncertainty_step did not return an uncertainty map "
+                    f"for {self.variable_spec.name}."
+                )
+            out["uncertainty_map"] = uncertainty_map.contiguous()
         return out
 
 
@@ -469,6 +494,7 @@ def _rewrite_summary_for_production(
         "prediction_tif_path",
         "ground_truth_tif_path",
         "absolute_error_tif_path",
+        "uncertainty_tif_path",
         "argo_points_geojson_path",
         "full_sample_locations_geojson_path",
         "patch_splits_geojson_path",
@@ -805,6 +831,9 @@ def _print_global_inference_settings(
     inference_num_workers: int,
     inference_prefetch_factor: int,
     requested_full_sample_count: int,
+    uncertainty_only: bool,
+    export_uncertainty: bool,
+    uncertainty_num_samples: int,
 ) -> None:
     """Print a concise summary of the resolved global inference settings."""
     tile_size = int(_nested_cfg_value(data_cfg, "dataset.grid.tile_size", default=128))
@@ -840,7 +869,10 @@ def _print_global_inference_settings(
         f"\n  sampler: {sampler_name}"
         f"\n  diffusion_num_timesteps: {diffusion_steps}"
         f"\n  ddim_num_timesteps: {ddim_steps}"
-        f"\n  export_ground_truth: {bool(args.export_ground_truth)}"
+        f"\n  export_ground_truth: {bool(args.export_ground_truth) and not bool(uncertainty_only)}"
+        f"\n  uncertainty_only: {bool(uncertainty_only)}"
+        f"\n  export_uncertainty: {bool(export_uncertainty)}"
+        f"\n  uncertainty_num_samples: {int(uncertainty_num_samples)}"
         f"\n  full_sample_count: {requested_full_sample_count}"
         f"\n  sigma: {float(args.sigma)}"
         f"\n  rectangle: {args.rectangle}\n",
@@ -1962,6 +1994,30 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Torch RNG seed so stochastic samplers remain reproducible.",
     )
     parser.add_argument(
+        "--export-uncertainty",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Run the model uncertainty step and export one stitched 1-channel "
+            "uncertainty raster for the active variable."
+        ),
+    )
+    parser.add_argument(
+        "--uncertainty-num-samples",
+        type=int,
+        default=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+        help="Number of stochastic generations used by --export-uncertainty.",
+    )
+    parser.add_argument(
+        "--uncertainty-only",
+        action="store_true",
+        help=(
+            "Only run the uncertainty step and export its stitched 1-channel "
+            "raster; implies --export-uncertainty and skips prediction, "
+            "GLORYS, absolute-error, and full-profile exports."
+        ),
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
@@ -2158,6 +2214,15 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
     )
     requested_full_sample_count = int(args.full_sample_count)
+    uncertainty_only = bool(getattr(args, "uncertainty_only", False))
+    export_uncertainty = bool(getattr(args, "export_uncertainty", False)) or uncertainty_only
+    export_prediction = not uncertainty_only
+    export_ground_truth = bool(args.export_ground_truth) and export_prediction
+    uncertainty_num_samples = int(
+        getattr(args, "uncertainty_num_samples", DEFAULT_UNCERTAINTY_NUM_SAMPLES)
+    )
+    if export_uncertainty and uncertainty_num_samples < 2:
+        raise ValueError("--uncertainty-num-samples must be at least 2.")
     if batch_size < 1:
         raise ValueError("--batch-size must be >= 1.")
     if inference_num_workers < 0:
@@ -2175,6 +2240,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         inference_num_workers=inference_num_workers,
         inference_prefetch_factor=inference_prefetch_factor,
         requested_full_sample_count=requested_full_sample_count,
+        uncertainty_only=uncertainty_only,
+        export_uncertainty=export_uncertainty,
+        uncertainty_num_samples=uncertainty_num_samples,
     )
 
     configured_val_year = data_cfg.get("split", {}).get("val_year")
@@ -2217,9 +2285,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
     model_cfg = load_yaml(args.model_config)
     variable_spec = resolve_export_variable_spec(model_cfg)
-    export_all_full_samples = requested_full_sample_count < 0
+    export_all_full_samples = requested_full_sample_count < 0 and export_prediction
     full_sample_count = int(max(0, requested_full_sample_count))
-    export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
+    export_full_profiles = bool(
+        export_prediction and (export_all_full_samples or full_sample_count > 0)
+    )
 
     sample_for_shape = dataset[selection.indices[0]]
     sample_target = sample_for_shape[variable_spec.y_key]
@@ -2239,14 +2309,18 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         layout=layout,
     )
     scratch_dir = run_dir / ".scratch"
-    pred_accumulators = {
-        level.suffix: create_raster_accumulator(
-            root_dir=scratch_dir,
-            stem=f"prediction_{level.suffix}",
-            layout=layout,
-        )
-        for level in depth_export_levels
-    }
+    pred_accumulators = (
+        {
+            level.suffix: create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem=f"prediction_{level.suffix}",
+                layout=layout,
+            )
+            for level in depth_export_levels
+        }
+        if export_prediction
+        else {}
+    )
     gt_accumulators = (
         {
             level.suffix: create_raster_accumulator(
@@ -2256,12 +2330,21 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             )
             for level in depth_export_levels
         }
-        if bool(args.export_ground_truth)
+        if export_ground_truth
         else {}
+    )
+    uncertainty_accumulator = (
+        create_raster_accumulator(
+            root_dir=scratch_dir,
+            stem="uncertainty",
+            layout=layout,
+        )
+        if export_uncertainty
+        else None
     )
     argo_points_geojson_path = (
         run_dir / f"{run_stem}_argo_points.geojson"
-        if bool(args.export_ground_truth)
+        if export_ground_truth
         else None
     )
     full_sample_locations_geojson_path = (
@@ -2300,11 +2383,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"batch_size={batch_size}, "
         f"inference_num_workers={inference_num_workers}, "
         f"inference_prefetch_factor={inference_prefetch_factor}, "
-        f"export_ground_truth={bool(args.export_ground_truth)}, "
+        f"export_ground_truth={export_ground_truth}, "
+        f"uncertainty_only={uncertainty_only}, "
         f"full_sample_count="
         f"{'all' if export_all_full_samples else full_sample_count}, "
-        "prediction_runs_per_patch=1, "
+        f"prediction_runs_per_patch={1 if export_prediction else 0}, "
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
+        f"export_uncertainty={export_uncertainty}, "
+        f"uncertainty_num_samples={uncertainty_num_samples}, "
         f"patch_stride={inference_grid_metadata['patch_stride']}, "
         f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
         f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
@@ -2357,8 +2443,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     inference_module = ExportInferenceWrapper(
         model,
         variable_spec=variable_spec,
-        export_ground_truth=bool(args.export_ground_truth),
+        export_ground_truth=export_ground_truth,
         export_full_prediction_stack=export_full_profiles,
+        export_prediction=export_prediction,
+        export_uncertainty=export_uncertainty,
+        uncertainty_num_samples=uncertainty_num_samples,
         depth_channel_indices=depth_channel_indices,
     )
     if use_multi_gpu:
@@ -2390,6 +2479,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
         prediction_depth_batch = (
             outputs["prediction_depth_stack"].detach().float().cpu().numpy()
+            if export_prediction
+            else None
         )
         prediction_full_stack_batch = (
             outputs["prediction_full_stack"].detach().float().cpu().numpy()
@@ -2398,7 +2489,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
         ground_truth_batch = (
             outputs["ground_truth_depth_stack"].detach().float().cpu().numpy()
-            if bool(args.export_ground_truth)
+            if export_ground_truth
+            else None
+        )
+        uncertainty_batch = (
+            outputs["uncertainty_map"].detach().float().cpu().numpy()
+            if uncertainty_accumulator is not None
             else None
         )
         eo_denorm_batch = (
@@ -2440,31 +2536,40 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 if ground_truth_batch is not None
                 else None
             )
-            for depth_idx, level in enumerate(depth_export_levels):
-                pred_accumulator = pred_accumulators[level.suffix]
-                _accumulate_patch_into_arrays(
-                    pred_accumulator.sum_array,
-                    pred_accumulator.count_array,
-                    row=row,
-                    patch_values=_prediction_zeros_to_nan(
-                        prediction_depth_batch[local_idx, depth_idx]
-                    ),
-                    layout=layout,
-                )
-                if ground_truth_batch is not None and level.suffix in gt_accumulators:
-                    gt_accumulator = gt_accumulators[level.suffix]
-                    gt_patch_values = (
-                        ground_truth_patch[int(level.channel_index)]
-                        if ground_truth_patch is not None
-                        else ground_truth_batch[local_idx, depth_idx]
-                    )
+            if prediction_depth_batch is not None:
+                for depth_idx, level in enumerate(depth_export_levels):
+                    pred_accumulator = pred_accumulators[level.suffix]
                     _accumulate_patch_into_arrays(
-                        gt_accumulator.sum_array,
-                        gt_accumulator.count_array,
+                        pred_accumulator.sum_array,
+                        pred_accumulator.count_array,
                         row=row,
-                        patch_values=gt_patch_values,
+                        patch_values=_prediction_zeros_to_nan(
+                            prediction_depth_batch[local_idx, depth_idx]
+                        ),
                         layout=layout,
                     )
+                    if ground_truth_batch is not None and level.suffix in gt_accumulators:
+                        gt_accumulator = gt_accumulators[level.suffix]
+                        gt_patch_values = (
+                            ground_truth_patch[int(level.channel_index)]
+                            if ground_truth_patch is not None
+                            else ground_truth_batch[local_idx, depth_idx]
+                        )
+                        _accumulate_patch_into_arrays(
+                            gt_accumulator.sum_array,
+                            gt_accumulator.count_array,
+                            row=row,
+                            patch_values=gt_patch_values,
+                            layout=layout,
+                        )
+            if uncertainty_batch is not None and uncertainty_accumulator is not None:
+                _accumulate_patch_into_arrays(
+                    uncertainty_accumulator.sum_array,
+                    uncertainty_accumulator.count_array,
+                    row=row,
+                    patch_values=uncertainty_batch[local_idx, 0],
+                    layout=layout,
+                )
             if argo_points_writer is not None:
                 # Use the dataset's horizontal support mask so the globe shows one
                 # marker per observed location instead of one marker per depth level.
@@ -2570,6 +2675,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         _flush_accumulator(accumulator)
     for accumulator in gt_accumulators.values():
         _flush_accumulator(accumulator)
+    if uncertainty_accumulator is not None:
+        _flush_accumulator(uncertainty_accumulator)
     if argo_points_writer is not None:
         argo_points_writer.close()
     patch_splits_writer.close()
@@ -2616,7 +2723,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         graphs_dir_path = None
 
     depth_export_records: list[dict[str, Any]] = []
-    for level in depth_export_levels:
+    for level in (depth_export_levels if export_prediction else ()): 
         prediction_tif_path_for_level = (
             run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
         )
@@ -2774,15 +2881,58 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             }
         )
 
-    prediction_tif_path = run_dir / str(depth_export_records[0]["prediction_tif_path"])
+    uncertainty_tif_path: Path | None = None
+    if uncertainty_accumulator is not None:
+        uncertainty_tif_path = run_dir / f"{run_stem}_uncertainty.tif"
+        write_global_top_band_geotiff(
+            output_path=uncertainty_tif_path,
+            accumulator=uncertainty_accumulator,
+            layout=layout,
+            nodata=float(args.nodata),
+            band_description=(f"uncertainty_std_{variable_spec.band_description_unit}"),
+            tags={
+                "selected_date": str(int(selection.selected_date)),
+                "selected_patch_count": str(int(len(selection.indices))),
+                "variable": variable_spec.name,
+                "variable_label": variable_spec.label,
+                "land_mask_path": str(effective_land_mask_path),
+                "land_zeroed": "false",
+                "land_masked_to_nodata": "true",
+                "value_units": variable_spec.value_units,
+                "value_unit_label": variable_spec.value_unit_label,
+                "value_space": f"generation_uncertainty_std_{variable_spec.band_description_unit}",
+                "source": (
+                    f"DepthDif global weekly {variable_spec.name} uncertainty export"
+                ),
+                "checkpoint_path": str(ckpt_path),
+                "kind": "uncertainty",
+                "uncertainty_stat": "std",
+                "uncertainty_num_samples": str(int(uncertainty_num_samples)),
+                "source_value_transform": (
+                    "std(model_prediction_denormalized_repeated_samples)"
+                ),
+                "prediction_zero_masked_to_nodata": "false",
+            },
+            land_mask=land_mask,
+            prediction_zero_masked_to_nodata=False,
+        )
+        print(f"Wrote uncertainty GeoTIFF: {uncertainty_tif_path}")
+
+    prediction_tif_path = (
+        None
+        if not depth_export_records
+        else run_dir / str(depth_export_records[0]["prediction_tif_path"])
+    )
     ground_truth_tif_path = (
         None
-        if depth_export_records[0]["ground_truth_tif_path"] is None
+        if not depth_export_records
+        or depth_export_records[0]["ground_truth_tif_path"] is None
         else run_dir / str(depth_export_records[0]["ground_truth_tif_path"])
     )
     absolute_error_tif_path = (
         None
-        if depth_export_records[0]["absolute_error_tif_path"] is None
+        if not depth_export_records
+        or depth_export_records[0]["absolute_error_tif_path"] is None
         else run_dir / str(depth_export_records[0]["absolute_error_tif_path"])
     )
     if ground_truth_tif_path is not None:
@@ -2824,7 +2974,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "land_mask_path": str(effective_land_mask_path),
         "land_zeroed": False,
         "land_masked_to_nodata": True,
-        "prediction_zero_masked_to_nodata": True,
+        "prediction_zero_masked_to_nodata": bool(export_prediction),
+        "uncertainty_only": bool(uncertainty_only),
         "prediction_zero_mask_epsilon_c": float(PREDICTION_ZERO_ARTIFACT_EPSILON),
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
@@ -2835,7 +2986,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "visible_gpus": int(visible_gpu_count),
         "multi_gpu_enabled": bool(use_multi_gpu),
         "batch_size": int(batch_size),
-        "prediction_runs_per_patch": 1,
+        "prediction_runs_per_patch": 1 if export_prediction else 0,
+        "export_uncertainty": bool(export_uncertainty),
+        "uncertainty_num_samples": (
+            int(uncertainty_num_samples) if export_uncertainty else None
+        ),
         "extra_gaussian_blur_sigma": float(args.sigma),
         "extra_gaussian_blur_kernel_size": int(
             DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE
@@ -2844,7 +2999,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "run_dir": (
             str(production_dir) if production_dir is not None else str(run_dir)
         ),
-        "prediction_tif_path": _summary_artifact_path(prediction_tif_path),
+        "prediction_tif_path": (
+            None
+            if prediction_tif_path is None
+            else _summary_artifact_path(prediction_tif_path)
+        ),
         "ground_truth_tif_path": (
             None
             if ground_truth_tif_path is None
@@ -2854,6 +3013,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             None
             if absolute_error_tif_path is None
             else _summary_artifact_path(absolute_error_tif_path)
+        ),
+        "uncertainty_tif_path": (
+            None
+            if uncertainty_tif_path is None
+            else _summary_artifact_path(uncertainty_tif_path)
         ),
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
@@ -2889,15 +3053,18 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         _cleanup_accumulator(accumulator)
     for accumulator in gt_accumulators.values():
         _cleanup_accumulator(accumulator)
+    if uncertainty_accumulator is not None:
+        _cleanup_accumulator(uncertainty_accumulator)
     scratch_dir.rmdir()
 
     if production_dir is not None:
         _promote_production_run(run_dir, production_dir)
         run_dir = production_dir
-        prediction_tif_path = run_dir / _production_artifact_name(
-            prediction_tif_path.name,
-            run_stem=_default_run_stem(selection.selected_date),
-        )
+        if prediction_tif_path is not None:
+            prediction_tif_path = run_dir / _production_artifact_name(
+                prediction_tif_path.name,
+                run_stem=_default_run_stem(selection.selected_date),
+            )
         if ground_truth_tif_path is not None:
             ground_truth_tif_path = run_dir / _production_artifact_name(
                 ground_truth_tif_path.name,
@@ -2906,6 +3073,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         if absolute_error_tif_path is not None:
             absolute_error_tif_path = run_dir / _production_artifact_name(
                 absolute_error_tif_path.name,
+                run_stem=_default_run_stem(selection.selected_date),
+            )
+        if uncertainty_tif_path is not None:
+            uncertainty_tif_path = run_dir / _production_artifact_name(
+                uncertainty_tif_path.name,
                 run_stem=_default_run_stem(selection.selected_date),
             )
         if argo_points_geojson_path is not None:
@@ -2943,6 +3115,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"prediction={prediction_tif_path}, "
         f"ground_truth={ground_truth_tif_path}, "
         f"absolute_error={absolute_error_tif_path}, "
+        f"uncertainty={uncertainty_tif_path}, "
         f"argo_points={argo_points_geojson_path}, "
         f"full_sample_locations={full_sample_locations_geojson_path}, "
         f"graphs={graphs_dir_path}, "
@@ -2959,6 +3132,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         iso_week=int(selection.iso_week),
         selected_patch_count=int(len(selection.indices)),
         absolute_error_tif_path=absolute_error_tif_path,
+        uncertainty_tif_path=uncertainty_tif_path,
         variable=variable_spec.name,
     )
 

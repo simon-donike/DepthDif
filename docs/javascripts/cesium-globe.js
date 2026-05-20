@@ -17,6 +17,19 @@
     { value: 24.0, rgb: [240, 84, 32] },
     { value: 30.0, rgb: [180, 16, 26] },
   ];
+  const SALINITY_EXPORT_COLOR_STOPS = [
+    { offset: 0.0, rgb: [49, 54, 149] },
+    { offset: 0.2, rgb: [69, 117, 180] },
+    { offset: 0.4, rgb: [116, 173, 209] },
+    { offset: 0.6, rgb: [171, 221, 164] },
+    { offset: 0.8, rgb: [253, 224, 71] },
+    { offset: 1.0, rgb: [168, 85, 36] },
+  ];
+  const ERROR_EXPORT_COLOR_STOPS = [
+    { offset: 0.0, rgb: [34, 197, 94] },
+    { offset: 0.5, rgb: [250, 204, 21] },
+    { offset: 1.0, rgb: [220, 38, 38] },
+  ];
   const DEFAULT_COLOR_SCALE = { min: 0.0, max: 30.0 };
   const PATCH_FILL_ALPHA = 0.18;
   const PATCH_FILL_COLOR = "#f97316";
@@ -60,12 +73,15 @@
     if (!container) {
       return null;
     }
+    const stage = container.closest(".globe-stage");
 
     return {
       container: container,
+      stage: stage,
       predictionToggle: document.getElementById("globe-toggle-prediction"),
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
       absoluteErrorToggle: document.getElementById("globe-toggle-absolute-error"),
+      uncertaintyToggle: document.getElementById("globe-toggle-uncertainty"),
       pointsToggle: document.getElementById("globe-toggle-points"),
       pointsRadios: document.querySelectorAll('input[name="globe-points-layer"]'),
       variableControl: document.getElementById("globe-variable-control"),
@@ -80,6 +96,9 @@
       depthTicks: document.getElementById("globe-depth-level-ticks"),
       spinToggle: document.getElementById("globe-toggle-spin"),
       resetButton: document.getElementById("globe-reset-camera"),
+      pictureExportButton: document.getElementById("globe-export-picture"),
+      cinematicToggle: document.getElementById("globe-toggle-cinematic"),
+      cinematicExit: document.getElementById("globe-exit-cinematic"),
       pageEyebrow: document.getElementById("globe-page-eyebrow"),
       pageTitle: document.getElementById("globe-page-title"),
       pageDescription: document.getElementById("globe-page-description"),
@@ -92,6 +111,7 @@
       valueLegendMax: document.getElementById("globe-value-legend-max"),
       valueLegendBar: document.getElementById("globe-value-legend-bar"),
       errorLegend: document.getElementById("globe-error-legend"),
+      errorLegendTitle: document.getElementById("globe-error-legend-title"),
       errorLegendMin: document.getElementById("globe-error-legend-min"),
       errorLegendMax: document.getElementById("globe-error-legend-max"),
       profilePopup: document.getElementById("globe-profile-popup"),
@@ -428,6 +448,16 @@
     markToggleUnavailable(toggle);
   }
 
+  function setToggleLabelHidden(toggle, hidden) {
+    if (!toggle) {
+      return;
+    }
+    const label = toggle.closest("label");
+    if (label) {
+      label.hidden = Boolean(hidden);
+    }
+  }
+
   function setToggleLoading(toggle, loading) {
     if (!toggle || toggle.dataset.globeUnavailable === "true") {
       return;
@@ -520,6 +550,7 @@
       state.elements.predictionToggle,
       state.elements.groundTruthToggle,
       state.elements.absoluteErrorToggle,
+      state.elements.uncertaintyToggle,
     ].filter(Boolean);
     const selectedToggle = toggles.find(function (toggle) {
       return toggle.checked && !toggle.disabled;
@@ -540,6 +571,7 @@
     const showPrediction = Boolean(elements.predictionToggle && elements.predictionToggle.checked);
     const showGroundTruth = Boolean(elements.groundTruthToggle && elements.groundTruthToggle.checked);
     const showAbsoluteError = Boolean(elements.absoluteErrorToggle && elements.absoluteErrorToggle.checked);
+    const showUncertainty = Boolean(elements.uncertaintyToggle && elements.uncertaintyToggle.checked);
     if (state.predictionLayer) {
       state.predictionLayer.show = showPrediction;
     }
@@ -548,6 +580,9 @@
     }
     if (state.absoluteErrorLayer) {
       state.absoluteErrorLayer.show = showAbsoluteError;
+    }
+    if (state.uncertaintyLayer) {
+      state.uncertaintyLayer.show = showUncertainty;
     }
     updateAbsoluteErrorLegend(state);
     requestRender(state);
@@ -625,6 +660,11 @@
     }
     if (state.elements.absoluteErrorToggle) {
       setToggleAvailable(state.elements.absoluteErrorToggle, hasAbsoluteErrorLayer(depthLevel));
+    }
+    if (state.elements.uncertaintyToggle) {
+      const uncertaintyAvailable = hasUncertaintyLayer(activeConfig);
+      setToggleAvailable(state.elements.uncertaintyToggle, uncertaintyAvailable);
+      setToggleLabelHidden(state.elements.uncertaintyToggle, !uncertaintyAvailable);
     }
     ensureRasterSelection(state);
     updateValueLegend(state);
@@ -791,6 +831,10 @@
     return Boolean(depthLevel && depthLevel.absolute_error_tiles_url);
   }
 
+  function hasUncertaintyLayer(config) {
+    return Boolean(config && config.uncertainty_tiles_url);
+  }
+
   function formatLegendValue(value, unitLabel) {
     const numericValue = Number(value);
     const unit = String(unitLabel || "");
@@ -810,29 +854,46 @@
     }
     const depthLevel = selectedDepthLevel(state);
     const activeConfig = activeVariableConfig(state);
-    const unitLabel = depthLevel.absolute_error_value_unit_label || valueUnitLabel(activeConfig);
-    const visible = Boolean(
+    const showUncertainty = Boolean(
+      state.elements.uncertaintyToggle &&
+        state.elements.uncertaintyToggle.checked &&
+        hasUncertaintyLayer(activeConfig)
+    );
+    const showAbsoluteError = Boolean(
       state.elements.absoluteErrorToggle &&
         state.elements.absoluteErrorToggle.checked &&
         hasAbsoluteErrorLayer(depthLevel)
     );
+    const unitLabel = showUncertainty
+      ? activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig)
+      : depthLevel.absolute_error_value_unit_label || valueUnitLabel(activeConfig);
+    const visible = showUncertainty || showAbsoluteError;
     errorLegend.hidden = !visible;
+    if (visible && state.elements.errorLegendTitle) {
+      state.elements.errorLegendTitle.textContent = showUncertainty ? "Uncertainty" : "Absolute Error";
+    }
     if (visible && state.elements.errorLegendMin) {
-      const legendMin = firstFiniteNumber(
-        [depthLevel.absolute_error_legend_min, depthLevel.absolute_error_legend_min_c],
-        0.0
-      );
+      const legendMin = showUncertainty
+        ? firstFiniteNumber([activeConfig.uncertainty_legend_min], 0.0)
+        : firstFiniteNumber(
+            [depthLevel.absolute_error_legend_min, depthLevel.absolute_error_legend_min_c],
+            0.0
+          );
       state.elements.errorLegendMin.textContent = formatLegendValue(legendMin, unitLabel);
     }
     if (visible && state.elements.errorLegendMax) {
-      const legendMax = firstFiniteNumber(
-        [depthLevel.absolute_error_legend_max, depthLevel.absolute_error_legend_max_c],
-        NaN
-      );
-      const colorScaleMax = firstFiniteNumber(
-        [depthLevel.absolute_error_color_scale_max, depthLevel.absolute_error_color_scale_max_c],
-        NaN
-      );
+      const legendMax = showUncertainty
+        ? firstFiniteNumber([activeConfig.uncertainty_legend_max], NaN)
+        : firstFiniteNumber(
+            [depthLevel.absolute_error_legend_max, depthLevel.absolute_error_legend_max_c],
+            NaN
+          );
+      const colorScaleMax = showUncertainty
+        ? firstFiniteNumber([activeConfig.uncertainty_color_scale_max], NaN)
+        : firstFiniteNumber(
+            [depthLevel.absolute_error_color_scale_max, depthLevel.absolute_error_color_scale_max_c],
+            NaN
+          );
       state.elements.errorLegendMax.textContent = formatLegendValue(
         Number.isFinite(legendMax) ? legendMax : colorScaleMax,
         unitLabel
@@ -914,6 +975,13 @@
     }
   }
 
+  function clearToolbarCollapseTimer(state) {
+    if (typeof state.toolbarCollapseTimer !== "undefined" && state.toolbarCollapseTimer !== null) {
+      window.clearTimeout(state.toolbarCollapseTimer);
+      state.toolbarCollapseTimer = null;
+    }
+  }
+
   function setToolbarCollapsed(elements, collapsed) {
     if (!elements.toolbar || !elements.toolbarToggle || !elements.toolbarContent) {
       return;
@@ -922,6 +990,30 @@
     elements.toolbar.classList.toggle("is-collapsed", collapsed);
     elements.toolbarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
     elements.toolbarToggle.textContent = collapsed ? "Show settings" : "Hide settings";
+  }
+
+  function setCinematicMode(state, enabled) {
+    state.cinematicEnabled = Boolean(enabled);
+    if (state.elements.stage) {
+      state.elements.stage.classList.toggle("is-cinematic", state.cinematicEnabled);
+    }
+    if (state.elements.cinematicToggle) {
+      state.elements.cinematicToggle.setAttribute(
+        "aria-pressed",
+        state.cinematicEnabled ? "true" : "false"
+      );
+      state.elements.cinematicToggle.textContent = state.cinematicEnabled
+        ? "Exit cinematic"
+        : "Cinematic";
+    }
+    if (state.elements.cinematicExit) {
+      state.elements.cinematicExit.hidden = !state.cinematicEnabled;
+    }
+    if (state.cinematicEnabled) {
+      closeProfilePopup(state);
+    }
+    forceViewerResize(state);
+    requestRender(state);
   }
 
   function finalizeProfilePopupClose(state) {
@@ -1070,6 +1162,9 @@
       // Error tiles use a different color scale, so keep them above temperature rasters.
       imageryLayers.raise(state.absoluteErrorLayer);
     }
+    if (state.uncertaintyLayer) {
+      imageryLayers.raise(state.uncertaintyLayer);
+    }
 
     const dataSources = state.viewer.dataSources;
     if (state.patchSplitsDataSource) {
@@ -1120,6 +1215,11 @@
       geocoder: false,
       homeButton: false,
       infoBox: false,
+      contextOptions: {
+        webgl: {
+          preserveDrawingBuffer: true,
+        },
+      },
       navigationHelpButton: false,
       requestRenderMode: true,
       maximumRenderTimeChange: Number.POSITIVE_INFINITY,
@@ -1226,6 +1326,314 @@
     requestRender(state);
   }
 
+  function activeRasterLayerKey(state) {
+    if (state.elements.uncertaintyToggle && state.elements.uncertaintyToggle.checked) {
+      return "uncertainty";
+    }
+    if (state.elements.absoluteErrorToggle && state.elements.absoluteErrorToggle.checked) {
+      return "error";
+    }
+    if (state.elements.groundTruthToggle && state.elements.groundTruthToggle.checked) {
+      return "glorys";
+    }
+    return "prediction";
+  }
+
+  function temperatureExportColorStops() {
+    const firstStop = TEMPERATURE_COLOR_STOPS[0];
+    const lastStop = TEMPERATURE_COLOR_STOPS[TEMPERATURE_COLOR_STOPS.length - 1];
+    const span = Math.max(1.0, lastStop.value - firstStop.value);
+    return TEMPERATURE_COLOR_STOPS.map(function (stop) {
+      return {
+        offset: clamp((stop.value - firstStop.value) / span, 0.0, 1.0),
+        rgb: stop.rgb,
+      };
+    });
+  }
+
+  function buildPictureLegendModel(state) {
+    const depthLevel = selectedDepthLevel(state);
+    const activeConfig = activeVariableConfig(state);
+    const rasterKey = activeRasterLayerKey(state);
+    if (rasterKey === "uncertainty" && hasUncertaintyLayer(activeConfig)) {
+      const unitLabel = activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig);
+      const legendMin = firstFiniteNumber([activeConfig.uncertainty_legend_min], 0.0);
+      const legendMax = firstFiniteNumber([activeConfig.uncertainty_legend_max], NaN);
+      const colorScaleMax = firstFiniteNumber([activeConfig.uncertainty_color_scale_max], NaN);
+      return {
+        colorStops: ERROR_EXPORT_COLOR_STOPS,
+        maxLabel: formatLegendValue(Number.isFinite(legendMax) ? legendMax : colorScaleMax, unitLabel),
+        minLabel: formatLegendValue(legendMin, unitLabel),
+        title: "Uncertainty",
+      };
+    }
+
+    if (rasterKey === "error" && hasAbsoluteErrorLayer(depthLevel)) {
+      const unitLabel = depthLevel.absolute_error_value_unit_label || valueUnitLabel(activeConfig);
+      const legendMin = firstFiniteNumber(
+        [depthLevel.absolute_error_legend_min, depthLevel.absolute_error_legend_min_c],
+        0.0
+      );
+      const legendMax = firstFiniteNumber(
+        [depthLevel.absolute_error_legend_max, depthLevel.absolute_error_legend_max_c],
+        NaN
+      );
+      const colorScaleMax = firstFiniteNumber(
+        [depthLevel.absolute_error_color_scale_max, depthLevel.absolute_error_color_scale_max_c],
+        NaN
+      );
+      return {
+        colorStops: ERROR_EXPORT_COLOR_STOPS,
+        maxLabel: formatLegendValue(Number.isFinite(legendMax) ? legendMax : colorScaleMax, unitLabel),
+        minLabel: formatLegendValue(legendMin, unitLabel),
+        title: "Absolute Error",
+      };
+    }
+
+    const colorScale = resolveColorScale(activeConfig);
+    const unitLabel = valueUnitLabel(activeConfig);
+    return {
+      colorStops: activeVariableKey(state) === "salinity"
+        ? SALINITY_EXPORT_COLOR_STOPS
+        : temperatureExportColorStops(),
+      maxLabel: formatLegendValue(colorScale.max, unitLabel),
+      minLabel: formatLegendValue(colorScale.min, unitLabel),
+      title: String(activeConfig.variable_label || activeConfig.variable || "Temperature"),
+    };
+  }
+
+  function shouldExportPointLegend(state) {
+    const activeConfig = activeVariableConfig(state);
+    return Boolean(
+      activeConfig &&
+        activeConfig.argo_sample_locations_url &&
+        state.elements.pointsToggle &&
+        state.elements.pointsToggle.checked
+    );
+  }
+
+  function addCanvasGradientStops(gradient, colorStops) {
+    colorStops.forEach(function (stop) {
+      gradient.addColorStop(
+        clamp(Number(stop.offset), 0.0, 1.0),
+        "rgb(" + stop.rgb.join(", ") + ")"
+      );
+    });
+  }
+
+  function drawPicturePointLegend(ctx, x, y, scale) {
+    const markerSize = 13 * scale;
+    ctx.save();
+    ctx.lineWidth = 2 * scale;
+    ctx.strokeStyle = "#7cf5ff";
+    ctx.fillStyle = "rgba(6, 23, 38, 0.82)";
+    ctx.beginPath();
+    ctx.arc(x, y, markerSize * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#dffcff";
+    ctx.beginPath();
+    ctx.arc(x, y, markerSize * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(234, 248, 255, 0.92)";
+    ctx.fillText("ARGO", x + 18 * scale, y + 4 * scale);
+
+    const diamondY = y + 29 * scale;
+    ctx.strokeStyle = "#ffd166";
+    ctx.fillStyle = "rgba(9, 34, 56, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(x, diamondY - markerSize * 0.7);
+    ctx.lineTo(x + markerSize * 0.7, diamondY - markerSize * 0.2);
+    ctx.lineTo(x + markerSize * 0.45, diamondY + markerSize * 0.68);
+    ctx.lineTo(x, diamondY + markerSize * 0.92);
+    ctx.lineTo(x - markerSize * 0.45, diamondY + markerSize * 0.68);
+    ctx.lineTo(x - markerSize * 0.7, diamondY - markerSize * 0.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#fff4cf";
+    ctx.beginPath();
+    ctx.arc(x, diamondY, markerSize * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(234, 248, 255, 0.92)";
+    ctx.fillText("Full-depth ARGO", x + 18 * scale, diamondY + 4 * scale);
+    ctx.restore();
+  }
+
+  function drawPictureLegend(ctx, outputCanvas, sourceHeight, state, legendHeight, scale) {
+    const legend = buildPictureLegendModel(state);
+    const paddingX = Math.max(26 * scale, outputCanvas.width * 0.035);
+    const top = sourceHeight;
+    const includePointLegend = shouldExportPointLegend(state) && outputCanvas.width >= 720 * scale;
+    const pointLegendWidth = includePointLegend ? 250 * scale : 0;
+    const gap = includePointLegend ? 36 * scale : 0;
+    const barX = paddingX;
+    const barY = top + 58 * scale;
+    const barHeight = 18 * scale;
+    const barWidth = Math.max(180 * scale, outputCanvas.width - paddingX * 2 - pointLegendWidth - gap);
+
+    ctx.fillStyle = "#04131f";
+    ctx.fillRect(0, top, outputCanvas.width, legendHeight);
+    ctx.strokeStyle = "rgba(124, 200, 255, 0.24)";
+    ctx.beginPath();
+    ctx.moveTo(0, top + 0.5 * scale);
+    ctx.lineTo(outputCanvas.width, top + 0.5 * scale);
+    ctx.stroke();
+
+    ctx.fillStyle = "#7cc8ff";
+    ctx.font = "700 " + Math.round(14 * scale) + "px Roboto, Arial, sans-serif";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(legend.title, barX, top + 34 * scale);
+
+    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+    addCanvasGradientStops(gradient, legend.colorStops);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+    ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+    ctx.fillStyle = "rgba(234, 248, 255, 0.92)";
+    ctx.font = "600 " + Math.round(13 * scale) + "px Roboto, Arial, sans-serif";
+    ctx.fillText(legend.minLabel, barX, top + 100 * scale);
+    ctx.textAlign = "right";
+    ctx.fillText(legend.maxLabel, barX + barWidth, top + 100 * scale);
+    ctx.textAlign = "left";
+
+    if (includePointLegend) {
+      ctx.font = "600 " + Math.round(13 * scale) + "px Roboto, Arial, sans-serif";
+      drawPicturePointLegend(ctx, barX + barWidth + gap + 12 * scale, top + 59 * scale, scale);
+    }
+  }
+
+  function buildPictureCanvas(state) {
+    const sourceCanvas = state.viewer && state.viewer.scene ? state.viewer.scene.canvas : null;
+    if (!sourceCanvas || !sourceCanvas.width || !sourceCanvas.height) {
+      throw new Error("Cesium canvas is not ready for export.");
+    }
+    const scale = Math.max(
+      1.0,
+      sourceCanvas.width / Math.max(1, sourceCanvas.clientWidth || sourceCanvas.width)
+    );
+    const legendHeight = Math.round(116 * scale);
+    const outputCanvas = document.createElement("canvas");
+    outputCanvas.width = sourceCanvas.width;
+    outputCanvas.height = sourceCanvas.height + legendHeight;
+    const ctx = outputCanvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Could not create PNG export canvas.");
+    }
+    ctx.fillStyle = "#04131f";
+    ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
+    ctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height);
+    drawPictureLegend(ctx, outputCanvas, sourceCanvas.height, state, legendHeight, scale);
+    return outputCanvas;
+  }
+
+  function waitForAnimationFrame() {
+    return new Promise(function (resolve) {
+      window.requestAnimationFrame(resolve);
+    });
+  }
+
+  async function waitForPictureRender(state) {
+    forceViewerResize(state);
+    requestRender(state);
+    await waitForAnimationFrame();
+    requestRender(state);
+    await waitForAnimationFrame();
+  }
+
+  function sanitizeFilenamePart(value) {
+    const sanitized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return sanitized || "view";
+  }
+
+  function buildPictureFilename(state) {
+    const activeConfig = activeVariableConfig(state);
+    const depthLevel = selectedDepthLevel(state);
+    const parts = [
+      "depthdif",
+      activeVariableKey(state),
+      activeRasterLayerKey(state),
+      formatDepthMeters(depthLevel),
+      activeConfig.selected_date || state.config.selected_date || "current",
+    ];
+    return parts.map(sanitizeFilenamePart).join("_") + ".png";
+  }
+
+  function setPictureExportButtonState(state, label, disabled) {
+    const button = state.elements.pictureExportButton;
+    if (!button) {
+      return;
+    }
+    button.textContent = label;
+    button.disabled = disabled;
+  }
+
+  function resetPictureExportButtonLater(state) {
+    if (state.pictureExportStatusTimer !== null) {
+      window.clearTimeout(state.pictureExportStatusTimer);
+    }
+    state.pictureExportStatusTimer = window.setTimeout(function () {
+      state.pictureExportStatusTimer = null;
+      setPictureExportButtonState(state, "Export PNG", false);
+    }, 1600);
+  }
+
+  function downloadCanvasPng(canvas, filename) {
+    return new Promise(function (resolve, reject) {
+      try {
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            reject(new Error("Could not render PNG export."));
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.setTimeout(function () {
+            URL.revokeObjectURL(url);
+          }, 0);
+          resolve();
+        }, "image/png");
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async function handlePictureExport(state) {
+    if (state.pictureExportInProgress) {
+      return;
+    }
+    state.pictureExportInProgress = true;
+    if (state.pictureExportStatusTimer !== null) {
+      window.clearTimeout(state.pictureExportStatusTimer);
+      state.pictureExportStatusTimer = null;
+    }
+    setPictureExportButtonState(state, "Rendering...", true);
+    try {
+      await waitForPictureRender(state);
+      const pictureCanvas = buildPictureCanvas(state);
+      await downloadCanvasPng(pictureCanvas, buildPictureFilename(state));
+      setPictureExportButtonState(state, "Saved PNG", false);
+    } catch (error) {
+      console.error(error);
+      setPictureExportButtonState(state, "Export failed", false);
+    } finally {
+      state.pictureExportInProgress = false;
+      resetPictureExportButtonLater(state);
+    }
+  }
+
   function attachSpinLoop(state) {
     state.spinTickListener = function (clock) {
       if (!state.spinEnabled) {
@@ -1316,6 +1724,27 @@
     layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
     layer.alpha = 1.0;
     layer.show = state.elements.absoluteErrorToggle.checked;
+    updateAbsoluteErrorLegend(state);
+    return layer;
+  }
+
+  async function addUncertaintyLayer(state) {
+    const activeConfig = activeVariableConfig(state);
+    const uncertaintyUrl = resolveAssetUrl(activeConfig.uncertainty_tiles_url, state.configUrl);
+    if (!uncertaintyUrl) {
+      markToggleUnavailable(state.elements.uncertaintyToggle);
+      setToggleLabelHidden(state.elements.uncertaintyToggle, true);
+      updateAbsoluteErrorLegend(state);
+      return null;
+    }
+    const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(uncertaintyUrl, {
+      credit: activeConfig.credits && activeConfig.credits.uncertainty,
+    });
+    const layer = state.viewer.imageryLayers.addImageryProvider(provider);
+    layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
+    layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
+    layer.alpha = 1.0;
+    layer.show = state.elements.uncertaintyToggle.checked;
     updateAbsoluteErrorLegend(state);
     return layer;
   }
@@ -1457,6 +1886,42 @@
     return state.absoluteErrorLayerLoadPromise;
   }
 
+  async function ensureUncertaintyLayer(state) {
+    if (state.uncertaintyLayer) {
+      return state.uncertaintyLayer;
+    }
+    if (state.uncertaintyLayerLoadPromise) {
+      return state.uncertaintyLayerLoadPromise;
+    }
+
+    const rasterDepthReloadToken = state.rasterDepthReloadToken;
+    setToggleLoading(state.elements.uncertaintyToggle, true);
+    const loadPromise = addUncertaintyLayer(state)
+      .then(function (layer) {
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (layer) {
+            state.viewer.imageryLayers.remove(layer, true);
+          }
+          requestRender(state);
+          return null;
+        }
+        state.uncertaintyLayer = layer;
+        enforceOverlayOrder(state);
+        updateAbsoluteErrorLegend(state);
+        requestRender(state);
+        return layer;
+      })
+      .finally(function () {
+        if (state.uncertaintyLayerLoadPromise === loadPromise) {
+          state.uncertaintyLayerLoadPromise = null;
+          setToggleLoading(state.elements.uncertaintyToggle, false);
+        }
+      });
+
+    state.uncertaintyLayerLoadPromise = loadPromise;
+    return state.uncertaintyLayerLoadPromise;
+  }
+
   async function ensurePointsLayer(state) {
     return loadOptionalLayer(
       state,
@@ -1487,6 +1952,7 @@
       const loaders = [
         ensureGroundTruthLayer,
         ensureAbsoluteErrorLayer,
+        ensureUncertaintyLayer,
         ensurePointsLayer,
         ensurePatchSplitsLayer,
       ];
@@ -1580,6 +2046,7 @@
     const showPrediction = state.elements.predictionToggle.checked;
     const showGroundTruth = state.elements.groundTruthToggle.checked;
     const showAbsoluteError = state.elements.absoluteErrorToggle.checked;
+    const showUncertainty = state.elements.uncertaintyToggle.checked;
     const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
     state.rasterDepthReloadToken = rasterDepthReloadToken;
 
@@ -1595,9 +2062,14 @@
       imageryLayers.remove(state.absoluteErrorLayer, true);
       state.absoluteErrorLayer = null;
     }
+    if (state.uncertaintyLayer) {
+      imageryLayers.remove(state.uncertaintyLayer, true);
+      state.uncertaintyLayer = null;
+    }
     state.predictionLayerLoadPromise = null;
     state.groundTruthLayerLoadPromise = null;
     state.absoluteErrorLayerLoadPromise = null;
+    state.uncertaintyLayerLoadPromise = null;
 
     try {
       const predictionLayer = await addPredictionLayer(state);
@@ -1635,6 +2107,19 @@
         state.absoluteErrorLayer = absoluteErrorLayer;
         if (absoluteErrorLayer) {
           absoluteErrorLayer.show = true;
+        }
+      }
+      if (showUncertainty) {
+        const uncertaintyLayer = await addUncertaintyLayer(state);
+        if (rasterDepthReloadToken !== state.rasterDepthReloadToken) {
+          if (uncertaintyLayer) {
+            imageryLayers.remove(uncertaintyLayer, true);
+          }
+          return;
+        }
+        state.uncertaintyLayer = uncertaintyLayer;
+        if (uncertaintyLayer) {
+          uncertaintyLayer.show = true;
         }
       }
       enforceOverlayOrder(state);
@@ -1698,6 +2183,10 @@
 
     elements.absoluteErrorToggle.addEventListener("change", function () {
       handleRasterLayerToggle(state, elements.absoluteErrorToggle, ensureAbsoluteErrorLayer);
+    });
+
+    elements.uncertaintyToggle.addEventListener("change", function () {
+      handleRasterLayerToggle(state, elements.uncertaintyToggle, ensureUncertaintyLayer);
     });
 
     if (elements.pointsRadios) {
@@ -1765,6 +2254,24 @@
       }
     });
 
+    if (elements.pictureExportButton) {
+      elements.pictureExportButton.addEventListener("click", function () {
+        handlePictureExport(state);
+      });
+    }
+
+    if (elements.cinematicToggle) {
+      elements.cinematicToggle.addEventListener("click", function () {
+        setCinematicMode(state, !state.cinematicEnabled);
+      });
+    }
+
+    if (elements.cinematicExit) {
+      elements.cinematicExit.addEventListener("click", function () {
+        setCinematicMode(state, false);
+      });
+    }
+
     if (elements.profilePopupClose) {
       elements.profilePopupClose.addEventListener("click", function () {
         closeProfilePopup(state);
@@ -1785,6 +2292,16 @@
     }
     clearProfilePopupCloseTimer(state);
     clearToolbarCollapseTimer(state);
+    if (state.pictureExportStatusTimer !== null) {
+      window.clearTimeout(state.pictureExportStatusTimer);
+      state.pictureExportStatusTimer = null;
+    }
+    if (state.elements && state.elements.stage) {
+      state.elements.stage.classList.remove("is-cinematic");
+    }
+    if (state.elements && state.elements.cinematicExit) {
+      state.elements.cinematicExit.hidden = true;
+    }
     if (state.stopWatchingResize) {
       state.stopWatchingResize();
       state.stopWatchingResize = null;
@@ -1841,19 +2358,24 @@
         predictionLayer: null,
         groundTruthLayer: null,
         absoluteErrorLayer: null,
+        uncertaintyLayer: null,
         pointsDataSource: null,
         patchSplitsDataSource: null,
         predictionLayerLoadPromise: null,
         groundTruthLayerLoadPromise: null,
         absoluteErrorLayerLoadPromise: null,
+        uncertaintyLayerLoadPromise: null,
         pointsDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
         selectedVariable: resolveDefaultVariable(loaded.config),
         selectedDepthIndex: 0,
         rasterDepthReloadToken: 0,
         spinEnabled: false,
+        cinematicEnabled: false,
         lastSpinTime: null,
         profilePopupCloseTimer: null,
+        pictureExportInProgress: false,
+        pictureExportStatusTimer: null,
         stopWatchingResize: null,
         handleWindowResize: null,
         spinTickListener: null,
@@ -1884,6 +2406,7 @@
       setSpinEnabled(state, false);
       wireUi(state);
       setToolbarCollapsed(elements, false);
+      setCinematicMode(state, false);
       updateArgoLegendVisibility(state);
       updateAbsoluteErrorLegend(state);
       viewer.screenSpaceEventHandler.setInputAction(function (movement) {
