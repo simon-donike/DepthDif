@@ -504,6 +504,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('id="globe-variable-control"', html)
         self.assertIn('name="globe-variable"', html)
         self.assertIn('name="globe-raster-layer"', html)
+        self.assertIn('name="globe-points-layer"', html)
+        self.assertIn('name="globe-patch-splits-layer"', html)
         self.assertIn("Salinity", html)
         self.assertIn("Ocean Variable Reconstruction", html)
         self.assertIn('id="globe-error-legend"', html)

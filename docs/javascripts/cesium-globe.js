@@ -1700,23 +1700,35 @@
       handleRasterLayerToggle(state, elements.absoluteErrorToggle, ensureAbsoluteErrorLayer);
     });
 
-    elements.pointsToggle.addEventListener("change", function () {
-      handleOptionalLayerToggle(
-        state,
-        elements.pointsToggle,
-        "pointsDataSource",
-        ensurePointsLayer
-      );
-    });
+    if (elements.pointsRadios) {
+      elements.pointsRadios.forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          if (!radio.checked) {
+            return;
+          }
+          handleOptionalLayerToggle(
+            state,
+            elements.pointsToggle,
+            "pointsDataSource",
+            ensurePointsLayer
+          );
+        });
+      });
+    }
 
-    if (elements.patchSplitsToggle) {
-      elements.patchSplitsToggle.addEventListener("change", function () {
-        handleOptionalLayerToggle(
-          state,
-          elements.patchSplitsToggle,
-          "patchSplitsDataSource",
-          ensurePatchSplitsLayer
-        );
+    if (elements.patchSplitsRadios) {
+      elements.patchSplitsRadios.forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          if (!radio.checked) {
+            return;
+          }
+          handleOptionalLayerToggle(
+            state,
+            elements.patchSplitsToggle,
+            "patchSplitsDataSource",
+            ensurePatchSplitsLayer
+          );
+        });
       });
     }
 
