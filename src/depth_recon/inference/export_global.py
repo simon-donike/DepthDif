@@ -2222,11 +2222,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     export_full_profiles = bool(export_all_full_samples or full_sample_count > 0)
 
     sample_for_shape = dataset[selection.indices[0]]
-    patch_shape = tuple(int(v) for v in sample_for_shape["y"].shape[-2:])
+    sample_target = sample_for_shape[variable_spec.y_key]
+    patch_shape = tuple(int(v) for v in sample_target.shape[-2:])
     depth_axis_m = _load_glorys_depth_axis_m(
         dataset,
         selected_rows[0],
-        expected_size=int(sample_for_shape["y"].shape[0]),
+        expected_size=int(sample_target.shape[0]),
     )
     depth_export_levels = resolve_depth_export_levels(depth_axis_m)
     depth_channel_indices = tuple(
