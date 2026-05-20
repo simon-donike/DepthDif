@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from depth_recon.utils.normalizations import (
+    salinity_normalize,
     salinity_to_plot_unit,
     temperature_normalize,
     temperature_to_plot_unit,
@@ -159,6 +160,7 @@ def log_wandb_denoise_timestep_grid(
     land_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     cmap: str = "turbo",
+    plot_unit: str = "temperature",
     nrows: int = 4,
     ncols: int = 4,
     tile_size_px: int = 128,
@@ -179,6 +181,7 @@ def log_wandb_denoise_timestep_grid(
         land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
         prefix (str): Input value.
         cmap (str): Input value.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
         nrows (int): Input value.
         ncols (int): Input value.
         tile_size_px (int): Input value.
@@ -206,7 +209,7 @@ def log_wandb_denoise_timestep_grid(
     canvas_h = (nrows * tile_size_px) + ((nrows - 1) * tile_pad_px)
     canvas_w = (ncols * tile_size_px) + ((ncols - 1) * tile_pad_px)
     canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-    cmap_fn = cm.get_cmap(cmap)
+    cmap_fn = _plot_cmap_with_black_invalid(cmap)
     timestep_labels: list[str] = []
 
     sorted_samples = sorted(denoise_samples, key=lambda item: int(item[0]))
@@ -260,9 +263,12 @@ def log_wandb_denoise_timestep_grid(
             mask_i = mask_i[0]
 
         image_t = sample_t[0, 0].detach().float()
-        image_t = temperature_normalize(mode="denorm", tensor=image_t)
+        if str(plot_unit).lower() == "salinity":
+            image_t = salinity_normalize(mode="denorm", tensor=image_t)
+        else:
+            image_t = temperature_normalize(mode="denorm", tensor=image_t)
         image_plot = torch.from_numpy(
-            _temperature_band_to_plot_image(image_t, mask=mask_i)
+            _physical_band_to_plot_image(image_t, mask=mask_i, plot_unit=plot_unit)
         ).to(device=image_t.device, dtype=image_t.dtype)
         image_plot = (
             F.interpolate(
@@ -1630,6 +1636,7 @@ def log_wandb_glorys_profile_comparison(
     prefix: str = "val_imgs",
     image_key: str = "glorys_profile_comparison",
     sample_idx: int = 0,
+    profile_x_label: str = "Temperature (deg C)",
 ) -> None:
     """Log full-depth profile comparisons at generated-only validation pixels.
 
@@ -1643,6 +1650,7 @@ def log_wandb_glorys_profile_comparison(
         prefix (str): Input value.
         image_key (str): Input value.
         sample_idx (int): Zero-based index for selecting a sample or batch.
+        profile_x_label (str): X-axis label for physical profile values.
 
     Returns:
         None: No value is returned.
@@ -1722,6 +1730,7 @@ def log_wandb_glorys_profile_comparison(
                 depth_axis=depth_idx,
                 title=f"Pixel ({row_i}, {col_i})",
                 show_legend=(plot_idx == 0),
+                profile_x_label=profile_x_label,
             )
 
         fig.suptitle(

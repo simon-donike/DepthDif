@@ -107,7 +107,10 @@ non-nodata codes would have the same precision as uint8, but the unsigned layout
 keeps the transform simpler and interoperates better with raster tooling.
 
 By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
-is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
+is expected at `/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr`.
+The Hugging Face package layout stores the same zarr at
+`/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr`
+and can be used as the `--enriched-argo-zarr` value as well:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
@@ -115,7 +118,7 @@ is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
   --sss-dir /data1/datasets/depth_v2/sss_daily \
-  --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
+  --enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \
@@ -127,3 +130,23 @@ is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
 
 Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
 without rewriting existing modality/date rasters.
+
+## Package Aligned ARGO Zarr for Hugging Face
+
+After `b_export_enriched_argo_profiles.py` creates
+`/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr`, package it
+for upload with:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
+  --input-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
+  --output-dir /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh \
+  --zarr-name argo_glors_ostia_ssh.zarr \
+  --file-mode hardlink \
+  --overwrite
+```
+
+The package keeps the zarr schema unchanged and adds `README.md`, `LICENSE`,
+`indices/profiles.parquet`, `indices/variables.parquet`, example readers, and
+metadata files. SSS variables are included in the zarr as `sss_sos`, `sss_dos`,
+`sss_sea_ice_fraction`, and `sss_temporal_status`.

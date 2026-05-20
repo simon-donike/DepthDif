@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=1.26,<2.1",
     "pandas",
     "Pillow",
+    "pyarrow",
     "pytorch-lightning",
     "PyYAML",
     "rasterio",

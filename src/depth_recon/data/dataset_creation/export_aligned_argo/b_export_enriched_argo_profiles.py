@@ -4,7 +4,7 @@ Production-range enriched ARGO export:
   --start-date 20100101 \
   --end-date 20240731 \
   --workers 4 \
-  --output-zarr /data1/datasets/depth_v2/enriched_argo_profiles.zarr
+  --output-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr
 
 Set multiple workers with --workers N, for example --workers 8.
 
@@ -2360,7 +2360,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-zarr",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/enriched_argo_profiles.zarr"),
+        default=Path(
+            "/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr"
+        ),
     )
     parser.add_argument(
         "--start-date",

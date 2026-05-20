@@ -2612,6 +2612,25 @@ class PixelDiffusionConditional(pl.LightningModule):
                     on_step=False,
                     on_epoch=True,
                 )
+        primary_is_salinity = primary_field == "salinity"
+        primary_plot_unit = "salinity" if primary_is_salinity else "temperature"
+        primary_cmap = PLOT_SALINITY_CMAP if primary_is_salinity else PLOT_CMAP
+        primary_error_metric_prefix = (
+            "val_salinity_absolute_band_error"
+            if primary_is_salinity
+            else "val_absolute_band_error"
+        )
+        primary_error_metric_unit = "psu" if primary_is_salinity else "deg"
+        primary_error_metric_label = "L1 (PSU)" if primary_is_salinity else "L1 (deg)"
+        primary_error_metric_title = (
+            "Generated-Pixel Salinity L1 by Band"
+            if primary_is_salinity
+            else "Generated-Pixel L1 by Band"
+        )
+        primary_profile_x_label = (
+            "Salinity (PSU)" if primary_is_salinity else "Temperature (deg C)"
+        )
+
         # This is the one expensive full reconstruction for this validation run.
         log_wandb_conditional_reconstruction_grid(
             logger=self.logger,
@@ -2627,8 +2646,13 @@ class PixelDiffusionConditional(pl.LightningModule):
                 "x_y_full_reconstruction",
                 image_key_suffix,
             ),
-            cmap=PLOT_CMAP,
+            cmap=primary_cmap,
             show_valid_mask_panel=False,
+            plot_unit=primary_plot_unit,
+            error_metric_prefix=primary_error_metric_prefix,
+            error_metric_unit=primary_error_metric_unit,
+            error_metric_label=primary_error_metric_label,
+            error_metric_title=primary_error_metric_title,
         )
         if salinity_log_payload is not None:
             log_wandb_conditional_reconstruction_grid(
@@ -2666,6 +2690,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                     image_key_suffix,
                 ),
                 sample_idx=0,
+                profile_x_label=primary_profile_x_label,
             )
         if log_denoise and self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
@@ -2679,7 +2704,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                 valid_mask=x_valid_mask,
                 land_mask=land_mask,
                 prefix="val_imgs",
-                cmap=PLOT_CMAP,
+                cmap=primary_cmap,
+                plot_unit=primary_plot_unit,
             )
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, pred, pred_batch, y, x, target

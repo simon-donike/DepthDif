@@ -1,10 +1,11 @@
 # Dataset Statistics
 
 These statistics were measured from the local dataset root at
-`/work/data/depthdif`. The page is split into two parts:
+`/work/data/depthdif`. The page is split into three parts:
 
 1. the exported enriched ARGO Zarr profile dataset
-2. the saved GeoTIFF ML dataset used by the patch dataloader
+2. the Hugging Face package layout for that same ARGO Zarr
+3. the saved GeoTIFF ML dataset used by the patch dataloader
 
 Note: the exporter now also writes SSS fields. The measured counts below
 predate a full local re-export with those fields unless the corresponding Zarr
@@ -16,7 +17,7 @@ list the current expected outputs.
 Path:
 
 ```text
-/work/data/depthdif/enriched_argo_profiles.zarr
+/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr
 ```
 
 This Zarr is the profile-level export. Each row is one EN4/ARGO profile that
@@ -125,9 +126,11 @@ profile.
 | `sss_temporal_status` | Status of SSS temporal matching. | `profile` | `int8` |
 
 The raw SSS error variables `sos_error` and `dos_error` are intentionally not
-exported to the enriched ARGO Zarr. Temporal status fields describe how the
-exporter chose the source file for each profile date; they do not describe
-spatial missingness, land masks, ice masks, or source QC flags.
+exported to the enriched ARGO Zarr or the Hugging Face package. The SSS
+component in the export product is `sss_sos`, `sss_dos`,
+`sss_sea_ice_fraction`, and `sss_temporal_status`. Temporal status fields
+describe how the exporter chose the source file for each profile date; they do
+not describe spatial missingness, land masks, ice masks, or source QC flags.
 
 | Code | Meaning | Interpretation |
 | ---: | --- | --- |
@@ -135,7 +138,37 @@ spatial missingness, land masks, ice masks, or source QC flags.
 | `1` | `nearest_edge` | The target date was outside the available source time range, so the exporter used the first or last available source file. Treat this as an edge extrapolation warning. |
 | `2` | `missing` | No usable source file existed for that modality, so the sampled values for that source were written as missing values. |
 
-## 2. Saved GeoTIFF ML Dataset
+## 2. Hugging Face Aligned ARGO Package
+
+Path:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh
+```
+
+The Hugging Face package is a documentation and indexing layer around the same
+enriched ARGO zarr schema listed above. Its main data store is:
+
+```text
+data/argo_glors_ostia_ssh.zarr
+```
+
+Package files:
+
+| Path | Role |
+| --- | --- |
+| `README.md` | Dataset card and quick-start notes. |
+| `LICENSE` | Dataset packaging license notice. |
+| `data/argo_glors_ostia_ssh.zarr/` | Unchanged enriched ARGO zarr, including GLORYS, OSTIA, sea-level, and SSS profile-context variables. |
+| `indices/profiles.parquet` | One row per profile with scalar metadata, coordinates, dates, and valid-depth counts. |
+| `indices/variables.parquet` | Variable-level metadata generated from the zarr. |
+| `examples/` | Minimal xarray and Parquet loading examples. |
+| `metadata/` | Dataset description, citation, and STAC item metadata. |
+
+The GeoTIFF exporter can use the packaged zarr directly as
+`--enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr`.
+
+## 3. Saved GeoTIFF ML Dataset
 
 Path:
 

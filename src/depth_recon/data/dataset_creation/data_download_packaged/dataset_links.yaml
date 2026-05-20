@@ -1,3 +1,3 @@
 # Dataset Links
-argo_aligned: "https://huggingface.co/simon-donike/DepthDif/resolve/main/aligned_argo_zarr.zip"
+argo_aligned: "https://huggingface.co/datasets/ESA-philab/OceanVariableReconstruction/"
 depthdif_training: "https://drive.google.com/file/d/18niqMxNu8bMyi6kSXGncXjhnGLP6VMG0/view?usp=sharing"

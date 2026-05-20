@@ -7,14 +7,56 @@ projection.
 
 The export goal is a directory that can be shared or copied as one training
 dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO
-profiles are stored in a compact grid-indexed profile store.
+profiles are stored in a compact grid-indexed profile store. The aligned ARGO
+profile zarr is also packageable as a Hugging Face dataset folder before it is
+used by the GeoTIFF export.
 Training can select this exported dataset with
 `src/depth_recon/configs/px_space/training_super_config.yaml`, which sets
 `data.dataset.core.dataset_variant: argo_geotiff_gridded`.
 
+## Aligned ARGO and Hugging Face Layout
+
+`b_export_enriched_argo_profiles.py` creates the enriched profile-level zarr by
+aligning EN4/ARGO profiles with GLORYS depth levels and sampling GLORYS, OSTIA,
+sea-level, and SSS context at each profile location. By default, it writes:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr
+```
+
+`c_package_huggingface_aligned_argo.py` repackages that same zarr into a
+Hugging Face-ready folder without changing the zarr schema:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/
+  enriched_argo_profiles.zarr
+  hf_argo_glors_ostia_ssh/
+    README.md
+    LICENSE
+    data/
+      argo_glors_ostia_ssh.zarr/
+    indices/
+      profiles.parquet
+      variables.parquet
+    examples/
+      open_with_xarray.py
+      subset_by_region_time.py
+    metadata/
+      dataset_description.json
+      citation.cff
+      stac-item.json
+```
+
+The GeoTIFF exporter can read either the direct zarr path or the packaged zarr
+path:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
+```
+
 ## Output Layout
 
-Default export root:
+Default GeoTIFF export root:
 
 ```text
 /work/data/depthdif
@@ -44,10 +86,10 @@ Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share
 the same CRS, transform, width, height, pixel centers, and nodata convention.
 
 The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the
-same on-disk dataset can support salinity-only and joint temperature/salinity experiments. The
-GeoTIFF dataloader reads and returns those salinity fields when the resolved
-scenario is `salinity` or `joint`. Daily SSS `sos` and `dos` rasters
-are also exported for auxiliary experiments.
+same on-disk dataset can support salinity-only and joint temperature/salinity
+experiments. The GeoTIFF dataloader reads and returns those salinity fields when
+the resolved scenario is `salinity` or `joint`. Daily SSS `sos` and `dos`
+rasters are also exported for auxiliary experiments.
 
 ## Spatial Grid
 
@@ -155,6 +197,29 @@ Contents:
 - File structure: one single-band GeoTIFF per variable and GLORYS weekly date
 - Temporal aggregation: centered 7-day mean around the GLORYS date by default
 
+## Variables in the Export Products
+
+The enriched ARGO zarr and its Hugging Face package contain the same variables.
+The package adds Parquet indices for discovery only; those indices do not
+replace the zarr arrays.
+
+| Product | Variables |
+| --- | --- |
+| ARGO profile coordinates and provenance | `latitude`, `longitude`, `profile_date`, `profile_juld`, `profile_idx`, `profile_source_file`, `valid_observed_depth_count` |
+| ARGO profiles on GLORYS depths | `argo_temp_on_glorys_depth`, `argo_potm_on_glorys_depth`, `argo_psal_on_glorys_depth`, matching `*_valid_on_glorys_depth` masks, matching `*_qc_on_glorys_depth` codes, `argo_depth_qc_on_glorys_depth`, whole-profile QC fields |
+| GLORYS profile context | `glorys_thetao`, `glorys_so`, `glorys_uo`, `glorys_vo`, `glorys_zos`, `glorys_mlotst`, `glorys_bottomT`, `glorys_sithick`, `glorys_siconc`, `glorys_usi`, `glorys_vsi`, `glorys_temporal_status` |
+| OSTIA profile context | `ostia_analysed_sst`, `ostia_analysis_error`, `ostia_sea_ice_fraction`, `ostia_mask`, `ostia_temporal_status` |
+| Sea-level profile context | `sealevel_sla`, `sealevel_err_sla`, `sealevel_adt`, `sealevel_ugosa`, `sealevel_err_ugosa`, `sealevel_vgosa`, `sealevel_err_vgosa`, `sealevel_ugos`, `sealevel_vgos`, `sealevel_flag_ice`, `sealevel_tpa_correction`, `sealevel_temporal_status` |
+| SSS profile context | `sss_sos`, `sss_dos`, `sss_sea_ice_fraction`, `sss_temporal_status` |
+| HF Parquet indices | `indices/profiles.parquet` stores scalar profile metadata and valid-depth counts; `indices/variables.parquet` stores variable names, dimensions, dtypes, and descriptions. |
+| GeoTIFF dense rasters | `thetao`, `so`, `analysed_sst`, `adt`, `sos`, `dos` |
+| GeoTIFF compact ARGO zarr | `argo_temp_kelvin_uint8`, `argo_psal_uint8`, `argo_temp_valid`, `argo_psal_valid`, `profile_date`, `target_date`, `latitude`, `longitude`, `grid_row`, `grid_col`, optional source identifiers |
+
+The raw SSS error variables `sos_error` and `dos_error` are not exported to the
+enriched ARGO zarr or the GeoTIFF training store. Daily SSS `sos` and `dos` are
+included as profile context in the aligned ARGO zarr and as dense surface
+rasters in the GeoTIFF export.
+
 ## ARGO Profile Store
 
 Path:
@@ -166,7 +231,13 @@ argo/argo_profiles_on_grid.zarr
 The exporter reads the enriched ARGO profile input by default:
 
 ```text
-/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr
+/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr
+```
+
+The packaged Hugging Face zarr can be used instead:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
 ```
 
 The saved profile store contains the profile information needed by a GeoTIFF
@@ -244,7 +315,7 @@ Run from the repository root:
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
   --sss-dir /data1/datasets/depth_v2/sss_daily \
-  --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
+  --enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \

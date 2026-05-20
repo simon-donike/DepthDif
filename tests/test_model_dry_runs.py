@@ -939,6 +939,65 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.equal(salinity_call["land_mask"], batch["land_mask"]))
         self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
 
+    def test_full_reconstruction_logs_salinity_only_grid_metadata(self) -> None:
+        model = _make_pixel_model(output_fields=("salinity",), log_intermediates=True)
+        batch = _make_pixel_batch(include_salinity=True)
+        model._cache_validation_batch(batch, n_cache=1)
+        salinity_denorm = salinity_normalize(mode="denorm", tensor=batch["y_salinity"])
+        pred = {
+            "y_hat": batch["y_salinity"],
+            "y_hat_salinity": batch["y_salinity"],
+            "y_hat_denorm": salinity_denorm,
+            "y_hat_denorm_for_plot": salinity_denorm,
+            "y_hat_salinity_denorm": salinity_denorm,
+            "y_hat_salinity_denorm_for_plot": salinity_denorm,
+            "further_valid_mask": None,
+            "denoise_samples": [(0, batch["y_salinity"]), (2, batch["y_salinity"])],
+            "x0_denoise_samples": [(0, batch["y_salinity"])],
+        }
+        reconstruction_calls: list[dict[str, Any]] = []
+        profile_calls: list[dict[str, Any]] = []
+        denoise_calls: list[dict[str, Any]] = []
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: reconstruction_calls.append(kwargs),
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_glorys_profile_comparison",
+                lambda **kwargs: profile_calls.append(kwargs),
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_denoise_timestep_grid",
+                lambda **kwargs: denoise_calls.append(kwargs),
+            ),
+        ):
+            model._run_single_image_full_reconstruction_for_current_weights()
+
+        self.assertEqual(len(reconstruction_calls), 1)
+        salinity_call = reconstruction_calls[0]
+        self.assertEqual(salinity_call["cmap"], "winter")
+        self.assertEqual(salinity_call["plot_unit"], "salinity")
+        self.assertEqual(
+            salinity_call["error_metric_prefix"],
+            "val_salinity_absolute_band_error",
+        )
+        self.assertEqual(salinity_call["error_metric_unit"], "psu")
+        self.assertEqual(salinity_call["error_metric_label"], "L1 (PSU)")
+        self.assertEqual(
+            salinity_call["error_metric_title"],
+            "Generated-Pixel Salinity L1 by Band",
+        )
+        self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
+        self.assertEqual(len(profile_calls), 1)
+        self.assertEqual(profile_calls[0]["profile_x_label"], "Salinity (PSU)")
+        self.assertEqual(len(denoise_calls), 1)
+        self.assertEqual(denoise_calls[0]["cmap"], "winter")
+        self.assertEqual(denoise_calls[0]["plot_unit"], "salinity")
+
     def test_full_reconstruction_logs_salinity_scalar_metrics(self) -> None:
         model = _make_pixel_model(
             generated_channels=4,
