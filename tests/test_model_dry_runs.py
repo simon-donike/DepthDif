@@ -837,6 +837,124 @@ class TestModelDryRuns(unittest.TestCase):
             )
         )
 
+    def test_pixel_uncertainty_step_returns_temperature_uncertainty_only(
+        self,
+    ) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+        batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
+        batch["land_mask"] = torch.ones_like(batch["land_mask"])
+        batch["output_land_mask"] = torch.ones_like(batch["land_mask"])
+        first_celsius = torch.zeros_like(batch["x"])
+        second_celsius = torch.full_like(batch["x"], 2.0)
+        second_celsius[:, 1] = 4.0
+        second_celsius[:, 0, 0, 0] = 6.0
+        second_celsius[:, 1, 0, 0] = 8.0
+        first_norm = temperature_normalize(mode="norm", tensor=first_celsius)
+        second_norm = temperature_normalize(mode="norm", tensor=second_celsius)
+
+        with patch.object(model, "forward", side_effect=[first_norm, second_norm]):
+            pred = model.uncertainty_step(batch, batch_idx=0, num_samples=2)
+
+        expected = torch.full(
+            (1, 1, batch["x"].size(-2), batch["x"].size(-1)),
+            1.5,
+            dtype=batch["x"].dtype,
+            device=batch["x"].device,
+        )
+        expected[:, :, 0, 0] = 3.5
+        self.assertNotIn("y_hat", pred)
+        self.assertNotIn("y_hat_temperature", pred)
+        self.assertEqual(pred["uncertainty_num_samples"], 2)
+        self.assertEqual(pred["uncertainty_stat"], "std")
+        self.assertEqual(tuple(pred["uncertainty"].shape), tuple(expected.shape))
+        self.assertTrue(torch.allclose(pred["uncertainty"], expected, atol=1e-5))
+        self.assertTrue(
+            torch.equal(pred["uncertainty"], pred["uncertainty_temperature"])
+        )
+        self.assertTrue(
+            torch.equal(
+                pred["uncertainty_normalized"],
+                pred["uncertainty_temperature_normalized"],
+            )
+        )
+        self.assertTrue(
+            torch.allclose(pred["uncertainty_normalized"][:, :, 0, 0], torch.ones(1, 1))
+        )
+        self.assertTrue(
+            torch.allclose(
+                pred["uncertainty_normalized"][:, :, 0, 1], torch.zeros(1, 1)
+            )
+        )
+
+    def test_pixel_uncertainty_step_requires_multiple_samples(self) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+
+        with self.assertRaisesRegex(ValueError, "num_samples must be at least 2"):
+            model.uncertainty_step(batch, batch_idx=0, num_samples=1)
+
+    def test_pixel_uncertainty_step_splits_joint_temperature_salinity_maps(
+        self,
+    ) -> None:
+        model = _make_pixel_model(
+            generated_channels=4,
+            condition_channels=5,
+            output_fields=("temperature", "salinity"),
+        )
+        batch = _make_pixel_batch(include_salinity=True)
+        batch["y_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
+        batch["y_salinity_valid_mask"] = torch.ones_like(batch["y_salinity_valid_mask"])
+        batch["land_mask"] = torch.ones_like(batch["land_mask"])
+        batch["output_land_mask"] = torch.ones_like(batch["land_mask"])
+        first_temperature_c = torch.zeros_like(batch["x"])
+        second_temperature_c = torch.full_like(batch["x"], 4.0)
+        first_salinity_psu = torch.full_like(batch["x_salinity"], 34.0)
+        second_salinity_psu = torch.full_like(batch["x_salinity"], 36.0)
+        first_norm = torch.cat(
+            [
+                temperature_normalize(mode="norm", tensor=first_temperature_c),
+                salinity_normalize(mode="norm", tensor=first_salinity_psu),
+            ],
+            dim=1,
+        )
+        second_norm = torch.cat(
+            [
+                temperature_normalize(mode="norm", tensor=second_temperature_c),
+                salinity_normalize(mode="norm", tensor=second_salinity_psu),
+            ],
+            dim=1,
+        )
+
+        with patch.object(model, "forward", side_effect=[first_norm, second_norm]):
+            pred = model.uncertainty_step(batch, batch_idx=0, num_samples=2)
+
+        expected_temperature = torch.full(
+            (1, 1, batch["x"].size(-2), batch["x"].size(-1)),
+            2.0,
+            dtype=batch["x"].dtype,
+            device=batch["x"].device,
+        )
+        expected_salinity = torch.full_like(expected_temperature, 1.0)
+        self.assertTrue(
+            torch.allclose(
+                pred["uncertainty_temperature"], expected_temperature, atol=1e-5
+            )
+        )
+        self.assertTrue(
+            torch.allclose(pred["uncertainty_salinity"], expected_salinity, atol=1e-5)
+        )
+        self.assertTrue(
+            torch.equal(pred["uncertainty"], pred["uncertainty_temperature"])
+        )
+        self.assertTrue(
+            torch.equal(
+                pred["uncertainty_normalized"],
+                pred["uncertainty_temperature_normalized"],
+            )
+        )
+        self.assertNotIn("y_hat", pred)
+
     def test_full_reconstruction_metrics_use_glorys_land_mask_support(self) -> None:
         model = _make_pixel_model()
         batch = _make_pixel_batch()

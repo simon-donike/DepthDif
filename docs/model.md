@@ -125,6 +125,13 @@ Output dictionary from `predict_step`:
 - `x0_denoise_samples`: optional per-step `x0` predictions
 - `sampler`: sampler object used
 
+Uncertainty entry point is `uncertainty_step(batch, batch_idx=0, num_samples=8)`. It runs repeated predictions with intermediates disabled, computes the pixel-wise standard deviation in denormalized physical units, collapses output/depth channels to `B x 1 x H x W`, and returns uncertainty-only outputs:
+- `uncertainty`: active single field, or temperature in joint mode
+- `uncertainty_normalized`: 0-1 min-max normalized uncertainty raster for display
+- `uncertainty_temperature` / `uncertainty_salinity`: field-specific uncertainty maps when active
+- `uncertainty_temperature_normalized` / `uncertainty_salinity_normalized`: field-specific display maps when active
+- `uncertainty_num_samples`, `uncertainty_stat`, `sampler`, and `further_valid_mask`
+
 ## Post-Processing in Lightning Inference
 After denormalization, inference can apply:
 - optional Gaussian blur (`model.post_process.gaussian_blur.*`)

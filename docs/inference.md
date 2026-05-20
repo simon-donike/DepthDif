@@ -276,8 +276,9 @@ Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for buck
 When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON.
 
 ## Workflow 2: Direct `predict_step`
-The model inference entry point is:
+The model inference entry points are:
 - `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`
+- `PixelDiffusionConditional.uncertainty_step(batch, batch_idx=0, num_samples=8)`
 
 Minimum required batch keys:
 - `x`
@@ -302,6 +303,14 @@ Common optional keys:
 - `y_hat_denorm`: temperature-denormalized prediction, masked to `NaN` where `y_valid_mask==0`
 - `denoise_samples`: reverse samples (if requested)
 - `x0_denoise_samples`: per-step x0 predictions (if requested)
+- `sampler`: sampler used for prediction
+
+`uncertainty_step` returns uncertainty-only outputs:
+- `uncertainty`: pixel-wise standard deviation in denormalized physical units, collapsed to `B x 1 x H x W`
+- `uncertainty_normalized`: 0-1 min-max normalized uncertainty raster for display
+- `uncertainty_temperature` / `uncertainty_salinity`: field-specific uncertainty maps when active
+- `uncertainty_num_samples`: number of generations used
+- `uncertainty_stat`: currently `std`
 - `sampler`: sampler used for prediction
 
 ## Example (`inference_super_config.yaml`)

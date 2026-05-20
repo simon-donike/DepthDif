@@ -1361,6 +1361,37 @@ class PixelDiffusionConditional(pl.LightningModule):
         outputs["y_hat_denorm_for_plot"] = denorm_for_plot_by_field[alias_field]
         return outputs
 
+    def _normalize_uncertainty_raster(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Normalize uncertainty rasters to 0-1 while preserving invalid pixels."""
+        normalized = torch.empty_like(tensor)
+        for batch_idx in range(int(tensor.size(0))):
+            for channel_idx in range(int(tensor.size(1))):
+                raster = tensor[batch_idx, channel_idx]
+                finite_mask = torch.isfinite(raster)
+                normalized_raster = torch.full_like(raster, float("nan"))
+                if finite_mask.any():
+                    finite_values = raster[finite_mask]
+                    raster_min = finite_values.min()
+                    raster_max = finite_values.max()
+                    value_range = raster_max - raster_min
+                    if bool(value_range > 0):
+                        normalized_raster[finite_mask] = (
+                            finite_values - raster_min
+                        ) / value_range
+                    else:
+                        # Flat rasters still carry useful "no contrast" information.
+                        normalized_raster[finite_mask] = torch.zeros_like(finite_values)
+                normalized[batch_idx, channel_idx] = normalized_raster
+        return normalized
+
+    def _collapse_uncertainty_channels(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Collapse per-depth/channel uncertainty into one spatial raster."""
+        if int(tensor.ndim) != 4:
+            raise RuntimeError(
+                f"Uncertainty tensors must be shaped (B,C,H,W), got {tuple(tensor.shape)}."
+            )
+        return torch.nanmean(tensor, dim=1, keepdim=True)
+
     def _split_prediction_samples(
         self, samples: list[tuple[int, torch.Tensor]], batch: dict[str, Any]
     ) -> list[tuple[int, torch.Tensor]]:
@@ -2006,6 +2037,76 @@ class PixelDiffusionConditional(pl.LightningModule):
             }
         )
         return prediction_outputs
+
+    @torch.no_grad()
+    def uncertainty_step(
+        self,
+        batch: dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+        num_samples: int = 8,
+    ) -> dict[str, Any]:
+        """Estimate pixel-wise generation uncertainty from repeated predictions.
+
+        Args:
+            batch (dict[str, Any]): Input batch passed to prediction.
+            batch_idx (int): Zero-based index for selecting a sample or batch.
+            dataloader_idx (int): Dataloader index passed through to prediction.
+            num_samples (int): Number of repeated generations used for uncertainty.
+
+        Returns:
+            dict[str, Any]: Dictionary containing uncertainty maps and metadata.
+        """
+        if int(num_samples) < 2:
+            raise ValueError("num_samples must be at least 2 for uncertainty_step.")
+
+        prediction_batch = dict(batch)
+        prediction_batch["return_intermediates"] = False
+
+        samples_by_field: dict[str, list[torch.Tensor]] = {
+            field: [] for field in self.output_fields
+        }
+        sampler: torch.nn.Module | None = None
+        further_valid_mask: torch.Tensor | None = None
+        for _ in range(int(num_samples)):
+            pred = self.predict_step(
+                prediction_batch,
+                batch_idx=batch_idx,
+                dataloader_idx=dataloader_idx,
+            )
+            sampler = pred["sampler"]
+            further_valid_mask = pred["further_valid_mask"]
+            for field in self.output_fields:
+                samples_by_field[field].append(pred[f"y_hat_{field}_denorm"])
+
+        outputs: dict[str, Any] = {
+            "uncertainty_num_samples": int(num_samples),
+            "uncertainty_stat": "std",
+            "sampler": sampler,
+            "further_valid_mask": further_valid_mask,
+        }
+        uncertainty_by_field: dict[str, torch.Tensor] = {}
+        for field in self.output_fields:
+            stacked = torch.stack(samples_by_field[field], dim=0)
+            # The repeated generations are the ensemble, so use population std.
+            field_uncertainty = stacked.std(dim=0, unbiased=False)
+            field_uncertainty = self._collapse_uncertainty_channels(field_uncertainty)
+            uncertainty_by_field[field] = field_uncertainty
+            outputs[f"uncertainty_{field}"] = field_uncertainty
+            outputs[f"uncertainty_{field}_normalized"] = (
+                self._normalize_uncertainty_raster(field_uncertainty)
+            )
+
+        alias_field = (
+            "temperature"
+            if "temperature" in self.output_fields
+            else self.output_fields[0]
+        )
+        outputs["uncertainty"] = uncertainty_by_field[alias_field]
+        outputs["uncertainty_normalized"] = outputs[
+            f"uncertainty_{alias_field}_normalized"
+        ]
+        return outputs
 
     def _log_validation_triplet_stats(
         self,
