@@ -67,6 +67,8 @@
       groundTruthToggle: document.getElementById("globe-toggle-ground-truth"),
       absoluteErrorToggle: document.getElementById("globe-toggle-absolute-error"),
       pointsToggle: document.getElementById("globe-toggle-points"),
+      variableControl: document.getElementById("globe-variable-control"),
+      variableRadios: document.querySelectorAll('input[name="globe-variable"]'),
       patchSplitsToggle: document.getElementById("globe-toggle-patch-splits"),
       toolbar: document.querySelector(".globe-toolbar"),
       toolbarContent: document.getElementById("globe-toolbar-content"),
@@ -82,7 +84,13 @@
       mobileBlockTitle: document.getElementById("globe-mobile-block-title"),
       mobileBlockText: document.getElementById("globe-mobile-block-text"),
       argoLegend: document.getElementById("globe-argo-legend"),
+      valueLegend: document.getElementById("globe-value-legend"),
+      valueLegendTitle: document.getElementById("globe-value-legend-title"),
+      valueLegendMin: document.getElementById("globe-value-legend-min"),
+      valueLegendMax: document.getElementById("globe-value-legend-max"),
+      valueLegendBar: document.getElementById("globe-value-legend-bar"),
       errorLegend: document.getElementById("globe-error-legend"),
+      errorLegendMin: document.getElementById("globe-error-legend-min"),
       errorLegendMax: document.getElementById("globe-error-legend-max"),
       profilePopup: document.getElementById("globe-profile-popup"),
       profilePopupTitle: document.getElementById("globe-profile-popup-title"),
@@ -125,6 +133,62 @@
       return;
     }
     window.clearTimeout(taskId);
+  }
+
+
+  function getVariableConfigs(config) {
+    if (!config || !config.variables || typeof config.variables !== "object") {
+      return null;
+    }
+    return config.variables;
+  }
+
+  function resolveDefaultVariable(config) {
+    const variables = getVariableConfigs(config);
+    if (!variables) {
+      return String(config && config.variable ? config.variable : "temperature");
+    }
+    const configuredDefault = String(config.default_variable || "").trim();
+    if (configuredDefault && variables[configuredDefault]) {
+      return configuredDefault;
+    }
+    if (variables.temperature) {
+      return "temperature";
+    }
+    return Object.keys(variables)[0] || "temperature";
+  }
+
+  function activeVariableConfig(state) {
+    const variables = getVariableConfigs(state.config);
+    if (!variables) {
+      return state.config;
+    }
+    const selected = String(state.selectedVariable || resolveDefaultVariable(state.config));
+    return variables[selected] || variables[resolveDefaultVariable(state.config)] || state.config;
+  }
+
+  function activeVariableKey(state) {
+    const activeConfig = activeVariableConfig(state);
+    return String(activeConfig.variable || state.selectedVariable || "temperature");
+  }
+
+  function valueUnitLabel(config) {
+    const explicit = config && config.value_unit_label ? String(config.value_unit_label) : "";
+    if (explicit) {
+      return explicit;
+    }
+    const units = String(config && config.value_units ? config.value_units : "");
+    return units.toUpperCase() === "PSU" ? "PSU" : "°C";
+  }
+
+  function firstFiniteNumber(values, fallback) {
+    for (let index = 0; index < values.length; index += 1) {
+      const value = Number(values[index]);
+      if (Number.isFinite(value)) {
+        return value;
+      }
+    }
+    return fallback;
   }
 
   function resolveConfigUrl() {
@@ -332,6 +396,24 @@
     toggle.dataset.globeUnavailable = "true";
   }
 
+  function clearToggleUnavailable(toggle) {
+    if (!toggle) {
+      return;
+    }
+    if (toggle.dataset.globeUnavailable === "true") {
+      delete toggle.dataset.globeUnavailable;
+      toggle.disabled = false;
+    }
+  }
+
+  function setToggleAvailable(toggle, available) {
+    if (available) {
+      clearToggleUnavailable(toggle);
+      return;
+    }
+    markToggleUnavailable(toggle);
+  }
+
   function setToggleLoading(toggle, loading) {
     if (!toggle || toggle.dataset.globeUnavailable === "true") {
       return;
@@ -348,8 +430,8 @@
   }
 
   function resolveColorScale(config) {
-    const minValue = Number(config.color_scale_min_c);
-    const maxValue = Number(config.color_scale_max_c);
+    const minValue = firstFiniteNumber([config.color_scale_min, config.color_scale_min_c], NaN);
+    const maxValue = firstFiniteNumber([config.color_scale_max, config.color_scale_max_c], NaN);
     if (Number.isFinite(minValue) && Number.isFinite(maxValue) && maxValue > minValue) {
       return { min: minValue, max: maxValue };
     }
@@ -374,7 +456,7 @@
   }
 
   function selectedDepthLevel(state) {
-    const depthLevels = getDepthLevels(state.config);
+    const depthLevels = getDepthLevels(activeVariableConfig(state));
     const index = clamp(Number(state.selectedDepthIndex || 0), 0, depthLevels.length - 1);
     return depthLevels[index] || depthLevels[0];
   }
@@ -419,8 +501,57 @@
     });
   }
 
+  function updateVariableControl(state) {
+    const variables = getVariableConfigs(state.config);
+    const elements = state.elements;
+    if (!elements.variableControl || !elements.variableRadios) {
+      return;
+    }
+    if (!variables) {
+      elements.variableControl.hidden = true;
+      return;
+    }
+    elements.variableControl.hidden = false;
+    elements.variableRadios.forEach(function (radio) {
+      const available = Boolean(variables[radio.value]);
+      radio.disabled = !available;
+      radio.checked = available && radio.value === state.selectedVariable;
+      const label = radio.closest("label");
+      if (label) {
+        label.hidden = !available;
+      }
+    });
+  }
+
+  function updateValueLegend(state) {
+    const elements = state.elements;
+    if (!elements.valueLegend) {
+      return;
+    }
+    const activeConfig = activeVariableConfig(state);
+    const colorScale = resolveColorScale(activeConfig);
+    const unitLabel = valueUnitLabel(activeConfig);
+    const variableLabel = String(activeConfig.variable_label || activeConfig.variable || "Temperature");
+    if (elements.valueLegendTitle) {
+      elements.valueLegendTitle.textContent = variableLabel;
+    }
+    if (elements.valueLegendMin) {
+      elements.valueLegendMin.textContent = formatLegendValue(colorScale.min, unitLabel);
+    }
+    if (elements.valueLegendMax) {
+      elements.valueLegendMax.textContent = formatLegendValue(colorScale.max, unitLabel);
+    }
+    if (elements.valueLegendBar) {
+      elements.valueLegendBar.classList.toggle(
+        "globe-legend__bar--salinity",
+        activeVariableKey(state) === "salinity"
+      );
+    }
+  }
+
   function updateDepthControl(state) {
-    const depthLevels = getDepthLevels(state.config);
+    const activeConfig = activeVariableConfig(state);
+    const depthLevels = getDepthLevels(activeConfig);
     if (state.elements.depthSlider) {
       state.elements.depthSlider.min = "0";
       state.elements.depthSlider.max = String(Math.max(0, depthLevels.length - 1));
@@ -434,12 +565,18 @@
       const depthLevel = selectedDepthLevel(state);
       state.elements.depthLabel.textContent = String(depthLevel.label || "Surface");
     }
-    if (state.elements.absoluteErrorToggle) {
-      const hasAnyAbsoluteErrorLayer = depthLevels.some(hasAbsoluteErrorLayer);
-      if (!hasAnyAbsoluteErrorLayer) {
-        markToggleUnavailable(state.elements.absoluteErrorToggle);
-      }
+    if (state.elements.predictionToggle) {
+      setToggleAvailable(state.elements.predictionToggle, Boolean(selectedDepthLevel(state).prediction_tiles_url));
     }
+    if (state.elements.groundTruthToggle) {
+      setToggleAvailable(state.elements.groundTruthToggle, depthLevels.some(function (depthLevel) {
+        return Boolean(depthLevel.ground_truth_tiles_url);
+      }));
+    }
+    if (state.elements.absoluteErrorToggle) {
+      setToggleAvailable(state.elements.absoluteErrorToggle, depthLevels.some(hasAbsoluteErrorLayer));
+    }
+    updateValueLegend(state);
     updateDepthTicks(state, depthLevels);
   }
 
@@ -594,7 +731,8 @@
     if (!argoLegend) {
       return;
     }
-    const hasCombinedLayer = Boolean(state.config && state.config.argo_sample_locations_url);
+    const activeConfig = activeVariableConfig(state);
+    const hasCombinedLayer = Boolean(activeConfig && activeConfig.argo_sample_locations_url);
     argoLegend.hidden = !hasCombinedLayer || !state.elements.pointsToggle.checked;
   }
 
@@ -602,12 +740,16 @@
     return Boolean(depthLevel && depthLevel.absolute_error_tiles_url);
   }
 
-  function formatErrorLegendValue(value) {
+  function formatLegendValue(value, unitLabel) {
     const numericValue = Number(value);
+    const unit = String(unitLabel || "");
     if (!Number.isFinite(numericValue)) {
-      return "0°C";
+      return unit === "PSU" ? "0 PSU" : "0°C";
     }
-    return String(Math.max(0, Math.round(numericValue))) + "°C";
+    const rounded = Math.abs(numericValue - Math.round(numericValue)) < 0.05
+      ? String(Math.round(numericValue))
+      : String(Number(numericValue.toFixed(1)));
+    return unit === "PSU" ? rounded + " PSU" : rounded + "°C";
   }
 
   function updateAbsoluteErrorLegend(state) {
@@ -616,17 +758,33 @@
       return;
     }
     const depthLevel = selectedDepthLevel(state);
+    const activeConfig = activeVariableConfig(state);
+    const unitLabel = depthLevel.absolute_error_value_unit_label || valueUnitLabel(activeConfig);
     const visible = Boolean(
       state.elements.absoluteErrorToggle &&
         state.elements.absoluteErrorToggle.checked &&
         hasAbsoluteErrorLayer(depthLevel)
     );
     errorLegend.hidden = !visible;
+    if (visible && state.elements.errorLegendMin) {
+      const legendMin = firstFiniteNumber(
+        [depthLevel.absolute_error_legend_min, depthLevel.absolute_error_legend_min_c],
+        0.0
+      );
+      state.elements.errorLegendMin.textContent = formatLegendValue(legendMin, unitLabel);
+    }
     if (visible && state.elements.errorLegendMax) {
-      const legendMax = Number(depthLevel.absolute_error_legend_max_c);
-      const colorScaleMax = Number(depthLevel.absolute_error_color_scale_max_c);
-      state.elements.errorLegendMax.textContent = formatErrorLegendValue(
-        Number.isFinite(legendMax) ? legendMax : colorScaleMax
+      const legendMax = firstFiniteNumber(
+        [depthLevel.absolute_error_legend_max, depthLevel.absolute_error_legend_max_c],
+        NaN
+      );
+      const colorScaleMax = firstFiniteNumber(
+        [depthLevel.absolute_error_color_scale_max, depthLevel.absolute_error_color_scale_max_c],
+        NaN
+      );
+      state.elements.errorLegendMax.textContent = formatLegendValue(
+        Number.isFinite(legendMax) ? legendMax : colorScaleMax,
+        unitLabel
       );
     }
   }
@@ -776,7 +934,8 @@
       return;
     }
     const locationId = properties.location_id ? properties.location_id.getValue(now) : "Full Sample";
-    const dateValue = properties.date ? properties.date.getValue(now) : state.config.selected_date;
+    const activeConfig = activeVariableConfig(state);
+    const dateValue = properties.date ? properties.date.getValue(now) : activeConfig.selected_date;
     const patchId = properties.patch_id ? properties.patch_id.getValue(now) : "";
     const pixelRow = properties.pixel_row ? properties.pixel_row.getValue(now) : null;
     const pixelCol = properties.pixel_col ? properties.pixel_col.getValue(now) : null;
@@ -813,7 +972,7 @@
     const dateValue =
       properties && properties.date
         ? properties.date.getValue(now)
-        : state.config.selected_date;
+        : activeVariableConfig(state).selected_date;
     const patchId = properties && properties.patch_id ? properties.patch_id.getValue(now) : "";
     const pixelRow = properties && properties.pixel_row ? properties.pixel_row.getValue(now) : null;
     const pixelCol = properties && properties.pixel_col ? properties.pixel_col.getValue(now) : null;
@@ -1051,6 +1210,7 @@
   }
 
   async function addPredictionLayer(state) {
+    const activeConfig = activeVariableConfig(state);
     const depthLevel = selectedDepthLevel(state);
     const predictionUrl = resolveAssetUrl(depthLevel.prediction_tiles_url, state.configUrl);
     if (!predictionUrl) {
@@ -1058,7 +1218,7 @@
       return null;
     }
     const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(predictionUrl, {
-      credit: state.config.credits && state.config.credits.prediction,
+      credit: activeConfig.credits && activeConfig.credits.prediction,
     });
     const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
@@ -1070,6 +1230,7 @@
   }
 
   async function addGroundTruthLayer(state) {
+    const activeConfig = activeVariableConfig(state);
     const depthLevel = selectedDepthLevel(state);
     const groundTruthUrl = resolveAssetUrl(depthLevel.ground_truth_tiles_url, state.configUrl);
     if (!groundTruthUrl) {
@@ -1077,7 +1238,7 @@
       return null;
     }
     const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(groundTruthUrl, {
-      credit: state.config.credits && state.config.credits.ground_truth,
+      credit: activeConfig.credits && activeConfig.credits.ground_truth,
     });
     const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
@@ -1088,6 +1249,7 @@
   }
 
   async function addAbsoluteErrorLayer(state) {
+    const activeConfig = activeVariableConfig(state);
     const depthLevel = selectedDepthLevel(state);
     const errorUrl = resolveAssetUrl(depthLevel.absolute_error_tiles_url, state.configUrl);
     if (!errorUrl) {
@@ -1096,7 +1258,7 @@
       return null;
     }
     const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(errorUrl, {
-      credit: state.config.credits && state.config.credits.absolute_error,
+      credit: activeConfig.credits && activeConfig.credits.absolute_error,
     });
     const layer = state.viewer.imageryLayers.addImageryProvider(provider);
     layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
@@ -1108,7 +1270,8 @@
   }
 
   async function addPointsLayer(state) {
-    const pointsUrl = resolveAssetUrl(state.config.argo_sample_locations_url, state.configUrl);
+    const activeConfig = activeVariableConfig(state);
+    const pointsUrl = resolveAssetUrl(activeConfig.argo_sample_locations_url, state.configUrl);
     if (!pointsUrl) {
       markToggleUnavailable(state.elements.pointsToggle);
       updateArgoLegendVisibility(state);
@@ -1120,7 +1283,7 @@
       markerSize: 10,
       stroke: Cesium.Color.BLACK,
       strokeWidth: 1,
-      credit: state.config.credits && state.config.credits.points,
+      credit: activeConfig.credits && activeConfig.credits.points,
     });
     styleArgoSampleEntities(dataSource);
     state.viewer.dataSources.add(dataSource);
@@ -1130,14 +1293,15 @@
   }
 
   async function addPatchSplitsLayer(state) {
-    const patchSplitsUrl = resolveAssetUrl(state.config.patch_splits_url, state.configUrl);
+    const activeConfig = activeVariableConfig(state);
+    const patchSplitsUrl = resolveAssetUrl(activeConfig.patch_splits_url, state.configUrl);
     if (!patchSplitsUrl) {
       markToggleUnavailable(state.elements.patchSplitsToggle);
       return null;
     }
     const dataSource = await Cesium.GeoJsonDataSource.load(patchSplitsUrl, {
       clampToGround: true,
-      credit: state.config.credits && state.config.credits.patch_splits,
+      credit: activeConfig.credits && activeConfig.credits.patch_splits,
     });
     stylePatchSplitEntities(dataSource);
     state.viewer.dataSources.add(dataSource);
@@ -1403,6 +1567,37 @@
     }
   }
 
+  function removeDataSourceIfPresent(state, stateKey, promiseKey) {
+    if (state[stateKey]) {
+      state.viewer.dataSources.remove(state[stateKey], true);
+      state[stateKey] = null;
+    }
+    state[promiseKey] = null;
+  }
+
+  async function reloadVariableLayers(state) {
+    state.selectedDepthIndex = 0;
+    updateVariableControl(state);
+    updateDepthControl(state);
+    updateAbsoluteErrorLegend(state);
+    closeProfilePopup(state);
+    removeDataSourceIfPresent(state, "pointsDataSource", "pointsDataSourceLoadPromise");
+    removeDataSourceIfPresent(state, "patchSplitsDataSource", "patchSplitsDataSourceLoadPromise");
+    await reloadRasterDepthLayers(state);
+    if (state.elements.pointsToggle && state.elements.pointsToggle.checked) {
+      ensurePointsLayer(state).catch(function (error) {
+        console.error(error);
+      });
+    }
+    if (state.elements.patchSplitsToggle && state.elements.patchSplitsToggle.checked) {
+      ensurePatchSplitsLayer(state).catch(function (error) {
+        console.error(error);
+      });
+    }
+    updateArgoLegendVisibility(state);
+    requestRender(state);
+  }
+
   function wireUi(state) {
     const elements = state.elements;
     if (elements.toolbarToggle) {
@@ -1458,6 +1653,18 @@
           "patchSplitsDataSource",
           ensurePatchSplitsLayer
         );
+      });
+    }
+
+    if (elements.variableRadios) {
+      elements.variableRadios.forEach(function (radio) {
+        radio.addEventListener("change", function () {
+          if (!radio.checked || radio.disabled || radio.value === state.selectedVariable) {
+            return;
+          }
+          state.selectedVariable = radio.value;
+          reloadVariableLayers(state);
+        });
       });
     }
 
@@ -1565,6 +1772,7 @@
         absoluteErrorLayerLoadPromise: null,
         pointsDataSourceLoadPromise: null,
         patchSplitsDataSourceLoadPromise: null,
+        selectedVariable: resolveDefaultVariable(loaded.config),
         selectedDepthIndex: 0,
         rasterDepthReloadToken: 0,
         spinEnabled: false,
@@ -1577,6 +1785,7 @@
       };
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
+      updateVariableControl(state);
       updateDepthControl(state);
       updateAbsoluteErrorLegend(state);
 

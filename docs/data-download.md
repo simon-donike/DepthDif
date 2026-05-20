@@ -2,10 +2,10 @@
 
 This page is split between two download paths:  
 
-- **Raw upstream data**: original GLORYS, OSTIA, sea-level, EN4/ARGO, and land  
+- **Raw upstream data**: original GLORYS, OSTIA, sea-level, SSS, EN4/ARGO, and land
   mask inputs used to build DepthDif training stores.  
-- **Packaged DepthDif datasets**: prebuilt archives that can be downloaded and  
-  extracted without rebuilding every intermediate from the upstream sources.  
+- **Packaged DepthDif datasets**: prebuilt folders or archives that can be
+  downloaded without rebuilding every intermediate from the upstream sources.
 
 Use [Data Sources](data-source.md) for native product details and  
 [Data Export](data-export.md) for conversion into trainable stores.  
@@ -17,7 +17,9 @@ All examples assume the project environment is available at
 /data1/datasets/depth_v2
 ```
 
-Packaged DepthDif exports are normally stored under:  
+Raw and aligned intermediate products are normally stored under
+`/data1/datasets/depth_v2`. The model-ready GeoTIFF export is normally stored
+under:
 
 ```bash
 /work/data/depthdif
@@ -30,7 +32,7 @@ Raw download scripts write one CSV log in each output directory. Set
 
 ### Copernicus Marine Inputs  
 
-GLORYS, OSTIA, and sea-level files are downloaded with the  
+GLORYS, OSTIA, sea-level, and SSS files are downloaded with the
 `copernicusmarine get` CLI. The scripts first run a dry query for each date and  
 then download only matching NetCDF files.  
 
@@ -98,6 +100,22 @@ START_DATE=2010-01-01 END_DATE=2024-07-31 \
   /data1/datasets/depth_v2/sealevel_daily
 ```
 
+#### Sea-Surface Salinity
+
+Role: daily auxiliary sea-surface salinity, density, and ice fields.
+
+Provider: Copernicus Marine Service / CNR.
+
+Product ID: `MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013`.
+
+Default dataset ID: `cmems_obs-mob_glo_phy-sss_my_multi_P1D`.
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
+  /data1/datasets/depth_v2/sss_daily
+```
+
 ### EN4 / ARGO Profiles  
 
 Role: sparse in-situ temperature and salinity profiles.  
@@ -149,23 +167,34 @@ Packaged dataset downloaders live under
 URLs are configured in  
 `src/depth_recon/data/dataset_creation/data_download_packaged/dataset_links.yaml`.  
 
-Use packaged downloads when you want the prepared DepthDif artifacts directly  
-instead of reconstructing them from the raw upstream products. The downloader  
-stores the archive in `--output-dir`, reuses an existing archive unless  
-`--force-download` is passed, and extracts the archive into the same directory.  
-Pass `--overwrite` when the extracted files already exist and should be  
-replaced.  
+Use packaged downloads when you want the prepared DepthDif artifacts directly
+instead of reconstructing them from the raw upstream products. The aligned ARGO
+downloader downloads Hugging Face package files into `--output-dir`, reusing
+existing files unless `--force-download` is passed. Pass `--overwrite` when
+existing package files should be replaced. Legacy zip links are still extracted
+into `--output-dir`.
 
 ### Aligned ARGO Zarr  
 
-Role: prealigned sparse ARGO/EN4 profile store, packaged as a zarr archive.  
+Role: prealigned sparse ARGO/EN4 profile store, packaged as a Hugging Face
+dataset folder with `data/argo_glors_ostia_ssh.zarr` and Parquet indices. This
+package includes GLORYS, OSTIA, sea-level, and SSS profile-context variables.
 
-Configured link key: `argo_aligned`.  
+Configured link key: `argo_aligned`.
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_aligned_argo_zarr \
-  --output-dir /work/data/depthdif/aligned_argo
+  --output-dir /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh
 ```
+
+The zarr path produced by this download is:
+
+```text
+/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
+```
+
+Pass that path to `--enriched-argo-zarr` when exporting the GeoTIFF training
+dataset from the packaged copy.
 
 ### Exported GeoTIFF Training Dataset  
 

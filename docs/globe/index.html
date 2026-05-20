@@ -47,6 +47,19 @@
               </button>
             </div>
             <div id="globe-toolbar-content" class="globe-toolbar__content">
+              <div id="globe-variable-control" class="globe-toolbar__group globe-toolbar__group--variable">
+                <span class="globe-toolbar__label">Variable</span>
+                <div class="globe-variable-toggle" role="radiogroup" aria-label="Ocean variable">
+                  <label class="globe-variable-toggle__option">
+                    <input name="globe-variable" type="radio" value="temperature" checked />
+                    <span>Temperature</span>
+                  </label>
+                  <label class="globe-variable-toggle__option">
+                    <input name="globe-variable" type="radio" value="salinity" />
+                    <span>Salinity</span>
+                  </label>
+                </div>
+              </div>
               <div class="globe-toolbar__sections" aria-label="Layer controls">
                 <section class="globe-layer-section" aria-labelledby="globe-raster-layer-heading">
                   <span id="globe-raster-layer-heading" class="globe-toolbar__label">Rasters</span>
@@ -105,12 +118,12 @@
             </div>
           </div>
           <div class="globe-legend-stack">
-            <div class="globe-legend" aria-label="Temperature color scale">
-              <span class="globe-legend__title">Temperature</span>
-              <div class="globe-legend__bar"></div>
+            <div id="globe-value-legend" class="globe-legend" aria-label="Variable color scale">
+              <span id="globe-value-legend-title" class="globe-legend__title">Temperature</span>
+              <div id="globe-value-legend-bar" class="globe-legend__bar"></div>
               <div class="globe-legend__labels">
-                <span>0°C</span>
-                <span>30°C</span>
+                <span id="globe-value-legend-min">0°C</span>
+                <span id="globe-value-legend-max">30°C</span>
               </div>
             </div>
             <div
@@ -122,7 +135,7 @@
               <span class="globe-legend__title">Absolute Error</span>
               <div class="globe-legend__bar globe-legend__bar--error"></div>
               <div class="globe-legend__labels">
-                <span>0°C</span>
+                <span id="globe-error-legend-min">0°C</span>
                 <span id="globe-error-legend-max">0°C</span>
               </div>
             </div>

@@ -6,10 +6,11 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 ## Overview  
 | Source | Role In Project | Native Sampling | Key Variables |  
 |---|---|---|---|  
-| GLORYS | 3D ocean reanalysis field | global gridded field, fixed 50 depth levels | `thetao`, `depth` |  
+| GLORYS | 3D ocean reanalysis field | global gridded field, fixed 50 depth levels | `thetao`, `so`, `depth` |
 | OSTIA | daily surface temperature field | daily global 2D grid | `analysed_sst` |  
-| EN4 / ARGO profiles | in-situ temperature observations | profile-specific corrected depths | `TEMP`, `DEPH_CORRECTED` |  
+| EN4 / ARGO profiles | in-situ temperature and salinity observations | profile-specific corrected depths | `TEMP`, `PSAL_CORRECTED`, `DEPH_CORRECTED` |
 | Sea Level L4 | daily surface height and currents | daily global 0.125 degree grid | sea-surface-height fields, geostrophic currents |  
+| SSS MULTIOBS | daily surface salinity and density | daily global surface grid | `sos`, `dos`, `sea_ice_fraction` |
 
 ## Product A: GLORYS Reanalysis  
 ![GLORYS banner](assets/data/glorys_banner.png)  
@@ -83,6 +84,20 @@ The Copernicus reprocessed global sea-level product provides daily gridded sea-s
 
 Relevant helper script:  
 - `src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh`  
+
+## Product E: Sea-Surface Salinity
+
+The Copernicus multi-observation SSS product provides daily global surface
+salinity and density fields with ice-fraction layers.
+
+- Provider: Copernicus Marine Service / CNR
+- Product ID: `MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013`
+- Dataset ID used here: `cmems_obs-mob_glo_phy-sss_my_multi_P1D`
+- Temporal resolution: daily
+- Native variables used here: `sos`, `dos`, `sea_ice_fraction`
+
+Relevant helper script:
+- `src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh`
 
 ## Raw Product Notes  
 Representative raw GLORYS variables:  

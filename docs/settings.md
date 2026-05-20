@@ -1,299 +1,169 @@
-# Model Settings  
-This page maps key configuration flags to their runtime behavior in code.  
+# Config Settings
+This page maps the current config files to runtime behavior. Pixel-space training and inference now use super-configs plus a scenario selector; the old pixel split data/model/training YAMLs are gone.
 
-Primary config files used in current EO setup:  
-- `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml` (OSTIA + Argo + GLORYS lazy NetCDF training preset)  
-- `src/depth_recon/configs/px_space/model_config.yaml`  
-- `src/depth_recon/configs/px_space/model_config_ambient.yaml`  
-- `src/depth_recon/configs/px_space/training_config.yaml`  
+## Active Pixel Configs
 
-Latent-space config set:  
-- `src/depth_recon/configs/lat_space/model_config.yaml`  
-- `src/depth_recon/configs/lat_space/training_config.yaml`  
-- `src/depth_recon/configs/lat_space/ae_config.yaml`  
+| File | Used by | Purpose |
+| --- | --- | --- |
+| `src/depth_recon/configs/px_space/training_super_config.yaml` | `train.py` | Pixel GeoTIFF training defaults. Contains top-level `scenario`, `data`, `model`, and `training` sections. |
+| `src/depth_recon/configs/px_space/inference_super_config.yaml` | inference exporters and smoke scripts | Pixel GeoTIFF inference defaults. Contains top-level `scenario`, `data`, `model`, `training`, and `inference` sections. |
 
-See [Autoencoder + Latent Diffusion](autoencoder.md) for latent architecture and training workflow.  
+Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config.yaml`, `training_config.yaml`, and `ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md).
 
-## Major Settings  
-### Conditioning channels  
-Config (`model_config_*`):  
-- `model.generated_channels`  
-- `model.condition_channels`  
-- `model.condition_mask_channels`  
-- `model.condition_include_eo`  
-- `model.condition_use_valid_mask`  
+## Scenario Resolution
 
-Runtime effect:  
-- controls how `condition = [eo?, x, x_valid_mask?]` is assembled  
-- channel count is validated against expected `condition_channels`  
+Select the pixel task with `--scenario temperature|salinity|joint` or with the top-level `scenario` key in the super-config. CLI `--scenario` wins over the file. The resolver lives in `depth_recon.configs.config_resolver_pixel` and materializes effective split configs for existing dataset/model constructors.
 
-### Diffusion target parameterization  
-Config:  
-- `model.parameterization`: `epsilon` or `x0`  
+| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Derived `model.generated_channels` | Derived `model.condition_channels` |
+| --- | --- | --- | ---: | ---: | ---: |
+| `temperature` | `['temperature']` | `['temperature']` | `false` | `50` | `53` |
+| `salinity` | `['salinity']` | `['salinity']` | `true` | `50` | `53` |
+| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `100` | `103` |
 
-Runtime effect:  
-- defines target in diffusion loss and sampler conversions  
-- current EO config uses `x0`  
+`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
 
-### Masked loss  
-Config:  
-- `model.mask_loss_with_valid_pixels`  
+Examples:
 
-Runtime effect:  
-- if enabled, loss uses the task-valid support instead of the old missing-pixel mask  
-- standard mode: `y_valid_mask` over the full `y` target  
-- ambient mode: `x_valid_mask ∩ y_valid_mask` over the `x` target  
-- mask alignment preserves per-band semantics (`B x C x H x W`) unless a single shared mask channel is explicitly used  
+```bash
+/work/envs/depth/bin/python train.py --scenario temperature
+/work/envs/depth/bin/python train.py --scenario salinity
+/work/envs/depth/bin/python train.py --scenario joint
+/work/envs/depth/bin/python train.py --scenario temperature --set training.trainer.max_epochs=100
+```
 
-### Inference output composition  
-Runtime effect:  
-- direct `y` prediction keeps the generated field and masks invalid `y_valid_mask` support to `NaN`  
-- ambient `x` completion leaves known-pixel enforcement to `clamp_known_pixels` during sampling  
-- both modes then mask invalid `y_valid_mask` support to `NaN`  
+Override paths are rooted at the super-config sections: `data.*`, `model.*`, `training.*`, and for inference helpers `inference.*`.
 
-### Known-pixel clamping during sampling  
-Config:  
-- `model.clamp_known_pixels`  
+## Effective Config Snapshots
 
-Runtime effect:  
-- if enabled and known masks/values are available, known pixels are overwritten each reverse step  
-- useful for inpainting-style stability  
+The resolver writes effective split YAMLs whenever a run directory is available:
 
-Illustration:  
-![img](assets/figures/clamped_pixels.png)  
+- `config_original.yaml`: the original super-config snapshot
+- `data_config_effective.yaml`: resolved data section wrapped for dataset constructors
+- `model_config_effective.yaml`: resolved model section wrapped for model constructors
+- `training_config_effective.yaml`: resolved training section
+- `inference_config_effective.yaml`: inference-only snapshot for inference super-config loads
 
-### Coordinate/date FiLM conditioning  
-Config:  
-- data: `dataset.output.return_coords`  
-- model:  
-  - `coord_conditioning.enabled`  
-  - `coord_conditioning.encoding`  
-  - `coord_conditioning.include_date`  
-  - `coord_conditioning.date_encoding`  
-  - `coord_conditioning.embed_dim`  
+Training stores these under `logs/<timestamp>/`. Inference exporters store them in the output run directory or a temporary runtime directory, depending on the caller.
 
-Runtime effect:  
-- creates a coordinate/date embedding and injects it via FiLM in ConvNeXt blocks  
-- details: [Data + Coordinate Injection](data-coordinate-injection.md)  
+## Data Keys
 
-## Training and Optimization Settings  
-### Noise schedule and diffusion steps  
-Config (`training.noise`):  
-- `num_timesteps`  
-- `schedule`: `linear`, `cosine`, `quadratic`, `sigmoid`  
-- `beta_start`, `beta_end`  
+These keys live under top-level `data` in both pixel super-configs.
 
-### Validation sampling mode  
-Config (`training.validation_sampling`):  
-- `sampler`: `ddpm` or `ddim`  
-- `ddim_num_timesteps`, `ddim_eta`, `ddim_temperature`  
-- `log_intermediates`  
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `data.dataset.core.dataset_variant` | `argo_geotiff_gridded` | Dataset implementation. This is the active pixel workflow. `argo_netcdf_gridded` is legacy. |
+| `data.dataset.core.dataloader_type` | `light` | Training runner expects the lightweight dataloader path. |
+| `data.dataset.core.geotiff_root_dir` | `/work/data/depthdif` | Exported GeoTIFF store root containing `manifest.yaml`, rasters, and `argo/argo_profiles_on_grid.zarr`. |
+| `data.dataset.core.metadata_cache_dir` | `/work/data/depthdif/depthdif_cache` | Patch/date metadata cache directory. |
+| `data.dataset.grid.tile_size` | `128` | Patch height and width in pixels. |
+| `data.dataset.grid.resolution_deg` | `0.1` | Horizontal grid resolution. |
+| `data.dataset.grid.patch_grid_source` | `land_mask` | Builds patch origins from the configured land-mask GeoTIFF. |
+| `data.dataset.grid.land_mask_path` | GLORYS 0.1 degree mask path | Land/ocean mask used for patch selection and fallback support. |
+| `data.dataset.grid.patch_stride` | `32` | Pixel stride between patch origins. `32` gives 75% overlap for 128-pixel tiles. |
+| `data.dataset.grid.max_land_fraction` | `0.3` | Maximum land fraction allowed for default patch candidates. |
+| `data.dataset.grid.force_include_regions` | named regional boxes | Relaxed patch-inclusion rules for specific ocean regions. |
+| `data.dataset.sampling.temporal_window_days` | `7` | Centered ARGO/OSTIA/auxiliary window around each GLORYS date. |
+| `data.dataset.sampling.glorys_var_name` | `thetao` | Dense GLORYS temperature target variable. |
+| `data.dataset.sampling.ostia_var_name` | `analysed_sst` | Dense OSTIA surface-temperature EO variable. |
+| `data.dataset.selection.require_argo_for_train` | `true` | Drops train rows without ARGO support. |
+| `data.dataset.selection.require_argo_for_val` | `true` | Drops validation rows without ARGO support. |
+| `data.dataset.selection.require_argo_for_all` | `false` | Keeps no-ARGO rows for full-grid inference. |
+| `data.dataset.synthetic.enabled` | `false` | If true, builds sparse `x` by sampling dense `y` instead of ARGO. |
+| `data.dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels sampled when synthetic mode is enabled. |
+| `data.dataset.output.return_info` | `false` | Adds metadata under `batch['info']`. |
+| `data.dataset.output.return_coords` | `true` | Adds patch-center coordinates under `batch['coords']`. Required for coordinate conditioning. |
+| `data.dataset.output.fields` | scenario-derived | Physical fields loaded by the GeoTIFF dataset: `temperature`, `salinity`, or both. |
+| `data.dataset.output.include_salinity` | scenario-derived | Enables salinity raster/profile support. Derived from scenario. |
+| `data.dataset.runtime.random_seed` | `7` | Deterministic split/sampling seed. |
+| `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
+| `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
+| `data.split.val_fraction` | `0.2` | Fallback validation fraction when no validation year is set. |
+| `data.dataloader.num_workers` | `6` | Dataset-side dataloader worker default used by helper paths. |
+| `data.dataloader.prefetch_factor` | `2` | Prefetched batches per worker when workers are enabled. |
+| `data.dataloader.val_shuffle` | `true` | Validation loader shuffle remains enabled intentionally. |
 
-Runtime effect:  
-- training loss still uses forward noising objective  
-- full reverse sampling diagnostics use chosen validation sampler  
+## Model Keys
 
-### Exponential moving average weights  
-Config (`model.ema`):  
-- `enabled`: disabled by default  
-- `decay`: EMA smoothing factor, e.g. `0.9999`  
-- `apply_every_n_steps`: optimizer-step cadence for updates  
-- `start_step`: first global step where updates may run  
-- `save_ema_weights_in_callback_state`: stores EMA weights in Lightning checkpoints  
-- `evaluate_ema_weights_instead`: swaps EMA weights in for validation/test, then restores training weights  
+These keys live under top-level `model` in both pixel super-configs.
 
-Runtime effect:  
-- EMA is wired as a Lightning callback in `train.py`  
-- checkpoints keep raw training weights for resume plus EMA weights in callback state when saving is enabled  
-- validation image logging emits both `x_y_full_reconstruction_standard` and  
-  `x_y_full_reconstruction_ema` when EMA is enabled  
-- validation also logs `val_standard/*`, `val_ema/*`, and raw-vs-EMA weight  
-  diagnostics under `ema/*`  
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `model.model_type` | `cond_px_dif` | Pixel diffusion model selector. |
+| `model.depth_channels` | `50` | Depth channels per active output field. Used by scenario derivation. |
+| `model.resume_checkpoint` | `false` | `false`/`null` starts from scratch; a path resumes or warm-starts from that checkpoint. |
+| `model.load_checkpoint_only` | `false` | When true, loads model weights only and reinitializes optimizer/trainer state. |
+| `model.output_fields` | scenario-derived | Active predicted fields. Derived from scenario. |
+| `model.generated_channels` | scenario-derived | Number of generated output channels. Derived from scenario. |
+| `model.condition_channels` | scenario-derived | Total input channels to the denoiser. Derived from scenario and conditioning toggles. |
+| `model.condition_mask_channels` | `1` | Number of valid-mask channels appended to conditioning when enabled. |
+| `model.condition_include_eo` | `true` | Prepends the OSTIA EO channel to model conditioning. |
+| `model.condition_use_valid_mask` | `true` | Appends ARGO observation support to conditioning. |
+| `model.condition_use_land_mask` | `true` | Appends GLORYS spatial support to conditioning. |
+| `model.clamp_known_pixels` | `false` | Re-injects known values during reverse sampling when enabled. |
+| `model.mask_loss_with_valid_pixels` | `true` | Restricts loss to task-valid support intersected with `land_mask`. |
+| `model.parameterization` | `x0` | Diffusion target, either `x0` or `epsilon`. |
+| `model.log_intermediates` | `false` | Captures reverse-process intermediates when enabled by the caller. |
+| `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
+| `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
+| `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |
+| `model.coord_conditioning.*` | enabled, date included | Coordinate/date FiLM conditioning controls. |
+| `model.unet.*` | `dim=64`, `dim_mults=[1,2,4,8]` | ConvNeXt U-Net width/depth and output behavior. |
 
-### Learning-rate warmup and plateau scheduler  
-Config (`scheduler`):  
-- `warmup.enabled`, `warmup.steps`, `warmup.start_ratio`  
-- `reduce_on_plateau.enabled`  
-- `reduce_on_plateau.monitor`, `interval`, `mode`, `factor`, `patience`, `threshold`, `cooldown`  
+## Training Keys
 
-Runtime effect:  
-- warmup is applied per optimizer step in `optimizer_step`  
-- plateau scheduler is applied on the configured `step` or `epoch` interval  
-- the default plateau monitor remains validation loss; cheap validation loss can use  
-  more batches without increasing the single full-reconstruction pass per validation run  
+These keys live under top-level `training` in `training_super_config.yaml` and are also present in `inference_super_config.yaml` so checkpoints can rebuild the model consistently.
 
-## Trainer/Runtime Controls  
-Config (`trainer`):  
-- hardware/precision: `accelerator`, `devices`, optional `num_gpus`, `precision`  
-- logging/checkpoint cadence: `log_every_n_steps`, `ckpt_monitor`, `lr_logging_interval`  
-- validation cadence/load: `val_check_interval`, `val_batches_per_epoch`, or `limit_val_batches`  
-- stability knobs: `gradient_clip_val`, warning suppressions  
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `training.training.lr` | `1.0e-4` | Optimizer learning rate. |
+| `training.training.batch_size` | `4` | Informational batch size; `training.dataloader.batch_size` is the dataloader source of truth. |
+| `training.training.noise.num_timesteps` | `1000` | Diffusion training timesteps. |
+| `training.training.noise.schedule` | `cosine` | Noise schedule: `linear`, `cosine`, `quadratic`, or `sigmoid`. |
+| `training.training.noise.beta_start` | `1.0e-4` | First-step beta for schedules that use explicit endpoints. |
+| `training.training.noise.beta_end` | `2.0e-2` | Final beta for schedules that use explicit endpoints. |
+| `training.training.validation_sampling.sampler` | `ddpm` | Validation reconstruction sampler. |
+| `training.training.validation_sampling.ddim_num_timesteps` | `100` | DDIM step count when the sampler is `ddim`. |
+| `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
+| `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
+| `training.training.validation_sampling.max_full_reconstruction_samples` | `5` | Cap for expensive full-reconstruction validation examples. |
+| `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
+| `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
+| `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |
+| `training.trainer.ckpt_monitor` | `val/loss_ckpt` | Best-checkpoint metric. |
+| `training.trainer.val_check_interval` | `0.1` | Validation cadence within each epoch. |
+| `training.trainer.limit_val_batches` | `64` | Validation batches per validation run. |
+| `training.trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold. |
+| `training.wandb.*` | project/run/logging defaults | W&B project, run naming, watch, scalar, and image logging controls. |
+| `training.dataloader.batch_size` | `4` | Training dataloader batch size. |
+| `training.dataloader.val_batch_size` | `2` | Validation dataloader batch size. |
+| `training.dataloader.num_workers` | `6` | Training dataloader workers. |
+| `training.dataloader.val_num_workers` | `0` | Validation dataloader workers. |
+| `training.dataloader.shuffle` | `true` | Training shuffle. |
+| `training.dataloader.val_shuffle` | `true` | Validation shuffle. This is intended behavior. |
+| `training.dataloader.pin_memory` | `true` | Enables pinned host memory. |
+| `training.scheduler.warmup.*` | disabled by default | Optional step-based linear warmup. |
+| `training.scheduler.reduce_on_plateau.*` | enabled by default | Plateau LR scheduler settings. |
 
-## Dataloader Settings  
-Config (`dataloader`):  
-- `batch_size`, `val_batch_size`  
-- `num_workers`, `val_num_workers`  
-- `shuffle`, `val_shuffle`  
-- `pin_memory`, `persistent_workers`, `prefetch_factor`  
+## Inference Keys
 
-Runtime notes:  
-- `prefetch_factor` is only applied when `num_workers > 0`  
-- validation shuffle defaults to true in DataModule unless explicitly changed  
+These keys live under top-level `inference` in `inference_super_config.yaml`.
 
-## Logging Settings (W&B)  
-Config (`wandb`):  
-- project/entity/run naming  
-- model logging policy  
-- watch toggles (`watch_gradients`, `watch_parameters`)  
-- scalar/image logging intervals  
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `inference.grid.patch_stride` | `96` | Inference-time patch stride override. Smaller values increase overlap and runtime. |
+| `inference.grid.min_ocean_fraction` | `0.05` | Minimum ocean fraction for inference patch selection. |
+| `inference.grid.land_mask_path` | GLORYS 0.1 degree mask path | Land-mask grid used by inference patch selection and final cleanup. |
+| `inference.dataloader.batch_size` | `64` | Prediction batch size. |
+| `inference.dataloader.num_workers` | `6` | Prediction dataloader workers. |
+| `inference.dataloader.prefetch_factor` | `2` | Prefetched batches per prediction worker. |
 
-Runtime notes:  
-- watch mode is resolved from explicit gradient/parameter toggles  
-- config files used in the run are uploaded to W&B run files when possible  
+Export scripts may expose CLI flags such as `--patch-stride` or `--min-ocean-fraction`; those one-off flags override the inference super-config for that run.
 
-## FUll settings documentation  
-This section contains the complete key-by-key configuration reference previously documented on the separate Configs page.  
+## Runtime Mapping Notes
 
-### Dataset Configs (`src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`)  
-Dataset settings are grouped by intent (`core`, `grid`, `sampling`, `selection`, `output`, `runtime`).  
-Defaults below refer to `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml` unless noted.  
-
-| Config key | Default value | Explanation |  
-|---|---|---|  
-| `dataset.core.dataset_variant` | `"argo_netcdf_gridded"` | Selects the dataset implementation in `train.py`; use `"argo_geotiff_gridded"` with `src/depth_recon/configs/px_space/data_ostia_argo_geotiff.yaml` for exported GeoTIFF stores. |  
-| `dataset.core.dataloader_type` | `"light"` | The current training runner supports only `"light"` loading. |  
-| `dataset.core.argo_dir` | `"/data1/datasets/depth_v2/en4_profiles"` | Root directory scanned for raw ARGO/EN4 monthly NetCDF files. |  
-| `dataset.core.glorys_dir` | `"/data1/datasets/depth_v2/glorys_weekly"` | Root directory scanned for GLORYS NetCDF target files. |  
-| `dataset.core.ostia_dir` | `"/data1/datasets/depth_v2/ostia"` | Root directory scanned for OSTIA NetCDF EO files. |  
-| `dataset.core.sealevel_dir` | `"/data1/datasets/depth_v2/sealevel_daily"` | Root directory scanned for sea-level NetCDF files used for optional metadata/diagnostics. |  
-| `dataset.core.geotiff_root_dir` | `"/work/data/depthdif"` | Export root containing `manifest.yaml`, dense GeoTIFF rasters, and `argo/argo_profiles_on_grid.zarr` for the GeoTIFF dataset variant. |  
-| `dataset.core.metadata_cache_dir` | `"/data1/datasets/depth_v2/depthdif_cache"` | Directory for compact patch/date metadata caches only. |  
-| `dataset.grid.tile_size` | `128` | Patch height and width in pixels. |  
-| `dataset.grid.resolution_deg` | `0.1` | Patch grid resolution in geographic degrees. |  
-| `dataset.grid.patch_grid_source` | `"land_mask"` | Builds patch origins from the committed GLORYS-aligned land-mask GeoTIFF. Use `"ostia_mask"` for the legacy OSTIA-derived grid. |  
-| `dataset.grid.land_mask_path` | `"src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"` | GeoTIFF used when `patch_grid_source="land_mask"`; value `1` is land and `0` is water. |  
-| `dataset.grid.patch_stride` | `64` NetCDF; `32` GeoTIFF | Pixel stride between patch origins. Values smaller than `tile_size` create overlapping patch views. |  
-| `dataset.grid.max_land_fraction` | `0.30` | Maximum allowed fraction of land pixels in a land-mask-derived patch. |  
-| `dataset.grid.force_include_regions` | Region-specific bboxes and max-land caps | Optional named lat/lon regions that keep patches whose centers fall inside the region using that region's relaxed `max_land_fraction`. |  
-| `dataset.sampling.glorys_var_name` | `"thetao"` | GLORYS target variable. |  
-| `dataset.sampling.ostia_var_name` | `"analysed_sst"` | OSTIA EO variable. |  
-| `dataset.sampling.temporal_window_days` | `7` | Total date window centered on each patch date for Argo profile selection. |  
-| `dataset.sampling.argo_temp_var_name` | `"TEMP"` | ARGO temperature profile variable projected onto the GLORYS depth axis. |  
-| `dataset.sampling.argo_depth_var_name` | `"DEPH_CORRECTED"` | ARGO depth profile variable used for GLORYS-axis projection. |  
-| `dataset.selection.require_argo_for_train` | `true` | Drops train rows with no Argo support. |  
-| `dataset.selection.require_argo_for_val` | `true` | Drops validation rows with no Argo support. |  
-| `dataset.selection.require_argo_for_all` | `false` | Keeps no-Argo rows for full-grid inference unless explicitly enabled. |  
-| `dataset.synthetic.enabled` | `false` | If true, builds sparse `x` by sampling GLORYS `y` instead of ARGO profiles. |  
-| `dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels copied from GLORYS `y` into sparse `x` per patch. |  
-| `dataset.output.return_info` | `false` | Returns per-sample metadata under `batch["info"]`. |  
-| `dataset.output.return_coords` | `true` | Returns patch-center coordinates under `batch["coords"]`. |  
-| `dataset.runtime.random_seed` | `7` | Seed used for deterministic split and random dataset sampling behavior. |  
-| `dataset.runtime.cache_size` | `8` | Maximum number of open NetCDF files cached per source store. |  
-| `split.val_year` | `2018` | Calendar year assigned to validation rows; all other years become training rows. Required when `patch_stride < tile_size` to avoid overlapping spatial train/val leakage. |  
-| `split.val_fraction` | `0.2` | Patch fraction reserved for validation when `split.val_year` is null. |  
-
-### `src/depth_recon/configs/px_space/model_config.yaml`  
-| Config key | Default value | Explanation |  
-|---|---|---|  
-| `model.model_type` | `"cond_px_dif"` | Model type (`"cond_px_dif"` for pixel diffusion, `"latent_cond_dif"` for latent diffusion with AE bridge). |  
-| `model.resume_checkpoint` | `false` | `false/null` starts from scratch; checkpoint path loads checkpoint state. |  
-| `model.load_checkpoint_only` | `false` | When `true`, loads model `state_dict` only; when `false`, resumes optimizer/scheduler/trainer state too. |  
-| `model.generated_channels` | `50` | Number of predicted GLORYS depth channels. |  
-| `model.condition_channels` | `52` | Condition channel count: OSTIA EO (`1`) + corrupted Argo stack (`50`) + collapsed `x_valid_mask` (`1`). |  
-| `model.condition_mask_channels` | `1` | Number of `x_valid_mask` condition channels. |  
-| `model.condition_include_eo` | `true` | Includes `batch["eo"]` as condition input. |  
-| `model.condition_use_valid_mask` | `true` | Includes `x_valid_mask` in condition input. |  
-| `model.clamp_known_pixels` | `false` | Clamps known pixels each reverse step for inpainting-style stability. |  
-| `model.mask_loss_with_valid_pixels` | `true` | Computes loss on the task-valid supervision mask (`y_valid_mask` in standard mode, `x_valid_mask ∩ y_valid_mask` in ambient mode). |  
-| `model.parameterization` | `"x0"` | Diffusion training target (`"epsilon"` or `"x0"`). |  
-| `model.log_intermediates` | `true` | Default validation intermediate logging behavior. |  
-| `model.ambient_occlusion.enabled` | `false` | Enables ambient-diffusion style occlusion objective (further-corrupt input, supervise `x` on `x_valid_mask ∩ y_valid_mask`). |  
-| `model.ambient_occlusion.further_drop_prob` | `0.1` | Additional drop probability `delta` applied on already observed pixels during training. |  
-| `model.ambient_occlusion.apply_to_noisy_branch` | `true` | Applies the further mask to the noisy target branch in `p_loss` (`~A x_t`). |  
-| `model.ambient_occlusion.shared_spatial_mask` | `true` | Uses one spatial further-mask per sample and shares it across channels. |  
-| `model.ambient_occlusion.min_kept_observed_pixels` | `1` | Guarantees a minimum number of observed pixels kept after further corruption. |  
-| `model.ambient_occlusion.require_x0_parameterization` | `true` | Enforces `model.parameterization == "x0"` when ambient objective is enabled. |  
-| `model.post_process.gaussian_blur.enabled` | `true` | Enables final denormalized Gaussian blur post-process. |  
-| `model.post_process.gaussian_blur.sigma` | `0.75` | Gaussian blur sigma in pixels. |  
-| `model.post_process.gaussian_blur.kernel_size` | `3` | Blur kernel size; even values are adjusted to odd. |  
-| `model.coord_conditioning.enabled` | `true` | Enables coordinate conditioning with FiLM. |  
-| `model.coord_conditioning.encoding` | `"unit_sphere"` | Coordinate encoding type (`"unit_sphere"`, `"sincos"`, `"raw"`). |  
-| `model.coord_conditioning.include_date` | `true` | Includes date encoding with coordinates. |  
-| `model.coord_conditioning.date_encoding` | `"day_of_year_sincos"` | Date encoding mode (day-of-year sin/cos, denominator 365). |  
-| `model.coord_conditioning.embed_dim` | `null` | FiLM embedding dimension; defaults to `unet.dim` when null. |  
-| `model.unet.dim` | `64` | Base channel width of U-Net denoiser. |  
-| `model.unet.dim_mults` | `[1, 2, 4, 8]` | Per-stage width multipliers; controls depth/width scaling. |  
-| `model.unet.with_time_emb` | `true` | Enables timestep embeddings in denoiser. |  
-| `model.unet.output_mean_scale` | `false` | Optional output mean correction for diffusion variants. |  
-| `model.unet.residual` | `false` | If enabled, predicts residual added to input. |  
-
-Detailed objective math, implementation mapping, visualization, and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md).  
-
-### `src/depth_recon/configs/px_space/training_config.yaml`  
-| Config key | Default value | Explanation |  
-|---|---|---|  
-| `training.lr` | `1.0e-4` | Optimizer learning rate. |  
-| `training.batch_size` | `4` | Informational training batch size (dataloader section is source of truth). |  
-| `training.noise.num_timesteps` | `1000` | Number of diffusion timesteps. |  
-| `training.noise.schedule` | `"cosine"` | Noise schedule: `linear`, `cosine`, `quadratic`, `sigmoid`. |  
-| `training.noise.beta_start` | `1.0e-4` | First-step noise level (must be positive and below `beta_end`). |  
-| `training.noise.beta_end` | `2.0e-2` | Final-step noise level (must be below `1` and above `beta_start`). |  
-| `training.validation_sampling.sampler` | `"ddim"` | Validation sampler (`ddpm` full chain, `ddim` faster). |  
-| `training.validation_sampling.ddim_num_timesteps` | `100` | DDIM steps when `sampler="ddim"`. |  
-| `training.validation_sampling.ddim_eta` | `0.0` | DDIM eta; `0.0` is deterministic DDIM. |  
-| `training.validation_sampling.ddim_temperature` | `1.0` | DDIM initial and stochastic step noise scale; lower values reduce generative variation. |  
-| `training.validation_sampling.log_intermediates` | `false` | Captures/logs denoising intermediate images in validation. |  
-| `training.validation_sampling.skip_full_reconstruction_in_sanity_check` | `true` | Skips expensive full reconstruction during Lightning sanity checks when true. |  
-| `training.validation_sampling.max_full_reconstruction_samples` | `5` | Max first-batch val samples used for the single full reconstruction pass. |  
-| `trainer.max_epochs` | `1500` | Maximum training epochs. |  
-| `trainer.accelerator` | `"auto"` | Lightning accelerator backend selection. |  
-| `trainer.devices` | `"auto"` | Device selection (`auto`, int, list). |  
-| `trainer.num_gpus` | `null` | Legacy explicit GPU count override; `null` leaves `accelerator`/`devices` in control. |  
-| `trainer.strategy` | `"auto"` | Distributed strategy selection. |  
-| `trainer.precision` | `"16-mixed"` | Mixed precision mode. |  
-| `trainer.matmul_precision` | `"high"` | `torch.set_float32_matmul_precision` mode. |  
-| `trainer.suppress_accumulate_grad_stream_mismatch_warning` | `true` | Suppresses PyTorch stream mismatch warning noise. |  
-| `trainer.suppress_lightning_pytree_warning` | `true` | Suppresses Lightning LeafSpec deprecation warning noise. |  
-| `trainer.ckpt_monitor` | `"val/loss_ckpt"` | Metric monitored for best-checkpoint saving. |  
-| `trainer.lr_logging_interval` | `"step"` | Learning-rate logging cadence (`step` or `epoch`). |  
-| `trainer.log_every_n_steps` | `25` | Trainer logging interval in steps. |  
-| `trainer.num_sanity_val_steps` | `1` | Number of startup sanity-validation steps. |  
-| `trainer.val_check_interval` | `0.1` | Validation cadence within each training epoch. |  
-| `trainer.limit_val_batches` | `16` | Number/fraction of validation batches per validation run. |  
-| `trainer.enable_model_summary` | `true` | Enables Lightning model summary printout. |  
-| `trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold (`0.0` disables). |  
-| `wandb.project` | `"DepthDif_Simon"` | W&B project name. |  
-| `wandb.entity` | `"esa-phi-lab"` | W&B entity/team (null uses default account). |  
-| `wandb.run_name` | `"ostia_argo_netcdf_px"` | Explicit run name. |  
-| `wandb.log_model` | `"false"` | W&B model artifact logging policy. |  
-| `wandb.verbose` | `true` | Enables extra metric/image logging. |  
-| `wandb.watch_gradients` | `false` | Enables gradient history logging via `wandb.watch`. |  
-| `wandb.watch_parameters` | `false` | Enables parameter history logging via `wandb.watch`. |  
-| `wandb.watch_log_freq` | `100` | `wandb.watch` logging frequency in steps. |  
-| `wandb.watch_log_graph` | `false` | Logs computation graph when watch is enabled. |  
-| `wandb.log_stats_every_n_steps` | `200` | Step interval for scalar debug stats. |  
-| `wandb.log_images_every_n_steps` | `200` | Step interval for validation preview images. |  
-| `dataloader.batch_size` | `4` | Training dataloader batch size. |  
-| `dataloader.val_batch_size` | `5` | Validation batch size (falls back to `batch_size` if omitted). |  
-| `dataloader.num_workers` | `4` | Number of training dataloader workers. |  
-| `dataloader.val_num_workers` | `0` | Validation workers (`0` avoids h5netcdf sanity-check instability). |  
-| `dataloader.persistent_workers` | `true` | Keeps train workers alive across epochs when true. |  
-| `dataloader.val_persistent_workers` | `false` | Validation worker persistence (when `val_num_workers > 0`). |  
-| `dataloader.prefetch_factor` | `2` | Prefetched batches per worker (only used when workers > 0). |  
-| `dataloader.shuffle` | `true` | Shuffles training dataset each epoch. |  
-| `dataloader.val_shuffle` | `true` | Shuffles validation set (often used with limited val batches). |  
-| `dataloader.pin_memory` | `true` | Enables pinned host memory for faster H2D transfer. |  
-| `scheduler.warmup.enabled` | `true` | Enables linear warmup before plateau scheduling. |  
-| `scheduler.warmup.steps` | `2000` | Warmup step count to ramp LR from `start_ratio` to base LR. |  
-| `scheduler.warmup.start_ratio` | `0.2` | Initial warmup LR as ratio of `training.lr`. |  
-| `scheduler.reduce_on_plateau.enabled` | `true` | Enables `ReduceLROnPlateau`. |  
-| `scheduler.reduce_on_plateau.monitor` | `"val/loss_ckpt"` | Validation metric monitored for LR reduction. |  
-| `scheduler.reduce_on_plateau.interval` | `"step"` | Scheduler cadence; `patience` counts this unit (`step` or `epoch`). |  
-| `scheduler.reduce_on_plateau.mode` | `"min"` | Plateau mode (`min` or `max`). |  
-| `scheduler.reduce_on_plateau.factor` | `0.5` | Multiplicative LR decay factor on plateau. |  
-| `scheduler.reduce_on_plateau.patience` | `2000` | Scheduler intervals with no improvement before reducing LR. |  
-| `scheduler.reduce_on_plateau.threshold` | `1.0e-4` | Minimum significant metric change. |  
-| `scheduler.reduce_on_plateau.threshold_mode` | `"rel"` | Threshold mode (`rel` or `abs`). |  
-| `scheduler.reduce_on_plateau.cooldown` | `0` | Scheduler-interval cooldown after LR reduction. |  
-| `scheduler.reduce_on_plateau.min_lr` | `1.0e-6` | Lower bound for LR. |  
-| `scheduler.reduce_on_plateau.eps` | `1.0e-8` | Minimum effective LR change. |  
+- `x_valid_mask` is ARGO observation support; it is collapsed to one conditioning channel when `condition_mask_channels=1`.
+- `land_mask` is GLORYS spatial/domain support and gates loss when mask-based loss is enabled.
+- `output_land_mask` is an optional predict-time cleanup overlay, not a training dataloader key.
+- For salinity-only runs, the dataloader skips temperature tensors and returns only `x_salinity`, `y_salinity`, and their salinity masks.
+- For joint runs, temperature channels come first, followed by salinity channels.
+- Existing checkpoints are only shape-compatible with runs that use the same scenario-derived channel counts.
