@@ -4,7 +4,10 @@ Production-range enriched ARGO export:
   --start-date 20100101 \
   --end-date 20240731 \
   --workers 4 \
-  --output-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr
+  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --compact-chunk-profile 50000
 
 Set multiple workers with --workers N, for example --workers 8.
 
@@ -61,8 +64,20 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     _open_argo_dataset,
     scan_timed_files,
 )
+from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
+    DEFAULT_LAND_MASK_PATH,
+    _date_int_from_days_since_1950,
+    _filter_timed_files as _filter_geotiff_timed_files,
+    _load_target_grid,
+    _write_argo_profile_store,
+)
 
 CATEGORICAL_VARS = {"mask", "flag_ice"}
+DEFAULT_WORK_DATASET_DIR = Path("/work/data/depthdif")
+DEFAULT_ENRICHED_ARGO_ZARR = DEFAULT_WORK_DATASET_DIR / "enriched_argo_profiles.zarr"
+DEFAULT_COMPACT_ARGO_ZARR = (
+    DEFAULT_WORK_DATASET_DIR / "argo" / "argo_profiles_on_grid.zarr"
+)
 SOURCE_PRODUCTS = {
     "argo": {
         "provider": "UK Met Office Hadley Centre",
@@ -2051,6 +2066,78 @@ def _export_enriched_argo_profiles_parallel(
     return output_zarr
 
 
+def _write_compact_argo_profile_zarr(
+    *,
+    enriched_zarr: Path,
+    compact_output_zarr: Path,
+    glorys_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    land_mask_path: Path,
+    start_date: int | None,
+    end_date: int | None,
+    chunk_profile: int,
+    overwrite: bool,
+) -> dict[str, Any]:
+    """Write the compact grid-indexed ARGO Zarr used by the GeoTIFF loader."""
+    selected_glorys = _filter_geotiff_timed_files(
+        glorys_index,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not selected_glorys:
+        raise RuntimeError("No GLORYS files were selected for compact ARGO export.")
+    target_dates = np.asarray(
+        [_date_int_from_days_since_1950(float(item.day)) for item in selected_glorys],
+        dtype=np.int32,
+    )
+    grid = _load_target_grid(Path(land_mask_path))
+    input_ds = xr.open_zarr(enriched_zarr, consolidated=None)
+    try:
+        return _write_argo_profile_store(
+            input_ds=input_ds,
+            output_zarr=Path(compact_output_zarr),
+            grid=grid,
+            target_dates=target_dates,
+            depth_axis=np.asarray(glorys_depths, dtype=np.float32),
+            source_kind="enriched",
+            chunk_profile=int(chunk_profile),
+            overwrite=overwrite,
+            skip_existing=False,
+            show_progress=True,
+        )
+    finally:
+        input_ds.close()
+
+
+def _finalize_argo_zarr_exports(
+    *,
+    output_zarr: Path,
+    compact_output_zarr: Path | None,
+    glorys_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    compact_land_mask_path: Path,
+    start_date: int | None,
+    end_date: int | None,
+    compact_chunk_profile: int,
+    overwrite: bool,
+) -> Path:
+    """Finish optional ARGO-derived Zarr outputs and return the enriched path."""
+    if compact_output_zarr is None:
+        return output_zarr
+    _write_compact_argo_profile_zarr(
+        enriched_zarr=output_zarr,
+        compact_output_zarr=Path(compact_output_zarr),
+        glorys_index=glorys_index,
+        glorys_depths=glorys_depths,
+        land_mask_path=Path(compact_land_mask_path),
+        start_date=start_date,
+        end_date=end_date,
+        chunk_profile=int(compact_chunk_profile),
+        overwrite=overwrite,
+    )
+    return output_zarr
+
+
 def export_enriched_argo_profiles(
     *,
     argo_dir: Path,
@@ -2066,6 +2153,9 @@ def export_enriched_argo_profiles(
     overwrite: bool = False,
     max_profiles: int | None = None,
     workers: int = 1,
+    compact_output_zarr: Path | None = None,
+    compact_land_mask_path: Path = DEFAULT_LAND_MASK_PATH,
+    compact_chunk_profile: int = 50000,
 ) -> Path:
     workers = int(workers)
     if workers < 1:
@@ -2103,7 +2193,7 @@ def export_enriched_argo_profiles(
         workers=workers,
     )
     if workers > 1:
-        return _export_enriched_argo_profiles_parallel(
+        _export_enriched_argo_profiles_parallel(
             argo_files=argo_files,
             output_zarr=output_zarr,
             start_date=start_date,
@@ -2118,6 +2208,17 @@ def export_enriched_argo_profiles(
             sss_index=sss_index,
             glorys_depths=glorys_depths,
             export_metadata=export_metadata,
+        )
+        return _finalize_argo_zarr_exports(
+            output_zarr=output_zarr,
+            compact_output_zarr=compact_output_zarr,
+            glorys_index=glorys_index,
+            glorys_depths=glorys_depths,
+            compact_land_mask_path=compact_land_mask_path,
+            start_date=start_date,
+            end_date=end_date,
+            compact_chunk_profile=compact_chunk_profile,
+            overwrite=overwrite,
         )
 
     cache = DatasetCache(max_open=cache_size)
@@ -2308,11 +2409,31 @@ def export_enriched_argo_profiles(
                                 )
                                 if reached_profile_cap:
                                     file_progress.update(1)
-                                    return output_zarr
+                                    return _finalize_argo_zarr_exports(
+                                        output_zarr=output_zarr,
+                                        compact_output_zarr=compact_output_zarr,
+                                        glorys_index=glorys_index,
+                                        glorys_depths=glorys_depths,
+                                        compact_land_mask_path=compact_land_mask_path,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        compact_chunk_profile=compact_chunk_profile,
+                                        overwrite=overwrite,
+                                    )
 
                     if max_profiles is not None and written >= int(max_profiles):
                         file_progress.update(1)
-                        return output_zarr
+                        return _finalize_argo_zarr_exports(
+                            output_zarr=output_zarr,
+                            compact_output_zarr=compact_output_zarr,
+                            glorys_index=glorys_index,
+                            glorys_depths=glorys_depths,
+                            compact_land_mask_path=compact_land_mask_path,
+                            start_date=start_date,
+                            end_date=end_date,
+                            compact_chunk_profile=compact_chunk_profile,
+                            overwrite=overwrite,
+                        )
 
             if batch["profile_idx"]:
                 count = _write_batch(
@@ -2329,7 +2450,17 @@ def export_enriched_argo_profiles(
     finally:
         cache.close()
 
-    return output_zarr
+    return _finalize_argo_zarr_exports(
+        output_zarr=output_zarr,
+        compact_output_zarr=compact_output_zarr,
+        glorys_index=glorys_index,
+        glorys_depths=glorys_depths,
+        compact_land_mask_path=compact_land_mask_path,
+        start_date=start_date,
+        end_date=end_date,
+        compact_chunk_profile=compact_chunk_profile,
+        overwrite=overwrite,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -2360,9 +2491,30 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-zarr",
         type=Path,
-        default=Path(
-            "/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr"
-        ),
+        default=DEFAULT_ENRICHED_ARGO_ZARR,
+    )
+    parser.add_argument(
+        "--compact-output-zarr",
+        type=Path,
+        default=DEFAULT_COMPACT_ARGO_ZARR,
+        help="Optional compact grid-indexed ARGO Zarr for the GeoTIFF dataloader.",
+    )
+    parser.add_argument(
+        "--skip-compact-zarr",
+        action="store_true",
+        help="Only write the enriched profile-level ARGO Zarr.",
+    )
+    parser.add_argument(
+        "--compact-land-mask-path",
+        type=Path,
+        default=DEFAULT_LAND_MASK_PATH,
+        help="Land-mask grid used for compact ARGO row/column assignment.",
+    )
+    parser.add_argument(
+        "--compact-chunk-profile",
+        type=int,
+        default=50000,
+        help="Profile chunk size for the compact ARGO Zarr.",
     )
     parser.add_argument(
         "--start-date",
@@ -2409,6 +2561,11 @@ def main() -> None:
         overwrite=args.overwrite,
         max_profiles=args.max_profiles,
         workers=args.workers,
+        compact_output_zarr=(
+            None if args.skip_compact_zarr else args.compact_output_zarr
+        ),
+        compact_land_mask_path=args.compact_land_mask_path,
+        compact_chunk_profile=args.compact_chunk_profile,
     )
     print(f"Wrote enriched ARGO profile Zarr: {out}")
 

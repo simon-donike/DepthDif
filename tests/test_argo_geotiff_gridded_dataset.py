@@ -471,11 +471,19 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             payload["data"]["dataset"]["core"]["dataset_variant"],
             "argo_geotiff_gridded",
         )
+        core = payload["data"]["dataset"]["core"]
+        self.assertEqual(
+            core["geotiff_root_dir"], "/work/data/OceanVariableReconstruction"
+        )
+        self.assertEqual(
+            core["metadata_cache_dir"],
+            "/work/data/OceanVariableReconstruction/depthdif_cache",
+        )
         grid = payload["data"]["dataset"]["grid"]
         self.assertEqual(grid["patch_grid_source"], "land_mask")
         self.assertEqual(grid["patch_stride"], 32)
         self.assertEqual(float(grid["max_land_fraction"]), 0.30)
-        self.assertTrue(Path(grid["land_mask_path"]).exists())
+        self.assertEqual(grid["land_mask_path"], "masks/world_land_mask_glorys_0p1.tif")
         self.assertEqual(
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],

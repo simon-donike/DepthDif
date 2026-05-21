@@ -1,34 +1,44 @@
 # Production Dataset
 
-This page documents the maintained production dataset path. DepthDif now builds
-patches directly from source NetCDF files through
-`ArgoNetCDFGriddedPatchDataset`; there is no precomputed patch export stage.
+This page documents the maintained production dataset path. The active pixel
+workflow reads the self-contained Hugging Face-style dataset folder at
+`/work/data/OceanVariableReconstruction` through
+`ArgoGeoTIFFGriddedPatchDataset`. The legacy NetCDF dataset remains in the code
+for older experiments but is not the production dataloader path.
 
-Use [Data Sources](data-source.md) for native product properties and
-[Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling.
+Use [Data Sources](data-source.md) for native product properties,
+[Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling,
+and [Data Export](data-export.md) for rebuilding the packaged folder.
 
-## Source Inputs
+## Dataset Root
 
-Expected source trees:
+Expected local structure:
 
-- `/data1/datasets/depth_v2/ostia`
-- `/data1/datasets/depth_v2/en4_profiles`
-- `/data1/datasets/depth_v2/glorys_weekly`
-- `/data1/datasets/depth_v2/sealevel_daily`
+```text
+/work/data/OceanVariableReconstruction/
+  manifest.yaml
+  rasters/
+  argo/argo_profiles_on_grid.zarr/
+  data/argo_glors_ostia_ssh.zarr/
+  masks/world_land_mask_glorys_0p1.tif
+  metadata/
+  indices/
+```
 
 The active config is `src/depth_recon/configs/px_space/training_super_config.yaml`.
+It sets `data.dataset.core.geotiff_root_dir` to the package root and uses
+dataset-root-relative mask paths such as `masks/world_land_mask_glorys_0p1.tif`.
 
 ## Dataset Assembly
 
 At runtime, the loader:
 
-1. Scans NetCDF source roots and caches compact date/path indexes.
-2. Builds a deterministic land-mask-derived patch grid, with configurable
-   overlap and maximum land fraction.
-3. Assigns train/val from `split.val_year` when overlapping patches are enabled.
-4. Expands source dates into `(patch, date)` rows.
-5. Optionally precomputes ARGO-support flags for fast split filtering.
-6. Reads GLORYS, OSTIA, ARGO, and sea-level source files lazily per sample.
+1. Reads `manifest.yaml` from the package root.
+2. Resolves dense raster paths under root-level `rasters/`.
+3. Opens compact ARGO profiles from `argo/argo_profiles_on_grid.zarr`.
+4. Builds a deterministic land-mask-derived patch grid from `masks/`.
+5. Assigns train/val from `split.val_year` when overlapping patches are enabled.
+6. Reads GeoTIFF rasters and compact ARGO profiles lazily per sample.
 
 Only metadata caches are written under `dataset.core.metadata_cache_dir`.
 Model-facing tensors are produced on demand.
@@ -55,8 +65,8 @@ used for training or validation rows.
 
 ## Patch Filtering
 
-The grid is built from the committed GLORYS-aligned land-mask GeoTIFF:
-`src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif`.
+The grid is built from the packaged GLORYS-aligned land-mask GeoTIFF:
+`/work/data/OceanVariableReconstruction/masks/world_land_mask_glorys_0p1.tif`.
 In that mask, `1` means land and `0` means ocean. For each candidate patch, the
 dataset computes the fraction of land pixels and keeps the patch when
 `land_fraction <= dataset.grid.max_land_fraction`.

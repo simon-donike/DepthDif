@@ -15,9 +15,10 @@ Example:
    --argo-source enriched \
    --chunk-profile 50000 \
    --workers 12 \
+   --rasters-only \
    --overwrite
 
-Resume a partial export by replacing --overwrite with --skip-existing.
+Resume a partial raster export by replacing --overwrite with --skip-existing.
 
 Export aligned uint8 GeoTIFF rasters and preprocessed ARGO profile inputs.
 """
@@ -1583,6 +1584,7 @@ def export_training_geotiff_dataset(
     workers: int = DEFAULT_RASTER_WORKERS,
     overwrite: bool = False,
     skip_existing: bool = False,
+    write_argo: bool = True,
     show_progress: bool = True,
 ) -> Path:
     """Export aligned uint8 raster training sources and preprocessed ARGO profiles."""
@@ -1694,7 +1696,7 @@ def export_training_geotiff_dataset(
 
         raster_steps_per_date = 4 + len(SSS_RASTER_VARS)
         total_steps = (len(glorys_items) * raster_steps_per_date) + 2
-        if str(argo_source) == "none":
+        if not write_argo or str(argo_source) == "none":
             total_steps -= 1
         with tqdm(
             total=total_steps,
@@ -1844,7 +1846,19 @@ def export_training_geotiff_dataset(
                     )
 
             argo_output_zarr = output_root / "argo" / "argo_profiles_on_grid.zarr"
-            if str(argo_source) == "none":
+            if not write_argo:
+                if argo_output_zarr.exists():
+                    manifest["argo"] = _existing_argo_profile_store_metadata(
+                        argo_output_zarr,
+                        source_kind=str(argo_source),
+                    )
+                else:
+                    manifest["argo"] = {
+                        "path": None,
+                        "profile_count": 0,
+                        "source_kind": "external",
+                    }
+            elif str(argo_source) == "none":
                 manifest["argo"] = {
                     "path": None,
                     "profile_count": 0,
@@ -1943,6 +1957,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--rasters-only",
+        action="store_true",
+        help="Only export dense GeoTIFF rasters; compact ARGO Zarrs are written by the ARGO exporter.",
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="Reuse existing raster/date outputs and write only missing files. Ignored when --overwrite is set.",
@@ -1970,6 +1989,7 @@ def main() -> None:
         workers=args.workers,
         overwrite=args.overwrite,
         skip_existing=args.skip_existing,
+        write_argo=not args.rasters_only,
     )
     print(f"Wrote GeoTIFF training dataset: {output}")
 

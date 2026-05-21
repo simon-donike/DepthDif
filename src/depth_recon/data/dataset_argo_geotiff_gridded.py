@@ -18,7 +18,6 @@ import yaml
 import zarr
 
 from depth_recon.data.dataset_grid_utils import (
-    DEFAULT_LAND_MASK_PATH,
     MISSING_TEXT_VALUES,
     _GridParams,
     _build_land_mask_patch_table,
@@ -31,7 +30,7 @@ from depth_recon.data.dataset_grid_utils import (
     _sanitize_cache_text,
     _validate_grid_params,
 )
-from depth_recon.paths import config_path, resolve_config_path, resolve_package_path
+from depth_recon.paths import config_path, resolve_config_path
 from depth_recon.utils.normalizations import (
     CELSIUS_TO_KELVIN_OFFSET,
     salinity_normalize,
@@ -73,11 +72,14 @@ def _resolve_manifest_path(root_dir: Path, raw_path: str | Path) -> Path:
 
 
 def _resolve_land_mask_path(root_dir: Path, raw_path: str | Path) -> Path:
-    """Resolve a land-mask path from an export manifest or package config."""
+    """Resolve a land-mask path inside the packaged GeoTIFF dataset root."""
     export_path = _resolve_manifest_path(root_dir, raw_path)
-    if export_path.exists():
-        return export_path
-    return resolve_package_path(raw_path)
+    if not export_path.exists():
+        raise FileNotFoundError(
+            "Land-mask GeoTIFF must be present in the packaged dataset layout: "
+            f"{export_path}"
+        )
+    return export_path
 
 
 def _records_by_date(
@@ -543,12 +545,20 @@ class GeoTIFFPatchIndex:
         return support_counts
 
 
+DEFAULT_DATASET_ROOT_DIR = Path("/work/data/OceanVariableReconstruction")
+DEFAULT_GEOTIFF_ROOT_DIR = DEFAULT_DATASET_ROOT_DIR.as_posix()
+DEFAULT_METADATA_CACHE_DIR = (DEFAULT_DATASET_ROOT_DIR / "depthdif_cache").as_posix()
+DEFAULT_LAND_MASK_RELATIVE_PATH = "masks/world_land_mask_glorys_0p1.tif"
+
+
 class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     """Dataset that lazily reads training patches from exported GeoTIFF stores."""
 
     DEFAULT_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
-    DEFAULT_GEOTIFF_ROOT_DIR = "/work/data/depthdif"
-    DEFAULT_METADATA_CACHE_DIR = "/work/data/depthdif/depthdif_cache"
+    DEFAULT_GEOTIFF_ROOT_DIR = DEFAULT_DATASET_ROOT_DIR.as_posix()
+    DEFAULT_METADATA_CACHE_DIR = (
+        DEFAULT_DATASET_ROOT_DIR / "depthdif_cache"
+    ).as_posix()
 
     def __init__(
         self,
@@ -597,14 +607,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.resolution_deg = float(resolution_deg)
         self.patch_grid_source = str(patch_grid_source)
         manifest_grid = self.manifest.get("grid", {})
-        configured_land_mask = manifest_grid.get("source") or land_mask_path
+        configured_land_mask = (
+            land_mask_path
+            or manifest_grid.get("source")
+            or DEFAULT_LAND_MASK_RELATIVE_PATH
+        )
         self.land_mask_path = _resolve_land_mask_path(
             self.root_dir,
-            (
-                DEFAULT_LAND_MASK_PATH
-                if configured_land_mask is None
-                else configured_land_mask
-            ),
+            configured_land_mask,
         )
         self.patch_stride = None if patch_stride is None else int(patch_stride)
         self.max_land_fraction = float(max_land_fraction)

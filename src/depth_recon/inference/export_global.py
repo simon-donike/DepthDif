@@ -50,7 +50,10 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from depth_recon.data.datamodule import DepthTileDataModule
-from depth_recon.data.dataset_argo_netcdf_gridded import DEFAULT_LAND_MASK_PATH
+from depth_recon.data.dataset_argo_geotiff_gridded import (
+    DEFAULT_GEOTIFF_ROOT_DIR,
+    DEFAULT_LAND_MASK_RELATIVE_PATH,
+)
 from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE,
     DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE,
@@ -1036,6 +1039,23 @@ def _inference_section(inference_cfg: dict[str, Any]) -> dict[str, Any]:
     """Return the root inference config section."""
     section = inference_cfg.get("inference", inference_cfg)
     return section if isinstance(section, dict) else {}
+
+
+def _resolve_dataset_root_relative_path(
+    data_cfg: dict[str, Any], raw_path: str | Path
+) -> Path:
+    """Resolve relative inference paths against the packaged dataset root."""
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    root_dir = Path(
+        _nested_cfg_value(
+            data_cfg,
+            "dataset.core.geotiff_root_dir",
+            default=DEFAULT_GEOTIFF_ROOT_DIR,
+        )
+    )
+    return root_dir / path
 
 
 def global_inference_dataset_overrides(
@@ -2170,10 +2190,17 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         inference_grid_cfg = {}
     if not isinstance(inference_dataloader_cfg, dict):
         inference_dataloader_cfg = {}
-    effective_land_mask_path = Path(
+    raw_land_mask_path = (
         args.land_mask_path
         if args.land_mask_path is not None
-        else inference_grid_cfg.get("land_mask_path", DEFAULT_LAND_MASK_PATH)
+        else inference_grid_cfg.get(
+            "land_mask_path",
+            DEFAULT_LAND_MASK_RELATIVE_PATH,
+        )
+    )
+    effective_land_mask_path = _resolve_dataset_root_relative_path(
+        data_cfg,
+        raw_land_mask_path,
     )
     effective_min_ocean_fraction = float(
         args.min_ocean_fraction
@@ -2215,7 +2242,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     )
     requested_full_sample_count = int(args.full_sample_count)
     uncertainty_only = bool(getattr(args, "uncertainty_only", False))
-    export_uncertainty = bool(getattr(args, "export_uncertainty", False)) or uncertainty_only
+    export_uncertainty = (
+        bool(getattr(args, "export_uncertainty", False)) or uncertainty_only
+    )
     export_prediction = not uncertainty_only
     export_ground_truth = bool(args.export_ground_truth) and export_prediction
     uncertainty_num_samples = int(
@@ -2343,9 +2372,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         else None
     )
     argo_points_geojson_path = (
-        run_dir / f"{run_stem}_argo_points.geojson"
-        if export_ground_truth
-        else None
+        run_dir / f"{run_stem}_argo_points.geojson" if export_ground_truth else None
     )
     full_sample_locations_geojson_path = (
         run_dir / f"{run_stem}_full_sample_locations.geojson"
@@ -2548,7 +2575,10 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                         ),
                         layout=layout,
                     )
-                    if ground_truth_batch is not None and level.suffix in gt_accumulators:
+                    if (
+                        ground_truth_batch is not None
+                        and level.suffix in gt_accumulators
+                    ):
                         gt_accumulator = gt_accumulators[level.suffix]
                         gt_patch_values = (
                             ground_truth_patch[int(level.channel_index)]
@@ -2723,7 +2753,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         graphs_dir_path = None
 
     depth_export_records: list[dict[str, Any]] = []
-    for level in (depth_export_levels if export_prediction else ()): 
+    for level in (depth_export_levels if export_prediction else ()):
         prediction_tif_path_for_level = (
             run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
         )

@@ -1,7 +1,7 @@
 # Dataset Statistics
 
-These statistics were measured from the local dataset root at
-`/work/data/depthdif`. The page is split into three parts:
+These statistics were measured from the local packaged dataset root at
+`/work/data/OceanVariableReconstruction`. The page is split into three parts:
 
 1. the exported enriched ARGO Zarr profile dataset
 2. the Hugging Face package layout for that same ARGO Zarr
@@ -173,7 +173,7 @@ The GeoTIFF exporter can use the packaged zarr directly as
 Path:
 
 ```text
-/work/data/depthdif
+/work/data/OceanVariableReconstruction
 ```
 
 This is the model-ready dataset. It stores dense fields as aligned GeoTIFF
@@ -204,7 +204,7 @@ covers weekly target dates from `20100101` to `20240726`.
 Path:
 
 ```text
-/work/data/depthdif/argo/argo_profiles_on_grid.zarr
+/work/data/OceanVariableReconstruction/argo/argo_profiles_on_grid.zarr
 ```
 
 This store is smaller than the enriched ARGO export because it keeps only the

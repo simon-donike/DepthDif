@@ -1336,7 +1336,9 @@ def export_cesium_globe_assets(
                 shutil.rmtree(copied_graphs_dir_path)
             shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
 
-    bounds_source_path = prediction_path if prediction_path is not None else uncertainty_path
+    bounds_source_path = (
+        prediction_path if prediction_path is not None else uncertainty_path
+    )
     if bounds_source_path is None:
         raise RuntimeError("No raster was available for globe bounds metadata.")
     prediction_meta = _read_raster_metadata(bounds_source_path)

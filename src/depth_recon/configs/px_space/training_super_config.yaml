@@ -5,13 +5,13 @@ data:  # dataset, split, and loader inputs
     core:  # dataset implementation and paths
       dataset_variant: argo_geotiff_gridded  # active GeoTIFF dataset class
       dataloader_type: light  # lightweight dataloader path
-      geotiff_root_dir: /work/data/depthdif  # exported GeoTIFF store root
-      metadata_cache_dir: /work/data/depthdif/depthdif_cache  # patch metadata cache
+      geotiff_root_dir: /work/data/OceanVariableReconstruction  # packaged HF dataset root
+      metadata_cache_dir: /work/data/OceanVariableReconstruction/depthdif_cache  # patch metadata cache
     grid:  # spatial patch grid
       tile_size: 128  # patch height and width
       resolution_deg: 0.1  # grid resolution in degrees
       patch_grid_source: land_mask  # source for patch origins
-      land_mask_path: src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif  # land/ocean mask raster
+      land_mask_path: masks/world_land_mask_glorys_0p1.tif  # dataset-root-relative land/ocean mask raster
       patch_stride: 32  # training patch stride
       max_land_fraction: 0.3  # default land fraction cap
       force_include_regions:  # regional relaxed land caps

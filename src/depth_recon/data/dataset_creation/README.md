@@ -106,11 +106,28 @@ codes `0..126` plus nodata `127`. A signed int8 remapped across all 255
 non-nodata codes would have the same precision as uint8, but the unsigned layout
 keeps the transform simpler and interoperates better with raster tooling.
 
-By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
-is expected at `/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr`.
-The Hugging Face package layout stores the same zarr at
-`/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr`
-and can be used as the `--enriched-argo-zarr` value as well:
+By default, the working dataset root is `/work/data/depthdif`. The ARGO
+exporter owns both ARGO Zarr products: the full enriched profile-level Zarr and
+the compact grid-indexed Zarr consumed by the GeoTIFF dataloader:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
+  --argo-dir /data1/datasets/depth_v2/en4_profiles \
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+  --ostia-dir /data1/datasets/depth_v2/ostia \
+  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
+  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --start-date 20100101 \
+  --end-date 20240731 \
+  --workers 4 \
+  --overwrite
+```
+
+The GeoTIFF exporter owns dense raster products. Use `--rasters-only` when the
+compact ARGO Zarr has already been written by the ARGO exporter:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
@@ -118,35 +135,39 @@ and can be used as the `--enriched-argo-zarr` value as well:
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
   --sss-dir /data1/datasets/depth_v2/sss_daily \
-  --enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
   --workers 4 \
+  --rasters-only \
   --overwrite
 ```
 
 Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
 without rewriting existing modality/date rasters.
 
-## Package Aligned ARGO Zarr for Hugging Face
+## Package DepthDif Dataset for Hugging Face
 
-After `b_export_enriched_argo_profiles.py` creates
-`/data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr`, package it
-for upload with:
+After ARGO and raster exports complete, assemble a self-contained upload folder
+with root-level `rasters/` using:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
-  --input-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
-  --output-dir /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh \
+  --input-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --raster-root /work/data/depthdif/rasters \
+  --compact-argo-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --manifest-path /work/data/depthdif/manifest.yaml \
+  --masks-dir /work/data/depthdif/masks \
+  --output-dir /work/data/OceanVariableReconstruction \
   --zarr-name argo_glors_ostia_ssh.zarr \
-  --file-mode hardlink \
+  --file-mode copy \
   --overwrite
 ```
 
-The package keeps the zarr schema unchanged and adds `README.md`, `LICENSE`,
-`indices/profiles.parquet`, `indices/variables.parquet`, example readers, and
-metadata files. SSS variables are included in the zarr as `sss_sos`, `sss_dos`,
-`sss_sea_ice_fraction`, and `sss_temporal_status`.
+The upload root contains `rasters/`, `argo/argo_profiles_on_grid.zarr`,
+`data/argo_glors_ostia_ssh.zarr`, `manifest.yaml`, `masks/`, Parquet indices,
+examples, metadata, `README.md`, and `LICENSE`. SSS variables are included in
+the enriched Zarr as `sss_sos`, `sss_dos`, `sss_sea_ice_fraction`, and
+`sss_temporal_status`.

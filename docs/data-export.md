@@ -10,7 +10,8 @@ dataset: dense fields are stored as aligned GeoTIFF rasters, and sparse ARGO
 profiles are stored in a compact grid-indexed profile store. The aligned ARGO
 profile zarr is also packageable as a Hugging Face dataset folder before it is
 used by the GeoTIFF export.
-Training can select this exported dataset with
+Training selects the packaged dataset folder at
+`/work/data/OceanVariableReconstruction` with
 `src/depth_recon/configs/px_space/training_super_config.yaml`, which sets
 `data.dataset.core.dataset_variant: argo_geotiff_gridded`.
 
@@ -56,13 +57,13 @@ path:
 
 ## Output Layout
 
-Default GeoTIFF export root:
+GeoTIFF staging export root before Hugging Face packaging:
 
 ```text
 /work/data/depthdif
 ```
 
-Output files:
+Staged output files:
 
 ```text
 /work/data/depthdif/
@@ -82,7 +83,7 @@ Output files:
     argo_profiles_on_grid.zarr
 ```
 
-Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share
+The Hugging Face package step copies these assets into `/work/data/OceanVariableReconstruction`, which is the path used by the dataset and dataloader. Each `YYYYMMDD` is a GLORYS weekly target date. Files for the same date share
 the same CRS, transform, width, height, pixel centers, and nodata convention.
 
 The export includes GLORYS `so` rasters and ARGO `argo_psal_*` variables so the
@@ -315,17 +316,19 @@ Run from the repository root:
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
   --sss-dir /data1/datasets/depth_v2/sss_daily \
-  --enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
   --workers 4 \
+  --rasters-only \
   --overwrite
 ```
 
 `--workers` controls process-level parallelism for dense raster dates. Lower it
 if source-disk contention or memory pressure becomes the bottleneck. Use
-`--skip-existing` instead of `--overwrite` to resume a partial export: existing
-modality/date rasters are validated and reused, and missing rasters are written.
+`--rasters-only` when `b_export_enriched_argo_profiles.py` has already written
+`argo/argo_profiles_on_grid.zarr`. Use `--skip-existing` instead of
+`--overwrite` to resume a partial export: existing modality/date rasters are
+validated and reused, and missing rasters are written.

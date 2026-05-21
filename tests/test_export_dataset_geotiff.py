@@ -421,6 +421,67 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 manifest["rasters"]["sss"]["dos"][0],
             )
 
+    def test_rasters_only_skips_argo_write_but_records_existing_store(self) -> None:
+        """Raster-only mode leaves compact ARGO Zarr ownership to ARGO export."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            (
+                glorys_dir,
+                ostia_dir,
+                sealevel_dir,
+                sss_dir,
+                land_mask_path,
+                enriched_argo,
+            ) = _make_sources(tmp_path)
+            output_dir = tmp_path / "geotiff_training"
+            compact_dir = output_dir / "argo/argo_profiles_on_grid.zarr"
+            compact_dir.mkdir(parents=True)
+            xr.Dataset(
+                {
+                    "target_date": (
+                        ("profile",),
+                        np.asarray([20240108], dtype=np.int32),
+                    ),
+                    "grid_row": (("profile",), np.asarray([0], dtype=np.int32)),
+                    "grid_col": (("profile",), np.asarray([0], dtype=np.int32)),
+                    "argo_temp_kelvin_uint8": (
+                        ("profile", "glorys_depth"),
+                        np.asarray([[100, 101]], dtype=np.uint8),
+                    ),
+                    "argo_temp_valid": (
+                        ("profile", "glorys_depth"),
+                        np.asarray([[True, True]], dtype=bool),
+                    ),
+                },
+                coords={
+                    "profile": np.asarray([0], dtype=np.int64),
+                    "glorys_depth": np.asarray([0.0, 10.0], dtype=np.float32),
+                },
+                attrs={"source_kind": "enriched"},
+            ).to_zarr(compact_dir, mode="w", zarr_format=2)
+
+            export_training_geotiff_dataset(
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
+                enriched_argo_zarr=enriched_argo,
+                land_mask_path=land_mask_path,
+                output_dir=output_dir,
+                start_date=20240105,
+                end_date=20240111,
+                surface_aggregate_days=7,
+                workers=1,
+                overwrite=True,
+                write_argo=False,
+                show_progress=False,
+            )
+
+            manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
+            self.assertEqual(manifest["argo"]["profile_count"], 1)
+            self.assertEqual(manifest["argo"]["source_kind"], "enriched")
+            self.assertTrue((output_dir / "rasters/sss/sos/sos_20240108.tif").exists())
+
     def test_ostia_celsius_values_are_saved_as_kelvin(self) -> None:
         """Celsius-looking OSTIA values are converted before uint8 stretching."""
         with tempfile.TemporaryDirectory() as tmpdir:

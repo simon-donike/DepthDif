@@ -446,7 +446,7 @@ class TestArgoNetCDFGriddedPatchDataset(unittest.TestCase):
         self.assertEqual(grid["patch_grid_source"], "land_mask")
         self.assertEqual(grid["patch_stride"], 32)
         self.assertEqual(float(grid["max_land_fraction"]), 0.30)
-        self.assertTrue(Path(grid["land_mask_path"]).exists())
+        self.assertEqual(grid["land_mask_path"], "masks/world_land_mask_glorys_0p1.tif")
         self.assertEqual(
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],

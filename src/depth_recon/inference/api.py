@@ -1699,7 +1699,7 @@ def run_argo_week_inference(
     )
 
     depth_export_records: list[dict[str, object]] = []
-    for level in (depth_export_levels if export_prediction else ()): 
+    for level in (depth_export_levels if export_prediction else ()):
         prediction_tif_path = run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
         common_depth_tags = {
             "selected_date": str(int(selected_date)),

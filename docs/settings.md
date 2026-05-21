@@ -53,12 +53,12 @@ These keys live under top-level `data` in both pixel super-configs.
 | --- | --- | --- |
 | `data.dataset.core.dataset_variant` | `argo_geotiff_gridded` | Dataset implementation. This is the active pixel workflow. `argo_netcdf_gridded` is legacy. |
 | `data.dataset.core.dataloader_type` | `light` | Training runner expects the lightweight dataloader path. |
-| `data.dataset.core.geotiff_root_dir` | `/work/data/depthdif` | Exported GeoTIFF store root containing `manifest.yaml`, rasters, and `argo/argo_profiles_on_grid.zarr`. |
-| `data.dataset.core.metadata_cache_dir` | `/work/data/depthdif/depthdif_cache` | Patch/date metadata cache directory. |
+| `data.dataset.core.geotiff_root_dir` | `/work/data/OceanVariableReconstruction` | Packaged dataset root containing `manifest.yaml`, root-level `rasters/`, `argo/argo_profiles_on_grid.zarr`, and `masks/`. |
+| `data.dataset.core.metadata_cache_dir` | `/work/data/OceanVariableReconstruction/depthdif_cache` | Patch/date metadata cache directory inside the packaged dataset root. |
 | `data.dataset.grid.tile_size` | `128` | Patch height and width in pixels. |
 | `data.dataset.grid.resolution_deg` | `0.1` | Horizontal grid resolution. |
 | `data.dataset.grid.patch_grid_source` | `land_mask` | Builds patch origins from the configured land-mask GeoTIFF. |
-| `data.dataset.grid.land_mask_path` | GLORYS 0.1 degree mask path | Land/ocean mask used for patch selection and fallback support. |
+| `data.dataset.grid.land_mask_path` | `masks/world_land_mask_glorys_0p1.tif` | Dataset-root-relative land/ocean mask used for patch selection and fallback support. |
 | `data.dataset.grid.patch_stride` | `32` | Pixel stride between patch origins. `32` gives 75% overlap for 128-pixel tiles. |
 | `data.dataset.grid.max_land_fraction` | `0.3` | Maximum land fraction allowed for default patch candidates. |
 | `data.dataset.grid.force_include_regions` | named regional boxes | Relaxed patch-inclusion rules for specific ocean regions. |
@@ -152,7 +152,7 @@ These keys live under top-level `inference` in `inference_super_config.yaml`.
 | --- | --- | --- |
 | `inference.grid.patch_stride` | `96` | Inference-time patch stride override. Smaller values increase overlap and runtime. |
 | `inference.grid.min_ocean_fraction` | `0.05` | Minimum ocean fraction for inference patch selection. |
-| `inference.grid.land_mask_path` | GLORYS 0.1 degree mask path | Land-mask grid used by inference patch selection and final cleanup. |
+| `inference.grid.land_mask_path` | `masks/world_land_mask_glorys_0p1.tif` | Dataset-root-relative land-mask grid used by inference patch selection and final cleanup. |
 | `inference.dataloader.batch_size` | `64` | Prediction batch size. |
 | `inference.dataloader.num_workers` | `6` | Prediction dataloader workers. |
 | `inference.dataloader.prefetch_factor` | `2` | Prefetched batches per prediction worker. |
