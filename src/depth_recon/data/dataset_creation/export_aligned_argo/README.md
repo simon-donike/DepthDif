@@ -30,6 +30,11 @@ hf_argo_glors_ostia_ssh/
   metadata/dataset_description.json
   metadata/citation.cff
   metadata/stac-item.json
+  assets/figures/depthdif_schema.png
+  assets/data/geotiff_dataset_random100_surface.png
+  assets/data/argo_on_glorys_grid_3D.gif
+  assets/data/profile_comparison_good_alignment.png
+  assets/data/profile_comparison_bad_alignment.png
 ```
 
 The zarr store is unchanged, including the SSS variables `sss_sos`, `sss_dos`,

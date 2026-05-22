@@ -168,6 +168,6 @@ with root-level `rasters/` using:
 
 The upload root contains `rasters/`, `argo/argo_profiles_on_grid.zarr`,
 `data/argo_glors_ostia_ssh.zarr`, `manifest.yaml`, `masks/`, Parquet indices,
-examples, metadata, `README.md`, and `LICENSE`. SSS variables are included in
-the enriched Zarr as `sss_sos`, `sss_dos`, `sss_sea_ice_fraction`, and
-`sss_temporal_status`.
+examples, metadata, local `assets/` for the Hugging Face dataset card,
+`README.md`, and `LICENSE`. SSS variables are included in the enriched Zarr as
+`sss_sos`, `sss_dos`, `sss_sea_ice_fraction`, and `sss_temporal_status`.

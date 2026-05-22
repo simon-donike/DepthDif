@@ -11,12 +11,12 @@ from depth_recon.data.dataset_creation.data_download_packaged import (
 class TestDownloadAlignedArgoZarr(unittest.TestCase):
     def test_parse_hf_dataset_url_defaults_revision(self) -> None:
         endpoint, repo_id, revision, subdir = downloader._parse_hf_dataset_url(
-            "https://huggingface.co/datasets/ESA-philab/OceanVariableReconstruction/",
+            "https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/",
             default_revision="main",
         )
 
         self.assertEqual(endpoint, "https://huggingface.co")
-        self.assertEqual(repo_id, "ESA-philab/OceanVariableReconstruction")
+        self.assertEqual(repo_id, "simon-donike/OceanVariableReconstruction")
         self.assertEqual(revision, "main")
         self.assertEqual(subdir, "")
 

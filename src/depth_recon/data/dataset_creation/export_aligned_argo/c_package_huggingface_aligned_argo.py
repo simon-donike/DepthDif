@@ -36,6 +36,29 @@ DEFAULT_OUTPUT_DIR = Path("/work/data/OceanVariableReconstruction")
 DEFAULT_ZARR_NAME = "argo_glors_ostia_ssh.zarr"
 DEFAULT_DATASET_SLUG = "OceanVariableReconstruction"
 DEFAULT_DATA_SUBDIR = Path("data")
+REPO_ROOT = Path(__file__).resolve().parents[5]
+DATASET_CARD_ASSETS = (
+    (
+        Path("docs/assets/figures/depthdif_schema.png"),
+        Path("assets/figures/depthdif_schema.png"),
+    ),
+    (
+        Path("docs/assets/data/geotiff_dataset_random100_surface.png"),
+        Path("assets/data/geotiff_dataset_random100_surface.png"),
+    ),
+    (
+        Path("docs/assets/data/argo_on_glorys_grid_3D.gif"),
+        Path("assets/data/argo_on_glorys_grid_3D.gif"),
+    ),
+    (
+        Path("docs/assets/data/profile_comparison_good_alignment.png"),
+        Path("assets/data/profile_comparison_good_alignment.png"),
+    ),
+    (
+        Path("docs/assets/data/profile_comparison_bad_alignment.png"),
+        Path("assets/data/profile_comparison_bad_alignment.png"),
+    ),
+)
 
 PROFILE_SCALAR_COLUMNS = (
     "profile_source_file",
@@ -191,6 +214,18 @@ def _stage_optional_geotiff_assets(
     return staged
 
 
+def _stage_dataset_card_assets(output_dir: Path, *, file_mode: str) -> list[Path]:
+    """Stage README illustration assets into the upload package."""
+    staged_assets: list[Path] = []
+    for source_relative_path, target_relative_path in DATASET_CARD_ASSETS:
+        source_path = REPO_ROOT / source_relative_path
+        if not source_path.exists():
+            raise FileNotFoundError(f"Dataset card asset does not exist: {source_path}")
+        _stage_file(source_path, output_dir / target_relative_path, file_mode=file_mode)
+        staged_assets.append(target_relative_path)
+    return staged_assets
+
+
 def _as_1d_values(ds: xr.Dataset, name: str, profile_size: int) -> np.ndarray:
     """Read one profile-length variable into memory for Parquet export."""
     values = np.asarray(ds[name].values).reshape(-1)
@@ -309,9 +344,60 @@ def _write_readme(
     zarr_relative_path: Path,
     profile_df: pd.DataFrame,
     include_geotiff_assets: bool,
+    dataset_card_assets: list[Path],
 ) -> None:
     """Write the Hugging Face dataset card."""
     start_date, end_date = _date_bounds(profile_df)
+    assets = {path.as_posix() for path in dataset_card_assets}
+    schema_asset = "assets/figures/depthdif_schema.png"
+    raster_asset = "assets/data/geotiff_dataset_random100_surface.png"
+    argo_grid_asset = "assets/data/argo_on_glorys_grid_3D.gif"
+    good_alignment_asset = "assets/data/profile_comparison_good_alignment.png"
+    bad_alignment_asset = "assets/data/profile_comparison_bad_alignment.png"
+    overview_section = ""
+    if schema_asset in assets:
+        overview_section = f"""
+## Dataset Overview
+
+<p align="center">
+  <img src="{schema_asset}" width="85%" alt="DepthDif dataset and model overview" />
+</p>
+"""
+    raster_example_section = ""
+    if include_geotiff_assets and raster_asset in assets:
+        raster_example_section = f"""
+## Raster Example
+
+Representative surface-level training patches from the exported GeoTIFF store:
+
+<p align="center">
+  <img src="{raster_asset}" width="85%" alt="Random surface-level training dataset patches" />
+</p>
+"""
+    alignment_images: list[str] = []
+    if argo_grid_asset in assets:
+        alignment_images.append(f"""<p align="center">
+  <img src="{argo_grid_asset}" width="70%" alt="Depth-aligned ARGO values on the GLORYS grid" />
+</p>""")
+    if good_alignment_asset in assets:
+        alignment_images.append(f"""<p align="center">
+  <img src="{good_alignment_asset}" width="72%" alt="Example of good ARGO-to-GLORYS profile alignment" />
+</p>""")
+    if bad_alignment_asset in assets:
+        alignment_images.append(f"""<p align="center">
+  <img src="{bad_alignment_asset}" width="72%" alt="Example of weaker ARGO-to-GLORYS profile alignment" />
+</p>""")
+    alignment_section = ""
+    if alignment_images:
+        alignment_section = f"""
+## ARGO Alignment Examples
+
+ARGO profiles are projected onto the fixed 50-level GLORYS depth axis before
+spatial rasterization. The examples below show the grid-indexed ARGO
+representation and profile-level alignment quality.
+
+{chr(10).join(alignment_images)}
+"""
     tags = [
         "oceanography",
         "argo",
@@ -345,10 +431,17 @@ def _write_readme(
 
 This dataset package contains the model-ready DepthDif GeoTIFF raster store and
 the enriched ARGO profile Zarr used to create it.
+{overview_section}
 
 ## Layout
 
 ```text
+assets/
+  figures/depthdif_schema.png
+  data/geotiff_dataset_random100_surface.png
+  data/argo_on_glorys_grid_3D.gif
+  data/profile_comparison_good_alignment.png
+  data/profile_comparison_bad_alignment.png
 rasters/
   glorys/thetao/
   glorys/so/
@@ -378,6 +471,7 @@ The `rasters/` directory is intentionally at the repository root. It contains
 the aligned uint8 GeoTIFF products used by the pixel-space dataloader. The
 compact `argo/argo_profiles_on_grid.zarr` store is the grid-indexed ARGO input
 used by that dataloader.
+{raster_example_section}
 
 ## Raster Products
 
@@ -429,12 +523,14 @@ Coverage:
 
 Upstream product licenses and citation requirements for EN4/ARGO, GLORYS,
 OSTIA, sea-level, and sea-surface-salinity products still apply.
+{alignment_section}
 """
     else:
         body = f"""# {dataset_slug}
 
 This dataset package contains the DepthDif enriched ARGO profile Zarr store and
 lightweight Parquet indices for Hugging Face preview/search workflows.
+{overview_section}
 
 Main data:
 
@@ -467,6 +563,7 @@ Coverage:
 
 The package collocates EN4/ARGO profiles with GLORYS, OSTIA, sea-level, and SSS
 source fields. Upstream product licenses and citation requirements still apply.
+{alignment_section}
 """
     readme = f"---\n{yaml.safe_dump(card_metadata, sort_keys=False)}---\n\n{body}"
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
@@ -681,12 +778,16 @@ def build_huggingface_aligned_argo_package(
             output_dir / "indices/variables.parquet",
             zarr_relative_path=zarr_relative_path,
         )
+        dataset_card_assets = _stage_dataset_card_assets(
+            output_dir, file_mode=file_mode
+        )
         _write_readme(
             output_dir,
             dataset_slug=DEFAULT_DATASET_SLUG,
             zarr_relative_path=zarr_relative_path,
             profile_df=profile_df,
             include_geotiff_assets=include_geotiff_assets,
+            dataset_card_assets=dataset_card_assets,
         )
         _write_examples(output_dir, zarr_relative_path=zarr_relative_path)
         _write_metadata_files(
