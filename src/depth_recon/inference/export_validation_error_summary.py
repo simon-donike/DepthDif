@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -18,6 +19,11 @@ import yaml
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from depth_recon.configs.config_resolver_pixel import (
+    DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
+    PIXEL_SCENARIOS,
+    load_pixel_inference_config,
+)
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.inference.core import (
     build_dataset,
@@ -32,16 +38,13 @@ from depth_recon.inference.export_global import (
     _load_glorys_depth_axis_m,
     _parse_yyyymmdd,
 )
-from depth_recon.paths import config_path
 from depth_recon.utils.normalizations import temperature_normalize
 from depth_recon.utils.validation_denoise import (
     save_average_glorys_profile_and_error_plot,
     save_average_glorys_profile_error_plot,
 )
 
-DEFAULT_MODEL_CONFIG = str(config_path("px_space", "model_config.yaml"))
-DEFAULT_DATA_CONFIG = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
-DEFAULT_TRAIN_CONFIG = str(config_path("px_space", "training_config.yaml"))
+DEFAULT_INFERENCE_CONFIG = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_OUTPUT_NAME = "validation_error_summary"
 DEFAULT_CSV_NAME = "validation_error_by_depth.csv"
@@ -360,9 +363,31 @@ def _build_parser() -> argparse.ArgumentParser:
             "per-depth absolute error summaries against GLORYS and observed ARGO."
         )
     )
-    parser.add_argument("--model-config", type=str, default=DEFAULT_MODEL_CONFIG)
-    parser.add_argument("--data-config", type=str, default=DEFAULT_DATA_CONFIG)
-    parser.add_argument("--train-config", type=str, default=DEFAULT_TRAIN_CONFIG)
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=DEFAULT_INFERENCE_CONFIG,
+        dest="config_path",
+        help="Path to the pixel inference super-config yaml.",
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(PIXEL_SCENARIOS),
+        default=None,
+        help="High-level pixel inference scenario; derives data/model channel settings.",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="config_overrides",
+        metavar="TARGET=VALUE",
+        help=(
+            "Override config values. Format: "
+            "<data|training|model|inference>.<nested.path>=<yaml_value>. "
+            "Repeat --set for multiple overrides."
+        ),
+    )
     parser.add_argument(
         "--checkpoint-path",
         "--model-path-checkpoint",
@@ -431,8 +456,19 @@ def main() -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(args.seed))
 
-    model_cfg = load_yaml(args.model_config)
-    train_cfg = load_yaml(args.train_config)
+    config_bundle = load_pixel_inference_config(
+        config_path_value=args.config_path,
+        scenario_override=args.scenario,
+        overrides=list(args.config_overrides or []),
+        runtime_config_dir=Path("/tmp/depthdif_inference_configs")
+        / f"validation_{os.getpid()}",
+        write_snapshots=False,
+    )
+    model_cfg = config_bundle.model_cfg
+    train_cfg = config_bundle.training_cfg
+    args.model_config = config_bundle.effective_model_config_path
+    args.data_config = config_bundle.effective_data_config_path
+    args.train_config = config_bundle.effective_training_config_path
 
     dataset = build_validation_summary_dataset(args.data_config, split=str(args.split))
     selected_iso_year, selected_iso_week = (

@@ -23,6 +23,8 @@ administration/
 inference/outputs_v1_backup.zip
 tok.txt
 src/depth_recon/inference/outputs
+commands.txt
+src/depth_recon/data/local_data/
 
 # Packages
 *.egg-info
@@ -37,6 +39,10 @@ dist
 *.tiff
 *.geotiff
 !src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif
+!src/depth_recon/inference/
+!src/depth_recon/inference/export_global_variables.py
+!src/depth_recon/inference/transforms/
+!src/depth_recon/inference/transforms/salinity_blue_green_ramp.txt
 !src/depth_recon/inference/transforms/globe-config.template.json
 
 # Ckpts

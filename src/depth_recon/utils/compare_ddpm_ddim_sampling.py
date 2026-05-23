@@ -23,19 +23,21 @@ from scipy import ndimage as ndi
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from depth_recon.configs.config_resolver_pixel import (
+    DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
+    load_pixel_inference_config,
+)
 from depth_recon.inference.core import (
     build_datamodule,
     build_dataset,
     build_model,
     choose_device,
     load_checkpoint_weights,
-    load_yaml,
     resolve_checkpoint_path,
     resolve_model_type,
     to_device,
 )
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers import DDIM_Sampler
-from depth_recon.paths import config_path
 from depth_recon.utils.normalizations import (
     PLOT_CMAP,
     PLOT_TEMP_MAX,
@@ -43,9 +45,7 @@ from depth_recon.utils.normalizations import (
     temperature_normalize,
 )
 
-MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
-DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
-TRAIN_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
+CONFIG_PATH = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
 CHECKPOINT_PATH: str | None = None
 
 LOADER_SPLIT = "val"
@@ -68,9 +68,10 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot input, DDPM, DDIM eta=0, DDIM eta=1, and target samples."
     )
-    parser.add_argument("--model-config", default=MODEL_CONFIG_PATH)
-    parser.add_argument("--data-config", default=DATA_CONFIG_PATH)
-    parser.add_argument("--train-config", default=TRAIN_CONFIG_PATH)
+    parser.add_argument("--config", default=CONFIG_PATH)
+    parser.add_argument(
+        "--scenario", choices=("temperature", "salinity", "joint"), default=None
+    )
     parser.add_argument("--checkpoint", default=CHECKPOINT_PATH)
     parser.add_argument("--output-dir", default=str(OUTPUT_DIR))
     parser.add_argument(
@@ -367,9 +368,15 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_cfg = load_yaml(args.model_config)
-    data_cfg = load_yaml(args.data_config)
-    training_cfg = load_yaml(args.train_config)
+    config_bundle = load_pixel_inference_config(
+        config_path_value=args.config,
+        scenario_override=args.scenario,
+        runtime_config_dir=output_dir / ".effective_configs",
+        write_snapshots=False,
+    )
+    model_cfg = config_bundle.model_cfg
+    data_cfg = config_bundle.data_cfg
+    training_cfg = config_bundle.training_cfg
     resolve_model_type(model_cfg)
 
     dataloader_cfg = training_cfg.setdefault("dataloader", {})
@@ -384,7 +391,9 @@ def main() -> None:
     data_cfg.setdefault("dataloader", {})["val_shuffle"] = False
 
     device = choose_device(str(args.device))
-    dataset = build_dataset(args.data_config, data_cfg.get("dataset", {}))
+    dataset = build_dataset(
+        config_bundle.effective_data_config_path, data_cfg.get("dataset", {})
+    )
     datamodule = build_datamodule(
         dataset=dataset,
         data_cfg=data_cfg,
@@ -393,9 +402,9 @@ def main() -> None:
     datamodule.setup("fit")
 
     model = build_model(
-        model_config_path=args.model_config,
-        data_config_path=args.data_config,
-        training_config_path=args.train_config,
+        model_config_path=config_bundle.effective_model_config_path,
+        data_config_path=config_bundle.effective_data_config_path,
+        training_config_path=config_bundle.effective_training_config_path,
         model_cfg=model_cfg,
         datamodule=datamodule,
     )

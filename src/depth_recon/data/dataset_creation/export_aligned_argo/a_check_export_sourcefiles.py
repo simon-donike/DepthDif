@@ -8,6 +8,7 @@ Explicit full-path equivalent:
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
   --start-date 20100101 \
   --end-date 20240731
 
@@ -46,6 +47,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     GLORYS_3D_VARS,
     OSTIA_VARS,
     SEALEVEL_VARS,
+    SSS_VARS,
     TimedFile,
     _date_to_days_since_1950,
     _filter_argo_files_by_date_range,
@@ -54,7 +56,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     scan_timed_files,
 )
 
-SOURCE_KINDS = ("argo", "glorys", "ostia", "sealevel")
+SOURCE_KINDS = ("argo", "glorys", "ostia", "sealevel", "sss")
 ARGO_BASE_URL = "https://www.metoffice.gov.uk/hadobs/en4/data/en4-2-1"
 GLORYS_DATASET_CANDIDATES = (
     "cmems_mod_glo_phy_my_0.083deg_P1D-m",
@@ -69,6 +71,7 @@ OSTIA_DATASET_CANDIDATES = (
 SEALEVEL_DATASET_CANDIDATES = (
     "cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D",
 )
+SSS_DATASET_CANDIDATES = ("cmems_obs-mob_glo_phy-sss_my_multi_P1D",)
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,8 @@ def check_source_file(source: SourceFile) -> None:
         check_gridded_file(source.path, OSTIA_VARS)
     elif source.kind == "sealevel":
         check_gridded_file(source.path, SEALEVEL_VARS)
+    elif source.kind == "sss":
+        check_gridded_file(source.path, SSS_VARS)
     else:
         raise RuntimeError(f"unknown source kind: {source.kind}")
 
@@ -203,6 +208,7 @@ def collect_sources(args: argparse.Namespace) -> list[SourceFile]:
         ("glorys", args.glorys_dir),
         ("ostia", args.ostia_dir),
         ("sealevel", args.sealevel_dir),
+        ("sss", args.sss_dir),
     ):
         if kind not in requested:
             continue
@@ -324,6 +330,8 @@ def _date_filter(source: SourceFile, kind: str) -> str:
             f"*/{year}/{month}/*{day}120000-"
             "UKMO-L4_GHRSST-SSTfnd-OSTIA-GLOB_REP-v02.0-fv02.0.nc"
         )
+    if kind == "sss":
+        return f"*/{year}/{month}/dataset-sss-ssd-*-daily_{day}T1200Z_P*.nc"
     return f"*/{year}/{month}/*{day}*.nc"
 
 
@@ -334,6 +342,8 @@ def _dataset_candidates(kind: str) -> tuple[str, ...]:
         return OSTIA_DATASET_CANDIDATES
     if kind == "sealevel":
         return SEALEVEL_DATASET_CANDIDATES
+    if kind == "sss":
+        return SSS_DATASET_CANDIDATES
     raise RuntimeError(f"no Copernicus dataset candidates for {kind}")
 
 
@@ -425,6 +435,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--sealevel-dir",
         type=Path,
         default=Path("/data1/datasets/depth_v2/sealevel_daily"),
+    )
+    parser.add_argument(
+        "--sss-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/sss_daily"),
     )
     parser.add_argument(
         "--start-date",

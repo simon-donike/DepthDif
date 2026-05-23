@@ -855,7 +855,7 @@ class VirtualPatchIndex:
 class ArgoNetCDFGriddedPatchDataset(Dataset):
     """Dataset that lazily builds OSTIA/ARGO/GLORYS patches from raw NetCDF."""
 
-    DEFAULT_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+    DEFAULT_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
     DEFAULT_ARGO_DIR = "/data1/datasets/depth_v2/en4_profiles"
     DEFAULT_GLORYS_DIR = "/data1/datasets/depth_v2/glorys_weekly"
     DEFAULT_OSTIA_DIR = "/data1/datasets/depth_v2/ostia"

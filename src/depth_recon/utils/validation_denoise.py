@@ -10,6 +10,8 @@ import torch
 import torch.nn.functional as F
 
 from depth_recon.utils.normalizations import (
+    salinity_normalize,
+    salinity_to_plot_unit,
     temperature_normalize,
     temperature_to_plot_unit,
 )
@@ -158,6 +160,7 @@ def log_wandb_denoise_timestep_grid(
     land_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     cmap: str = "turbo",
+    plot_unit: str = "temperature",
     nrows: int = 4,
     ncols: int = 4,
     tile_size_px: int = 128,
@@ -178,6 +181,7 @@ def log_wandb_denoise_timestep_grid(
         land_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
         prefix (str): Input value.
         cmap (str): Input value.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
         nrows (int): Input value.
         ncols (int): Input value.
         tile_size_px (int): Input value.
@@ -205,7 +209,7 @@ def log_wandb_denoise_timestep_grid(
     canvas_h = (nrows * tile_size_px) + ((nrows - 1) * tile_pad_px)
     canvas_w = (ncols * tile_size_px) + ((ncols - 1) * tile_pad_px)
     canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-    cmap_fn = cm.get_cmap(cmap)
+    cmap_fn = _plot_cmap_with_black_invalid(cmap)
     timestep_labels: list[str] = []
 
     sorted_samples = sorted(denoise_samples, key=lambda item: int(item[0]))
@@ -259,9 +263,12 @@ def log_wandb_denoise_timestep_grid(
             mask_i = mask_i[0]
 
         image_t = sample_t[0, 0].detach().float()
-        image_t = temperature_normalize(mode="denorm", tensor=image_t)
+        if str(plot_unit).lower() == "salinity":
+            image_t = salinity_normalize(mode="denorm", tensor=image_t)
+        else:
+            image_t = temperature_normalize(mode="denorm", tensor=image_t)
         image_plot = torch.from_numpy(
-            _temperature_band_to_plot_image(image_t, mask=mask_i)
+            _physical_band_to_plot_image(image_t, mask=mask_i, plot_unit=plot_unit)
         ).to(device=image_t.device, dtype=image_t.dtype)
         image_plot = (
             F.interpolate(
@@ -586,6 +593,7 @@ def _mask_for_sample(
 
     Args:
         mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
         sample_idx (int): Input value.
 
     Returns:
@@ -612,6 +620,7 @@ def _plot_band_image(
     *,
     band_idx: int = 0,
     mask: torch.Tensor | None = None,
+    plot_unit: str = "temperature",
 ) -> np.ndarray:
     """Helper that computes plot band image.
 
@@ -620,6 +629,7 @@ def _plot_band_image(
         sample_idx (int): Input value.
         band_idx (int): Input value.
         mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
 
     Returns:
         np.ndarray: Computed output value.
@@ -635,27 +645,111 @@ def _plot_band_image(
         raise RuntimeError(
             f"Expected tensor ndim in {{2,3,4}} for plotting, got {int(tensor.ndim)}."
         )
-    return _temperature_band_to_plot_image(image_t, mask=mask)
+    return _physical_band_to_plot_image(image_t, mask=mask, plot_unit=plot_unit)
 
 
-def _temperature_band_to_plot_image(
+def _invalid_plot_fill_value(plot_unit: str) -> float:
+    """Return the plotted fill value for invalid pixels."""
+    if str(plot_unit).lower() == "salinity":
+        return -1.0
+    return 0.0
+
+
+def _plot_cmap_with_black_invalid(cmap: str) -> Any:
+    """Return a colormap that renders under-range invalid pixels as black."""
+    cmap_obj = cm.get_cmap(cmap).copy()
+    cmap_obj.set_under("black")
+    cmap_obj.set_bad("black")
+    return cmap_obj
+
+
+def _physical_band_to_plot_image(
     image_t: torch.Tensor,
     *,
     mask: torch.Tensor | None = None,
+    plot_unit: str = "temperature",
 ) -> np.ndarray:
-    """Convert one denormalized temperature band into the shared plot color scale."""
+    """Convert one denormalized physical band into a shared plot color scale."""
     image_t = image_t.detach().float()
     finite_mask = torch.isfinite(image_t)
     if mask is not None:
         finite_mask = finite_mask & (mask > 0.5).to(device=image_t.device)
-    # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
-    image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
+    if str(plot_unit).lower() == "salinity":
+        image_plot = salinity_to_plot_unit(image_t, tensor_is_normalized=False)
+    else:
+        # Use one global Celsius plotting range so EO, GLORYS, and reconstructions share colors.
+        image_plot = temperature_to_plot_unit(image_t, tensor_is_normalized=False)
+    invalid_value = _invalid_plot_fill_value(plot_unit)
     image_plot = torch.where(
         finite_mask,
         image_plot,
-        torch.zeros_like(image_plot),
+        torch.full_like(image_plot, float(invalid_value)),
     )
     return image_plot.cpu().numpy().astype(np.float32)
+
+
+def _collapse_valid_mask_to_spatial(mask: torch.Tensor | None) -> torch.Tensor | None:
+    """Return a 2D mask where any depth channel contains a valid observation."""
+    if mask is None:
+        return None
+    mask_bool = mask.detach() > 0.5
+    if mask_bool.ndim == 3:
+        return mask_bool.any(dim=0)
+    if mask_bool.ndim == 2:
+        return mask_bool
+    return None
+
+
+def _plot_any_depth_observation_image(
+    tensor: torch.Tensor,
+    sample_idx: int,
+    *,
+    valid_mask_i: torch.Tensor | None,
+    land_band: torch.Tensor | None = None,
+    band_idx: int = 0,
+    plot_unit: str = "temperature",
+) -> np.ndarray:
+    """Render sparse input pixels wherever any depth channel is observed."""
+    if tensor.ndim != 4 or valid_mask_i is None or valid_mask_i.ndim != 3:
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    sample_t = tensor[sample_idx].detach().float()
+    if sample_t.shape != valid_mask_i.shape:
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    observed = (valid_mask_i > 0.5).to(device=sample_t.device)
+    spatial_observed = observed.any(dim=0)
+    if not bool(torch.any(spatial_observed)):
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    # Pick the shallowest observed channel at each profile location so the input panel
+    # shows every ARGO profile once without changing per-depth metric masks.
+    first_observed_depth = observed.float().argmax(dim=0).long()
+    image_t = torch.gather(sample_t, 0, first_observed_depth.unsqueeze(0)).squeeze(0)
+    plot_mask = spatial_observed
+    if land_band is not None:
+        land_bool = (land_band > 0.5).to(device=sample_t.device)
+        if land_bool.shape == plot_mask.shape:
+            plot_mask = plot_mask & land_bool
+    return _physical_band_to_plot_image(image_t, mask=plot_mask, plot_unit=plot_unit)
 
 
 def average_observed_argo_pixels_per_image(
@@ -700,6 +794,11 @@ def log_wandb_conditional_reconstruction_grid(
     image_key: str = "x_y_full_reconstruction",
     cmap: str = "turbo",
     show_valid_mask_panel: bool = True,
+    plot_unit: str = "temperature",
+    error_metric_prefix: str = "val_absolute_band_error",
+    error_metric_unit: str = "deg",
+    error_metric_label: str = "L1 (deg)",
+    error_metric_title: str = "Generated-Pixel L1 by Band",
 ) -> None:
     """Log wandb conditional reconstruction grid for monitoring.
 
@@ -716,6 +815,11 @@ def log_wandb_conditional_reconstruction_grid(
         image_key (str): Input value.
         cmap (str): Input value.
         show_valid_mask_panel (bool): Controls whether valid mask is shown as a panel.
+        plot_unit (str): Physical variable scale to map into 0..1 plot units.
+        error_metric_prefix (str): W&B namespace for per-band error metrics.
+        error_metric_unit (str): Unit suffix used in per-band metric names.
+        error_metric_label (str): Series label for the compact W&B line chart.
+        error_metric_title (str): Title for the compact W&B line chart.
 
     Returns:
         None: No value is returned.
@@ -771,6 +875,8 @@ def log_wandb_conditional_reconstruction_grid(
         fig, axes = plt.subplots(
             total_rows, ncols, figsize=(4 * ncols, 2.8 * total_rows), squeeze=False
         )
+        image_cmap = _plot_cmap_with_black_invalid(cmap)
+        invalid_value = _invalid_plot_fill_value(plot_unit)
 
         for i in range(num_to_plot):
             valid_mask_i = _mask_for_sample(valid_mask, i)
@@ -784,33 +890,50 @@ def log_wandb_conditional_reconstruction_grid(
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-                x_img = _plot_band_image(x, i, band_idx=band_idx, mask=land_band)
+                spatial_valid_band = _collapse_valid_mask_to_spatial(valid_mask_i)
+                x_img = _plot_any_depth_observation_image(
+                    x,
+                    i,
+                    valid_mask_i=valid_mask_i,
+                    land_band=land_band,
+                    band_idx=band_idx,
+                    plot_unit=plot_unit,
+                )
                 y_hat_img = _plot_band_image(
-                    y_hat, i, band_idx=band_idx, mask=land_band
+                    y_hat, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
                 )
                 y_target_img = _plot_band_image(
-                    y_target, i, band_idx=band_idx, mask=land_band
+                    y_target,
+                    i,
+                    band_idx=band_idx,
+                    mask=land_band,
+                    plot_unit=plot_unit,
                 )
                 if valid_band is not None:
-                    # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
-                    valid_np = valid_band.detach().cpu().numpy() > 0.5
-                    x_img[~valid_np] = 0.0
+                    # Keep full-panel x visualization sparse while marking any-depth profiles.
+                    valid_for_plot = spatial_valid_band
+                    if valid_for_plot is None:
+                        valid_for_plot = valid_band
+                    valid_np = valid_for_plot.detach().cpu().numpy() > 0.5
+                    x_img[~valid_np] = invalid_value
                 if y is not None:
-                    y_img = _plot_band_image(y, i, band_idx=band_idx, mask=land_band)
+                    y_img = _plot_band_image(
+                        y, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
+                    )
                 else:
                     y_img = None
                 if land_band is not None:
-                    # Zero land pixels right before rendering full reconstruction panels.
+                    # Fill land pixels right before rendering full reconstruction panels.
                     ocean_np = land_band.detach().cpu().numpy() > 0.5
-                    x_img[~ocean_np] = 0.0
+                    x_img[~ocean_np] = invalid_value
                     if y_img is not None:
-                        y_img[~ocean_np] = 0.0
-                    y_hat_img[~ocean_np] = 0.0
-                    y_target_img[~ocean_np] = 0.0
+                        y_img[~ocean_np] = invalid_value
+                    y_hat_img[~ocean_np] = invalid_value
+                    y_target_img[~ocean_np] = invalid_value
 
                 col = 0
                 x_img = _resize_input_plot_image(x_img)
-                axes[row_idx, col].imshow(x_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].imshow(x_img, cmap=image_cmap, vmin=0.0, vmax=1.0)
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
                     title = "Input"
@@ -820,7 +943,9 @@ def log_wandb_conditional_reconstruction_grid(
                 col += 1
 
                 if y_img is not None:
-                    axes[row_idx, col].imshow(y_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                    axes[row_idx, col].imshow(
+                        y_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                    )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
                         axes[row_idx, col].set_title("GLORYS")
@@ -830,14 +955,18 @@ def log_wandb_conditional_reconstruction_grid(
                     eo_img = _plot_band_image(eo, i, band_idx=band_idx, mask=land_band)
                     if land_band is not None:
                         ocean_np = land_band.detach().cpu().numpy() > 0.5
-                        eo_img[~ocean_np] = 0.0
-                    axes[row_idx, col].imshow(eo_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                        eo_img[~ocean_np] = invalid_value
+                    axes[row_idx, col].imshow(
+                        eo_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                    )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
                         axes[row_idx, col].set_title("EO condition")
                     col += 1
 
-                axes[row_idx, col].imshow(y_hat_img, cmap=cmap, vmin=0.0, vmax=1.0)
+                axes[row_idx, col].imshow(
+                    y_hat_img, cmap=image_cmap, vmin=0.0, vmax=1.0
+                )
                 axes[row_idx, col].set_axis_off()
                 if row_idx == 0:
                     axes[row_idx, col].set_title("Reconstruction")
@@ -845,7 +974,7 @@ def log_wandb_conditional_reconstruction_grid(
 
                 if show_target_panel:
                     axes[row_idx, col].imshow(
-                        y_target_img, cmap=cmap, vmin=0.0, vmax=1.0
+                        y_target_img, cmap=image_cmap, vmin=0.0, vmax=1.0
                     )
                     axes[row_idx, col].set_axis_off()
                     if row_idx == 0:
@@ -853,16 +982,19 @@ def log_wandb_conditional_reconstruction_grid(
                     col += 1
 
                 if show_valid_panel:
-                    if valid_band is not None:
+                    valid_panel = spatial_valid_band
+                    if valid_panel is None:
+                        valid_panel = valid_band
+                    if valid_panel is not None:
                         axes[row_idx, col].imshow(
-                            valid_band.detach().float().cpu().numpy(),
+                            valid_panel.detach().float().cpu().numpy(),
                             cmap="gray",
                             vmin=0.0,
                             vmax=1.0,
                         )
                         axes[row_idx, col].set_axis_off()
                         if row_idx == 0:
-                            axes[row_idx, col].set_title("Valid mask")
+                            axes[row_idx, col].set_title("Valid mask (any depth)")
                     col += 1
 
                 if land_mask is not None and land_band is not None:
@@ -944,7 +1076,8 @@ def log_wandb_conditional_reconstruction_grid(
         )
 
         # Keep per-band error metrics out of the image namespace in W&B.
-        metric_prefix = "val_absolute_band_error"
+        metric_prefix = str(error_metric_prefix)
+        metric_unit = str(error_metric_unit).strip().lower() or "unit"
         l1_logs: dict[str, float] = {}
         band_x: list[int] = []
         band_y: list[float] = []
@@ -952,9 +1085,9 @@ def log_wandb_conditional_reconstruction_grid(
             if not bool(valid_bands[band_idx].item()):
                 continue
             band_val = float(l1_per_band[band_idx].item())
-            l1_logs[f"{metric_prefix}/recon_l1_generated_deg_band_{int(band_idx)}"] = (
-                band_val
-            )
+            l1_logs[
+                f"{metric_prefix}/recon_l1_generated_{metric_unit}_band_{int(band_idx)}"
+            ] = band_val
             band_x.append(int(band_idx))
             band_y.append(band_val)
 
@@ -965,11 +1098,11 @@ def log_wandb_conditional_reconstruction_grid(
         # Optional compact view: all bands in a single plot panel for this validation pass.
         experiment.log(
             {
-                f"{metric_prefix}/recon_l1_generated_deg_by_band": wandb.plot.line_series(
+                f"{metric_prefix}/recon_l1_generated_{metric_unit}_by_band": wandb.plot.line_series(
                     xs=band_x,
                     ys=[band_y],
-                    keys=["L1 (deg)"],
-                    title="Generated-Pixel L1 by Band",
+                    keys=[str(error_metric_label)],
+                    title=str(error_metric_title),
                     xname="Band index",
                 )
             }
@@ -1166,6 +1299,8 @@ def plot_glorys_profile_comparison_axis(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     show_legend: bool = False,
+    profile_x_label: str = "Temperature (deg C)",
+    surface_context_label: str = "OSTIA SST",
 ) -> None:
     """Draw one validation-style profile comparison axis."""
     x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
@@ -1219,7 +1354,7 @@ def plot_glorys_profile_comparison_axis(
         ax.scatter(
             [float(ostia_sst_c)],
             [0.0],
-            label="OSTIA SST",
+            label=surface_context_label,
             color="tab:green",
             marker="D",
             s=42,
@@ -1228,7 +1363,7 @@ def plot_glorys_profile_comparison_axis(
     # Keep shallow water at the top regardless of any other subplot settings.
     ax.set_ylim(depth_bottom, depth_top)
     ax.margins(y=0.0)
-    ax.set_xlabel("Temperature (deg C)")
+    ax.set_xlabel(str(profile_x_label))
     ax.set_ylabel(depth_label)
     if title is not None:
         ax.set_title(title)
@@ -1247,6 +1382,7 @@ def plot_glorys_profile_error_axis(
     depth_axis: np.ndarray | None = None,
     title: str | None = None,
     show_legend: bool = False,
+    error_x_label: str = "Absolute error (deg C)",
 ) -> None:
     """Draw one absolute-error-vs-depth axis for prediction errors."""
     x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
@@ -1307,7 +1443,7 @@ def plot_glorys_profile_error_axis(
     # Match the main profile panel: 0 m stays at the top and deeper values go down.
     ax.set_ylim(depth_bottom, depth_top)
     ax.margins(y=0.0)
-    ax.set_xlabel("Absolute error (deg C)")
+    ax.set_xlabel(str(error_x_label))
     ax.set_ylabel(depth_label)
     if title is not None:
         ax.set_title(title)
@@ -1408,6 +1544,9 @@ def save_glorys_profile_comparison_plot(
     ostia_sst_c: float | None = None,
     title: str | None = None,
     figure_title: str | None = None,
+    profile_x_label: str = "Temperature (deg C)",
+    error_x_label: str = "Absolute error (deg C)",
+    surface_context_label: str = "OSTIA SST",
     dpi: int = 180,
 ) -> Path:
     """Save one validation-style profile comparison plot to disk."""
@@ -1433,6 +1572,8 @@ def save_glorys_profile_comparison_plot(
             ostia_sst_c=ostia_sst_c,
             title=title,
             show_legend=True,
+            profile_x_label=profile_x_label,
+            surface_context_label=surface_context_label,
         )
         plot_glorys_profile_error_axis(
             ax[0, 1],
@@ -1443,6 +1584,7 @@ def save_glorys_profile_comparison_plot(
             depth_axis=depth_axis,
             title="Absolute error",
             show_legend=True,
+            error_x_label=error_x_label,
         )
         if figure_title is not None:
             fig.suptitle(figure_title, fontsize=13)
@@ -1570,6 +1712,7 @@ def log_wandb_glorys_profile_comparison(
     prefix: str = "val_imgs",
     image_key: str = "glorys_profile_comparison",
     sample_idx: int = 0,
+    profile_x_label: str = "Temperature (deg C)",
 ) -> None:
     """Log full-depth profile comparisons at generated-only validation pixels.
 
@@ -1583,6 +1726,7 @@ def log_wandb_glorys_profile_comparison(
         prefix (str): Input value.
         image_key (str): Input value.
         sample_idx (int): Zero-based index for selecting a sample or batch.
+        profile_x_label (str): X-axis label for physical profile values.
 
     Returns:
         None: No value is returned.
@@ -1662,6 +1806,7 @@ def log_wandb_glorys_profile_comparison(
                 depth_axis=depth_idx,
                 title=f"Pixel ({row_i}, {col_i})",
                 show_legend=(plot_idx == 0),
+                profile_x_label=profile_x_label,
             )
 
         fig.suptitle(

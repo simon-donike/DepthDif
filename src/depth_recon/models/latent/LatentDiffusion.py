@@ -85,7 +85,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         cls,
         model_config_path: str = str(config_path("lat_space", "model_config.yaml")),
         data_config_path: str = str(
-            config_path("px_space", "data_ostia_argo_netcdf.yaml")
+            config_path("px_space", "training_super_config.yaml")
         ),
         training_config_path: str = str(
             config_path("lat_space", "training_config.yaml")
@@ -183,6 +183,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             condition_include_eo=bool(m.get("condition_include_eo", True)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
+            condition_use_land_mask=bool(m.get("condition_use_land_mask", False)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", False)),
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", True)
@@ -294,6 +295,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         valid_mask: torch.Tensor | None,
         *,
         eo: torch.Tensor | None = None,
+        land_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # EO can stay in pixel-space while x is encoded to latent channels.
         condition_parts: list[torch.Tensor] = []
@@ -316,6 +318,16 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             mask_t = mask_t.to(device=data_t.device, dtype=data_t.dtype)
             condition_parts.append(mask_t)
 
+        land_t = self._prepare_land_condition_mask(
+            land_mask,
+            batch_size=int(data_t.size(0)),
+            height=int(data_t.size(-2)),
+            width=int(data_t.size(-1)),
+        )
+        if land_t is not None:
+            land_t = land_t.to(device=data_t.device, dtype=data_t.dtype)
+            condition_parts.append(land_t)
+
         condition = torch.cat(condition_parts, dim=1)
         expected_channels = int(getattr(self.model, "condition_channels", 0))
         if expected_channels > 0 and int(condition.size(1)) != expected_channels:
@@ -323,7 +335,8 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                 "Conditioning channel mismatch: "
                 f"built={int(condition.size(1))}, expected={expected_channels}. "
                 "Check condition_channels / condition_mask_channels / "
-                "condition_include_eo / condition_use_valid_mask."
+                "condition_include_eo / condition_use_valid_mask / "
+                "condition_use_land_mask."
             )
         return condition
 

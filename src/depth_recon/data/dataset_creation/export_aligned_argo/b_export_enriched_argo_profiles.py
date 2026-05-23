@@ -4,7 +4,10 @@ Production-range enriched ARGO export:
   --start-date 20100101 \
   --end-date 20240731 \
   --workers 4 \
-  --output-zarr /data1/datasets/depth_v2/enriched_argo_profiles.zarr
+  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --compact-chunk-profile 50000
 
 Set multiple workers with --workers N, for example --workers 8.
 
@@ -53,6 +56,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     GLORYS_3D_VARS,
     OSTIA_VARS,
     SEALEVEL_VARS,
+    SSS_VARS,
     SOURCE_VARIABLES,
     TimedFile,
     date_to_days_since_1950,
@@ -60,8 +64,20 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     _open_argo_dataset,
     scan_timed_files,
 )
+from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
+    DEFAULT_LAND_MASK_PATH,
+    _date_int_from_days_since_1950,
+    _filter_timed_files as _filter_geotiff_timed_files,
+    _load_target_grid,
+    _write_argo_profile_store,
+)
 
 CATEGORICAL_VARS = {"mask", "flag_ice"}
+DEFAULT_WORK_DATASET_DIR = Path("/work/data/depthdif")
+DEFAULT_ENRICHED_ARGO_ZARR = DEFAULT_WORK_DATASET_DIR / "enriched_argo_profiles.zarr"
+DEFAULT_COMPACT_ARGO_ZARR = (
+    DEFAULT_WORK_DATASET_DIR / "argo" / "argo_profiles_on_grid.zarr"
+)
 SOURCE_PRODUCTS = {
     "argo": {
         "provider": "UK Met Office Hadley Centre",
@@ -84,6 +100,12 @@ SOURCE_PRODUCTS = {
         "dataset_id": "cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D",
         "role": "Daily sea-level, geostrophic current, and ice-flag fields sampled at profile points.",
     },
+    "sss": {
+        "provider": "Copernicus Marine Service / CNR",
+        "product": "MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013",
+        "dataset_id": "cmems_obs-mob_glo_phy-sss_my_multi_P1D",
+        "role": "Daily sea-surface salinity, density, and sea-ice fields sampled at profile points.",
+    },
 }
 _ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?P<prefix>^|[\s=:'\"(\[{])(?P<path>/(?!/)[^\s,;)\]\}]+)"
@@ -103,6 +125,7 @@ ARGO_LEVEL_QC_VALUE_KEYS = {
 _WORKER_GLORYS_INDEX: list[TimedFile] | None = None
 _WORKER_OSTIA_INDEX: list[TimedFile] | None = None
 _WORKER_SEALEVEL_INDEX: list[TimedFile] | None = None
+_WORKER_SSS_INDEX: list[TimedFile] | None = None
 _WORKER_GLORYS_DEPTHS: np.ndarray | None = None
 _WORKER_CACHE: DatasetCache | None = None
 
@@ -206,7 +229,7 @@ def project_argo_profile_to_glorys_depths(
     depths: np.ndarray,
     glorys_depths: np.ndarray,
 ) -> np.ndarray:
-    # Keep the export projection identical to the active NetCDF patch dataset.
+    # Keep the export projection identical to the dataset patch alignment logic.
     return _align_argo_profile_to_glorys_depths(
         temperature=np.asarray(values, dtype=np.float32),
         depth=np.asarray(depths, dtype=np.float32),
@@ -981,6 +1004,7 @@ def _build_export_metadata(
     glorys_index: list[TimedFile],
     ostia_index: list[TimedFile],
     sealevel_index: list[TimedFile],
+    sss_index: list[TimedFile],
     start_date: int | None,
     end_date: int | None,
     batch_size: int,
@@ -997,9 +1021,10 @@ def _build_export_metadata(
         "glorys": _timed_index_summary(glorys_index),
         "ostia": _timed_index_summary(ostia_index),
         "sealevel": _timed_index_summary(sealevel_index),
+        "sss": _timed_index_summary(sss_index),
     }
     return {
-        "description": "ARGO profiles enriched with freshly collocated GLORYS, OSTIA, and sea-level fields.",
+        "description": "ARGO profiles enriched with freshly collocated GLORYS, OSTIA, sea-level, and SSS fields.",
         "created_by": "depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles",
         "created_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "requested_date_range": {"start_date": start_date, "end_date": end_date},
@@ -1031,6 +1056,11 @@ def _build_export_metadata(
                 kind="sealevel",
                 files=_metadata_file_list(sealevel_index),
                 variables=SOURCE_VARIABLES["sealevel"],
+            ),
+            "sss": _extract_source_metadata(
+                kind="sss",
+                files=_metadata_file_list(sss_index),
+                variables=SOURCE_VARIABLES["sss"],
             ),
         },
         "processing": {
@@ -1065,6 +1095,8 @@ def _build_export_metadata(
             "2": "missing",
         },
         "primary_external_sea_surface_height": "sealevel_adt",
+        "primary_external_sea_surface_salinity": "sss_sos",
+        "primary_external_sea_surface_density": "sss_dos",
         "known_source_notes": {
             "sealevel_tpa_correction": (
                 "The Copernicus source metadata marks this field as not implemented in "
@@ -1129,12 +1161,14 @@ def _empty_batch() -> dict[str, list[Any]]:
         "glorys_temporal_status",
         "ostia_temporal_status",
         "sealevel_temporal_status",
+        "sss_temporal_status",
     ]
     keys.extend(f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS)
     keys.extend(f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS)
     keys.extend(f"glorys_{name}" for name in GLORYS_3D_VARS + GLORYS_2D_VARS)
     keys.extend(f"ostia_{name}" for name in OSTIA_VARS)
     keys.extend(f"sealevel_{name}" for name in SEALEVEL_VARS)
+    keys.extend(f"sss_{name}" for name in SSS_VARS)
     return {key: [] for key in keys}
 
 
@@ -1157,6 +1191,7 @@ def _append_profile_to_batch(
     glorys_index: list[TimedFile],
     ostia_index: list[TimedFile],
     sealevel_index: list[TimedFile],
+    sss_index: list[TimedFile],
     cache: DatasetCache,
     sampled_source_values: dict[str, dict[str, np.ndarray]] | None = None,
     sampled_source_status: dict[str, np.int8] | None = None,
@@ -1207,6 +1242,7 @@ def _append_profile_to_batch(
         ("glorys", glorys_index, GLORYS_3D_VARS + GLORYS_2D_VARS),
         ("ostia", ostia_index, OSTIA_VARS),
         ("sealevel", sealevel_index, SEALEVEL_VARS),
+        ("sss", sss_index, SSS_VARS),
     ):
         if (
             sampled_source_values is None
@@ -1236,24 +1272,28 @@ def _append_profile_to_batch(
     batch["glorys_temporal_status"].append(source_status["glorys"])
     batch["ostia_temporal_status"].append(source_status["ostia"])
     batch["sealevel_temporal_status"].append(source_status["sealevel"])
+    batch["sss_temporal_status"].append(source_status["sss"])
 
 
 def _init_collocation_worker(
     glorys_index: list[TimedFile],
     ostia_index: list[TimedFile],
     sealevel_index: list[TimedFile],
+    sss_index: list[TimedFile],
     glorys_depths: np.ndarray,
     cache_size: int,
 ) -> None:
     global _WORKER_GLORYS_INDEX
     global _WORKER_OSTIA_INDEX
     global _WORKER_SEALEVEL_INDEX
+    global _WORKER_SSS_INDEX
     global _WORKER_GLORYS_DEPTHS
     global _WORKER_CACHE
 
     _WORKER_GLORYS_INDEX = glorys_index
     _WORKER_OSTIA_INDEX = ostia_index
     _WORKER_SEALEVEL_INDEX = sealevel_index
+    _WORKER_SSS_INDEX = sss_index
     _WORKER_GLORYS_DEPTHS = np.asarray(glorys_depths, dtype=np.float32)
     _WORKER_CACHE = DatasetCache(max_open=cache_size)
 
@@ -1263,6 +1303,7 @@ def _collocate_argo_date_group(payload: dict[str, Any]) -> dict[str, list[Any]]:
         _WORKER_GLORYS_INDEX is None
         or _WORKER_OSTIA_INDEX is None
         or _WORKER_SEALEVEL_INDEX is None
+        or _WORKER_SSS_INDEX is None
         or _WORKER_GLORYS_DEPTHS is None
         or _WORKER_CACHE is None
     ):
@@ -1288,6 +1329,7 @@ def _collocate_argo_date_group(payload: dict[str, Any]) -> dict[str, list[Any]]:
         ("glorys", _WORKER_GLORYS_INDEX, GLORYS_3D_VARS + GLORYS_2D_VARS),
         ("ostia", _WORKER_OSTIA_INDEX, OSTIA_VARS),
         ("sealevel", _WORKER_SEALEVEL_INDEX, SEALEVEL_VARS),
+        ("sss", _WORKER_SSS_INDEX, SSS_VARS),
     ):
         values_by_name, status = sample_temporal_values_for_points(
             index,
@@ -1331,6 +1373,7 @@ def _collocate_argo_date_group(payload: dict[str, Any]) -> dict[str, list[Any]]:
             glorys_index=_WORKER_GLORYS_INDEX,
             ostia_index=_WORKER_OSTIA_INDEX,
             sealevel_index=_WORKER_SEALEVEL_INDEX,
+            sss_index=_WORKER_SSS_INDEX,
             cache=_WORKER_CACHE,
             sampled_source_values=source_values,
             sampled_source_status=source_status,
@@ -1652,6 +1695,7 @@ def _apply_output_metadata(
         ("glorys", GLORYS_3D_VARS + GLORYS_2D_VARS),
         ("ostia", OSTIA_VARS),
         ("sealevel", SEALEVEL_VARS),
+        ("sss", SSS_VARS),
     ):
         product = SOURCE_PRODUCTS[source_name]["product"]
         for var_name in variables:
@@ -1686,7 +1730,7 @@ def _apply_output_metadata(
                 },
             )
 
-    for source_name in ("glorys", "ostia", "sealevel"):
+    for source_name in ("glorys", "ostia", "sealevel", "sss"):
         _set_attrs(
             ds,
             f"{source_name}_temporal_status",
@@ -1877,6 +1921,7 @@ def _export_enriched_argo_profiles_parallel(
     glorys_index: list[TimedFile],
     ostia_index: list[TimedFile],
     sealevel_index: list[TimedFile],
+    sss_index: list[TimedFile],
     glorys_depths: np.ndarray,
     export_metadata: dict[str, Any],
 ) -> Path:
@@ -1903,6 +1948,7 @@ def _export_enriched_argo_profiles_parallel(
             glorys_index,
             ostia_index,
             sealevel_index,
+            sss_index,
             glorys_depths,
             int(cache_size),
         ),
@@ -2020,6 +2066,78 @@ def _export_enriched_argo_profiles_parallel(
     return output_zarr
 
 
+def _write_compact_argo_profile_zarr(
+    *,
+    enriched_zarr: Path,
+    compact_output_zarr: Path,
+    glorys_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    land_mask_path: Path,
+    start_date: int | None,
+    end_date: int | None,
+    chunk_profile: int,
+    overwrite: bool,
+) -> dict[str, Any]:
+    """Write the compact grid-indexed ARGO Zarr used by the GeoTIFF loader."""
+    selected_glorys = _filter_geotiff_timed_files(
+        glorys_index,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not selected_glorys:
+        raise RuntimeError("No GLORYS files were selected for compact ARGO export.")
+    target_dates = np.asarray(
+        [_date_int_from_days_since_1950(float(item.day)) for item in selected_glorys],
+        dtype=np.int32,
+    )
+    grid = _load_target_grid(Path(land_mask_path))
+    input_ds = xr.open_zarr(enriched_zarr, consolidated=None)
+    try:
+        return _write_argo_profile_store(
+            input_ds=input_ds,
+            output_zarr=Path(compact_output_zarr),
+            grid=grid,
+            target_dates=target_dates,
+            depth_axis=np.asarray(glorys_depths, dtype=np.float32),
+            source_kind="enriched",
+            chunk_profile=int(chunk_profile),
+            overwrite=overwrite,
+            skip_existing=False,
+            show_progress=True,
+        )
+    finally:
+        input_ds.close()
+
+
+def _finalize_argo_zarr_exports(
+    *,
+    output_zarr: Path,
+    compact_output_zarr: Path | None,
+    glorys_index: list[TimedFile],
+    glorys_depths: np.ndarray,
+    compact_land_mask_path: Path,
+    start_date: int | None,
+    end_date: int | None,
+    compact_chunk_profile: int,
+    overwrite: bool,
+) -> Path:
+    """Finish optional ARGO-derived Zarr outputs and return the enriched path."""
+    if compact_output_zarr is None:
+        return output_zarr
+    _write_compact_argo_profile_zarr(
+        enriched_zarr=output_zarr,
+        compact_output_zarr=Path(compact_output_zarr),
+        glorys_index=glorys_index,
+        glorys_depths=glorys_depths,
+        land_mask_path=Path(compact_land_mask_path),
+        start_date=start_date,
+        end_date=end_date,
+        chunk_profile=int(compact_chunk_profile),
+        overwrite=overwrite,
+    )
+    return output_zarr
+
+
 def export_enriched_argo_profiles(
     *,
     argo_dir: Path,
@@ -2027,6 +2145,7 @@ def export_enriched_argo_profiles(
     ostia_dir: Path,
     sealevel_dir: Path,
     output_zarr: Path,
+    sss_dir: Path = Path("/data1/datasets/depth_v2/sss_daily"),
     start_date: int | None = None,
     end_date: int | None = None,
     batch_size: int = 2048,
@@ -2034,6 +2153,9 @@ def export_enriched_argo_profiles(
     overwrite: bool = False,
     max_profiles: int | None = None,
     workers: int = 1,
+    compact_output_zarr: Path | None = None,
+    compact_land_mask_path: Path = DEFAULT_LAND_MASK_PATH,
+    compact_chunk_profile: int = 50000,
 ) -> Path:
     workers = int(workers)
     if workers < 1:
@@ -2048,6 +2170,7 @@ def export_enriched_argo_profiles(
     glorys_index = scan_timed_files(glorys_dir, show_progress=True)
     ostia_index = scan_timed_files(ostia_dir, show_progress=True)
     sealevel_index = scan_timed_files(sealevel_dir, show_progress=True)
+    sss_index = scan_timed_files(sss_dir, show_progress=True)
     glorys_depths = _load_glorys_depths(glorys_index)
     argo_files = _filter_argo_files_by_date_range(
         sorted(Path(argo_dir).glob("EN.4.2.2.f.profiles.g10.*.nc")),
@@ -2061,6 +2184,7 @@ def export_enriched_argo_profiles(
         glorys_index=glorys_index,
         ostia_index=ostia_index,
         sealevel_index=sealevel_index,
+        sss_index=sss_index,
         start_date=start_date,
         end_date=end_date,
         batch_size=batch_size,
@@ -2069,7 +2193,7 @@ def export_enriched_argo_profiles(
         workers=workers,
     )
     if workers > 1:
-        return _export_enriched_argo_profiles_parallel(
+        _export_enriched_argo_profiles_parallel(
             argo_files=argo_files,
             output_zarr=output_zarr,
             start_date=start_date,
@@ -2081,8 +2205,20 @@ def export_enriched_argo_profiles(
             glorys_index=glorys_index,
             ostia_index=ostia_index,
             sealevel_index=sealevel_index,
+            sss_index=sss_index,
             glorys_depths=glorys_depths,
             export_metadata=export_metadata,
+        )
+        return _finalize_argo_zarr_exports(
+            output_zarr=output_zarr,
+            compact_output_zarr=compact_output_zarr,
+            glorys_index=glorys_index,
+            glorys_depths=glorys_depths,
+            compact_land_mask_path=compact_land_mask_path,
+            start_date=start_date,
+            end_date=end_date,
+            compact_chunk_profile=compact_chunk_profile,
+            overwrite=overwrite,
         )
 
     cache = DatasetCache(max_open=cache_size)
@@ -2183,6 +2319,7 @@ def export_enriched_argo_profiles(
                             ("glorys", glorys_index, GLORYS_3D_VARS + GLORYS_2D_VARS),
                             ("ostia", ostia_index, OSTIA_VARS),
                             ("sealevel", sealevel_index, SEALEVEL_VARS),
+                            ("sss", sss_index, SSS_VARS),
                         ):
                             values_by_name, status = sample_temporal_values_for_points(
                                 index,
@@ -2230,6 +2367,7 @@ def export_enriched_argo_profiles(
                                 glorys_index=glorys_index,
                                 ostia_index=ostia_index,
                                 sealevel_index=sealevel_index,
+                                sss_index=sss_index,
                                 cache=cache,
                                 sampled_source_values=source_values,
                                 sampled_source_status=source_status,
@@ -2271,11 +2409,31 @@ def export_enriched_argo_profiles(
                                 )
                                 if reached_profile_cap:
                                     file_progress.update(1)
-                                    return output_zarr
+                                    return _finalize_argo_zarr_exports(
+                                        output_zarr=output_zarr,
+                                        compact_output_zarr=compact_output_zarr,
+                                        glorys_index=glorys_index,
+                                        glorys_depths=glorys_depths,
+                                        compact_land_mask_path=compact_land_mask_path,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        compact_chunk_profile=compact_chunk_profile,
+                                        overwrite=overwrite,
+                                    )
 
                     if max_profiles is not None and written >= int(max_profiles):
                         file_progress.update(1)
-                        return output_zarr
+                        return _finalize_argo_zarr_exports(
+                            output_zarr=output_zarr,
+                            compact_output_zarr=compact_output_zarr,
+                            glorys_index=glorys_index,
+                            glorys_depths=glorys_depths,
+                            compact_land_mask_path=compact_land_mask_path,
+                            start_date=start_date,
+                            end_date=end_date,
+                            compact_chunk_profile=compact_chunk_profile,
+                            overwrite=overwrite,
+                        )
 
             if batch["profile_idx"]:
                 count = _write_batch(
@@ -2292,12 +2450,22 @@ def export_enriched_argo_profiles(
     finally:
         cache.close()
 
-    return output_zarr
+    return _finalize_argo_zarr_exports(
+        output_zarr=output_zarr,
+        compact_output_zarr=compact_output_zarr,
+        glorys_index=glorys_index,
+        glorys_depths=glorys_depths,
+        compact_land_mask_path=compact_land_mask_path,
+        start_date=start_date,
+        end_date=end_date,
+        compact_chunk_profile=compact_chunk_profile,
+        overwrite=overwrite,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export ARGO profiles enriched with collocated GLORYS, OSTIA, and sea-level fields."
+        description="Export ARGO profiles enriched with collocated GLORYS, OSTIA, sea-level, and SSS fields."
     )
     parser.add_argument(
         "--argo-dir", type=Path, default=Path("/data1/datasets/depth_v2/en4_profiles")
@@ -2316,9 +2484,37 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("/data1/datasets/depth_v2/sealevel_daily"),
     )
     parser.add_argument(
+        "--sss-dir",
+        type=Path,
+        default=Path("/data1/datasets/depth_v2/sss_daily"),
+    )
+    parser.add_argument(
         "--output-zarr",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/enriched_argo_profiles.zarr"),
+        default=DEFAULT_ENRICHED_ARGO_ZARR,
+    )
+    parser.add_argument(
+        "--compact-output-zarr",
+        type=Path,
+        default=DEFAULT_COMPACT_ARGO_ZARR,
+        help="Optional compact grid-indexed ARGO Zarr for the GeoTIFF dataloader.",
+    )
+    parser.add_argument(
+        "--skip-compact-zarr",
+        action="store_true",
+        help="Only write the enriched profile-level ARGO Zarr.",
+    )
+    parser.add_argument(
+        "--compact-land-mask-path",
+        type=Path,
+        default=DEFAULT_LAND_MASK_PATH,
+        help="Land-mask grid used for compact ARGO row/column assignment.",
+    )
+    parser.add_argument(
+        "--compact-chunk-profile",
+        type=int,
+        default=50000,
+        help="Profile chunk size for the compact ARGO Zarr.",
     )
     parser.add_argument(
         "--start-date",
@@ -2357,6 +2553,7 @@ def main() -> None:
         ostia_dir=args.ostia_dir,
         sealevel_dir=args.sealevel_dir,
         output_zarr=args.output_zarr,
+        sss_dir=args.sss_dir,
         start_date=args.start_date,
         end_date=args.end_date,
         batch_size=args.batch_size,
@@ -2364,6 +2561,11 @@ def main() -> None:
         overwrite=args.overwrite,
         max_profiles=args.max_profiles,
         workers=args.workers,
+        compact_output_zarr=(
+            None if args.skip_compact_zarr else args.compact_output_zarr
+        ),
+        compact_land_mask_path=args.compact_land_mask_path,
+        compact_chunk_profile=args.compact_chunk_profile,
     )
     print(f"Wrote enriched ARGO profile Zarr: {out}")
 

@@ -545,25 +545,28 @@
     });
   }
 
-  function ensureRasterSelection(state) {
-    const toggles = [
+  function rasterLayerToggles(state) {
+    return [
       state.elements.predictionToggle,
       state.elements.groundTruthToggle,
       state.elements.absoluteErrorToggle,
       state.elements.uncertaintyToggle,
     ].filter(Boolean);
-    const selectedToggle = toggles.find(function (toggle) {
+  }
+
+  function hasActiveRasterSelection(state) {
+    return rasterLayerToggles(state).some(function (toggle) {
       return toggle.checked && !toggle.disabled;
     });
-    if (selectedToggle) {
-      return;
-    }
-    const fallbackToggle = toggles.find(function (toggle) {
-      return !toggle.disabled;
+  }
+
+  function ensureRasterSelection(state) {
+    // The raster group intentionally supports an empty selection for a clear base globe.
+    rasterLayerToggles(state).forEach(function (toggle) {
+      if (toggle.disabled) {
+        toggle.checked = false;
+      }
     });
-    if (fallbackToggle) {
-      fallbackToggle.checked = true;
-    }
   }
 
   function syncRasterLayerVisibility(state) {
@@ -584,6 +587,7 @@
     if (state.uncertaintyLayer) {
       state.uncertaintyLayer.show = showUncertainty;
     }
+    updateValueLegend(state);
     updateAbsoluteErrorLegend(state);
     requestRender(state);
   }
@@ -613,6 +617,10 @@
   function updateValueLegend(state) {
     const elements = state.elements;
     if (!elements.valueLegend) {
+      return;
+    }
+    elements.valueLegend.hidden = !hasActiveRasterSelection(state);
+    if (elements.valueLegend.hidden) {
       return;
     }
     const activeConfig = activeVariableConfig(state);
@@ -1175,38 +1183,55 @@
     }
   }
 
-  function addBaseMap(viewer) {
+  function addBaseMap(viewer, config, configUrl) {
     const naturalEarthUrl = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII");
-    // Prefer Cesium's bundled Natural Earth relief tiles for a lighter free basemap.
-    Cesium.TileMapServiceImageryProvider.fromUrl(naturalEarthUrl, {
-      credit: "Natural Earth II",
-    })
-      .then(function (provider) {
-        if (!viewer.isDestroyed()) {
-          const baseLayer = viewer.imageryLayers.addImageryProvider(provider);
-          // The basemap may resolve after overlay layers, so pin it to the bottom
-          // of the stack to keep prediction and GLORYS imagery visible above it.
-          viewer.imageryLayers.lowerToBottom(baseLayer);
-          viewer.scene.requestRender();
-        }
-      })
-      .catch(function (error) {
-        console.error(error);
-        if (viewer.isDestroyed()) {
-          return;
-        }
-        const fallbackLayer = viewer.imageryLayers.addImageryProvider(
-          new Cesium.OpenStreetMapImageryProvider({
-            url: "https://tile.openstreetmap.org/",
-            credit: "OpenStreetMap contributors",
-          })
-        );
-        viewer.imageryLayers.lowerToBottom(fallbackLayer);
-        viewer.scene.requestRender();
-      });
+
+    function addProvider(url, credit, fallback) {
+      Cesium.TileMapServiceImageryProvider.fromUrl(url, { credit: credit })
+        .then(function (provider) {
+          if (!viewer.isDestroyed()) {
+            const baseLayer = viewer.imageryLayers.addImageryProvider(provider);
+            // The basemap may resolve after overlay layers, so pin it to the bottom
+            // of the stack to keep prediction and GLORYS imagery visible above it.
+            viewer.imageryLayers.lowerToBottom(baseLayer);
+            viewer.scene.requestRender();
+          }
+        })
+        .catch(function (error) {
+          console.error(error);
+          fallback();
+        });
+    }
+
+    function addOpenStreetMapFallback() {
+      if (viewer.isDestroyed()) {
+        return;
+      }
+      const fallbackLayer = viewer.imageryLayers.addImageryProvider(
+        new Cesium.OpenStreetMapImageryProvider({
+          url: "https://tile.openstreetmap.org/",
+          credit: "OpenStreetMap contributors",
+        })
+      );
+      viewer.imageryLayers.lowerToBottom(fallbackLayer);
+      viewer.scene.requestRender();
+    }
+
+    function addBundledNaturalEarthFallback() {
+      addProvider(naturalEarthUrl, "Natural Earth II", addOpenStreetMapFallback);
+    }
+
+    const hostedBaseMapUrl = resolveAssetUrl(config && config.base_map_tiles_url, configUrl);
+    if (hostedBaseMapUrl) {
+      const hostedCredit =
+        config.base_map_credit || (config.credits && config.credits.base_map) || "Natural Earth II";
+      addProvider(hostedBaseMapUrl, hostedCredit, addBundledNaturalEarthFallback);
+      return;
+    }
+    addBundledNaturalEarthFallback();
   }
 
-  function buildViewer(container) {
+  function buildViewer(container, config, configUrl) {
     const viewer = new Cesium.Viewer(container, {
       animation: false,
       baseLayer: false,
@@ -1230,7 +1255,7 @@
     });
     viewer.useBrowserRecommendedResolution = false;
     viewer.resolutionScale = window.devicePixelRatio || 1;
-    addBaseMap(viewer);
+    addBaseMap(viewer, config, configUrl);
     viewer.scene.globe.enableLighting = false;
     viewer.clock.shouldAnimate = false;
     return viewer;
@@ -1336,7 +1361,10 @@
     if (state.elements.groundTruthToggle && state.elements.groundTruthToggle.checked) {
       return "glorys";
     }
-    return "prediction";
+    if (state.elements.predictionToggle && state.elements.predictionToggle.checked) {
+      return "prediction";
+    }
+    return "off";
   }
 
   function temperatureExportColorStops() {
@@ -1362,6 +1390,7 @@
       const colorScaleMax = firstFiniteNumber([activeConfig.uncertainty_color_scale_max], NaN);
       return {
         colorStops: ERROR_EXPORT_COLOR_STOPS,
+        element: state.elements.errorLegend,
         maxLabel: formatLegendValue(Number.isFinite(legendMax) ? legendMax : colorScaleMax, unitLabel),
         minLabel: formatLegendValue(legendMin, unitLabel),
         title: "Uncertainty",
@@ -1384,6 +1413,7 @@
       );
       return {
         colorStops: ERROR_EXPORT_COLOR_STOPS,
+        element: state.elements.errorLegend,
         maxLabel: formatLegendValue(Number.isFinite(legendMax) ? legendMax : colorScaleMax, unitLabel),
         minLabel: formatLegendValue(legendMin, unitLabel),
         title: "Absolute Error",
@@ -1396,6 +1426,7 @@
       colorStops: activeVariableKey(state) === "salinity"
         ? SALINITY_EXPORT_COLOR_STOPS
         : temperatureExportColorStops(),
+      element: state.elements.valueLegend,
       maxLabel: formatLegendValue(colorScale.max, unitLabel),
       minLabel: formatLegendValue(colorScale.min, unitLabel),
       title: String(activeConfig.variable_label || activeConfig.variable || "Temperature"),
@@ -1460,49 +1491,121 @@
     ctx.restore();
   }
 
-  function drawPictureLegend(ctx, outputCanvas, sourceHeight, state, legendHeight, scale) {
-    const legend = buildPictureLegendModel(state);
-    const paddingX = Math.max(26 * scale, outputCanvas.width * 0.035);
-    const top = sourceHeight;
-    const includePointLegend = shouldExportPointLegend(state) && outputCanvas.width >= 720 * scale;
-    const pointLegendWidth = includePointLegend ? 250 * scale : 0;
-    const gap = includePointLegend ? 36 * scale : 0;
-    const barX = paddingX;
-    const barY = top + 58 * scale;
-    const barHeight = 18 * scale;
-    const barWidth = Math.max(180 * scale, outputCanvas.width - paddingX * 2 - pointLegendWidth - gap);
-
-    ctx.fillStyle = "#04131f";
-    ctx.fillRect(0, top, outputCanvas.width, legendHeight);
-    ctx.strokeStyle = "rgba(124, 200, 255, 0.24)";
+  function drawRoundedRectPath(ctx, x, y, width, height, radius) {
+    const clampedRadius = Math.min(radius, width / 2, height / 2);
     ctx.beginPath();
-    ctx.moveTo(0, top + 0.5 * scale);
-    ctx.lineTo(outputCanvas.width, top + 0.5 * scale);
+    ctx.moveTo(x + clampedRadius, y);
+    ctx.lineTo(x + width - clampedRadius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + clampedRadius);
+    ctx.lineTo(x + width, y + height - clampedRadius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - clampedRadius, y + height);
+    ctx.lineTo(x + clampedRadius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - clampedRadius);
+    ctx.lineTo(x, y + clampedRadius);
+    ctx.quadraticCurveTo(x, y, x + clampedRadius, y);
+    ctx.closePath();
+  }
+
+  function scaledElementDimension(element, scale, dimensionName, fallbackCssPixels) {
+    const rect = element && element.getBoundingClientRect ? element.getBoundingClientRect() : null;
+    const elementPixels = rect ? rect[dimensionName] : 0;
+    return Math.round((elementPixels > 0 ? elementPixels : fallbackCssPixels) * scale);
+  }
+
+  function drawPictureLegendCard(ctx, x, y, width, height, legend, scale) {
+    const borderWidth = Math.max(1, scale);
+    const radius = 16 * scale;
+    const paddingX = 13.6 * scale;
+    const paddingY = 12 * scale;
+    const gap = 7.2 * scale;
+    const titleFontSize = 11.52 * scale;
+    const labelFontSize = 13.12 * scale;
+    const barHeight = 11.2 * scale;
+    const contentLeft = x + paddingX;
+    const contentRight = x + width - paddingX;
+    const barY = y + paddingY + titleFontSize * 1.2 + gap;
+    const labelY = barY + barHeight + gap;
+
+    ctx.save();
+    drawRoundedRectPath(ctx, x, y, width, height, radius);
+    ctx.fillStyle = "rgba(5, 20, 32, 0.86)";
+    ctx.fill();
+    ctx.lineWidth = borderWidth;
+    ctx.strokeStyle = "rgba(124, 200, 255, 0.16)";
     ctx.stroke();
 
     ctx.fillStyle = "#7cc8ff";
-    ctx.font = "700 " + Math.round(14 * scale) + "px Roboto, Arial, sans-serif";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(legend.title, barX, top + 34 * scale);
+    ctx.font = "700 " + Math.round(titleFontSize) + "px Roboto, Arial, sans-serif";
+    ctx.textBaseline = "top";
+    ctx.fillText(legend.title.toUpperCase(), contentLeft, y + paddingY);
 
-    const gradient = ctx.createLinearGradient(barX, barY, barX + barWidth, barY);
+    const gradient = ctx.createLinearGradient(contentLeft, barY, contentRight, barY);
     addCanvasGradientStops(gradient, legend.colorStops);
+    drawRoundedRectPath(ctx, contentLeft, barY, contentRight - contentLeft, barHeight, barHeight / 2);
     ctx.fillStyle = gradient;
-    ctx.fillRect(barX, barY, barWidth, barHeight);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
-    ctx.strokeRect(barX, barY, barWidth, barHeight);
+    ctx.fill();
+    ctx.lineWidth = borderWidth;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.stroke();
 
     ctx.fillStyle = "rgba(234, 248, 255, 0.92)";
-    ctx.font = "600 " + Math.round(13 * scale) + "px Roboto, Arial, sans-serif";
-    ctx.fillText(legend.minLabel, barX, top + 100 * scale);
+    ctx.font = "600 " + Math.round(labelFontSize) + "px Roboto, Arial, sans-serif";
+    ctx.fillText(legend.minLabel, contentLeft, labelY);
     ctx.textAlign = "right";
-    ctx.fillText(legend.maxLabel, barX + barWidth, top + 100 * scale);
-    ctx.textAlign = "left";
+    ctx.fillText(legend.maxLabel, contentRight, labelY);
+    ctx.restore();
+  }
+
+  function drawPicturePointLegendCard(ctx, x, y, width, height, scale) {
+    const borderWidth = Math.max(1, scale);
+    const radius = 16 * scale;
+    const paddingX = 13.6 * scale;
+    const paddingY = 12 * scale;
+
+    ctx.save();
+    drawRoundedRectPath(ctx, x, y, width, height, radius);
+    ctx.fillStyle = "rgba(5, 20, 32, 0.86)";
+    ctx.fill();
+    ctx.lineWidth = borderWidth;
+    ctx.strokeStyle = "rgba(124, 200, 255, 0.16)";
+    ctx.stroke();
+
+    ctx.fillStyle = "#7cc8ff";
+    ctx.font = "700 " + Math.round(11.52 * scale) + "px Roboto, Arial, sans-serif";
+    ctx.textBaseline = "top";
+    ctx.fillText("ARGO SAMPLES", x + paddingX, y + paddingY);
+    ctx.font = "600 " + Math.round(13.12 * scale) + "px Roboto, Arial, sans-serif";
+    drawPicturePointLegend(ctx, x + paddingX + 10 * scale, y + paddingY + 36 * scale, scale);
+    ctx.restore();
+  }
+
+  function drawPictureLegend(ctx, outputCanvas, state, scale) {
+    if (!hasActiveRasterSelection(state)) {
+      return;
+    }
+    const legend = buildPictureLegendModel(state);
+    const margin = 16 * scale;
+    const gap = 12 * scale;
+    const legendWidth = scaledElementDimension(legend.element, scale, "width", 235.2);
+    const legendHeight = scaledElementDimension(legend.element, scale, "height", 74.4);
+    const includePointLegend = shouldExportPointLegend(state) && outputCanvas.width >= 540 * scale;
+    const pointLegendWidth = includePointLegend
+      ? scaledElementDimension(state.elements.argoLegend, scale, "width", 235.2)
+      : 0;
+    const pointLegendHeight = includePointLegend
+      ? scaledElementDimension(state.elements.argoLegend, scale, "height", 96)
+      : 0;
+    const totalWidth = legendWidth + (includePointLegend ? gap + pointLegendWidth : 0);
+    const legendX = Math.max(margin, outputCanvas.width - margin - legendWidth);
+    const legendY = Math.max(margin, outputCanvas.height - margin - legendHeight);
 
     if (includePointLegend) {
-      ctx.font = "600 " + Math.round(13 * scale) + "px Roboto, Arial, sans-serif";
-      drawPicturePointLegend(ctx, barX + barWidth + gap + 12 * scale, top + 59 * scale, scale);
+      // Match the website legend stack by keeping any point legend as its own compact card.
+      const pointX = Math.max(margin, outputCanvas.width - margin - totalWidth);
+      const pointY = Math.max(margin, outputCanvas.height - margin - pointLegendHeight);
+      drawPicturePointLegendCard(ctx, pointX, pointY, pointLegendWidth, pointLegendHeight, scale);
     }
+    drawPictureLegendCard(ctx, legendX, legendY, legendWidth, legendHeight, legend, scale);
   }
 
   function buildPictureCanvas(state) {
@@ -1514,10 +1617,9 @@
       1.0,
       sourceCanvas.width / Math.max(1, sourceCanvas.clientWidth || sourceCanvas.width)
     );
-    const legendHeight = Math.round(116 * scale);
     const outputCanvas = document.createElement("canvas");
     outputCanvas.width = sourceCanvas.width;
-    outputCanvas.height = sourceCanvas.height + legendHeight;
+    outputCanvas.height = sourceCanvas.height;
     const ctx = outputCanvas.getContext("2d");
     if (!ctx) {
       throw new Error("Could not create PNG export canvas.");
@@ -1525,7 +1627,7 @@
     ctx.fillStyle = "#04131f";
     ctx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
     ctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height);
-    drawPictureLegend(ctx, outputCanvas, sourceCanvas.height, state, legendHeight, scale);
+    drawPictureLegend(ctx, outputCanvas, state, scale);
     return outputCanvas;
   }
 
@@ -1974,7 +2076,11 @@
   }
 
   async function handleRasterLayerToggle(state, toggle, ensureLayer) {
-    if (!toggle || !toggle.checked) {
+    if (!toggle) {
+      return;
+    }
+    if (!toggle.checked) {
+      syncRasterLayerVisibility(state);
       return;
     }
 
@@ -2173,21 +2279,36 @@
       });
     }
 
-    elements.predictionToggle.addEventListener("change", function () {
-      handleRasterLayerToggle(state, elements.predictionToggle, null);
-    });
+    function wireRasterRadio(toggle, ensureLayer) {
+      const pointerTarget = toggle.closest("label") || toggle;
+      const rememberCheckedState = function () {
+        toggle.dataset.globeWasChecked = toggle.checked ? "true" : "false";
+      };
+      pointerTarget.addEventListener("pointerdown", rememberCheckedState);
+      toggle.addEventListener("keydown", function (event) {
+        if ((event.key === " " || event.key === "Enter") && toggle.checked && !toggle.disabled) {
+          event.preventDefault();
+          toggle.checked = false;
+          syncRasterLayerVisibility(state);
+        }
+      });
+      toggle.addEventListener("click", function (event) {
+        if (toggle.dataset.globeWasChecked === "true" && toggle.checked && !toggle.disabled) {
+          event.preventDefault();
+          toggle.checked = false;
+          syncRasterLayerVisibility(state);
+        }
+        delete toggle.dataset.globeWasChecked;
+      });
+      toggle.addEventListener("change", function () {
+        handleRasterLayerToggle(state, toggle, ensureLayer);
+      });
+    }
 
-    elements.groundTruthToggle.addEventListener("change", function () {
-      handleRasterLayerToggle(state, elements.groundTruthToggle, ensureGroundTruthLayer);
-    });
-
-    elements.absoluteErrorToggle.addEventListener("change", function () {
-      handleRasterLayerToggle(state, elements.absoluteErrorToggle, ensureAbsoluteErrorLayer);
-    });
-
-    elements.uncertaintyToggle.addEventListener("change", function () {
-      handleRasterLayerToggle(state, elements.uncertaintyToggle, ensureUncertaintyLayer);
-    });
+    wireRasterRadio(elements.predictionToggle, null);
+    wireRasterRadio(elements.groundTruthToggle, ensureGroundTruthLayer);
+    wireRasterRadio(elements.absoluteErrorToggle, ensureAbsoluteErrorLayer);
+    wireRasterRadio(elements.uncertaintyToggle, ensureUncertaintyLayer);
 
     if (elements.pointsRadios) {
       elements.pointsRadios.forEach(function (radio) {
@@ -2349,7 +2470,7 @@
         return false;
       }
 
-      const viewer = buildViewer(elements.container);
+      const viewer = buildViewer(elements.container, loaded.config, loaded.configUrl);
       const state = {
         config: loaded.config,
         configUrl: loaded.configUrl,

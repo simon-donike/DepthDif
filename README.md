@@ -73,15 +73,16 @@ publishing credentials.
 ## Model Overview
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
-- Active dataset: `src/depth_recon/data/dataset_argo_netcdf_gridded.py` (`ArgoNetCDFGriddedPatchDataset`) lazily builds model-ready patches from ARGO/EN4, GLORYS, OSTIA, and sea-level NetCDF files without writing patch exports.
+- Active dataset: `src/depth_recon/data/dataset_argo_geotiff_gridded.py` (`ArgoGeoTIFFGriddedPatchDataset`) reads exported GeoTIFF rasters and preprocessed ARGO/EN4 profiles through the pixel super-configs.
 - Optional dataset ablation: `dataset.synthetic.enabled=true` builds sparse `x` from random GLORYS `y` pixels, controlled by `dataset.synthetic.pixel_count`.
 - Config layout:
-  - `src/depth_recon/configs/px_space/`: active pixel-space diffusion configs
+  - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
+  - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
   - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST plus coordinate/date context.
+DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST, ARGO observation support, GLORYS spatial support, plus coordinate/date context.
 
-Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support (`x_valid_mask ∩ y_valid_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
+Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
 ![depthdif_schema](docs/assets/figures/depthdif_schema.png)
 
@@ -95,31 +96,32 @@ Representative surface-level training patches:
 
 ## Training
 
-OSTIA + Argo NetCDF training:
+Pixel-space GeoTIFF training uses `src/depth_recon/configs/px_space/training_super_config.yaml` plus one scenario selector to keep the data/model channel contract aligned:
 
 ```bash
-/work/envs/depth/bin/python train.py \
-  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config src/depth_recon/configs/px_space/training_config.yaml \
-  --model-config src/depth_recon/configs/px_space/model_config.yaml
+/work/envs/depth/bin/python train.py --scenario temperature
+/work/envs/depth/bin/python train.py --scenario salinity
+/work/envs/depth/bin/python train.py --scenario joint
 ```
 
 Ambient-occlusion objective example:
 
 ```bash
 /work/envs/depth/bin/python train.py \
-  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
-  --train-config src/depth_recon/configs/px_space/training_config.yaml \
-  --model-config src/depth_recon/configs/px_space/model_config_ambient.yaml \
-  --set training.wandb.run_name=ambient_ostia_argo_netcdf_v1
+  --scenario temperature \
+  --set model.ambient_occlusion.enabled=true \
+  --set model.ambient_occlusion.further_drop_prob=0.25 \
+  --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
 ```
 
 Notes:
-- `--train-config` and `--training-config` are equivalent.
-- Training outputs are written under `logs/<timestamp>/` with `best.ckpt` and `last.ckpt`.
+- Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
+- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `model.generated_channels`, and `model.condition_channels`.
+- `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
+- Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
 - `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.
 - Latent diffusion workflow configs live in `src/depth_recon/configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
-- Latent launcher scripts: `src/depth_recon/scripts/train_autoencoder.sh`, `src/depth_recon/scripts/train_latent_diffusion.sh`.
+- Pixel config details and key meanings are documented in `docs/settings.md`; latent diffusion still uses the `src/depth_recon/configs/lat_space/` config files documented in `docs/autoencoder.md`.
 
 ## Inference
 
@@ -142,7 +144,7 @@ run_dir = run_week_inference(
 
 The public API downloads configs/checkpoints and the land mask from Hugging Face,
 downloads EN4/ARGO and, by default, OSTIA for the selected ISO week, and returns
-the GeoTIFF run directory. Existing cached files are reused automatically. Pass
+the GeoTIFF run directory. Pass `export_uncertainty=True` to also write a 5-sample 1-channel uncertainty raster. Existing cached files are reused automatically. Pass
 `auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
 The package API uses non-overlapping public inference patches by default
 (`patch_stride=tile_size`, normally 128), so small rectangles select compact
@@ -157,9 +159,7 @@ environment, or credentials passed to `run_week_inference` via
 accepts that token through its password field, so `copernicus_password` remains
 supported as a backwards-compatible alias.
 
-By default, the package uses `simon-donike/DepthDif` at revision `main`,
-`model_config.yaml`, `data_config.yaml`, `training_config.yaml`,
-`depthdif_v1.ckpt`, and `world_land_mask_glorys_0p1.tif`.
+By default, the package uses `simon-donike/DepthDif` at revision `main`, cached public config/checkpoint assets, and `world_land_mask_glorys_0p1.tif`; the runtime call materializes an inference super-config before export.
 
 To prepare the public model files and land mask before a run:
 
@@ -188,25 +188,19 @@ depth-recon-infer-week \
   --device cuda
 ```
 
-Use `src/depth_recon/inference/run_single.py`:
-
-1. Set config/checkpoint constants at the top of `src/depth_recon/inference/run_single.py` (`MODEL_CONFIG_PATH`, `DATA_CONFIG_PATH`, `TRAIN_CONFIG_PATH`, `CHECKPOINT_PATH`).
-   For the active EO setup in this repository, use:
-   `src/depth_recon/configs/px_space/model_config.yaml`, `src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml`, `src/depth_recon/configs/px_space/training_config.yaml`
-2. Choose `MODE` (`"dataloader"` or `"random"`).
-3. Run:
+Use `src/depth_recon/inference/run_single.py` for a local smoke test. Set `CONFIG_PATH`, optional `SCENARIO`, and `CHECKPOINT_PATH` at the top of the file, then run:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.run_single
 ```
 
-For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects the nearest available dataset snapshot inside the requested ISO week, runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction, decoded/dequantized GLORYS, and absolute prediction-vs-GLORYS error GeoTIFFs in degrees Celsius for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, sampled full-profile locations with per-point graphs, and patch squares. The exporter defaults to the GeoTIFF-backed dataset, reads its dedicated inference grid from `src/depth_recon/inference/inference_config.yaml`, stitches overlaps with deterministic spatial weights, and masks final land pixels to the GeoTIFF nodata value. Extra export-time Gaussian blur is disabled by default; pass a positive `--sigma` only when explicitly needed.
+For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects the nearest available dataset snapshot inside the requested ISO week, runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction, decoded/dequantized GLORYS, and absolute prediction-vs-GLORYS error GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. Pass `--export-uncertainty` to also write one 5-sample 1-channel uncertainty GeoTIFF for the active variable. Temperature exports are in degrees Celsius; salinity exports are in PSU. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, up to 1000 sampled full-profile locations with per-point graphs, and patch squares. The exporter defaults to the GeoTIFF-backed dataset, reads its dedicated inference grid from `src/depth_recon/configs/px_space/inference_super_config.yaml`, stitches overlaps with deterministic spatial weights, applies periodic dateline edge blending for full-world outputs, and masks final land pixels to the GeoTIFF nodata value. Extra export-time Gaussian blur is disabled by default; pass a positive `--sigma` only when explicitly needed.
 
 For a pooled validation-set depth summary, use `src/depth_recon/inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_validation_error_summary \
-  --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+  --scenario temperature \
   --checkpoint logs/<run>/best.ckpt \
   --split val \
   --year 2015 \
@@ -224,7 +218,21 @@ To package one exported run for the Cesium globe viewer in the docs, use:
   --rclone-sync-scope globe
 ```
 
-The globe packager tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready folders and uploads those tiled assets, GeoJSON, graph PNGs, and `globe-config.json` when `--rclone-sync-scope globe` is used. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
+The globe packager tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready WebP folders, tiles optional uncertainty rasters when present, converts hosted profile-comparison graphs to WebP, and uploads those assets, GeoJSON, and `globe-config.json` when `--rclone-sync-scope globe` is used. When `src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif` exists locally, the same bundle also includes a higher-quality Natural Earth basemap under `basemaps/natural_earth_ii_webp_q95/`. Raw GeoTIFFs and source graph PNGs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
+
+For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector. By default each variable export writes at most 1000 full-profile graph images. Add `--export-uncertainty` to generate and tile one uncertainty map for each variable; the viewer hides the Uncertainty option when a manifest does not include `uncertainty_tiles_url`.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
+  --year 2018 \
+  --iso-week 25 \
+  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
+  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
+  --device cuda \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production/globe \
+  --rclone-sync-scope globe
+```
 
 ## Experiment Script
 

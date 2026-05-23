@@ -3,6 +3,8 @@ import tempfile
 import unittest
 
 import numpy as np
+import rasterio
+from rasterio.transform import from_origin
 import xarray as xr
 
 from depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles import (
@@ -22,6 +24,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     GLORYS_3D_VARS,
     OSTIA_VARS,
     SEALEVEL_VARS,
+    SSS_VARS,
     TimedFile,
     date_to_days_since_1950,
 )
@@ -179,11 +182,32 @@ def _write_enriched_surface_source(
     ds.to_netcdf(root_dir / filename, engine="h5netcdf")
 
 
-def _make_enriched_export_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+def _write_compact_land_mask(path: Path) -> None:
+    """Write a tiny north-up land-mask grid for compact ARGO tests."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=2,
+        width=2,
+        count=1,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(10.0, 2.0, 1.0, 1.0),
+        nodata=255,
+    ) as ds:
+        ds.write(np.zeros((1, 2, 2), dtype=np.uint8))
+
+
+def _make_enriched_export_sources(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, Path, Path]:
     argo_dir = tmp_path / "en4_profiles"
     glorys_dir = tmp_path / "glorys"
     ostia_dir = tmp_path / "ostia"
     sealevel_dir = tmp_path / "sealevel"
+    sss_dir = tmp_path / "sss"
     _write_enriched_argo_source(argo_dir)
     for date_value, base in ((20240102, 100.0), (20240103, 200.0)):
         _write_enriched_glorys_source(glorys_dir, date_value=date_value, base=base)
@@ -203,7 +227,15 @@ def _make_enriched_export_sources(tmp_path: Path) -> tuple[Path, Path, Path, Pat
             lat_name="latitude",
             lon_name="longitude",
         )
-    return argo_dir, glorys_dir, ostia_dir, sealevel_dir
+        _write_enriched_surface_source(
+            sss_dir,
+            filename=f"sss_{date_value}.nc",
+            variables=SSS_VARS,
+            base=base + 3000.0,
+            lat_name="lat",
+            lon_name="lon",
+        )
+    return argo_dir, glorys_dir, ostia_dir, sealevel_dir, sss_dir
 
 
 class TestEnrichedArgoExport(unittest.TestCase):
@@ -339,10 +371,50 @@ class TestEnrichedArgoExport(unittest.TestCase):
                     workers=0,
                 )
 
+    def test_export_can_write_compact_geotiff_loader_zarr(self) -> None:
+        """The ARGO export owns both enriched and compact ARGO Zarr outputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            argo_dir, glorys_dir, ostia_dir, sealevel_dir, sss_dir = (
+                _make_enriched_export_sources(tmp_path)
+            )
+            land_mask_path = tmp_path / "land_mask.tif"
+            _write_compact_land_mask(land_mask_path)
+            output_zarr = tmp_path / "enriched.zarr"
+            compact_zarr = tmp_path / "argo/argo_profiles_on_grid.zarr"
+
+            export_enriched_argo_profiles(
+                argo_dir=argo_dir,
+                glorys_dir=glorys_dir,
+                ostia_dir=ostia_dir,
+                sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
+                output_zarr=output_zarr,
+                start_date=20240102,
+                end_date=20240103,
+                batch_size=2,
+                cache_size=2,
+                workers=1,
+                overwrite=True,
+                compact_output_zarr=compact_zarr,
+                compact_land_mask_path=land_mask_path,
+                compact_chunk_profile=2,
+            )
+
+            compact = xr.open_zarr(compact_zarr, consolidated=None)
+            try:
+                self.assertIn("argo_temp_kelvin_uint8", compact)
+                self.assertIn("argo_psal_uint8", compact)
+                self.assertIn("argo_psal_valid", compact)
+                self.assertGreater(int(compact.sizes["profile"]), 0)
+                self.assertEqual(int(compact.sizes["glorys_depth"]), 2)
+            finally:
+                compact.close()
+
     def test_parallel_export_matches_serial_output_order_and_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            argo_dir, glorys_dir, ostia_dir, sealevel_dir = (
+            argo_dir, glorys_dir, ostia_dir, sealevel_dir, sss_dir = (
                 _make_enriched_export_sources(tmp_path)
             )
             serial_path = export_enriched_argo_profiles(
@@ -350,6 +422,7 @@ class TestEnrichedArgoExport(unittest.TestCase):
                 glorys_dir=glorys_dir,
                 ostia_dir=ostia_dir,
                 sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
                 output_zarr=tmp_path / "serial.zarr",
                 start_date=20240102,
                 end_date=20240103,
@@ -363,6 +436,7 @@ class TestEnrichedArgoExport(unittest.TestCase):
                 glorys_dir=glorys_dir,
                 ostia_dir=ostia_dir,
                 sealevel_dir=sealevel_dir,
+                sss_dir=sss_dir,
                 output_zarr=tmp_path / "parallel.zarr",
                 start_date=20240102,
                 end_date=20240103,
@@ -384,6 +458,7 @@ class TestEnrichedArgoExport(unittest.TestCase):
                     "glorys_temporal_status",
                     "ostia_temporal_status",
                     "sealevel_temporal_status",
+                    "sss_temporal_status",
                 ):
                     np.testing.assert_array_equal(
                         serial[name].values, parallel[name].values
@@ -397,6 +472,9 @@ class TestEnrichedArgoExport(unittest.TestCase):
                     "glorys_thetao",
                     "ostia_analysed_sst",
                     "sealevel_adt",
+                    "sss_sos",
+                    "sss_dos",
+                    "sss_sea_ice_fraction",
                 ):
                     np.testing.assert_allclose(
                         serial[name].values,

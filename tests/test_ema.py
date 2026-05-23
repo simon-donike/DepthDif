@@ -9,10 +9,81 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 
+
 from depth_recon.inference.core import extract_ema_state_dict, load_checkpoint_weights
 from depth_recon.models.diffusion import EMA
 from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from train import build_ema_callback
+
+
+class _TinyPixelDataset(torch.utils.data.Dataset):
+    """Single-sample dataset for PixelDiffusion checkpoint metadata tests."""
+
+    def __len__(self) -> int:
+        """Return the fixed dataset length."""
+        return 1
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        """Return one temperature-only pixel diffusion sample."""
+        _ = idx
+        y = torch.linspace(-0.5, 0.5, steps=2 * 8 * 8, dtype=torch.float32).reshape(
+            2, 8, 8
+        )
+        x = y.clone()
+        x[:, ::2, ::2] = 0.0
+        x_valid_mask = torch.ones_like(x, dtype=torch.bool)
+        x_valid_mask[:, ::2, ::2] = False
+        y_valid_mask = torch.ones_like(y, dtype=torch.bool)
+        return {
+            "x": x,
+            "y": y,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": y_valid_mask,
+            "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
+            "land_mask": torch.ones(1, 8, 8, dtype=torch.float32),
+        }
+
+
+class _TinyPixelDataModule:
+    """Minimal datamodule adapter used by PixelDiffusionConditional."""
+
+    def train_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
+        """Return one training batch."""
+        return DataLoader(_TinyPixelDataset(), batch_size=1)
+
+    def val_dataloader(self) -> DataLoader[dict[str, torch.Tensor]]:
+        """Return one validation batch."""
+        return DataLoader(_TinyPixelDataset(), batch_size=1)
+
+
+def _make_pixel_checkpoint_model(
+    *, scenario: str = "temperature", datamodule: object | None = None
+) -> PixelDiffusionConditional:
+    """Build a tiny PixelDiffusionConditional with scenario metadata."""
+    output_fields = (
+        ("temperature", "salinity") if scenario == "joint" else (str(scenario),)
+    )
+    return PixelDiffusionConditional(
+        datamodule=datamodule,
+        generated_channels=2,
+        condition_channels=3,
+        output_fields=output_fields,
+        variable_scenario=scenario,
+        condition_mask_channels=1,
+        condition_include_eo=False,
+        condition_use_valid_mask=True,
+        condition_use_land_mask=False,
+        mask_loss_with_valid_pixels=True,
+        parameterization="x0",
+        num_timesteps=2,
+        noise_schedule="linear",
+        unet_dim=8,
+        unet_dim_mults=(1,),
+        val_inference_sampler="ddim",
+        val_ddim_num_timesteps=1,
+        log_intermediates=False,
+        wandb_verbose=False,
+    )
 
 
 class _TinyLightningModule(pl.LightningModule):
@@ -326,6 +397,100 @@ class TestEMA(unittest.TestCase):
         self.assertEqual(weight_source, "standard")
         self.assertTrue(torch.allclose(module.weight.detach(), torch.tensor([5.0])))
         self.assertTrue(torch.equal(module.counter, torch.tensor([7])))
+
+    def test_pixel_checkpoint_embeds_variable_scenario_metadata(self) -> None:
+        model = _make_pixel_checkpoint_model(
+            scenario="temperature", datamodule=_TinyPixelDataModule()
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = pl.Trainer(
+                accelerator="cpu",
+                devices=1,
+                max_epochs=1,
+                limit_train_batches=1,
+                limit_val_batches=0,
+                num_sanity_val_steps=0,
+                logger=False,
+                enable_checkpointing=False,
+                enable_model_summary=False,
+                default_root_dir=tmpdir,
+            )
+            trainer.fit(model)
+
+            checkpoint_path = Path(tmpdir) / "pixel_scenario.ckpt"
+            trainer.save_checkpoint(str(checkpoint_path))
+            checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
+
+        self.assertEqual(checkpoint["variable_scenario"], "temperature")
+        self.assertEqual(
+            checkpoint["hyper_parameters"]["variable_scenario"], "temperature"
+        )
+
+    def test_checkpoint_loader_rejects_variable_scenario_mismatch(self) -> None:
+        source_model = _make_pixel_checkpoint_model(scenario="temperature")
+        target_model = _make_pixel_checkpoint_model(scenario="salinity")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "temperature.ckpt"
+            torch.save(
+                {
+                    "variable_scenario": "temperature",
+                    "state_dict": source_model.state_dict(),
+                },
+                checkpoint_path,
+            )
+
+            with self.assertRaisesRegex(ValueError, "variable_scenario mismatch"):
+                load_checkpoint_weights(target_model, checkpoint_path, strict=True)
+
+    def test_pixel_on_load_checkpoint_validates_variable_scenario(self) -> None:
+        model = _make_pixel_checkpoint_model(scenario="salinity")
+
+        with self.assertRaisesRegex(ValueError, "variable_scenario mismatch"):
+            model.on_load_checkpoint({"variable_scenario": "temperature"})
+
+        with self.assertWarnsRegex(UserWarning, "variable_scenario metadata"):
+            model.on_load_checkpoint({})
+
+    def test_checkpoint_loader_warns_for_missing_variable_scenario(
+        self,
+    ) -> None:
+        model = _make_pixel_checkpoint_model(scenario="temperature")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "legacy.ckpt"
+            torch.save({"state_dict": model.state_dict()}, checkpoint_path)
+
+            with self.assertWarnsRegex(UserWarning, "variable_scenario metadata"):
+                weight_source = load_checkpoint_weights(
+                    model, checkpoint_path, strict=True
+                )
+
+        self.assertEqual(weight_source, "standard")
+
+    def test_checkpoint_loader_accepts_matching_variable_scenario_with_ema(
+        self,
+    ) -> None:
+        source_model = _make_pixel_checkpoint_model(scenario="salinity")
+        target_model = _make_pixel_checkpoint_model(scenario="salinity")
+        ema_weights = {
+            key: value.detach().clone()
+            for key, value in source_model.state_dict().items()
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = Path(tmpdir) / "salinity_ema.ckpt"
+            torch.save(
+                {
+                    "variable_scenario": "salinity",
+                    "state_dict": source_model.state_dict(),
+                    "callbacks": {"EMA": {"ema_weights": ema_weights}},
+                },
+                checkpoint_path,
+            )
+
+            weight_source = load_checkpoint_weights(
+                target_model, checkpoint_path, strict=True
+            )
+
+        self.assertEqual(weight_source, "ema")
 
     def test_lightning_checkpoint_saves_and_inference_loads_ema_weights(
         self,

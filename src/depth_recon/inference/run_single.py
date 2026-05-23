@@ -25,7 +25,6 @@ from depth_recon.inference.core import (
     build_random_batch,
     choose_device,
     ds_cfg_value,
-    load_yaml,
     load_checkpoint_weights,
     pretty_shape,
     resolve_checkpoint_path,
@@ -33,14 +32,17 @@ from depth_recon.inference.core import (
     run_predict_once,
     to_device,
 )
-from depth_recon.paths import config_path
+from depth_recon.configs.config_resolver_pixel import (
+    DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
+    load_pixel_inference_config,
+)
 
 # ----------------------------
 # In-script settings
 # ----------------------------
-MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
-DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
-TRAIN_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
+CONFIG_PATH = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
+SCENARIO: str | None = None
+CONFIG_OVERRIDES: list[str] = []
 
 # Optional explicit checkpoint path. If None, uses model.resume_checkpoint from model config.
 CHECKPOINT_PATH: str | None = None
@@ -68,9 +70,16 @@ def main() -> None:
     """Run the script entry point."""
     torch.manual_seed(int(SEED))
 
-    model_cfg = load_yaml(MODEL_CONFIG_PATH)
-    data_cfg = load_yaml(DATA_CONFIG_PATH)
-    training_cfg = load_yaml(TRAIN_CONFIG_PATH)
+    config_bundle = load_pixel_inference_config(
+        config_path_value=CONFIG_PATH,
+        scenario_override=SCENARIO,
+        overrides=CONFIG_OVERRIDES,
+        runtime_config_dir=Path("/tmp/depthdif_inference_configs") / "run_single",
+        write_snapshots=False,
+    )
+    model_cfg = config_bundle.model_cfg
+    data_cfg = config_bundle.data_cfg
+    training_cfg = config_bundle.training_cfg
     resolve_model_type(model_cfg)
 
     device = choose_device(DEVICE)
@@ -82,16 +91,18 @@ def main() -> None:
             f"LOADER_SPLIT must be 'train' or 'val' (got '{LOADER_SPLIT}')."
         )
 
-    dataset = build_dataset(DATA_CONFIG_PATH, data_cfg.get("dataset", {}))
+    dataset = build_dataset(
+        config_bundle.effective_data_config_path, data_cfg.get("dataset", {})
+    )
     datamodule = build_datamodule(
         dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
     )
     datamodule.setup("fit")
 
     model = build_model(
-        model_config_path=MODEL_CONFIG_PATH,
-        data_config_path=DATA_CONFIG_PATH,
-        training_config_path=TRAIN_CONFIG_PATH,
+        model_config_path=config_bundle.effective_model_config_path,
+        data_config_path=config_bundle.effective_data_config_path,
+        training_config_path=config_bundle.effective_training_config_path,
         model_cfg=model_cfg,
         datamodule=datamodule,
     )

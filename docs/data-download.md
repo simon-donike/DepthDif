@@ -18,11 +18,11 @@ All examples assume the project environment is available at
 ```
 
 Raw and aligned intermediate products are normally stored under
-`/data1/datasets/depth_v2`. The model-ready GeoTIFF export is normally stored
-under:
+`/data1/datasets/depth_v2`. The model-ready packaged dataset used by the GeoTIFF dataloader is normally stored
+under the Hugging Face repo name:
 
 ```bash
-/work/data/depthdif
+/work/data/OceanVariableReconstruction
 ```
 
 ## Raw Upstream Data  

@@ -10,6 +10,8 @@
   "argo_points_url": null,
   "patch_splits_url": null,
   "full_sample_points_url": null,
+  "base_map_tiles_url": null,
+  "base_map_credit": null,
   "west": -180.0,
   "south": -90.0,
   "east": 180.0,
@@ -32,7 +34,9 @@
     "valid_alpha": 255,
     "color_scale_min_c": 0.0,
     "color_scale_max_c": 30.0,
-    "note": "Land-masked source pixels use the GeoTIFF nodata value before color relief so 0 C remains a valid ocean color in the globe tiles."
+    "note": "Land-masked source pixels use the GeoTIFF nodata value before color relief so 0 C remains a valid ocean color in the globe tiles.",
+    "color_scale_min": 0.0,
+    "color_scale_max": 30.0
   },
   "credits": {
     "prediction": "DepthDif prediction overlay",
@@ -40,8 +44,29 @@
     "points": "Observed Argo points",
     "patch_splits": "Inference patch grid",
     "full_sample_points": "Full-depth profiles",
-    "absolute_error": "Prediction absolute error overlay"
+    "base_map": "Natural Earth II",
+    "absolute_error": "Prediction absolute error overlay",
+    "uncertainty": "Prediction uncertainty overlay"
   },
   "description": "Fill this template with hosted asset URLs to drive the Cesium globe page.",
-  "absolute_error_tiles_url": null
+  "absolute_error_tiles_url": null,
+  "variable": "temperature",
+  "variable_label": "Temperature",
+  "value_units": "degree_Celsius",
+  "value_unit_label": "\u00b0C",
+  "color_scale_min": 0.0,
+  "color_scale_max": 30.0,
+  "default_variable": "temperature",
+  "available_variables": [
+    "temperature"
+  ],
+  "variables": {},
+  "uncertainty_tiles_url": null,
+  "uncertainty_color_palette": "absolute_error_green_red",
+  "uncertainty_value_units": "degree_Celsius",
+  "uncertainty_value_unit_label": "\u00b0C",
+  "uncertainty_color_scale_min": null,
+  "uncertainty_color_scale_max": null,
+  "uncertainty_legend_min": 0.0,
+  "uncertainty_legend_max": null
 }

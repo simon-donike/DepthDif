@@ -39,11 +39,16 @@ DEFAULT_TEMPLATE_PATH = (
 DEFAULT_COLOR_RAMP_PATH = (
     Path(__file__).resolve().parent / "transforms" / "temperature_blue_red_ramp.txt"
 )
+DEFAULT_SALINITY_COLOR_RAMP_PATH = (
+    Path(__file__).resolve().parent / "transforms" / "salinity_blue_green_ramp.txt"
+)
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TRANSPARENT_ALPHA = 0
 DEFAULT_OPAQUE_ALPHA = 255
 DEFAULT_COLOR_SCALE_MIN_C = 0.0
 DEFAULT_COLOR_SCALE_MAX_C = 30.0
+DEFAULT_SALINITY_COLOR_SCALE_MIN = 30.0
+DEFAULT_SALINITY_COLOR_SCALE_MAX = 40.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
 DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
@@ -51,6 +56,13 @@ DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_TILE_SIZE = 256
+DEFAULT_TILE_DRIVER = "WEBP"
+DEFAULT_WEBP_QUALITY = 95
+DEFAULT_BASE_MAP_RASTER_PATH = (
+    DEFAULT_REPO_ROOT / "src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif"
+)
+DEFAULT_BASE_MAP_TILES_PATH = Path("basemaps") / "natural_earth_ii_webp_q95"
+DEFAULT_BASE_MAP_CREDIT = "Natural Earth II"
 DEFAULT_CAMERA_LON = -38.55
 DEFAULT_CAMERA_LAT = 34.50
 DEFAULT_CAMERA_HEIGHT = 11_500_000.0
@@ -78,6 +90,54 @@ ARGO_SAMPLE_LOCATION_PROPERTY_KEYS = tuple(
     )
 )
 PATCH_SPLIT_PROPERTY_KEYS = ("split",)
+
+
+VARIABLE_GLOBE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "temperature": {
+        "label": "Temperature",
+        "value_units": "degree_Celsius",
+        "value_unit_label": "°C",
+        "color_scale_min": DEFAULT_COLOR_SCALE_MIN_C,
+        "color_scale_max": DEFAULT_COLOR_SCALE_MAX_C,
+        "color_palette": "temperature_blue_red",
+        "color_ramp_path": DEFAULT_COLOR_RAMP_PATH,
+    },
+    "salinity": {
+        "label": "Salinity",
+        "value_units": "PSU",
+        "value_unit_label": "PSU",
+        "color_scale_min": DEFAULT_SALINITY_COLOR_SCALE_MIN,
+        "color_scale_max": DEFAULT_SALINITY_COLOR_SCALE_MAX,
+        "color_palette": "salinity_blue_green",
+        "color_ramp_path": DEFAULT_SALINITY_COLOR_RAMP_PATH,
+    },
+}
+
+
+def _run_variable_metadata(run_summary: dict[str, Any]) -> dict[str, Any]:
+    """Return display and color metadata for a single exported variable run."""
+    variable = str(run_summary.get("variable", "temperature")).strip().lower()
+    defaults = VARIABLE_GLOBE_DEFAULTS.get(
+        variable, VARIABLE_GLOBE_DEFAULTS["temperature"]
+    )
+    return {
+        "name": variable,
+        "label": str(run_summary.get("variable_label", defaults["label"])),
+        "value_units": str(run_summary.get("value_units", defaults["value_units"])),
+        "value_unit_label": str(
+            run_summary.get("value_unit_label", defaults["value_unit_label"])
+        ),
+        "color_scale_min": float(
+            run_summary.get("color_scale_min", defaults["color_scale_min"])
+        ),
+        "color_scale_max": float(
+            run_summary.get("color_scale_max", defaults["color_scale_max"])
+        ),
+        "color_palette": str(
+            run_summary.get("color_palette", defaults["color_palette"])
+        ),
+        "color_ramp_path": Path(defaults["color_ramp_path"]),
+    }
 
 
 def _surface_depth_export(
@@ -143,7 +203,8 @@ def _resolve_land_mask_path(
 def _resolve_run_artifacts(
     run_dir: Path,
 ) -> tuple[
-    Path,
+    Path | None,
+    Path | None,
     Path | None,
     Path | None,
     Path | None,
@@ -161,12 +222,7 @@ def _resolve_run_artifacts(
     )
     if prediction_path is None:
         matches = sorted(run_dir.glob("*_prediction.tif"))
-        if not matches:
-            raise FileNotFoundError(
-                "Could not locate the prediction GeoTIFF. "
-                "Expected run_summary.yaml or one '*_prediction.tif' inside the run directory."
-            )
-        prediction_path = matches[0]
+        prediction_path = matches[0] if matches else None
 
     ground_truth_path = _coerce_existing_path(
         run_summary.get("ground_truth_tif_path"),
@@ -180,6 +236,20 @@ def _resolve_run_artifacts(
         run_summary.get("absolute_error_tif_path"),
         run_dir=run_dir,
     )
+
+    uncertainty_path = _coerce_existing_path(
+        run_summary.get("uncertainty_tif_path"),
+        run_dir=run_dir,
+    )
+    if uncertainty_path is None:
+        matches = sorted(run_dir.glob("*_uncertainty.tif"))
+        uncertainty_path = matches[0] if matches else None
+    if prediction_path is None and uncertainty_path is None:
+        raise FileNotFoundError(
+            "Could not locate prediction or uncertainty GeoTIFFs. Expected "
+            "run_summary.yaml, '*_prediction.tif', or '*_uncertainty.tif' inside "
+            "the run directory."
+        )
 
     points_path = _coerce_existing_path(
         run_summary.get("argo_points_geojson_path"),
@@ -227,6 +297,7 @@ def _resolve_run_artifacts(
         patch_splits_path,
         full_sample_points_path,
         graphs_dir_path,
+        uncertainty_path,
         run_summary,
     )
 
@@ -235,9 +306,11 @@ def _resolve_depth_export_artifacts(
     *,
     run_dir: Path,
     run_summary: dict[str, Any],
-    prediction_path: Path,
+    prediction_path: Path | None,
     ground_truth_path: Path | None,
 ) -> list[dict[str, Any]]:
+    if prediction_path is None:
+        return []
     raw_exports = run_summary.get("depth_exports")
     if not isinstance(raw_exports, list) or not raw_exports:
         return [
@@ -435,9 +508,7 @@ def _write_absolute_error_color_ramp(
         if previous_value is not None and np.isclose(value, previous_value):
             continue
         previous_value = float(value)
-        lines.append(
-            f"{float(value):.6f}    {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}"
-        )
+        lines.append(f"{float(value):.6f}    {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}")
     lines.append("nv   0 0 0 0")
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -522,37 +593,149 @@ def _build_gdal2tiles_command(
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    resampling: str = "near",
+    tile_driver: str = DEFAULT_TILE_DRIVER,
+    webp_quality: int = DEFAULT_WEBP_QUALITY,
 ) -> list[str]:
     gdal2tiles_exe = shutil.which("gdal2tiles.py")
     if gdal2tiles_exe is None:
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
     max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
-    return [
+    command = [
         gdal2tiles_exe,
         "-p",
         "mercator",
         "-r",
-        "near",
+        str(resampling),
         "-z",
         f"0-{max_zoom}",
         "-w",
         "none",
-        str(input_path),
-        str(output_dir),
     ]
+    if tile_driver:
+        command.append(f"--tiledriver={tile_driver}")
+        if str(tile_driver).upper() == "WEBP":
+            command.append(f"--webp-quality={int(webp_quality)}")
+    command.extend([str(input_path), str(output_dir)])
+    return command
+
+
+def _remove_gdal_auxiliary_files(output_dir: Path) -> int:
+    """Delete GDAL sidecar metadata files that are not needed for hosted tiles."""
+    removed = 0
+    for path in Path(output_dir).rglob("*.aux.xml"):
+        path.unlink()
+        removed += 1
+    return removed
 
 
 def _run_gdal2tiles(
-    input_path: Path, output_dir: Path, *, extra_zoom_levels: int
+    input_path: Path,
+    output_dir: Path,
+    *,
+    extra_zoom_levels: int,
+    resampling: str = "near",
+    tile_driver: str = DEFAULT_TILE_DRIVER,
+    webp_quality: int = DEFAULT_WEBP_QUALITY,
 ) -> None:
     _ensure_clean_directory(output_dir)
     command = _build_gdal2tiles_command(
         input_path,
         output_dir,
         extra_zoom_levels=extra_zoom_levels,
+        resampling=resampling,
+        tile_driver=tile_driver,
+        webp_quality=webp_quality,
     )
     subprocess.run(command, check=True)
+    _remove_gdal_auxiliary_files(output_dir)
+
+
+def _export_base_map_tiles(
+    globe_dir: Path,
+    *,
+    public_base_url: str | None,
+    base_map_raster_path: Path = DEFAULT_BASE_MAP_RASTER_PATH,
+) -> tuple[Path | None, str | None, str | None]:
+    """Tile the optional hosted basemap and return its local path and config URL."""
+    base_map_raster_path = Path(base_map_raster_path)
+    if not base_map_raster_path.exists():
+        return None, None, None
+
+    output_dir = Path(globe_dir) / DEFAULT_BASE_MAP_TILES_PATH
+    _run_gdal2tiles(
+        base_map_raster_path,
+        output_dir,
+        extra_zoom_levels=0,
+        resampling="bilinear",
+    )
+    return (
+        output_dir,
+        _resolve_layer_url(
+            DEFAULT_BASE_MAP_TILES_PATH.as_posix(),
+            public_base_url=public_base_url,
+        ),
+        DEFAULT_BASE_MAP_CREDIT,
+    )
+
+
+def _convert_image_to_webp(
+    source_path: Path,
+    destination_path: Path,
+    *,
+    quality: int = DEFAULT_WEBP_QUALITY,
+) -> None:
+    """Convert one hosted image to WebP for smaller bucket assets."""
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError(
+            "Pillow with WebP support is required to convert profile graphs."
+        ) from exc
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(source_path) as image:
+        image.save(destination_path, "WEBP", quality=int(quality), method=6)
+
+
+def _convert_hosted_profile_graphs_to_webp(
+    graphs_dir: Path,
+    *,
+    quality: int = DEFAULT_WEBP_QUALITY,
+) -> int:
+    """Convert copied profile graph PNGs to WebP and remove the PNG copies."""
+    converted = 0
+    for png_path in sorted(Path(graphs_dir).rglob("*.png")):
+        webp_path = png_path.with_suffix(".webp")
+        _convert_image_to_webp(png_path, webp_path, quality=quality)
+        png_path.unlink()
+        converted += 1
+    return converted
+
+
+def _rewrite_geojson_graph_paths_to_webp(geojson_path: Path) -> None:
+    """Point hosted profile graph references at converted WebP images."""
+    if not Path(geojson_path).exists():
+        return
+    with Path(geojson_path).open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    changed = False
+    for feature in payload.get("features", []):
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        graph_path = properties.get("graph_png_path")
+        if not isinstance(graph_path, str) or not graph_path.lower().endswith(".png"):
+            continue
+        properties["graph_png_path"] = graph_path[:-4] + ".webp"
+        changed = True
+
+    if changed:
+        with Path(geojson_path).open("w", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+            f.write("\n")
 
 
 def _sync_with_rclone(local_dir: Path, remote: str) -> tuple[bool, str]:
@@ -744,6 +927,9 @@ def _raster_transparency_config(
     raster_path: Path,
     *,
     land_mask_path: Path | None,
+    color_scale_min: float = DEFAULT_COLOR_SCALE_MIN_C,
+    color_scale_max: float = DEFAULT_COLOR_SCALE_MAX_C,
+    value_unit_label: str = "°C",
 ) -> dict[str, Any]:
     """Describe how raster pixels are converted to transparent globe tiles."""
     with rasterio.open(raster_path) as ds:
@@ -765,11 +951,14 @@ def _raster_transparency_config(
         "land_mask_mode": land_mask_mode,
         "land_mask_alpha": DEFAULT_TRANSPARENT_ALPHA,
         "valid_alpha": DEFAULT_OPAQUE_ALPHA,
-        "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
-        "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
+        "color_scale_min": float(color_scale_min),
+        "color_scale_max": float(color_scale_max),
+        "color_scale_min_c": float(color_scale_min),
+        "color_scale_max_c": float(color_scale_max),
         "note": (
             "Land-masked source pixels use the GeoTIFF nodata value before "
-            "color relief so 0 C remains a valid ocean color in the globe tiles."
+            f"color relief so valid 0 {value_unit_label} ocean values remain visible "
+            "when present."
         ),
     }
 
@@ -780,7 +969,7 @@ def build_globe_config(
     target_date: int | None,
     iso_year: int | None,
     iso_week: int | None,
-    prediction_tiles_url: str,
+    prediction_tiles_url: str | None,
     ground_truth_tiles_url: str | None,
     absolute_error_tiles_url: str | None,
     depth_levels: list[dict[str, Any]],
@@ -800,17 +989,64 @@ def build_globe_config(
     color_palette: str,
     raster_transparency: dict[str, Any],
     template: dict[str, Any],
+    variable: str = "temperature",
+    variable_label: str = "Temperature",
+    value_units: str = "degree_Celsius",
+    value_unit_label: str = "°C",
+    variables: dict[str, Any] | None = None,
+    default_variable: str | None = None,
+    uncertainty_tiles_url: str | None = None,
+    uncertainty_credit: str | None = None,
+    uncertainty_color_palette: str = DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+    uncertainty_color_scale_min: float | None = None,
+    uncertainty_color_scale_max: float | None = None,
+    uncertainty_legend_min: float = DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+    uncertainty_legend_max: int | None = None,
+    uncertainty_value_units: str | None = None,
+    uncertainty_value_unit_label: str | None = None,
+    base_map_tiles_url: str | None = None,
+    base_map_credit: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
+    uncertainty_units = (
+        value_units if uncertainty_value_units is None else uncertainty_value_units
+    )
+    uncertainty_unit_label = (
+        value_unit_label
+        if uncertainty_value_unit_label is None
+        else uncertainty_value_unit_label
+    )
     config.update(
         {
             "selected_date": selected_date,
             "target_date": target_date,
             "iso_year": iso_year,
             "iso_week": iso_week,
+            "variable": str(variable),
+            "variable_label": str(variable_label),
+            "value_units": str(value_units),
+            "value_unit_label": str(value_unit_label),
             "prediction_tiles_url": prediction_tiles_url,
             "ground_truth_tiles_url": ground_truth_tiles_url,
             "absolute_error_tiles_url": absolute_error_tiles_url,
+            "uncertainty_tiles_url": uncertainty_tiles_url,
+            "uncertainty_color_palette": str(uncertainty_color_palette),
+            "uncertainty_value_units": str(uncertainty_units),
+            "uncertainty_value_unit_label": str(uncertainty_unit_label),
+            "uncertainty_color_scale_min": (
+                None
+                if uncertainty_color_scale_min is None
+                else float(uncertainty_color_scale_min)
+            ),
+            "uncertainty_color_scale_max": (
+                None
+                if uncertainty_color_scale_max is None
+                else float(uncertainty_color_scale_max)
+            ),
+            "uncertainty_legend_min": float(uncertainty_legend_min),
+            "uncertainty_legend_max": (
+                None if uncertainty_legend_max is None else int(uncertainty_legend_max)
+            ),
             "depth_levels": depth_levels,
             "argo_sample_locations_url": argo_sample_locations_url,
             "argo_points_url": argo_points_url,
@@ -821,24 +1057,45 @@ def build_globe_config(
             "east": float(bounds["east"]),
             "north": float(bounds["north"]),
             "default_camera_destination": dict(bounds["default_camera_destination"]),
+            "color_scale_min": float(color_scale_min_c),
+            "color_scale_max": float(color_scale_max_c),
             "color_scale_min_c": float(color_scale_min_c),
             "color_scale_max_c": float(color_scale_max_c),
             "color_palette": str(color_palette),
             "raster_transparency": dict(raster_transparency),
         }
     )
+    if base_map_tiles_url is not None:
+        config["base_map_tiles_url"] = str(base_map_tiles_url)
+    else:
+        config.pop("base_map_tiles_url", None)
+    if base_map_credit is not None:
+        config["base_map_credit"] = str(base_map_credit)
+    else:
+        config.pop("base_map_credit", None)
+    if variables is not None:
+        config["variables"] = dict(variables)
+        config["default_variable"] = (
+            str(default_variable) if default_variable is not None else str(variable)
+        )
     credits = dict(config.get("credits", {}))
     credits["prediction"] = prediction_credit
     if ground_truth_credit is not None:
         credits["ground_truth"] = ground_truth_credit
     if absolute_error_credit is not None:
         credits["absolute_error"] = absolute_error_credit
+    if uncertainty_credit is not None:
+        credits["uncertainty"] = uncertainty_credit
     if points_credit is not None:
         credits["points"] = points_credit
     if patch_splits_credit is not None:
         credits["patch_splits"] = patch_splits_credit
     if full_sample_points_credit is not None:
         credits["full_sample_points"] = full_sample_points_credit
+    if base_map_credit is not None:
+        credits["base_map"] = str(base_map_credit)
+    else:
+        credits.pop("base_map", None)
     config["credits"] = credits
     return config
 
@@ -924,6 +1181,7 @@ def export_cesium_globe_assets(
     rclone_remote: str | None = None,
     rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+    include_base_map: bool = True,
 ) -> dict[str, Any]:
     """Build Cesium globe assets for one global inference run and optionally upload."""
     run_dir = Path(run_dir).resolve()
@@ -938,14 +1196,21 @@ def export_cesium_globe_assets(
         patch_splits_path,
         full_sample_points_path,
         graphs_dir_path,
+        uncertainty_path,
         run_summary,
     ) = _resolve_run_artifacts(run_dir)
 
+    variable_metadata = _run_variable_metadata(run_summary)
     globe_dir = run_dir / str(globe_dir_name)
     globe_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = globe_dir / ".tmp_colorized_rasters"
     _ensure_clean_directory(temp_dir)
     color_ramp_path = Path(color_ramp_path)
+    if (
+        variable_metadata["name"] != "temperature"
+        and color_ramp_path == DEFAULT_COLOR_RAMP_PATH
+    ):
+        color_ramp_path = Path(variable_metadata["color_ramp_path"])
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
     land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
@@ -960,6 +1225,8 @@ def export_cesium_globe_assets(
     prediction_tiles_dir: Path | None = None
     ground_truth_tiles_dir: Path | None = None
     absolute_error_tiles_dir: Path | None = None
+    uncertainty_tiles_dir: Path | None = None
+    uncertainty_scale: dict[str, float | int] | None = None
     for depth_export in depth_exports:
         suffix = str(depth_export["suffix"])
         prediction_export_path = Path(depth_export["prediction_path"])
@@ -1011,7 +1278,9 @@ def export_cesium_globe_assets(
         if absolute_error_export_path is not None:
             absolute_error_export_path = Path(absolute_error_export_path)
             _validate_raster_transparency_contract(absolute_error_export_path)
-            absolute_error_scale = _absolute_error_color_scale(absolute_error_export_path)
+            absolute_error_scale = _absolute_error_color_scale(
+                absolute_error_export_path
+            )
             absolute_error_ramp_path = (
                 temp_dir / f"{absolute_error_export_path.stem}_green_red_ramp.txt"
             )
@@ -1047,9 +1316,14 @@ def export_cesium_globe_assets(
                 "requested_depth_m": float(depth_export["requested_depth_m"]),
                 "actual_depth_m": float(depth_export["actual_depth_m"]),
                 "channel_index": int(depth_export["channel_index"]),
-                "value_units": "degree_Celsius",
-                "color_scale_min_c": DEFAULT_COLOR_SCALE_MIN_C,
-                "color_scale_max_c": DEFAULT_COLOR_SCALE_MAX_C,
+                "variable": str(variable_metadata["name"]),
+                "variable_label": str(variable_metadata["label"]),
+                "value_units": str(variable_metadata["value_units"]),
+                "value_unit_label": str(variable_metadata["value_unit_label"]),
+                "color_scale_min": float(variable_metadata["color_scale_min"]),
+                "color_scale_max": float(variable_metadata["color_scale_max"]),
+                "color_scale_min_c": float(variable_metadata["color_scale_min"]),
+                "color_scale_max_c": float(variable_metadata["color_scale_max"]),
                 "prediction_tiles_url": _resolve_layer_url(
                     prediction_tiles_dir_for_depth.name,
                     public_base_url=public_base_url,
@@ -1071,6 +1345,20 @@ def export_cesium_globe_assets(
                     )
                 ),
                 "absolute_error_color_palette": DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+                "absolute_error_value_units": str(variable_metadata["value_units"]),
+                "absolute_error_value_unit_label": str(
+                    variable_metadata["value_unit_label"]
+                ),
+                "absolute_error_color_scale_min": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_min_c"])
+                ),
+                "absolute_error_color_scale_max": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["color_scale_max_c"])
+                ),
                 "absolute_error_color_scale_min_c": (
                     None
                     if absolute_error_scale is None
@@ -1081,11 +1369,22 @@ def export_cesium_globe_assets(
                     if absolute_error_scale is None
                     else float(absolute_error_scale["color_scale_max_c"])
                 ),
+                "absolute_error_legend_min": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+                "absolute_error_legend_max": (
+                    None
+                    if absolute_error_scale is None
+                    else int(absolute_error_scale["legend_max_c"])
+                ),
                 "absolute_error_legend_min_c": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
                 "absolute_error_legend_max_c": (
                     None
                     if absolute_error_scale is None
                     else int(absolute_error_scale["legend_max_c"])
+                ),
+                "absolute_error_valid_max": (
+                    None
+                    if absolute_error_scale is None
+                    else float(absolute_error_scale["valid_max_c"])
                 ),
                 "absolute_error_valid_max_c": (
                     None
@@ -1101,8 +1400,32 @@ def export_cesium_globe_assets(
             }
         )
 
-    if prediction_tiles_dir is None:
-        raise RuntimeError("No prediction depth tiles were generated.")
+    if uncertainty_path is not None:
+        _validate_raster_transparency_contract(uncertainty_path)
+        uncertainty_scale = _absolute_error_color_scale(uncertainty_path)
+        uncertainty_ramp_path = temp_dir / f"{uncertainty_path.stem}_green_red_ramp.txt"
+        _write_absolute_error_color_ramp(
+            uncertainty_ramp_path,
+            color_scale_min_c=float(uncertainty_scale["color_scale_min_c"]),
+            color_scale_max_c=float(uncertainty_scale["color_scale_max_c"]),
+            valid_max_c=float(uncertainty_scale["valid_max_c"]),
+        )
+        uncertainty_colorized_path = temp_dir / f"{uncertainty_path.stem}_colorized.tif"
+        _colorize_raster(
+            uncertainty_path,
+            uncertainty_colorized_path,
+            color_ramp_path=uncertainty_ramp_path,
+        )
+        uncertainty_tiles_dir = globe_dir / "uncertainty_tiles"
+        _run_gdal2tiles(
+            uncertainty_colorized_path,
+            uncertainty_tiles_dir,
+            extra_zoom_levels=extra_zoom_levels,
+        )
+
+    if prediction_tiles_dir is None and uncertainty_tiles_dir is None:
+        raise RuntimeError("No prediction or uncertainty tiles were generated.")
+
     copied_points_path: Path | None = None
     if points_path is not None:
         copied_points_path = globe_dir / "argo_points.geojson"
@@ -1139,6 +1462,7 @@ def export_cesium_globe_assets(
             full_sample_points_path=full_sample_points_path,
         )
 
+    converted_profile_graph_count = 0
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():
         copied_graphs_dir_path = globe_dir / "graphs"
@@ -1146,8 +1470,33 @@ def export_cesium_globe_assets(
             if copied_graphs_dir_path.exists():
                 shutil.rmtree(copied_graphs_dir_path)
             shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
+        converted_profile_graph_count = _convert_hosted_profile_graphs_to_webp(
+            copied_graphs_dir_path
+        )
+        for geojson_path in (
+            copied_full_sample_points_path,
+            copied_argo_sample_locations_path,
+        ):
+            if geojson_path is not None:
+                _rewrite_geojson_graph_paths_to_webp(geojson_path)
 
-    prediction_meta = _read_raster_metadata(prediction_path)
+    base_map_tiles_dir: Path | None = None
+    base_map_tiles_url: str | None = None
+    base_map_credit: str | None = None
+    if include_base_map:
+        base_map_tiles_dir, base_map_tiles_url, base_map_credit = (
+            _export_base_map_tiles(
+                globe_dir,
+                public_base_url=public_base_url,
+            )
+        )
+
+    bounds_source_path = (
+        prediction_path if prediction_path is not None else uncertainty_path
+    )
+    if bounds_source_path is None:
+        raise RuntimeError("No raster was available for globe bounds metadata.")
+    prediction_meta = _read_raster_metadata(bounds_source_path)
     ground_truth_meta = (
         _read_raster_metadata(ground_truth_path)
         if ground_truth_path is not None
@@ -1158,9 +1507,17 @@ def export_cesium_globe_assets(
         if absolute_error_path is not None
         else None
     )
+    uncertainty_meta = (
+        _read_raster_metadata(uncertainty_path)
+        if uncertainty_path is not None
+        else None
+    )
     raster_transparency = _raster_transparency_config(
-        prediction_path,
+        bounds_source_path,
         land_mask_path=land_mask_path,
+        color_scale_min=float(variable_metadata["color_scale_min"]),
+        color_scale_max=float(variable_metadata["color_scale_max"]),
+        value_unit_label=str(variable_metadata["value_unit_label"]),
     )
     template = _load_template(Path(template_path))
     config = build_globe_config(
@@ -1168,15 +1525,19 @@ def export_cesium_globe_assets(
         target_date=run_summary.get("target_date", run_summary.get("selected_date")),
         iso_year=run_summary.get("iso_year"),
         iso_week=run_summary.get("iso_week"),
-        prediction_tiles_url=str(config_depth_levels[0]["prediction_tiles_url"]),
+        prediction_tiles_url=(
+            None
+            if not config_depth_levels
+            else str(config_depth_levels[0]["prediction_tiles_url"])
+        ),
         ground_truth_tiles_url=(
             None
-            if ground_truth_tiles_dir is None
+            if ground_truth_tiles_dir is None or not config_depth_levels
             else config_depth_levels[0]["ground_truth_tiles_url"]
         ),
         absolute_error_tiles_url=(
             None
-            if absolute_error_tiles_dir is None
+            if absolute_error_tiles_dir is None or not config_depth_levels
             else config_depth_levels[0]["absolute_error_tiles_url"]
         ),
         depth_levels=config_depth_levels,
@@ -1220,6 +1581,9 @@ def export_cesium_globe_assets(
         absolute_error_credit=(
             None if absolute_error_meta is None else absolute_error_meta["credit"]
         ),
+        uncertainty_credit=(
+            None if uncertainty_meta is None else uncertainty_meta["credit"]
+        ),
         points_credit=None if copied_points_path is None else "Observed Argo points",
         patch_splits_credit=(
             None if copied_patch_splits_path is None else "Inference patch grid"
@@ -1229,11 +1593,40 @@ def export_cesium_globe_assets(
             if copied_full_sample_points_path is None
             else "Random full-depth profile locations"
         ),
-        color_scale_min_c=DEFAULT_COLOR_SCALE_MIN_C,
-        color_scale_max_c=DEFAULT_COLOR_SCALE_MAX_C,
-        color_palette="temperature_blue_red",
+        color_scale_min_c=float(variable_metadata["color_scale_min"]),
+        color_scale_max_c=float(variable_metadata["color_scale_max"]),
+        color_palette=str(variable_metadata["color_palette"]),
         raster_transparency=raster_transparency,
         template=template,
+        variable=str(variable_metadata["name"]),
+        variable_label=str(variable_metadata["label"]),
+        value_units=str(variable_metadata["value_units"]),
+        value_unit_label=str(variable_metadata["value_unit_label"]),
+        uncertainty_tiles_url=(
+            None
+            if uncertainty_tiles_dir is None
+            else _resolve_layer_url(
+                uncertainty_tiles_dir.name,
+                public_base_url=public_base_url,
+            )
+        ),
+        uncertainty_color_scale_min=(
+            None
+            if uncertainty_scale is None
+            else float(uncertainty_scale["color_scale_min_c"])
+        ),
+        uncertainty_color_scale_max=(
+            None
+            if uncertainty_scale is None
+            else float(uncertainty_scale["color_scale_max_c"])
+        ),
+        uncertainty_legend_max=(
+            None
+            if uncertainty_scale is None
+            else int(uncertainty_scale["legend_max_c"])
+        ),
+        base_map_tiles_url=base_map_tiles_url,
+        base_map_credit=base_map_credit,
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1244,11 +1637,16 @@ def export_cesium_globe_assets(
 
     print(f"Wrote globe assets to: {globe_dir}")
     print(f"- prediction depth tile sets: {len(config_depth_levels)}")
-    print(f"- first prediction tiles: {prediction_tiles_dir}")
+    if prediction_tiles_dir is not None:
+        print(f"- first prediction tiles: {prediction_tiles_dir}")
     if ground_truth_tiles_dir is not None:
         print(f"- first ground-truth tiles: {ground_truth_tiles_dir}")
     if absolute_error_tiles_dir is not None:
         print(f"- first absolute-error tiles: {absolute_error_tiles_dir}")
+    if uncertainty_tiles_dir is not None:
+        print(f"- uncertainty tiles: {uncertainty_tiles_dir}")
+    if base_map_tiles_dir is not None:
+        print(f"- hosted base map tiles: {base_map_tiles_dir}")
     if copied_argo_sample_locations_path is not None:
         print(
             "- combined ARGO sample locations GeoJSON: "
@@ -1261,15 +1659,21 @@ def export_cesium_globe_assets(
     if copied_full_sample_points_path is not None:
         print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
     if copied_graphs_dir_path is not None:
-        print(f"- full-sample graphs: {copied_graphs_dir_path}")
+        print(
+            f"- full-sample graphs: {copied_graphs_dir_path} "
+            f"({converted_profile_graph_count} WebP files)"
+        )
     print(f"- config: {config_path}")
     print(
-        "- fixed Celsius color scale: "
-        f"[{DEFAULT_COLOR_SCALE_MIN_C:.1f}, {DEFAULT_COLOR_SCALE_MAX_C:.1f}]"
+        f"- fixed {variable_metadata['label']} color scale: "
+        f"[{float(variable_metadata['color_scale_min']):.1f}, "
+        f"{float(variable_metadata['color_scale_max']):.1f}] "
+        f"{variable_metadata['value_unit_label']}"
     )
     print(f"- color ramp: {color_ramp_path}")
     print(f"- transparent land mask: {land_mask_path}")
     print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
+    print(f"- tile format: {DEFAULT_TILE_DRIVER} q{DEFAULT_WEBP_QUALITY}")
     print("- tile resampling: nearest-neighbor")
     upload_ok: bool | None = None
     upload_message: str | None = None
@@ -1298,6 +1702,7 @@ def export_cesium_globe_assets(
     return {
         "globe_dir": str(globe_dir),
         "config_path": str(config_path),
+        "variable": str(variable_metadata["name"]),
         "depth_tile_set_count": int(len(config_depth_levels)),
         "absolute_error_tile_set_count": int(
             sum(
@@ -1306,6 +1711,242 @@ def export_cesium_globe_assets(
                 if depth_level.get("absolute_error_tiles_url") is not None
             )
         ),
+        "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
+        "base_map_tile_set_count": int(base_map_tiles_dir is not None),
+        "profile_graph_webp_count": int(converted_profile_graph_count),
+        "upload_requested": rclone_remote is not None,
+        "upload_ok": upload_ok,
+        "upload_message": upload_message,
+        "upload_remote": rclone_remote,
+        "upload_source": None if upload_source is None else str(upload_source),
+    }
+
+
+ASSET_URL_KEYS = (
+    "prediction_tiles_url",
+    "ground_truth_tiles_url",
+    "absolute_error_tiles_url",
+    "uncertainty_tiles_url",
+    "argo_sample_locations_url",
+    "argo_points_url",
+    "patch_splits_url",
+    "full_sample_points_url",
+)
+
+
+def _is_absolute_asset_url(asset_url: str) -> bool:
+    """Return True when an asset URL should not be rewritten as relative."""
+    lowered = str(asset_url).strip().lower()
+    return (
+        lowered.startswith("http://")
+        or lowered.startswith("https://")
+        or lowered.startswith("data:")
+    )
+
+
+def _prefix_variable_asset_url(
+    asset_url: str | None,
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> str | None:
+    """Prefix a single-variable asset URL for the combined globe config."""
+    if asset_url is None:
+        return None
+    raw = str(asset_url).strip()
+    if raw == "" or _is_absolute_asset_url(raw):
+        return raw
+    clean = raw[2:] if raw.startswith("./") else raw
+    clean = clean.lstrip("/")
+    if public_base_url is not None:
+        return f"{public_base_url.rstrip('/')}/{variable}/{clean}"
+    return f"{variable}/{clean}"
+
+
+def _prefix_variable_config_asset_urls(
+    variable_config: dict[str, Any],
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> dict[str, Any]:
+    """Rewrite one variable config so URLs resolve from the combined config."""
+    rewritten = dict(variable_config)
+    for key in ASSET_URL_KEYS:
+        rewritten[key] = _prefix_variable_asset_url(
+            rewritten.get(key),
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+    depth_levels = []
+    for depth_level in rewritten.get("depth_levels", []):
+        if not isinstance(depth_level, dict):
+            continue
+        rewritten_depth = dict(depth_level)
+        for key in ASSET_URL_KEYS[:3]:
+            rewritten_depth[key] = _prefix_variable_asset_url(
+                rewritten_depth.get(key),
+                variable=variable,
+                public_base_url=public_base_url,
+            )
+        depth_levels.append(rewritten_depth)
+    rewritten["depth_levels"] = depth_levels
+    return rewritten
+
+
+def _prefix_geojson_graph_paths(
+    geojson_path: Path,
+    *,
+    variable: str,
+    public_base_url: str | None,
+) -> None:
+    """Rewrite graph PNG paths so popups work from the combined config URL."""
+    if not geojson_path.exists():
+        return
+    with geojson_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    changed = False
+    for feature in payload.get("features", []):
+        properties = feature.get("properties")
+        if not isinstance(properties, dict) or not properties.get("graph_png_path"):
+            continue
+        properties["graph_png_path"] = _prefix_variable_asset_url(
+            str(properties["graph_png_path"]),
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+        changed = True
+    if changed:
+        with geojson_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+            f.write("\n")
+
+
+def _ordered_variable_items(
+    variable_run_dirs: dict[str, Path],
+) -> list[tuple[str, Path]]:
+    """Return variable run directories in a stable viewer order."""
+    items = {
+        str(key).strip().lower(): Path(value)
+        for key, value in variable_run_dirs.items()
+    }
+    ordered: list[tuple[str, Path]] = []
+    for key in ("temperature", "salinity"):
+        if key in items:
+            ordered.append((key, items.pop(key)))
+    ordered.extend(sorted(items.items(), key=lambda item: item[0]))
+    return ordered
+
+
+def export_cesium_globe_variable_assets(
+    *,
+    variable_run_dirs: dict[str, Path],
+    globe_dir: Path,
+    public_base_url: str | None = None,
+    rclone_remote: str | None = None,
+    rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
+    extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+) -> dict[str, Any]:
+    """Build one combined Cesium globe bundle from per-variable export runs."""
+    ordered_variables = _ordered_variable_items(variable_run_dirs)
+    if not ordered_variables:
+        raise ValueError("At least one variable run directory is required.")
+
+    globe_dir = Path(globe_dir).resolve()
+    _ensure_clean_directory(globe_dir)
+    variables: dict[str, Any] = {}
+    single_results: dict[str, Any] = {}
+    for variable, run_dir in ordered_variables:
+        run_dir = Path(run_dir).resolve()
+        single_result = export_cesium_globe_assets(
+            run_dir=run_dir,
+            public_base_url=None,
+            globe_dir_name="globe",
+            rclone_remote=None,
+            rclone_sync_scope=DEFAULT_RCLONE_SYNC_SCOPE,
+            extra_zoom_levels=extra_zoom_levels,
+            include_base_map=False,
+        )
+        source_globe_dir = Path(str(single_result["globe_dir"])).resolve()
+        variable_globe_dir = globe_dir / variable
+        if variable_globe_dir.exists():
+            shutil.rmtree(variable_globe_dir)
+        if source_globe_dir != variable_globe_dir:
+            shutil.move(str(source_globe_dir), str(variable_globe_dir))
+        for geojson_name in (
+            "argo_sample_locations.geojson",
+            "full_sample_locations.geojson",
+        ):
+            _prefix_geojson_graph_paths(
+                variable_globe_dir / geojson_name,
+                variable=variable,
+                public_base_url=public_base_url,
+            )
+        with (variable_globe_dir / "globe-config.json").open(
+            "r", encoding="utf-8"
+        ) as f:
+            variable_config = json.load(f)
+        variables[variable] = _prefix_variable_config_asset_urls(
+            variable_config,
+            variable=variable,
+            public_base_url=public_base_url,
+        )
+        single_results[variable] = single_result
+
+    default_variable = (
+        "temperature" if "temperature" in variables else next(iter(variables))
+    )
+    base_map_tiles_dir, base_map_tiles_url, base_map_credit = _export_base_map_tiles(
+        globe_dir,
+        public_base_url=public_base_url,
+    )
+    combined_config = dict(variables[default_variable])
+    if base_map_tiles_url is not None:
+        combined_config["base_map_tiles_url"] = base_map_tiles_url
+    if base_map_credit is not None:
+        combined_config["base_map_credit"] = base_map_credit
+        combined_credits = dict(combined_config.get("credits", {}))
+        combined_credits["base_map"] = base_map_credit
+        combined_config["credits"] = combined_credits
+    combined_config["variables"] = variables
+    combined_config["default_variable"] = default_variable
+    combined_config["available_variables"] = list(variables.keys())
+    combined_config_path = globe_dir / "globe-config.json"
+    with combined_config_path.open("w", encoding="utf-8") as f:
+        json.dump(combined_config, f, indent=2)
+        f.write("\n")
+
+    upload_ok: bool | None = None
+    upload_message: str | None = None
+    upload_source: Path | None = None
+    if rclone_remote is not None:
+        if str(rclone_sync_scope) == "run":
+            upload_source = globe_dir.parent
+            sync_scope_label = "combined run directory"
+        else:
+            upload_source = globe_dir
+            sync_scope_label = "combined globe assets"
+        ok, message = _sync_with_rclone(upload_source, rclone_remote)
+        upload_ok = bool(ok)
+        upload_message = str(message)
+        if ok:
+            print(f"- rclone upload ({sync_scope_label}): {rclone_remote}")
+            print(f"  source: {upload_source}")
+            print(f"  {message}")
+        else:
+            print(f"WARNING: {message}")
+            print("WARNING: Combined globe assets were still created locally.")
+
+    print(f"Wrote combined globe config: {combined_config_path}")
+    print(f"- variables: {', '.join(variables.keys())}")
+    if base_map_tiles_dir is not None:
+        print(f"- hosted base map tiles: {base_map_tiles_dir}")
+    return {
+        "globe_dir": str(globe_dir),
+        "config_path": str(combined_config_path),
+        "variables": list(variables.keys()),
+        "default_variable": default_variable,
+        "single_results": single_results,
+        "base_map_tile_set_count": int(base_map_tiles_dir is not None),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,

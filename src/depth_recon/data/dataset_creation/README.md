@@ -6,14 +6,14 @@ metadata used by the active patch dataset.
 Folder layout:
 
 - `data_download_raw/`: source-specific scripts for downloading upstream
-  EN4/ARGO, GLORYS, OSTIA, and sea-level NetCDF files.
+  EN4/ARGO, GLORYS, OSTIA, SSS, and sea-level NetCDF files.
 - `data_download_packaged/`: packaged dataset download and extraction helpers.
 - `export_aligned_argo/`: aligned ARGO export workflow scripts, source variable
   names, and NetCDF source-file utilities used by
   `ArgoNetCDFGriddedPatchDataset`.
 - `export_dataset_geotiff/`: aligned uint8 GeoTIFF export workflow for dense
-  GLORYS, OSTIA, and sea-level rasters plus a compact grid-indexed ARGO profile
-  zarr.
+  GLORYS, OSTIA, sea-level, and SSS rasters plus a compact grid-indexed ARGO
+  profile zarr.
 
 The current default source root is:
 
@@ -61,8 +61,15 @@ START_DATE=2010-01-01 END_DATE=2024-07-31 \
   /data1/datasets/depth_v2/sealevel_daily
 ```
 
-The active dataset reads these NetCDF files directly and creates only compact
-metadata caches under `dataset.core.metadata_cache_dir`.
+Download daily sea-surface salinity files:
+
+```bash
+START_DATE=2010-01-01 END_DATE=2024-07-31 \
+  src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
+  /data1/datasets/depth_v2/sss_daily
+```
+
+The current pixel training path first exports these sources into the GeoTIFF store used by `training_super_config.yaml`. Legacy NetCDF dataset code can still read the raw files directly for tests and older experiments.
 
 ## Export GeoTIFF Raster Training Stores
 
@@ -70,6 +77,12 @@ The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
 variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
 salinity, and validity masks. Temperature stretches decode to Kelvin.
+The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys. The pixel
+scenario resolver sets `output.fields`; `--scenario salinity` skips temperature and
+returns `x_salinity`, `y_salinity`, and their validity masks, while `--scenario joint`
+returns both field groups. Use `salinity_normalize(..., mode="denorm")` to recover
+physical PSU values. The dataloader does not concatenate variables;
+`PixelDiffusionConditional` selects or stacks fields according to the resolved scenario.
 The authoritative land-mask GeoTIFF is copied into `masks/` in the export root
 and recorded in `manifest.yaml`.
 Dense raster dates are exported with process workers by default; use `--workers`
@@ -85,6 +98,7 @@ worst-case rounding error.
 | --- | --- | ---: | ---: | ---: | ---: |
 | Temperature | `[270.15, 308.15] K` | `0.1496 K` | `0.0748 K` | `0.3016 K` | `0.1508 K` |
 | Salinity | `[30, 40] PSU` | `0.0394 PSU` | `0.0197 PSU` | `0.0794 PSU` | `0.0397 PSU` |
+| Density | `[1000, 1035] kg/m3` | `0.1378 kg/m3` | `0.0689 kg/m3` | `0.2778 kg/m3` | `0.1389 kg/m3` |
 | Sea height `adt` | `[-2, 2] m` | `0.0157 m` | `0.0079 m` | `0.0317 m` | `0.0159 m` |
 
 The int8 comparison assumes a signed-byte layout that only uses nonnegative
@@ -92,20 +106,68 @@ codes `0..126` plus nodata `127`. A signed int8 remapped across all 255
 non-nodata codes would have the same precision as uint8, but the unsigned layout
 keeps the transform simpler and interoperates better with raster tooling.
 
-By default, the export root is `/work/data/depthdif`, and the aligned ARGO input
-is expected at `/work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr`:
+By default, the working dataset root is `/work/data/depthdif`. The ARGO
+exporter owns both ARGO Zarr products: the full enriched profile-level Zarr and
+the compact grid-indexed Zarr consumed by the GeoTIFF dataloader:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
+  --argo-dir /data1/datasets/depth_v2/en4_profiles \
+  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
+  --ostia-dir /data1/datasets/depth_v2/ostia \
+  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
+  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
+  --start-date 20100101 \
+  --end-date 20240731 \
+  --workers 4 \
+  --overwrite
+```
+
+The GeoTIFF exporter owns dense raster products. Use `--rasters-only` when the
+compact ARGO Zarr has already been written by the ARGO exporter:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
   --ostia-dir /data1/datasets/depth_v2/ostia \
   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-  --enriched-argo-zarr /work/data/depthdif/aligned_argo/enriched_argo_profiles.zarr \
+  --sss-dir /data1/datasets/depth_v2/sss_daily \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --output-dir /work/data/depthdif \
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
   --workers 4 \
+  --rasters-only \
   --overwrite
 ```
+
+Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
+without rewriting existing modality/date rasters.
+
+## Package DepthDif Dataset for Hugging Face
+
+After ARGO and raster exports complete, assemble a self-contained upload folder
+with root-level `rasters/` using:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
+  --input-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
+  --raster-root /work/data/depthdif/rasters \
+  --compact-argo-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --manifest-path /work/data/depthdif/manifest.yaml \
+  --masks-dir /work/data/depthdif/masks \
+  --output-dir /work/data/OceanVariableReconstruction \
+  --zarr-name argo_glors_ostia_ssh.zarr \
+  --file-mode copy \
+  --overwrite
+```
+
+The upload root contains `rasters/`, `argo/argo_profiles_on_grid.zarr`,
+`data/argo_glors_ostia_ssh.zarr`, `manifest.yaml`, `masks/`, Parquet indices,
+examples, metadata, local `assets/` for the Hugging Face dataset card,
+`README.md`, and `LICENSE`. SSS variables are included in the enriched Zarr as
+`sss_sos`, `sss_dos`, `sss_sea_ice_fraction`, and `sss_temporal_status`.
