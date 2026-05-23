@@ -948,6 +948,8 @@ def build_globe_config(
     uncertainty_value_unit_label: str | None = None,
     base_map_tiles_url: str | None = None,
     base_map_credit: str | None = None,
+    error_analysis_url: str | None = None,
+    error_analysis_data_url: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
     uncertainty_units = (
@@ -1020,6 +1022,14 @@ def build_globe_config(
         config["default_variable"] = (
             str(default_variable) if default_variable is not None else str(variable)
         )
+    if error_analysis_url is not None:
+        config["error_analysis_url"] = str(error_analysis_url)
+    else:
+        config.pop("error_analysis_url", None)
+    if error_analysis_data_url is not None:
+        config["error_analysis_data_url"] = str(error_analysis_data_url)
+    else:
+        config.pop("error_analysis_data_url", None)
     credits = dict(config.get("credits", {}))
     credits["prediction"] = prediction_credit
     if ground_truth_credit is not None:
@@ -1110,6 +1120,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "native max zoom. Tiling always uses nearest-neighbor resampling."
         ),
     )
+    parser.add_argument(
+        "--error-analysis",
+        "--include-error-analysis",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="include_error_analysis",
+        help=(
+            "Generate error-analysis.{html,json} into the globe directory and add "
+            "dashboard URLs to globe-config.json."
+        ),
+    )
     return parser
 
 
@@ -1124,6 +1145,7 @@ def export_cesium_globe_assets(
     rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
     include_base_map: bool = True,
+    include_error_analysis: bool = True,
 ) -> dict[str, Any]:
     """Build Cesium globe assets for one global inference run and optionally upload."""
     run_dir = Path(run_dir).resolve()
@@ -1423,6 +1445,21 @@ def export_cesium_globe_assets(
             )
         )
 
+    copied_error_analysis_html_path: Path | None = None
+    copied_error_analysis_json_path: Path | None = None
+    if include_error_analysis:
+        from depth_recon.inference.export_error_analysis_dashboard import (
+            export_error_analysis_dashboard,
+        )
+
+        error_analysis_result = export_error_analysis_dashboard(
+            run_dir=run_dir,
+            output_dir=globe_dir,
+            public_base_url=public_base_url,
+        )
+        copied_error_analysis_html_path = Path(error_analysis_result["html_path"])
+        copied_error_analysis_json_path = Path(error_analysis_result["json_path"])
+
     bounds_source_path = (
         prediction_path if prediction_path is not None else uncertainty_path
     )
@@ -1559,6 +1596,22 @@ def export_cesium_globe_assets(
         ),
         base_map_tiles_url=base_map_tiles_url,
         base_map_credit=base_map_credit,
+        error_analysis_url=(
+            None
+            if copied_error_analysis_html_path is None
+            else _resolve_layer_url(
+                copied_error_analysis_html_path.name,
+                public_base_url=public_base_url,
+            )
+        ),
+        error_analysis_data_url=(
+            None
+            if copied_error_analysis_json_path is None
+            else _resolve_layer_url(
+                copied_error_analysis_json_path.name,
+                public_base_url=public_base_url,
+            )
+        ),
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1592,6 +1645,8 @@ def export_cesium_globe_assets(
         print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
     if copied_graphs_dir_path is not None:
         print(f"- full-sample graphs: {copied_graphs_dir_path}")
+    if copied_error_analysis_html_path is not None:
+        print(f"- error analysis dashboard: {copied_error_analysis_html_path}")
     print(f"- config: {config_path}")
     print(
         f"- fixed {variable_metadata['label']} color scale: "
@@ -1699,7 +1754,7 @@ def _prefix_variable_config_asset_urls(
 ) -> dict[str, Any]:
     """Rewrite one variable config so URLs resolve from the combined config."""
     rewritten = dict(variable_config)
-    for key in ASSET_URL_KEYS:
+    for key in ASSET_URL_KEYS + ("error_analysis_url", "error_analysis_data_url"):
         rewritten[key] = _prefix_variable_asset_url(
             rewritten.get(key),
             variable=variable,
@@ -1793,6 +1848,7 @@ def export_cesium_globe_variable_assets(
             rclone_sync_scope=DEFAULT_RCLONE_SYNC_SCOPE,
             extra_zoom_levels=extra_zoom_levels,
             include_base_map=False,
+            include_error_analysis=True,
         )
         source_globe_dir = Path(str(single_result["globe_dir"])).resolve()
         variable_globe_dir = globe_dir / variable
@@ -1838,6 +1894,14 @@ def export_cesium_globe_variable_assets(
     combined_config["variables"] = variables
     combined_config["default_variable"] = default_variable
     combined_config["available_variables"] = list(variables.keys())
+    default_analysis_source = globe_dir / default_variable / "error-analysis.json"
+    if default_analysis_source.exists():
+        default_analysis_path = globe_dir / "error-analysis.json"
+        shutil.copy2(default_analysis_source, default_analysis_path)
+        combined_config["error_analysis_data_url"] = _resolve_layer_url(
+            default_analysis_path.name,
+            public_base_url=public_base_url,
+        )
     combined_config_path = globe_dir / "globe-config.json"
     with combined_config_path.open("w", encoding="utf-8") as f:
         json.dump(combined_config, f, indent=2)
@@ -1895,6 +1959,7 @@ def main() -> None:
         rclone_remote=args.rclone_remote,
         rclone_sync_scope=args.rclone_sync_scope,
         extra_zoom_levels=args.extra_zoom_levels,
+        include_error_analysis=bool(args.include_error_analysis),
     )
 
 

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en" class="standalone-analysis-root">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DepthDif Analysis Dashboard</title>
+    <meta
+      name="description"
+      content="Standalone DepthDif dashboard for absolute-error geography, depth profiles, and regional diagnostics."
+    />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
+    />
+    <link rel="icon" href="../assets/branding/website_icon.png" />
+    <link rel="stylesheet" href="../stylesheets/analysis-dashboard.css" />
+    <script defer src="../javascripts/analysis-dashboard.js"></script>
+  </head>
+  <body class="standalone-analysis-page">
+    <main class="analysis-shell">
+      <header class="analysis-header">
+        <div>
+          <span class="analysis-eyebrow">DepthDif Diagnostics</span>
+          <h1>Analysis Dashboard</h1>
+          <p id="analysis-run-label">Loading absolute-error diagnostics...</p>
+        </div>
+        <nav class="analysis-links" aria-label="Dashboard links">
+          <a href="../">Docs</a>
+          <a href="../globe/">Globe</a>
+        </nav>
+      </header>
+
+      <section class="analysis-controls" aria-label="Dashboard controls">
+        <label>
+          <span>Modality</span>
+          <select id="analysis-modality-select"></select>
+        </label>
+        <label>
+          <span>Depth</span>
+          <select id="analysis-depth-select"></select>
+        </label>
+        <label>
+          <span>Metric</span>
+          <div id="analysis-metric-toggle" class="analysis-segmented" role="radiogroup"></div>
+        </label>
+        <label>
+          <span>Focus</span>
+          <select id="analysis-focus-select"></select>
+        </label>
+      </section>
+
+      <section id="analysis-kpis" class="analysis-kpis" aria-label="Key error metrics"></section>
+
+      <section class="analysis-grid">
+        <article class="analysis-panel analysis-panel--map">
+          <div class="analysis-panel__header">
+            <div>
+              <h2>Geographic Error Field</h2>
+              <p id="analysis-map-caption">Global grid-cell absolute error</p>
+            </div>
+            <span id="analysis-selection-pill" class="analysis-pill">Global</span>
+          </div>
+          <canvas id="analysis-map" aria-label="World map of absolute-error grid cells"></canvas>
+          <div id="analysis-map-tooltip" class="analysis-tooltip" hidden></div>
+        </article>
+
+        <aside class="analysis-panel analysis-panel--rankings">
+          <div class="analysis-panel__header">
+            <div>
+              <h2>Rankings</h2>
+              <p>Worst areas for the active depth and metric</p>
+            </div>
+          </div>
+          <div class="analysis-ranking-group">
+            <h3>Basins</h3>
+            <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
+          </div>
+          <div class="analysis-ranking-group">
+            <h3>Hotspot Cells</h3>
+            <div id="analysis-cell-ranking" class="analysis-ranking-list"></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="analysis-charts">
+        <article class="analysis-panel">
+          <div class="analysis-panel__header">
+            <div>
+              <h2>Error Across Depth</h2>
+              <p id="analysis-profile-caption">Global accumulated error curve</p>
+            </div>
+          </div>
+          <svg id="analysis-depth-profile" role="img" aria-label="Error curve across depth levels"></svg>
+        </article>
+        <article class="analysis-panel">
+          <div class="analysis-panel__header">
+            <div>
+              <h2>Basin Spread</h2>
+              <p>Regional comparison at the active depth</p>
+            </div>
+          </div>
+          <svg id="analysis-basin-chart" role="img" aria-label="Basin error comparison"></svg>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

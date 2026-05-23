@@ -15,6 +15,9 @@
   <a href="https://depthdif.donike.net/experiments/">
     <img src="https://img.shields.io/badge/experiments-online-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
+  <a href="https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/">
+    <img src="https://img.shields.io/badge/Hugging%20Face-dataset-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000000" alt="Hugging Face dataset" />
+  </a>
   <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb">
     <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab" />
   </a>
@@ -208,6 +211,8 @@ For a pooled validation-set depth summary, use `src/depth_recon/inference/export
   --device cuda
 ```
 
+The standalone Analysis Dashboard data is generated as part of globe packaging. The packager reads the run's absolute-error GeoTIFF depth exports, groups errors by approximate ocean basin and fixed lat-lon cells, and writes `error-analysis.json` beside `globe-config.json` for `docs/analysis/index.html` to read.
+
 To package one exported run for the Cesium globe viewer in the docs, use:
 
 ```bash
@@ -218,7 +223,7 @@ To package one exported run for the Cesium globe viewer in the docs, use:
   --rclone-sync-scope globe
 ```
 
-The globe packager tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready WebP folders, tiles optional uncertainty rasters when present, copies exported WebP profile-comparison graphs, and uploads those assets, GeoJSON, and `globe-config.json` when `--rclone-sync-scope globe` is used. When `src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif` exists locally, the same bundle also includes a higher-quality Natural Earth basemap under `basemaps/natural_earth_ii_webp_q95/`. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
+The globe packager also writes `error-analysis.json`/`error-analysis.html` by default, tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready WebP folders, tiles optional uncertainty rasters when present, copies exported WebP profile-comparison graphs, and uploads those assets, GeoJSON, and `globe-config.json` when `--rclone-sync-scope globe` is used. When `src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif` exists locally, the same bundle also includes a higher-quality Natural Earth basemap under `basemaps/natural_earth_ii_webp_q95/`. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
 
 For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector. By default each variable export writes at most 1000 full-profile graph images. Add `--export-uncertainty` to generate and tile one uncertainty map for each variable; the viewer hides the Uncertainty option when a manifest does not include `uncertainty_tiles_url`.
 

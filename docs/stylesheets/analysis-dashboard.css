@@ -1,0 +1,420 @@
+html.standalone-analysis-root,
+.standalone-analysis-page {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+.standalone-analysis-page {
+  --analysis-bg: #061726;
+  --analysis-panel: rgba(5, 20, 32, 0.78);
+  --analysis-panel-2: rgba(10, 42, 67, 0.82);
+  --analysis-border: rgba(124, 200, 255, 0.18);
+  --analysis-text: #d7e9f7;
+  --analysis-muted: rgba(215, 233, 247, 0.72);
+  --analysis-cyan: #7cc8ff;
+  --analysis-blue: #42aef0;
+  --analysis-yellow: #ffd166;
+  --analysis-red: #ef5b5b;
+  min-height: 100vh;
+  color: var(--analysis-text);
+  font-family: Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(79, 195, 247, 0.18), transparent 32%),
+    linear-gradient(180deg, #04131f 0%, #061726 100%);
+}
+
+.standalone-analysis-page button,
+.standalone-analysis-page select {
+  font: inherit;
+}
+
+.analysis-shell {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 100vh;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.analysis-header,
+.analysis-controls,
+.analysis-kpis,
+.analysis-grid,
+.analysis-charts {
+  width: min(1720px, 100%);
+  margin: 0 auto;
+}
+
+.analysis-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.analysis-eyebrow,
+.analysis-controls span,
+.analysis-panel__header p,
+.analysis-ranking-group h3,
+.analysis-kpi__label {
+  color: var(--analysis-cyan);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.analysis-header h1 {
+  margin: 0.18rem 0 0;
+  font-size: clamp(2rem, 3.5vw, 4.5rem);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.analysis-header p {
+  margin: 0.55rem 0 0;
+  color: var(--analysis-muted);
+  font-size: 0.98rem;
+}
+
+.analysis-links {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.analysis-links a,
+.analysis-segmented button,
+.analysis-controls select,
+.analysis-ranking-button {
+  border: 1px solid var(--analysis-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--analysis-text);
+}
+
+.analysis-links a {
+  padding: 0.72rem 0.9rem;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.analysis-controls {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--analysis-border);
+  border-radius: 8px;
+  backdrop-filter: blur(18px);
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
+    rgba(5, 20, 32, 0.76);
+}
+
+.analysis-controls label {
+  display: grid;
+  gap: 6px;
+}
+
+.analysis-controls select {
+  min-width: 11rem;
+  height: 2.45rem;
+  padding: 0 0.7rem;
+}
+
+.analysis-segmented {
+  display: flex;
+  gap: 5px;
+}
+
+.analysis-segmented button {
+  height: 2.45rem;
+  min-width: 4.1rem;
+  padding: 0 0.75rem;
+  cursor: pointer;
+}
+
+.analysis-segmented button[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--analysis-cyan);
+  color: #041625;
+}
+
+.analysis-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-kpi,
+.analysis-panel {
+  border: 1px solid var(--analysis-border);
+  border-radius: 8px;
+  backdrop-filter: blur(18px);
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.1), transparent 34%),
+    var(--analysis-panel);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
+}
+
+.analysis-kpi {
+  padding: 12px;
+  min-width: 0;
+}
+
+.analysis-kpi__value {
+  margin-top: 6px;
+  font-size: clamp(1.35rem, 1.5vw, 2.1rem);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.analysis-kpi__sub {
+  margin-top: 4px;
+  color: var(--analysis-muted);
+  font-size: 0.78rem;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 14px;
+  min-height: 0;
+}
+
+.analysis-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 14px;
+}
+
+.analysis-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+}
+
+.analysis-panel__header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.analysis-panel__header h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.analysis-panel__header p {
+  margin: 0.25rem 0 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.analysis-pill {
+  display: inline-flex;
+  max-width: 18rem;
+  overflow: hidden;
+  padding: 0.38rem 0.55rem;
+  border: 1px solid rgba(124, 200, 255, 0.32);
+  border-radius: 8px;
+  color: var(--analysis-cyan);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#analysis-map {
+  display: block;
+  width: 100%;
+  height: min(55vh, 620px);
+  min-height: 430px;
+  border-radius: 6px;
+  background: #04131f;
+  cursor: crosshair;
+}
+
+.analysis-panel--rankings {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  max-height: calc(min(55vh, 620px) + 62px);
+  overflow: auto;
+}
+
+.analysis-ranking-group h3 {
+  margin: 0 0 8px;
+}
+
+.analysis-ranking-list {
+  display: grid;
+  gap: 7px;
+}
+
+.analysis-ranking-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  width: 100%;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.analysis-ranking-button:hover,
+.analysis-ranking-button.is-active {
+  border-color: rgba(124, 200, 255, 0.76);
+  background: var(--analysis-panel-2);
+}
+
+.analysis-ranking-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-ranking-meta {
+  margin-top: 3px;
+  color: var(--analysis-muted);
+  font-size: 0.78rem;
+}
+
+.analysis-ranking-value {
+  color: var(--analysis-cyan);
+  font-weight: 800;
+}
+
+.analysis-charts svg {
+  display: block;
+  width: 100%;
+  height: 260px;
+  overflow: visible;
+}
+
+.analysis-axis {
+  stroke: rgba(223, 244, 239, 0.24);
+  stroke-width: 1;
+}
+
+.analysis-line {
+  fill: none;
+  stroke: var(--analysis-yellow);
+  stroke-width: 3;
+}
+
+.analysis-line--global {
+  stroke: rgba(124, 200, 255, 0.42);
+  stroke-width: 2;
+}
+
+.analysis-point {
+  fill: var(--analysis-yellow);
+  stroke: #04131f;
+  stroke-width: 2;
+}
+
+.analysis-bar {
+  fill: var(--analysis-cyan);
+}
+
+.analysis-tooltip {
+  position: fixed;
+  z-index: 10;
+  max-width: 300px;
+  padding: 9px 10px;
+  border: 1px solid var(--analysis-border);
+  border-radius: 8px;
+  background: rgba(5, 20, 32, 0.98);
+  color: var(--analysis-text);
+  font-size: 0.78rem;
+  pointer-events: none;
+}
+
+@media (max-width: 1100px) {
+  .analysis-kpis,
+  .analysis-grid,
+  .analysis-charts {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-panel--rankings {
+    max-height: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .analysis-shell {
+    padding: 10px;
+  }
+
+  .analysis-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .analysis-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-controls,
+  .analysis-segmented {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analysis-controls label,
+  .analysis-controls select,
+  .analysis-segmented button {
+    width: 100%;
+  }
+}
+
+.analysis-load-failed .analysis-controls,
+.analysis-load-failed .analysis-kpis,
+.analysis-load-failed .analysis-grid,
+.analysis-load-failed .analysis-charts {
+  opacity: 1;
+}
+
+.analysis-error-state {
+  width: min(920px, 100%);
+  margin: 2rem auto 0;
+  padding: 1.2rem 1.35rem;
+  border: 1px solid rgba(124, 200, 255, 0.28);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
+    rgba(5, 20, 32, 0.82);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+
+.analysis-error-state h2 {
+  margin: 0 0 0.5rem;
+  color: #f4fbff;
+  font-size: 1.25rem;
+}
+
+.analysis-error-state p {
+  margin: 0.35rem 0;
+  color: var(--analysis-muted);
+}
+
+.analysis-error-state code {
+  color: #a8dcff;
+  overflow-wrap: anywhere;
+}
+
+.analysis-controls select:disabled,
+.analysis-segmented button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}

@@ -68,6 +68,7 @@ nav:
   - Model:
       - Training: training.md
       - Inference: inference.md
+      - Uncertainty: uncertainty.md
       - Public Inference Package: public-inference-package.md
       - Quickstart: quickstart.md
       - Model Description: model.md
@@ -91,5 +92,6 @@ nav:
       - Early Experiments: experiments.md
       - Second Dataset Results: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
+  - Analysis Dashboard: https://depthdif.donike.net/analysis/
   - 3D Globe: https://depthdif.donike.net/globe/
   - API Reference: api.md

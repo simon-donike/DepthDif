@@ -540,7 +540,7 @@
       const offsetPercent = depthLevels.length <= 1 ? 0.0 : (index / (depthLevels.length - 1)) * 100.0;
       tick.className = "globe-depth-ticks__tick";
       tick.style.left = String(offsetPercent) + "%";
-      tick.textContent = formatDepthMeters(depthLevel);
+      tick.textContent = formatDepthMeters(depthLevel).replace(/\s*m$/, "");
       depthTicks.appendChild(tick);
     });
   }

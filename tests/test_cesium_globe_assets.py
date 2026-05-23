@@ -162,6 +162,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 "valid_alpha": 255,
             },
             template=template,
+            error_analysis_url="./error-analysis.html",
+            error_analysis_data_url="./error-analysis.json",
         )
 
         self.assertEqual(config["selected_date"], 20260105)
@@ -218,6 +220,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertNotIn("base_map_tiles_url", config)
         self.assertNotIn("base_map_credit", config)
         self.assertNotIn("base_map", config["credits"])
+        self.assertEqual(config["error_analysis_url"], "./error-analysis.html")
+        self.assertEqual(config["error_analysis_data_url"], "./error-analysis.json")
 
     def test_build_globe_config_keeps_multivariable_config_and_legacy_fields(
         self,
@@ -794,6 +798,12 @@ class TestCesiumGlobeAssets(unittest.TestCase):
 
         self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
+        self.assertTrue(args.include_error_analysis)
+
+        args = parser.parse_args(
+            ["--run-dir", "inference/outputs/example", "--no-error-analysis"]
+        )
+        self.assertFalse(args.include_error_analysis)
 
     def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(
         self,

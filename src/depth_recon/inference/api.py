@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from typing import Callable, Sequence
@@ -1079,7 +1080,7 @@ def _write_public_inference_super_config(
     min_ocean_fraction: float,
     batch_size: int | None,
 ) -> Path:
-    """Materialize public split assets as one inference super-config."""
+    """Materialize public split assets as one temporary inference super-config."""
     model_cfg = (
         load_yaml(assets.model_config).get("model", {})
         if Path(assets.model_config).is_file()
@@ -1112,9 +1113,15 @@ def _write_public_inference_super_config(
             "dataloader": dataloader_cfg,
         },
     }
-    output_path = Path(output_root) / "depthdif_public_inference_super_config.yaml"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
+    # The exporter requires a path, but this generated config is only runtime glue.
+    output_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix="_depthdif_public_inference_super_config.yaml",
+        delete=False,
+    )
+    output_path = Path(output_file.name)
+    with output_file as f:
         yaml.safe_dump(super_cfg, f, sort_keys=False)
     return output_path
 
@@ -1326,8 +1333,11 @@ def run_week_inference(
         uncertainty_num_samples=uncertainty_num_samples,
         uncertainty_only=uncertainty_only,
     )
-    result: ExportRunResult = run_global_inference(args)
-    return result.run_dir
+    try:
+        result: ExportRunResult = run_global_inference(args)
+        return result.run_dir
+    finally:
+        Path(args.config_path).unlink(missing_ok=True)
 
 
 def run_argo_week_inference(
