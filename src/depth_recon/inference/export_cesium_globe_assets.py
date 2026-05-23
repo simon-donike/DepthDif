@@ -680,64 +680,6 @@ def _export_base_map_tiles(
     )
 
 
-def _convert_image_to_webp(
-    source_path: Path,
-    destination_path: Path,
-    *,
-    quality: int = DEFAULT_WEBP_QUALITY,
-) -> None:
-    """Convert one hosted image to WebP for smaller bucket assets."""
-    try:
-        from PIL import Image
-    except Exception as exc:
-        raise RuntimeError(
-            "Pillow with WebP support is required to convert profile graphs."
-        ) from exc
-
-    destination_path.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(source_path) as image:
-        image.save(destination_path, "WEBP", quality=int(quality), method=6)
-
-
-def _convert_hosted_profile_graphs_to_webp(
-    graphs_dir: Path,
-    *,
-    quality: int = DEFAULT_WEBP_QUALITY,
-) -> int:
-    """Convert copied profile graph PNGs to WebP and remove the PNG copies."""
-    converted = 0
-    for png_path in sorted(Path(graphs_dir).rglob("*.png")):
-        webp_path = png_path.with_suffix(".webp")
-        _convert_image_to_webp(png_path, webp_path, quality=quality)
-        png_path.unlink()
-        converted += 1
-    return converted
-
-
-def _rewrite_geojson_graph_paths_to_webp(geojson_path: Path) -> None:
-    """Point hosted profile graph references at converted WebP images."""
-    if not Path(geojson_path).exists():
-        return
-    with Path(geojson_path).open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    changed = False
-    for feature in payload.get("features", []):
-        properties = feature.get("properties")
-        if not isinstance(properties, dict):
-            continue
-        graph_path = properties.get("graph_png_path")
-        if not isinstance(graph_path, str) or not graph_path.lower().endswith(".png"):
-            continue
-        properties["graph_png_path"] = graph_path[:-4] + ".webp"
-        changed = True
-
-    if changed:
-        with Path(geojson_path).open("w", encoding="utf-8") as f:
-            json.dump(payload, f, separators=(",", ":"))
-            f.write("\n")
-
-
 def _sync_with_rclone(local_dir: Path, remote: str) -> tuple[bool, str]:
     rclone_exe = shutil.which("rclone")
     if rclone_exe is None:
@@ -1462,7 +1404,6 @@ def export_cesium_globe_assets(
             full_sample_points_path=full_sample_points_path,
         )
 
-    converted_profile_graph_count = 0
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():
         copied_graphs_dir_path = globe_dir / "graphs"
@@ -1470,15 +1411,6 @@ def export_cesium_globe_assets(
             if copied_graphs_dir_path.exists():
                 shutil.rmtree(copied_graphs_dir_path)
             shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
-        converted_profile_graph_count = _convert_hosted_profile_graphs_to_webp(
-            copied_graphs_dir_path
-        )
-        for geojson_path in (
-            copied_full_sample_points_path,
-            copied_argo_sample_locations_path,
-        ):
-            if geojson_path is not None:
-                _rewrite_geojson_graph_paths_to_webp(geojson_path)
 
     base_map_tiles_dir: Path | None = None
     base_map_tiles_url: str | None = None
@@ -1659,10 +1591,7 @@ def export_cesium_globe_assets(
     if copied_full_sample_points_path is not None:
         print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
     if copied_graphs_dir_path is not None:
-        print(
-            f"- full-sample graphs: {copied_graphs_dir_path} "
-            f"({converted_profile_graph_count} WebP files)"
-        )
+        print(f"- full-sample graphs: {copied_graphs_dir_path}")
     print(f"- config: {config_path}")
     print(
         f"- fixed {variable_metadata['label']} color scale: "
@@ -1713,7 +1642,6 @@ def export_cesium_globe_assets(
         ),
         "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
         "base_map_tile_set_count": int(base_map_tiles_dir is not None),
-        "profile_graph_webp_count": int(converted_profile_graph_count),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,

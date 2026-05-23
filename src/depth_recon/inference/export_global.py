@@ -87,6 +87,7 @@ DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
 # Keep hosted graph bundles bounded by default; negative values still request all
 # observed ARGO locations for explicit full-profile exports.
 DEFAULT_FULL_SAMPLE_COUNT = 1000
+DEFAULT_PROFILE_GRAPH_WEBP_QUALITY = 95
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
@@ -1252,7 +1253,7 @@ def _write_full_profile_sample_artifacts(
     location_id: str,
     variable_spec: ExportVariableSpec = EXPORT_VARIABLE_SPECS["temperature"],
 ) -> None:
-    graph_rel_path = Path("graphs") / f"{location_id}.png"
+    graph_rel_path = Path("graphs") / f"{location_id}.webp"
     depth_axis_m = _load_glorys_depth_axis_m(
         dataset,
         sample.row,
@@ -1283,6 +1284,7 @@ def _write_full_profile_sample_artifacts(
             lat=sample.lat,
             lon=sample.lon,
         ),
+        webp_quality=DEFAULT_PROFILE_GRAPH_WEBP_QUALITY,
     )
     writer.write_feature(
         _full_profile_feature_for_sample(

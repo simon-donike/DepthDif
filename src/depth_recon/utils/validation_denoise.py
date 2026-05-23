@@ -25,8 +25,9 @@ def _overlay_profile_graph_logo(
     *,
     output_path: str | Path,
     dpi: int,
+    webp_quality: int = 95,
 ) -> None:
-    """Stamp the small website icon onto the saved graph PNG."""
+    """Stamp the small website icon onto the saved profile graph."""
     try:
         from PIL import Image
     except Exception:
@@ -58,7 +59,15 @@ def _overlay_profile_graph_logo(
     overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
     overlay.alpha_composite(logo, dest=(logo_padding_px, logo_padding_px))
     base = Image.alpha_composite(base, overlay)
-    base.save(output_path)
+    if output_path.suffix.lower() == ".webp":
+        base.convert("RGB").save(
+            output_path,
+            "WEBP",
+            quality=int(webp_quality),
+            method=6,
+        )
+    else:
+        base.save(output_path)
 
 
 def build_capture_indices(
@@ -1548,6 +1557,7 @@ def save_glorys_profile_comparison_plot(
     error_x_label: str = "Absolute error (deg C)",
     surface_context_label: str = "OSTIA SST",
     dpi: int = 180,
+    webp_quality: int = 95,
 ) -> Path:
     """Save one validation-style profile comparison plot to disk."""
     output_path = Path(output_path)
@@ -1591,8 +1601,18 @@ def save_glorys_profile_comparison_plot(
             fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
         else:
             fig.tight_layout()
-        fig.savefig(output_path, dpi=int(dpi))
-        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
+        save_kwargs: dict[str, Any] = {}
+        if output_path.suffix.lower() == ".webp":
+            save_kwargs = {
+                "format": "webp",
+                "pil_kwargs": {"quality": int(webp_quality), "method": 6},
+            }
+        fig.savefig(output_path, dpi=int(dpi), **save_kwargs)
+        _overlay_profile_graph_logo(
+            output_path=output_path,
+            dpi=int(dpi),
+            webp_quality=int(webp_quality),
+        )
     finally:
         if fig is not None:
             plt.close(fig)

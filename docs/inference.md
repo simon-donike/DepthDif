@@ -145,7 +145,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius for temperature or PSU for salinity on the finalized raster grid
 - optionally runs `uncertainty_step(..., num_samples=5)` via `--export-uncertainty` and writes one stitched 1-channel uncertainty GeoTIFF for the active variable
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
-- exports full-profile metadata for up to 1000 observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable, a positive count to change the cap, or a negative value to export all observed locations
+- exports full-profile metadata for up to 1000 observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel WebP q95 image per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable, a positive count to change the cap, or a negative value to export all observed locations
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 - optionally packages Cesium globe assets and uploads them with `rclone` in the same command
 
@@ -171,7 +171,7 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only
-- `graphs/`: one large PNG per sampled full-profile location with side-by-side variable-vs-depth and absolute-error-vs-depth panels
+- `graphs/`: one WebP q95 image per sampled full-profile location with side-by-side variable-vs-depth and absolute-error-vs-depth panels
 - `globe/`: Cesium tiles, hosted GeoJSON, copied graphs, and `globe-config.json` when `--public-base-url` or `--rclone-remote` is supplied
 - `selected_patches.csv`: the dataset rows used for the run
 - `run_summary.yaml`: checkpoint/config/date, forced inference-grid, land-mask, packaging, and upload metadata for traceability
@@ -256,7 +256,7 @@ The standard path is to let `src/depth_recon/inference/export_global.py` package
 - colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth-specific 2nd-98th percentile range, then tiles them beside prediction and GLORYS as WebP q95
 - colorizes and tiles the optional 1-channel uncertainty GeoTIFF when the run summary contains `uncertainty_tif_path`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
-- rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder and converts hosted graph PNGs to WebP q95
+- rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies the WebP q95 graphs emitted by the export workflow
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points
 - rewrites the patch GeoJSON with rounded coordinates for the viewer overlay
 - writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider; paired exports also write a `variables` object used by the Temperature/Salinity selector; the viewer only shows the Uncertainty raster option when `uncertainty_tiles_url` is present; when the local Natural Earth TIFF exists, the config points the viewer at the hosted WebP basemap

@@ -25,7 +25,6 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
-    _convert_hosted_profile_graphs_to_webp,
     _estimate_native_zoom_level,
     _export_base_map_tiles,
     _prefix_geojson_graph_paths,
@@ -34,7 +33,6 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _remove_gdal_auxiliary_files,
     _resolve_depth_export_artifacts,
     _resolve_rclone_sync_source,
-    _rewrite_geojson_graph_paths_to_webp,
     _rewrite_argo_sample_locations_geojson,
     _run_variable_metadata,
     _rewrite_geojson,
@@ -788,50 +786,6 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             globe_dir / "basemaps" / "natural_earth_ii_webp_q95",
             extra_zoom_levels=0,
             resampling="bilinear",
-        )
-
-    def test_profile_graphs_convert_to_webp_and_geojson_paths_are_rewritten(
-        self,
-    ) -> None:
-        from PIL import Image
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            graphs_dir = root / "graphs"
-            graphs_dir.mkdir()
-            png_path = graphs_dir / "full_sample_001.png"
-            Image.new("RGB", (16, 16), color=(255, 255, 255)).save(png_path)
-            geojson_path = root / "full_sample_locations.geojson"
-            geojson_path.write_text(
-                json.dumps(
-                    {
-                        "type": "FeatureCollection",
-                        "features": [
-                            {
-                                "type": "Feature",
-                                "properties": {
-                                    "graph_png_path": "graphs/full_sample_001.png"
-                                },
-                                "geometry": {"type": "Point", "coordinates": [0, 0]},
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            converted = _convert_hosted_profile_graphs_to_webp(graphs_dir)
-            _rewrite_geojson_graph_paths_to_webp(geojson_path)
-            payload = json.loads(geojson_path.read_text(encoding="utf-8"))
-            png_exists = png_path.exists()
-            webp_exists = png_path.with_suffix(".webp").exists()
-
-        self.assertEqual(converted, 1)
-        self.assertFalse(png_exists)
-        self.assertTrue(webp_exists)
-        self.assertEqual(
-            payload["features"][0]["properties"]["graph_png_path"],
-            "graphs/full_sample_001.webp",
         )
 
     def test_build_parser_defaults_to_zero_extra_zoom_levels(self) -> None:

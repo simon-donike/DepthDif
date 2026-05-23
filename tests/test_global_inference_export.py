@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,12 +14,14 @@ from torch import nn
 
 from depth_recon.inference.export_global import (
     DEFAULT_INFERENCE_CONFIG,
+    DEFAULT_PROFILE_GRAPH_WEBP_QUALITY,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
     DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     EXPORT_VARIABLE_SPECS,
     ExportInferenceWrapper,
     FullProfileSample,
+    GeoJSONPointWriter,
     MosaicLayout,
     _cleanup_accumulator,
     _argo_point_features_for_patch,
@@ -26,6 +29,7 @@ from depth_recon.inference.export_global import (
     _build_inference_loader,
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
+    _write_full_profile_sample_artifacts,
     _default_run_stem,
     filter_selection_by_rectangle,
     _normalize_cli_args,
@@ -1412,7 +1416,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         feature = _full_profile_feature_for_sample(
             sample=sample,
             location_id="full_sample_001",
-            graph_png_path="graphs/full_sample_001.png",
+            graph_png_path="graphs/full_sample_001.webp",
             depth_axis_m=np.asarray([0.5, 5.0, 25.0], dtype=np.float64),
         )
 
@@ -1420,7 +1424,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(feature["properties"]["date"], 20260105)
         self.assertEqual(feature["properties"]["location_id"], "full_sample_001")
         self.assertEqual(
-            feature["properties"]["graph_png_path"], "graphs/full_sample_001.png"
+            feature["properties"]["graph_png_path"], "graphs/full_sample_001.webp"
         )
         self.assertEqual(feature["properties"]["depth_m"], [0.5, 5.0, 25.0])
         self.assertEqual(feature["properties"]["ostia_sst_c"], 19.25)
@@ -1436,6 +1440,64 @@ class TestGlobalInferenceExport(unittest.TestCase):
             feature["properties"]["prediction_profile"], [11.5, 12.5, None]
         )
         self.assertEqual(feature["properties"]["glorys_profile"], [10.5, 11.5, None])
+
+    def test_write_full_profile_sample_artifacts_saves_webp_graph_reference(
+        self,
+    ) -> None:
+        class _DatasetWithDepthAxis:
+            depth_axis_m = np.asarray([0.5, 5.0, 25.0], dtype=np.float64)
+
+        sample = FullProfileSample(
+            dataset_index=4,
+            row={
+                "date": 20260105,
+                "patch_id": "patch-12",
+                "export_index": 18,
+                "lat0": 0.0,
+                "lat1": 2.0,
+                "lon0": 10.0,
+                "lon1": 12.0,
+            },
+            point_row=1,
+            point_col=0,
+            patch_height=2,
+            patch_width=2,
+            lon=10.5,
+            lat=0.5,
+            x_profile_c=np.asarray([12.0, 13.0, 14.0], dtype=np.float32),
+            y_hat_profile_c=np.asarray([11.5, 12.5, 13.5], dtype=np.float32),
+            y_target_profile_c=np.asarray([10.5, 11.5, 12.5], dtype=np.float32),
+            ostia_sst_c=19.25,
+            observed_profile=np.asarray([True, False, True], dtype=bool),
+            target_valid_profile=np.asarray([True, True, False], dtype=bool),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir)
+            geojson_path = run_dir / "full_sample_locations.geojson"
+            writer = GeoJSONPointWriter(geojson_path)
+            writer.open()
+            try:
+                _write_full_profile_sample_artifacts(
+                    run_dir=run_dir,
+                    dataset=_DatasetWithDepthAxis(),
+                    writer=writer,
+                    sample=sample,
+                    location_id="full_sample_001",
+                )
+            finally:
+                writer.close()
+            payload = json.loads(geojson_path.read_text(encoding="utf-8"))
+            webp_exists = (run_dir / "graphs" / "full_sample_001.webp").exists()
+            png_exists = (run_dir / "graphs" / "full_sample_001.png").exists()
+
+        self.assertTrue(webp_exists)
+        self.assertFalse(png_exists)
+        self.assertEqual(
+            payload["features"][0]["properties"]["graph_png_path"],
+            "graphs/full_sample_001.webp",
+        )
+        self.assertEqual(DEFAULT_PROFILE_GRAPH_WEBP_QUALITY, 95)
 
     def test_profile_graph_title_uses_iso_week_and_geographic_coordinates_only(
         self,
