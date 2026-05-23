@@ -34,6 +34,8 @@ from depth_recon.inference.export_global import (
     _promote_production_run,
     _load_ground_truth_patch_celsius,
     _load_ground_truth_patch_for_variable,
+    _apply_periodic_longitude_edge_blend_2d,
+    _periodic_longitude_blend_width_for_layout,
     _prediction_zeros_to_nan,
     _repair_small_nodata_gaps_2d,
     create_raster_accumulator,
@@ -582,6 +584,140 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertTrue(repaired_mask[:, 2].all())
         np.testing.assert_allclose(repaired, np.full((2, 5), 7.0, dtype=np.float32))
 
+    def test_periodic_longitude_edge_blend_tapers_world_edges(self) -> None:
+        layout = MosaicLayout(
+            left=-180.0,
+            bottom=0.0,
+            right=180.0,
+            top=2.0,
+            pixel_width=60.0,
+            pixel_height=1.0,
+            width=6,
+            height=2,
+            patch_width=4,
+            patch_height=2,
+            transform=from_origin(-180.0, 2.0, 60.0, 1.0),
+        )
+        raster = np.asarray(
+            [[1.0, 3.0, 5.0, 7.0, 9.0, 11.0]],
+            dtype=np.float32,
+        )
+
+        blended, did_blend, effective_width = _apply_periodic_longitude_edge_blend_2d(
+            raster,
+            nodata=-9999.0,
+            blend_width=2,
+            layout=layout,
+        )
+
+        self.assertTrue(did_blend)
+        self.assertEqual(effective_width, 2)
+        np.testing.assert_allclose(
+            blended,
+            np.asarray([[6.0, 4.5, 5.0, 7.0, 7.5, 6.0]], dtype=np.float32),
+        )
+
+    def test_periodic_longitude_edge_blend_does_not_fill_nodata(self) -> None:
+        layout = MosaicLayout(
+            left=-180.0,
+            bottom=0.0,
+            right=180.0,
+            top=2.0,
+            pixel_width=60.0,
+            pixel_height=1.0,
+            width=6,
+            height=2,
+            patch_width=4,
+            patch_height=2,
+            transform=from_origin(-180.0, 2.0, 60.0, 1.0),
+        )
+        raster = np.asarray(
+            [
+                [1.0, 2.0, 3.0, 4.0, 5.0, -9999.0],
+                [2.0, 3.0, 4.0, 5.0, 6.0, 8.0],
+            ],
+            dtype=np.float32,
+        )
+
+        blended, did_blend, effective_width = _apply_periodic_longitude_edge_blend_2d(
+            raster,
+            nodata=-9999.0,
+            blend_width=1,
+            layout=layout,
+        )
+
+        self.assertTrue(did_blend)
+        self.assertEqual(effective_width, 1)
+        self.assertEqual(blended[0, 0], 1.0)
+        self.assertEqual(blended[0, -1], -9999.0)
+        self.assertEqual(blended[1, 0], 5.0)
+        self.assertEqual(blended[1, -1], 5.0)
+
+    def test_periodic_longitude_edge_blend_noops_without_global_wrap(self) -> None:
+        raster = np.asarray([[1.0, 3.0, 9.0, 11.0]], dtype=np.float32)
+        global_layout = MosaicLayout(
+            left=-180.0,
+            bottom=0.0,
+            right=180.0,
+            top=1.0,
+            pixel_width=90.0,
+            pixel_height=1.0,
+            width=4,
+            height=1,
+            patch_width=4,
+            patch_height=1,
+            transform=from_origin(-180.0, 1.0, 90.0, 1.0),
+        )
+        regional_layout = MosaicLayout(
+            left=-90.0,
+            bottom=0.0,
+            right=90.0,
+            top=1.0,
+            pixel_width=45.0,
+            pixel_height=1.0,
+            width=4,
+            height=1,
+            patch_width=4,
+            patch_height=1,
+            transform=from_origin(-90.0, 1.0, 45.0, 1.0),
+        )
+
+        zero_width, did_zero, effective_zero = _apply_periodic_longitude_edge_blend_2d(
+            raster,
+            nodata=-9999.0,
+            blend_width=0,
+            layout=global_layout,
+        )
+        regional, did_regional, effective_regional = (
+            _apply_periodic_longitude_edge_blend_2d(
+                raster,
+                nodata=-9999.0,
+                blend_width=2,
+                layout=regional_layout,
+            )
+        )
+
+        self.assertFalse(did_zero)
+        self.assertEqual(effective_zero, 0)
+        np.testing.assert_allclose(zero_width, raster)
+        self.assertFalse(did_regional)
+        self.assertEqual(effective_regional, 0)
+        np.testing.assert_allclose(regional, raster)
+        self.assertEqual(
+            _periodic_longitude_blend_width_for_layout(
+                global_layout,
+                patch_stride=2,
+            ),
+            2,
+        )
+        self.assertEqual(
+            _periodic_longitude_blend_width_for_layout(
+                regional_layout,
+                patch_stride=2,
+            ),
+            0,
+        )
+
     def test_write_global_top_band_geotiff_repairs_small_internal_seam(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -629,6 +765,61 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 np.testing.assert_allclose(
                     band, np.full((32, 32), 7.0, dtype=np.float32)
                 )
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_blends_periodic_longitude_edges(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=-180.0,
+                bottom=0.0,
+                right=180.0,
+                top=4.0,
+                pixel_width=45.0,
+                pixel_height=1.0,
+                width=8,
+                height=4,
+                patch_width=4,
+                patch_height=4,
+                transform=from_origin(-180.0, 4.0, 45.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_wrap",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 5.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[:, 0] = 1.0
+                accumulator.sum_array[:, 1] = 3.0
+                accumulator.sum_array[:, -2] = 9.0
+                accumulator.sum_array[:, -1] = 11.0
+
+                tif_path = tmp_path / "prediction_wrap.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={"kind": "prediction"},
+                    periodic_longitude_blend_width=2,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+                    tags = ds.tags()
+
+                self.assertEqual(tags["longitude_wrap_stitching"], "true")
+                self.assertEqual(tags["longitude_wrap_blend_width_pixels"], "2")
+                np.testing.assert_allclose(band[:, 0], np.full((4,), 6.0))
+                np.testing.assert_allclose(band[:, -1], np.full((4,), 6.0))
+                np.testing.assert_allclose(band[:, 1], np.full((4,), 4.5))
+                np.testing.assert_allclose(band[:, -2], np.full((4,), 7.5))
             finally:
                 _cleanup_accumulator(accumulator)
 

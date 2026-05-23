@@ -51,6 +51,7 @@ from depth_recon.inference.export_global import (
     _build_parser as _build_export_parser,
     _cleanup_accumulator,
     _flush_accumulator,
+    _periodic_longitude_blend_width_for_layout,
     _summary_artifact_path,
     _to_device,
     build_mosaic_layout,
@@ -1501,6 +1502,17 @@ def run_argo_week_inference(
         int(level.channel_index) for level in depth_export_levels
     )
     layout = build_mosaic_layout(rows, patch_shape=(tile_size, tile_size))
+    longitude_wrap_blend_width = _periodic_longitude_blend_width_for_layout(
+        layout,
+        patch_stride=int(inference_grid_metadata["patch_stride"]),
+    )
+    inference_grid_metadata = dict(inference_grid_metadata)
+    inference_grid_metadata["longitude_wrap_stitching"] = bool(
+        longitude_wrap_blend_width > 0
+    )
+    inference_grid_metadata["longitude_wrap_blend_width_pixels"] = int(
+        longitude_wrap_blend_width
+    )
     land_mask = load_land_mask_for_layout(
         land_mask_path=Path(land_mask_path),
         layout=layout,
@@ -1731,6 +1743,7 @@ def run_argo_week_inference(
             },
             extra_gaussian_blur_sigma=float(sigma),
             land_mask=land_mask,
+            periodic_longitude_blend_width=longitude_wrap_blend_width,
         )
         depth_export_records.append(
             {
@@ -1776,6 +1789,7 @@ def run_argo_week_inference(
             },
             land_mask=land_mask,
             prediction_zero_masked_to_nodata=False,
+            periodic_longitude_blend_width=longitude_wrap_blend_width,
         )
 
     run_summary = {
@@ -1791,6 +1805,8 @@ def run_argo_week_inference(
         "land_mask_path": str(land_mask_path),
         "land_zeroed": False,
         "land_masked_to_nodata": True,
+        "longitude_wrap_stitching": bool(longitude_wrap_blend_width > 0),
+        "longitude_wrap_blend_width_pixels": int(longitude_wrap_blend_width),
         "checkpoint_path": str(ckpt_path),
         "model_config": str(assets.model_config),
         "data_config": str(assets.data_config),

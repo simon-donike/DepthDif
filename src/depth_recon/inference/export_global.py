@@ -1565,6 +1565,80 @@ def _apply_valid_gaussian_blur_2d(
     return blurred
 
 
+def _layout_spans_periodic_longitude(layout: MosaicLayout) -> bool:
+    """Return True when a mosaic covers the full -180..180 longitude span."""
+    lon_span = float(layout.right) - float(layout.left)
+    tolerance = max(float(layout.pixel_width) * 1.0e-6, 1.0e-6)
+    return (
+        float(layout.left) <= -180.0 + tolerance
+        and float(layout.right) >= 180.0 - tolerance
+        and abs(lon_span - 360.0) <= tolerance
+    )
+
+
+def _apply_periodic_longitude_edge_blend_2d(
+    image: np.ndarray,
+    *,
+    nodata: float,
+    blend_width: int,
+    layout: MosaicLayout,
+) -> tuple[np.ndarray, bool, int]:
+    """Blend valid west/east edge pixels for periodic longitude mosaics."""
+    patch = np.asarray(image, dtype=np.float32)
+    if patch.ndim != 2:
+        raise RuntimeError(
+            "Expected a 2D raster for longitude wrap stitching, "
+            f"got shape {tuple(patch.shape)}."
+        )
+
+    requested_width = int(blend_width)
+    if requested_width <= 0 or not _layout_spans_periodic_longitude(layout):
+        return patch.copy(), False, 0
+
+    edge_width = min(requested_width, int(patch.shape[1]) // 2)
+    if edge_width <= 0:
+        return patch.copy(), False, 0
+
+    left_edge = patch[:, :edge_width]
+    # Reverse the eastern edge so column 0 pairs with the pixel nearest +180.
+    right_edge = patch[:, -edge_width:][:, ::-1]
+    valid_pair_mask = _valid_raster_mask(left_edge, nodata) & _valid_raster_mask(
+        right_edge,
+        nodata,
+    )
+    if not np.any(valid_pair_mask):
+        return patch.copy(), False, edge_width
+
+    offsets = np.arange(edge_width, dtype=np.float32)
+    other_weight = (0.5 * (float(edge_width) - offsets) / float(edge_width))[None, :]
+    left_blended = (
+        (left_edge * (np.float32(1.0) - other_weight)) + (right_edge * other_weight)
+    ).astype(np.float32, copy=False)
+    right_blended = (
+        (right_edge * (np.float32(1.0) - other_weight)) + (left_edge * other_weight)
+    ).astype(np.float32, copy=False)
+
+    out = patch.copy()
+    out_left = out[:, :edge_width]
+    out_right = out[:, -edge_width:][:, ::-1]
+    out_left[valid_pair_mask] = left_blended[valid_pair_mask]
+    out_right[valid_pair_mask] = right_blended[valid_pair_mask]
+    return out, True, edge_width
+
+
+def _periodic_longitude_blend_width_for_layout(
+    layout: MosaicLayout,
+    *,
+    patch_stride: int | None,
+) -> int:
+    """Return the missing horizontal overlap width for a periodic mosaic."""
+    if not _layout_spans_periodic_longitude(layout):
+        return 0
+    if patch_stride is None:
+        return 0
+    return max(0, int(layout.patch_width) - int(patch_stride))
+
+
 def _geotiff_block_size(dimension: int) -> int:
     """Pick a tile size that satisfies GDAL's 16-pixel block constraint."""
     if dimension < 1:
@@ -1707,6 +1781,7 @@ def write_global_top_band_geotiff(
     extra_gaussian_blur_sigma: float = 0.0,
     land_mask: np.ndarray | None = None,
     prediction_zero_masked_to_nodata: bool = True,
+    periodic_longitude_blend_width: int = 0,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     land_mask_bool: np.ndarray | None = None
@@ -1739,6 +1814,8 @@ def write_global_top_band_geotiff(
     output_tags["prediction_zero_masked_to_nodata"] = str(
         bool(prediction_zero_masked_to_nodata)
     ).lower()
+    output_tags["longitude_wrap_stitching"] = "false"
+    output_tags["longitude_wrap_blend_width_pixels"] = "0"
     if prediction_zero_masked_to_nodata:
         output_tags["prediction_zero_mask_epsilon_c"] = (
             f"{PREDICTION_ZERO_ARTIFACT_EPSILON:.1e}"
@@ -1802,7 +1879,25 @@ def write_global_top_band_geotiff(
             # or Cesium color relief.
             zero_mask = _prediction_zero_artifact_mask(final_band)
             final_band[zero_mask] = float(nodata)
-        if np.any(repaired_mask) or land_mask_bool is not None or np.any(zero_mask):
+        final_band, wrap_blended, effective_blend_width = (
+            _apply_periodic_longitude_edge_blend_2d(
+                final_band,
+                nodata=nodata,
+                blend_width=int(periodic_longitude_blend_width),
+                layout=layout,
+            )
+        )
+        if effective_blend_width > 0:
+            ds.update_tags(
+                longitude_wrap_stitching="true",
+                longitude_wrap_blend_width_pixels=str(int(effective_blend_width)),
+            )
+        if (
+            np.any(repaired_mask)
+            or land_mask_bool is not None
+            or np.any(zero_mask)
+            or wrap_blended
+        ):
             ds.write(final_band, 1)
         elif float(extra_gaussian_blur_sigma) > 0.0:
             ds.write(final_band, 1)
@@ -2333,6 +2428,17 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         int(level.channel_index) for level in depth_export_levels
     )
     layout = build_mosaic_layout(selected_rows, patch_shape=patch_shape)
+    longitude_wrap_blend_width = _periodic_longitude_blend_width_for_layout(
+        layout,
+        patch_stride=int(inference_grid_metadata["patch_stride"]),
+    )
+    inference_grid_metadata = dict(inference_grid_metadata)
+    inference_grid_metadata["longitude_wrap_stitching"] = bool(
+        longitude_wrap_blend_width > 0
+    )
+    inference_grid_metadata["longitude_wrap_blend_width_pixels"] = int(
+        longitude_wrap_blend_width
+    )
     land_mask = load_land_mask_for_layout(
         land_mask_path=effective_land_mask_path,
         layout=layout,
@@ -2420,6 +2526,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"uncertainty_num_samples={uncertainty_num_samples}, "
         f"patch_stride={inference_grid_metadata['patch_stride']}, "
         f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
+        f"longitude_wrap_blend_width={longitude_wrap_blend_width}, "
         f"min_ocean_fraction={inference_grid_metadata['min_ocean_fraction']:.2f}, "
         f"land_mask_path={effective_land_mask_path}, "
         f"rectangle={args.rectangle}, "
@@ -2812,6 +2919,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             extra_gaussian_blur_sigma=float(args.sigma),
             land_mask=land_mask,
             prediction_zero_masked_to_nodata=True,
+            periodic_longitude_blend_width=longitude_wrap_blend_width,
         )
         print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
 
@@ -2945,6 +3053,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             },
             land_mask=land_mask,
             prediction_zero_masked_to_nodata=False,
+            periodic_longitude_blend_width=longitude_wrap_blend_width,
         )
         print(f"Wrote uncertainty GeoTIFF: {uncertainty_tif_path}")
 
@@ -3004,6 +3113,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "land_mask_path": str(effective_land_mask_path),
         "land_zeroed": False,
         "land_masked_to_nodata": True,
+        "longitude_wrap_stitching": bool(longitude_wrap_blend_width > 0),
+        "longitude_wrap_blend_width_pixels": int(longitude_wrap_blend_width),
         "prediction_zero_masked_to_nodata": bool(export_prediction),
         "uncertainty_only": bool(uncertainty_only),
         "prediction_zero_mask_epsilon_c": float(PREDICTION_ZERO_ARTIFACT_EPSILON),

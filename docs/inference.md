@@ -138,7 +138,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 75% spatial overlap and overlap-weighted stitching
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
-- stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, then conservatively fills tiny nodata seams
+- stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, feathering the periodic `-180/180` longitude edge when overlap exists, then conservatively fills tiny nodata seams
 - applies the configured land-mask GeoTIFF at the final write step so land pixels and uncovered water use the same GeoTIFF nodata value
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
 - exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized into the active variable unit
