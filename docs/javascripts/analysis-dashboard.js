@@ -66,7 +66,7 @@
   function setControlsDisabled(disabled) {
     document
       .querySelectorAll(
-        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button"
+        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button, #analysis-reset-focus"
       )
       .forEach((element) => {
         element.disabled = Boolean(disabled);
@@ -191,6 +191,19 @@
     return data().depth_levels[state.depthIndex];
   }
 
+  function chartDepthLevels() {
+    const depthLevels = data().depth_levels.filter((depth) => !depth.is_aggregate);
+    return depthLevels.length > 0 ? depthLevels : data().depth_levels;
+  }
+
+  function depthSubtitle(depth) {
+    if (depth.is_aggregate) {
+      const depthCount = Number(depth.depth_count || Math.max(0, data().depth_levels.length - 1));
+      return `${formatCount(depthCount)} depth levels pooled`;
+    }
+    return `${formatNumber(depth.actual_depth_m, 1)} m actual`;
+  }
+
   function metricLabel(metric) {
     return METRIC_LABELS[metric] || metric;
   }
@@ -227,6 +240,12 @@
     const depthSelect = $("analysis-depth-select");
     depthSelect.addEventListener("change", function () {
       state.depthIndex = Number(depthSelect.value);
+      render();
+    });
+
+    const resetFocus = $("analysis-reset-focus");
+    resetFocus.addEventListener("click", function () {
+      state.focus = { type: "global", id: "global", label: "Global" };
       render();
     });
 
@@ -297,19 +316,33 @@
     if (latValue <= -60) {
       return "Southern";
     }
-    if (lonValue >= 20 && lonValue < 147 && latValue > -60 && latValue < 32) {
-      return "Indian";
-    }
-    if ((lonValue >= -70 && lonValue < 20 && latValue > -60 && latValue < 66) || (lonValue >= 147 && latValue >= 50)) {
+    const atlantic =
+      (lonValue >= -70 && lonValue < 20) ||
+      (lonValue >= -10 && lonValue < 42 && latValue >= 30 && latValue < 48) ||
+      (lonValue >= -25 && lonValue < 32 && latValue >= 48);
+    if (atlantic && latValue > -60 && latValue < 66) {
       return "Atlantic";
     }
-    if (lonValue >= -180 && lonValue < 180 && latValue > -60 && latValue < 66) {
+    const indian =
+      (lonValue >= 20 && lonValue < 120 && latValue < 32) ||
+      (lonValue >= 120 && lonValue < 147 && latValue < 0);
+    if (indian && latValue > -60 && latValue < 66) {
+      return "Indian";
+    }
+    const pacific =
+      lonValue < -70 ||
+      lonValue >= 120 ||
+      (lonValue >= 100 && lonValue < 120 && latValue > -15 && latValue < 32);
+    if (pacific && latValue > -60 && latValue < 66) {
       return "Pacific";
     }
     return "Other";
   }
 
   function basinForCell(cell) {
+    if (cell.basin) {
+      return cell.basin;
+    }
     const lon = Number.isFinite(Number(cell.center_lon)) ? Number(cell.center_lon) : (Number(cell.west) + Number(cell.east)) / 2;
     const lat = Number.isFinite(Number(cell.center_lat)) ? Number(cell.center_lat) : (Number(cell.south) + Number(cell.north)) / 2;
     return basinForCoordinate(lon, lat);
@@ -321,7 +354,7 @@
     const count = Number(stats.count || 0);
     const countLabel = count > 0 ? `${formatPixelCount(count, state.focus.type === "basin")} valid` : "No valid pixels at this depth";
     const values = [
-      ["Active Depth", depth.label, `${formatNumber(depth.actual_depth_m, 1)} m actual`],
+      ["Active Depth", depth.label, depthSubtitle(depth)],
       ["Statistics", focusLabel(), countLabel],
       ["Median Error", formatMetric(stats.median), `${metricLabel(state.metric)} metric active`],
       ["Mean Error", formatMetric(stats.mean), "Average absolute error"],
@@ -345,6 +378,10 @@
   }
 
   function renderRankings() {
+    const resetFocus = $("analysis-reset-focus");
+    if (resetFocus) {
+      resetFocus.disabled = state.focus.type === "global";
+    }
     const depth = activeDepth();
     const basins = depth.basins
       .filter((basin) => basin[state.metric] !== null)
@@ -360,24 +397,72 @@
     });
   }
 
-  function colorFor(value, max) {
-    const t = Math.max(0, Math.min(1, Number(value || 0) / Math.max(1e-9, max)));
+  function finiteMetricValues(cells) {
+    return cells
+      .map((cell) => Number(cell[state.metric]))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+  }
+
+  function quantile(sortedValues, fraction) {
+    if (sortedValues.length === 0) {
+      return null;
+    }
+    const index = (sortedValues.length - 1) * Math.max(0, Math.min(1, fraction));
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    if (lower === upper) {
+      return sortedValues[lower];
+    }
+    const weight = index - lower;
+    return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+  }
+
+  function mapColorDomain(cells) {
+    const values = finiteMetricValues(cells);
+    if (values.length === 0) {
+      return { lower: 0, upper: 1, clipped: false };
+    }
+    const min = values[0];
+    const max = values[values.length - 1];
+    const lower = Math.max(0, quantile(values, 0.05) ?? min);
+    let upper = quantile(values, 0.95) ?? max;
+    if (!Number.isFinite(upper) || upper <= lower) {
+      upper = max > lower ? max : lower + 1;
+    }
+    return { lower, upper, clipped: max > upper };
+  }
+
+  function colorFor(value, domain) {
+    const raw = Number(value || 0);
+    const span = Math.max(1e-9, Number(domain.upper) - Number(domain.lower));
+    const normalized = Math.max(0, Math.min(1, (raw - Number(domain.lower)) / span));
+    const t = Math.pow(normalized, 0.72);
     const stops = [
-      [73, 209, 125],
-      [242, 196, 81],
-      [237, 91, 91],
+      [44, 123, 182],
+      [0, 166, 202],
+      [127, 211, 78],
+      [253, 174, 97],
+      [215, 25, 28],
     ];
-    const lower = t < 0.5 ? stops[0] : stops[1];
-    const upper = t < 0.5 ? stops[1] : stops[2];
-    const local = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+    const scaled = t * (stops.length - 1);
+    const lowerIndex = Math.min(stops.length - 2, Math.floor(scaled));
+    const upperIndex = lowerIndex + 1;
+    const local = scaled - lowerIndex;
+    const lower = stops[lowerIndex];
+    const upper = stops[upperIndex];
     const rgb = lower.map((channel, index) => Math.round(channel + (upper[index] - channel) * local));
     return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
   }
 
-  function renderMapLegend(max) {
+  function renderMapLegend(domain) {
+    const legendMin = $("analysis-map-legend-min");
     const legendMax = $("analysis-map-legend-max");
+    if (legendMin) {
+      legendMin.textContent = `P5 or lower (${formatMetric(domain.lower)})`;
+    }
     if (legendMax) {
-      legendMax.textContent = `Higher error (${formatMetric(max)})`;
+      legendMax.textContent = `${domain.clipped ? "P95+" : "Higher error"} (${formatMetric(domain.upper)})`;
     }
   }
 
@@ -420,7 +505,7 @@
     ].join("<br>");
   }
 
-  function cellMapStyle(cell, max) {
+  function cellMapStyle(cell, domain) {
     const basin = basinForCell(cell);
     const basinIsActive = state.focus.type === "basin" && state.focus.id === basin;
     const cellIsActive = state.focus.type === "cell" && state.focus.id === cell.id;
@@ -441,7 +526,7 @@
     }
     return {
       color,
-      fillColor: colorFor(cell[state.metric], max),
+      fillColor: colorFor(cell[state.metric], domain),
       fillOpacity,
       opacity,
       weight,
@@ -451,11 +536,11 @@
   function renderMap() {
     const map = state.map || createMap();
     const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
-    const max = Math.max(1, ...cells.map((cell) => Number(cell[state.metric] || 0)));
-    renderMapLegend(max);
+    const colorDomain = mapColorDomain(cells);
+    renderMapLegend(colorDomain);
     state.mapCellLayer.clearLayers();
     for (const cell of cells) {
-      const layer = window.L.rectangle(cellBounds(cell), cellMapStyle(cell, max));
+      const layer = window.L.rectangle(cellBounds(cell), cellMapStyle(cell, colorDomain));
       layer.bindTooltip(cellTooltipHtml(cell), {
         className: "analysis-leaflet-tooltip",
         direction: "auto",
@@ -472,8 +557,8 @@
     requestAnimationFrame(() => map.invalidateSize(false));
   }
 
-  function selectedSeries() {
-    return data().depth_levels.map((depth) => {
+  function selectedSeries(depthLevels = chartDepthLevels()) {
+    return depthLevels.map((depth) => {
       if (state.focus.type === "basin") {
         return (depth.basins.find((basin) => basin.name === state.focus.id) || {})[state.metric] ?? null;
       }
@@ -484,12 +569,12 @@
     });
   }
 
-  function globalSeries() {
-    return data().depth_levels.map((depth) => depth.global[state.metric] ?? null);
+  function globalSeries(depthLevels = chartDepthLevels()) {
+    return depthLevels.map((depth) => depth.global[state.metric] ?? null);
   }
 
-  function depthXValues() {
-    return data().depth_levels.map((depth, index) => {
+  function depthXValues(depthLevels = chartDepthLevels()) {
+    return depthLevels.map((depth, index) => {
       const actualDepth = Number(depth.actual_depth_m);
       return Number.isFinite(actualDepth) ? actualDepth : index;
     });
@@ -533,10 +618,11 @@
 
   function renderDepthProfile() {
     const chart = $("analysis-depth-profile");
-    const labels = data().depth_levels.map((depth) => depth.label);
-    const selected = selectedSeries();
-    const global = globalSeries();
-    const xValues = depthXValues();
+    const depthLevels = chartDepthLevels();
+    const labels = depthLevels.map((depth) => depth.label);
+    const selected = selectedSeries(depthLevels);
+    const global = globalSeries(depthLevels);
+    const xValues = depthXValues(depthLevels);
     const traces = [
       {
         customdata: labels,

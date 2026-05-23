@@ -64,28 +64,13 @@
           </div>
           <div id="analysis-map" class="analysis-map" role="application" aria-label="World map of absolute-error grid cells"></div>
           <div class="analysis-map-legend" aria-label="Map color scale">
-            <span>Lower error</span>
+            <span id="analysis-map-legend-min">Lower error</span>
             <span class="analysis-map-legend__ramp"></span>
             <span id="analysis-map-legend-max">Higher error</span>
           </div>
         </article>
 
-        <aside class="analysis-panel analysis-panel--rankings">
-          <div class="analysis-panel__header">
-            <div>
-              <h2>Rankings</h2>
-              <p>Worst areas for the active depth and metric</p>
-            </div>
-          </div>
-          <div class="analysis-ranking-group">
-            <h3>Basins</h3>
-            <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
-          </div>
-        </aside>
-      </section>
-
-      <section class="analysis-charts">
-        <article class="analysis-panel">
+        <article class="analysis-panel analysis-panel--depth-profile">
           <div class="analysis-panel__header">
             <div>
               <h2>Error Across Depth</h2>
@@ -94,6 +79,23 @@
           </div>
           <div id="analysis-depth-profile" class="analysis-chart" role="img" aria-label="Error curve across depth levels"></div>
         </article>
+      </section>
+
+      <section class="analysis-charts">
+        <aside class="analysis-panel analysis-panel--rankings">
+          <div class="analysis-panel__header">
+            <div>
+              <h2>Rankings</h2>
+              <p>Worst areas for the active depth and metric</p>
+            </div>
+            <button id="analysis-reset-focus" class="analysis-ranking-reset" type="button" disabled>Reset</button>
+          </div>
+          <div class="analysis-ranking-group">
+            <h3>Basins</h3>
+            <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
+          </div>
+        </aside>
+
         <article class="analysis-panel">
           <div class="analysis-panel__header">
             <div>

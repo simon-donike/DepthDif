@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
 
 from depth_recon.inference.export_cesium_globe_assets import (
     _resolve_depth_export_artifacts,
+    _resolve_land_mask_path,
     _resolve_layer_url,
     _resolve_run_artifacts,
     _run_variable_metadata,
@@ -28,7 +29,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
 DEFAULT_DASHBOARD_DIR_NAME = "error_analysis"
 DEFAULT_ANALYSIS_JSON_NAME = "error-analysis.json"
 DEFAULT_ANALYSIS_HTML_NAME = "error-analysis.html"
-DEFAULT_GRID_SIZE_DEGREES = 10.0
+DEFAULT_GRID_SIZE_DEGREES = 5.0
 METRIC_KEYS = ("median", "mean", "p90", "p95")
 BASIN_NAMES = ("Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other")
 
@@ -47,27 +48,99 @@ def _normalize_longitudes(lons: np.ndarray) -> np.ndarray:
     return np.where(dateline_mask, 180.0, normalized)
 
 
+def _basin_label_array(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
+    """Assign basin labels with explicit marginal-sea and land fallback regions."""
+    lon = _normalize_longitudes(lons)
+    lat = np.asarray(lats, dtype=np.float64)
+    labels = np.full(lon.shape, "Other", dtype="<U8")
+    finite_coords = np.isfinite(lon) & np.isfinite(lat)
+
+    arctic = finite_coords & (lat >= 66.0)
+    southern = finite_coords & (lat <= -60.0)
+    labels[arctic] = "Arctic"
+    labels[southern] = "Southern"
+
+    open_ocean = finite_coords & ~arctic & ~southern & (lat > -60.0) & (lat < 66.0)
+    atlantic = open_ocean & (
+        ((lon >= -70.0) & (lon < 20.0))
+        | ((lon >= -10.0) & (lon < 42.0) & (lat >= 30.0) & (lat < 48.0))
+        | ((lon >= -25.0) & (lon < 32.0) & (lat >= 48.0))
+    )
+    labels[atlantic] = "Atlantic"
+
+    indian = (
+        open_ocean
+        & (labels == "Other")
+        & (
+            ((lon >= 20.0) & (lon < 120.0) & (lat < 32.0))
+            | ((lon >= 120.0) & (lon < 147.0) & (lat < 0.0))
+        )
+    )
+    labels[indian] = "Indian"
+
+    pacific = (
+        open_ocean
+        & (labels == "Other")
+        & (
+            (lon < -70.0)
+            | (lon >= 120.0)
+            | ((lon >= 100.0) & (lon < 120.0) & (lat > -15.0) & (lat < 32.0))
+        )
+    )
+    labels[pacific] = "Pacific"
+    return labels
+
+
 def assign_ocean_basin(lon: float, lat: float) -> str:
     """Assign an approximate ocean basin for diagnostic regional summaries."""
-    lon = normalize_longitude(float(lon))
-    lat = float(lat)
-    if not np.isfinite(lon) or not np.isfinite(lat):
-        return "Other"
-    if lat >= 66.0:
-        return "Arctic"
-    if lat <= -60.0:
-        return "Southern"
-    if 20.0 <= lon < 147.0 and -60.0 < lat < 32.0:
-        return "Indian"
-    if (-70.0 <= lon < 20.0 and -60.0 < lat < 66.0) or (lon >= 147.0 and lat >= 50.0):
-        return "Atlantic"
-    if -180.0 <= lon < 180.0 and -60.0 < lat < 66.0:
-        return "Pacific"
-    return "Other"
+    labels = _basin_label_array(
+        np.asarray([lon], dtype=np.float64),
+        np.asarray([lat], dtype=np.float64),
+    )
+    return str(labels[0])
 
 
-def _valid_raster_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return finite raster values and their lon/lat pixel-center coordinates."""
+def _filter_ocean_points(
+    values: np.ndarray,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    land_mask_path: Path | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Drop points that fall on the Natural Earth/GLORYS land mask."""
+    if land_mask_path is None:
+        return values, lons, lats
+
+    with rasterio.open(land_mask_path) as mask_ds:
+        land_mask = mask_ds.read(1, masked=False)
+        rows, cols = rasterio.transform.rowcol(
+            mask_ds.transform,
+            _normalize_longitudes(lons),
+            lats,
+        )
+
+    rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+    inside = (
+        (rows >= 0)
+        & (rows < land_mask.shape[0])
+        & (cols >= 0)
+        & (cols < land_mask.shape[1])
+    )
+    ocean = np.zeros_like(inside, dtype=bool)
+    if np.any(inside):
+        # The packaged world mask stores land as 1 and ocean as 0.
+        land = np.asarray(land_mask[rows[inside], cols[inside]], dtype=np.float32) > 0.5
+        ocean[inside] = ~land
+    return values[ocean], lons[ocean], lats[ocean]
+
+
+def _valid_raster_arrays(
+    path: Path,
+    *,
+    land_mask_path: Path | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean raster values and their lon/lat pixel-center coordinates."""
     with rasterio.open(path) as ds:
         data = ds.read(1, masked=False).astype(np.float64, copy=False)
         valid = np.isfinite(data)
@@ -86,11 +159,11 @@ def _valid_raster_arrays(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray
             col_idx,
             offset="center",
         )
-    return (
-        data[row_idx, col_idx].astype(np.float64, copy=False),
-        np.asarray(xs, dtype=np.float64),
-        np.asarray(ys, dtype=np.float64),
-    )
+
+    values = data[row_idx, col_idx].astype(np.float64, copy=False)
+    lons = np.asarray(xs, dtype=np.float64)
+    lats = np.asarray(ys, dtype=np.float64)
+    return _filter_ocean_points(values, lons, lats, land_mask_path=land_mask_path)
 
 
 def summarize_values(values: np.ndarray) -> dict[str, float | int | None]:
@@ -128,56 +201,40 @@ def aggregate_by_basin(
     values: np.ndarray,
     lons: np.ndarray,
     lats: np.ndarray,
+    *,
+    basin_labels: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate absolute-error values into approximate ocean basins."""
-    lon = _normalize_longitudes(lons)
-    lat = np.asarray(lats, dtype=np.float64)
-    finite_coords = np.isfinite(lon) & np.isfinite(lat)
-    masks = {
-        "Arctic": finite_coords & (lat >= 66.0),
-        "Southern": finite_coords & (lat <= -60.0),
-    }
-    masks["Indian"] = (
-        finite_coords
-        & ~masks["Arctic"]
-        & ~masks["Southern"]
-        & (lon >= 20.0)
-        & (lon < 147.0)
-        & (lat > -60.0)
-        & (lat < 32.0)
+    labels = (
+        _basin_label_array(lons, lats)
+        if basin_labels is None
+        else np.asarray(basin_labels, dtype="<U8")
     )
-    masks["Atlantic"] = (
-        finite_coords
-        & ~masks["Arctic"]
-        & ~masks["Southern"]
-        & ~masks["Indian"]
-        & (
-            ((lon >= -70.0) & (lon < 20.0) & (lat > -60.0) & (lat < 66.0))
-            | ((lon >= 147.0) & (lat >= 50.0))
-        )
-    )
-    masks["Pacific"] = (
-        finite_coords
-        & ~masks["Arctic"]
-        & ~masks["Southern"]
-        & ~masks["Indian"]
-        & ~masks["Atlantic"]
-        & (lon >= -180.0)
-        & (lon < 180.0)
-        & (lat > -60.0)
-        & (lat < 66.0)
-    )
-    assigned = np.zeros_like(finite_coords, dtype=bool)
-    for basin_mask in masks.values():
-        assigned |= basin_mask
-    masks["Other"] = ~assigned
+    if labels.shape != values.shape:
+        raise ValueError("basin_labels must match values shape.")
 
     summaries: list[dict[str, Any]] = []
     for basin in BASIN_NAMES:
-        row = summarize_values(values[masks[basin]])
+        row = summarize_values(values[labels == basin])
         row["name"] = basin
         summaries.append(row)
     return summaries
+
+
+def _dominant_basin(labels: np.ndarray) -> str:
+    """Return the most common basin label in a grouped grid cell."""
+    if labels.size == 0:
+        return "Other"
+    unique, counts = np.unique(labels, return_counts=True)
+    counts_by_name = {str(name): int(count) for name, count in zip(unique, counts)}
+    best_name = "Other"
+    best_count = -1
+    for name in BASIN_NAMES:
+        count = counts_by_name.get(name, 0)
+        if count > best_count:
+            best_name = name
+            best_count = count
+    return best_name
 
 
 def aggregate_by_grid(
@@ -186,6 +243,7 @@ def aggregate_by_grid(
     lats: np.ndarray,
     *,
     grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
+    basin_labels: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
     """Aggregate absolute-error values into fixed lat-lon grid cells."""
     grid_size = float(grid_size_degrees)
@@ -196,6 +254,13 @@ def aggregate_by_grid(
     lat_bins = np.floor((np.asarray(lats) + 90.0) / grid_size).astype(np.int64)
     lon_bins = np.clip(lon_bins, 0, int(np.ceil(360.0 / grid_size)) - 1)
     lat_bins = np.clip(lat_bins, 0, int(np.ceil(180.0 / grid_size)) - 1)
+    labels = (
+        _basin_label_array(lons, lats)
+        if basin_labels is None
+        else np.asarray(basin_labels, dtype="<U8")
+    )
+    if labels.shape != values.shape:
+        raise ValueError("basin_labels must match values shape.")
 
     if values.size == 0:
         return []
@@ -203,6 +268,7 @@ def aggregate_by_grid(
     sorted_lat_bins = lat_bins[order]
     sorted_lon_bins = lon_bins[order]
     sorted_values = values[order]
+    sorted_labels = labels[order]
     key_changes = np.flatnonzero(
         (np.diff(sorted_lat_bins) != 0) | (np.diff(sorted_lon_bins) != 0)
     )
@@ -225,6 +291,7 @@ def aggregate_by_grid(
             {
                 "id": f"cell_{lat_bin}_{lon_bin}",
                 "label": f"{south:.0f} to {north:.0f} lat, {west:.0f} to {east:.0f} lon",
+                "basin": _dominant_basin(sorted_labels[start:stop]),
                 "west": float(west),
                 "south": float(south),
                 "east": float(east),
@@ -250,24 +317,134 @@ def _top_cells(
     return ranked[: int(limit)]
 
 
+def _aggregate_summary_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Average per-depth metric summaries and sum their valid pixel counts."""
+    total_count = sum(int(row.get("count", 0) or 0) for row in rows)
+    summary: dict[str, Any] = {"count": int(total_count)}
+    for metric in METRIC_KEYS:
+        weighted_sum = 0.0
+        weight_sum = 0
+        for row in rows:
+            value = row.get(metric)
+            count = int(row.get("count", 0) or 0)
+            if value is None or count <= 0:
+                continue
+            weighted_sum += float(value) * float(count)
+            weight_sum += count
+        summary[metric] = (
+            None if weight_sum <= 0 else float(weighted_sum / float(weight_sum))
+        )
+
+    min_values = [float(row["min"]) for row in rows if row.get("min") is not None]
+    max_values = [float(row["max"]) for row in rows if row.get("max") is not None]
+    summary["min"] = min(min_values) if min_values else None
+    summary["max"] = max(max_values) if max_values else None
+    return summary
+
+
+def _aggregate_basin_rows(depth_levels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build all-depth basin summaries from per-depth basin rows."""
+    basins: list[dict[str, Any]] = []
+    for basin in BASIN_NAMES:
+        rows = [
+            row
+            for depth in depth_levels
+            for row in depth.get("basins", [])
+            if row.get("name") == basin
+        ]
+        basin_row = _aggregate_summary_rows(rows)
+        basin_row["name"] = basin
+        basins.append(basin_row)
+    return basins
+
+
+def _aggregate_grid_cell_rows(
+    depth_levels: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build all-depth grid-cell summaries from matching per-depth cell ids."""
+    rows_by_cell: dict[str, list[dict[str, Any]]] = {}
+    for depth in depth_levels:
+        for cell in depth.get("grid_cells", []):
+            rows_by_cell.setdefault(str(cell["id"]), []).append(cell)
+
+    cells: list[dict[str, Any]] = []
+    for rows in rows_by_cell.values():
+        template = rows[0]
+        cell = _aggregate_summary_rows(rows)
+        cell.update(
+            {
+                "id": template["id"],
+                "label": template["label"],
+                "basin": template.get("basin", "Other"),
+                "west": template["west"],
+                "south": template["south"],
+                "east": template["east"],
+                "north": template["north"],
+                "center_lon": template["center_lon"],
+                "center_lat": template["center_lat"],
+            }
+        )
+        cells.append(cell)
+
+    cells.sort(key=lambda cell: (float(cell["south"]), float(cell["west"])))
+    return cells
+
+
+def _build_all_depths_analysis(
+    depth_levels: list[dict[str, Any]],
+    *,
+    top_cell_count: int,
+) -> dict[str, Any]:
+    """Build the first dashboard level aggregating all exported depths."""
+    grid_cells = _aggregate_grid_cell_rows(depth_levels)
+    return {
+        "index": -1,
+        "suffix": "all_depths",
+        "label": "All Depths",
+        "requested_depth_m": None,
+        "actual_depth_m": None,
+        "channel_index": None,
+        "is_aggregate": True,
+        "depth_count": int(len(depth_levels)),
+        "aggregation_method": "Count-weighted average of per-depth regional metrics; counts are summed across depths.",
+        "global": _aggregate_summary_rows([depth["global"] for depth in depth_levels]),
+        "basins": _aggregate_basin_rows(depth_levels),
+        "grid_cells": grid_cells,
+        "top_cells": {
+            metric: _top_cells(
+                grid_cells,
+                metric=metric,
+                limit=int(top_cell_count),
+            )
+            for metric in METRIC_KEYS
+        },
+    }
+
+
 def _build_depth_level_analysis(
     depth_index: int,
     depth_export: dict[str, Any],
     *,
     grid_size_degrees: float,
     top_cell_count: int,
+    land_mask_path: Path | None,
 ) -> dict[str, Any]:
     """Build exact error-analysis summaries for one depth export."""
     suffix = str(depth_export["suffix"])
-    values, lons, lats = _valid_raster_arrays(Path(depth_export["absolute_error_path"]))
+    values, lons, lats = _valid_raster_arrays(
+        Path(depth_export["absolute_error_path"]),
+        land_mask_path=land_mask_path,
+    )
+    basin_labels = _basin_label_array(lons, lats)
     grid_cells = aggregate_by_grid(
         values,
         lons,
         lats,
         grid_size_degrees=grid_size_degrees,
+        basin_labels=basin_labels,
     )
     global_stats = summarize_values(values)
-    basin_stats = aggregate_by_basin(values, lons, lats)
+    basin_stats = aggregate_by_basin(values, lons, lats, basin_labels=basin_labels)
     top_cells = {
         metric: _top_cells(
             grid_cells,
@@ -291,15 +468,16 @@ def _build_depth_level_analysis(
 
 
 def _build_depth_level_analysis_worker(
-    args: tuple[int, dict[str, Any], float, int],
+    args: tuple[int, dict[str, Any], float, int, Path | None],
 ) -> dict[str, Any]:
     """Unpack process-pool arguments for one depth export."""
-    depth_index, depth_export, grid_size_degrees, top_cell_count = args
+    depth_index, depth_export, grid_size_degrees, top_cell_count, land_mask_path = args
     return _build_depth_level_analysis(
         depth_index,
         depth_export,
         grid_size_degrees=grid_size_degrees,
         top_cell_count=top_cell_count,
+        land_mask_path=land_mask_path,
     )
 
 
@@ -324,6 +502,7 @@ def build_error_analysis_payload(
         run_summary,
     ) = _resolve_run_artifacts(run_dir)
     variable_metadata = _run_variable_metadata(run_summary)
+    land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
     depth_exports = _resolve_depth_export_artifacts(
         run_dir=run_dir,
         run_summary=run_summary,
@@ -357,11 +536,18 @@ def build_error_analysis_payload(
                 depth_export,
                 grid_size_degrees=grid_size_degrees,
                 top_cell_count=top_cell_count,
+                land_mask_path=land_mask_path,
             )
             progress.update(1)
     else:
         tasks = [
-            (depth_index, depth_export, float(grid_size_degrees), int(top_cell_count))
+            (
+                depth_index,
+                depth_export,
+                float(grid_size_degrees),
+                int(top_cell_count),
+                land_mask_path,
+            )
             for depth_index, depth_export in enumerate(depth_exports)
         ]
         with ProcessPoolExecutor(max_workers=worker_count) as executor:
@@ -376,6 +562,13 @@ def build_error_analysis_payload(
     progress.close()
     completed_depth_levels = [
         depth_level for depth_level in depth_levels if depth_level is not None
+    ]
+    displayed_depth_levels = [
+        _build_all_depths_analysis(
+            completed_depth_levels,
+            top_cell_count=top_cell_count,
+        ),
+        *completed_depth_levels,
     ]
 
     return {
@@ -404,9 +597,9 @@ def build_error_analysis_payload(
         "grouping": {
             "basins": list(BASIN_NAMES),
             "grid_size_degrees": float(grid_size_degrees),
-            "basin_method": "Approximate deterministic lon/lat diagnostic buckets.",
+            "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
         },
-        "depth_levels": completed_depth_levels,
+        "depth_levels": displayed_depth_levels,
     }
 
 
@@ -505,6 +698,10 @@ def _dashboard_html() -> str:
       function metricLabel(metric) { return metric === "p90" ? "P90" : metric === "p95" ? "P95" : metric[0].toUpperCase() + metric.slice(1); }
       function unit() { return state.data.variable.value_unit_label || ""; }
       function activeDepth() { return state.data.depth_levels[state.depthIndex]; }
+      function chartDepths() {
+        const depths = state.data.depth_levels.filter((depth) => !depth.is_aggregate);
+        return depths.length ? depths : state.data.depth_levels;
+      }
       async function init() {
         const response = await fetch(new URL("error-analysis.json", window.location.href));
         state.data = await response.json();
@@ -561,12 +758,33 @@ def _dashboard_html() -> str:
           });
         });
       }
-      function colorFor(value, max) {
-        const t = Math.max(0, Math.min(1, Number(value || 0) / Math.max(1e-9, max)));
-        const r = Math.round(34 + (239 - 34) * t);
-        const g = Math.round(220 - 129 * t);
-        const b = Math.round(132 - 74 * t);
-        return `rgb(${r},${g},${b})`;
+      function quantile(sortedValues, fraction) {
+        if (sortedValues.length === 0) return null;
+        const index = (sortedValues.length - 1) * Math.max(0, Math.min(1, fraction));
+        const lower = Math.floor(index), upper = Math.ceil(index);
+        if (lower === upper) return sortedValues[lower];
+        const weight = index - lower;
+        return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+      }
+      function colorDomain(cells) {
+        const values = cells.map((cell) => Number(cell[state.metric])).filter(Number.isFinite).sort((a, b) => a - b);
+        if (values.length === 0) return { lower: 0, upper: 1 };
+        const lower = Math.max(0, quantile(values, 0.05) ?? values[0]);
+        let upper = quantile(values, 0.95) ?? values[values.length - 1];
+        if (!Number.isFinite(upper) || upper <= lower) upper = values[values.length - 1] > lower ? values[values.length - 1] : lower + 1;
+        return { lower, upper };
+      }
+      function colorFor(value, domain) {
+        const normalized = Math.max(0, Math.min(1, (Number(value || 0) - domain.lower) / Math.max(1e-9, domain.upper - domain.lower)));
+        const t = Math.pow(normalized, 0.72);
+        const stops = [[44,123,182], [0,166,202], [127,211,78], [253,174,97], [215,25,28]];
+        const scaled = t * (stops.length - 1);
+        const lowerIndex = Math.min(stops.length - 2, Math.floor(scaled));
+        const upperIndex = lowerIndex + 1;
+        const local = scaled - lowerIndex;
+        const lower = stops[lowerIndex], upper = stops[upperIndex];
+        const rgb = lower.map((channel, index) => Math.round(channel + (upper[index] - channel) * local));
+        return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
       }
       function renderMap() {
         const canvas = document.getElementById("map");
@@ -584,14 +802,14 @@ def _dashboard_html() -> str:
         for (let lon = -180; lon <= 180; lon += 30) { const x = (lon + 180) / 360 * rect.width; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke(); }
         for (let lat = -60; lat <= 60; lat += 30) { const y = (90 - lat) / 180 * rect.height; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke(); }
         const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
-        const max = Math.max(...cells.map((cell) => Number(cell[state.metric] || 0)), 1);
+        const domain = colorDomain(cells);
         state.hitCells = [];
         for (const cell of cells) {
           const x = (cell.west + 180) / 360 * rect.width;
           const y = (90 - cell.north) / 180 * rect.height;
           const w = (cell.east - cell.west) / 360 * rect.width;
           const h = (cell.north - cell.south) / 180 * rect.height;
-          ctx.fillStyle = colorFor(cell[state.metric], max);
+          ctx.fillStyle = colorFor(cell[state.metric], domain);
           ctx.globalAlpha = state.selection.type === "cell" && state.selection.id !== cell.id ? 0.45 : 0.88;
           ctx.fillRect(x, y, Math.max(1, w), Math.max(1, h));
           if (state.selection.type === "cell" && state.selection.id === cell.id) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h); }
@@ -614,8 +832,8 @@ def _dashboard_html() -> str:
         };
         canvas.onmouseleave = () => showTooltip(null, "");
       }
-      function selectedSeries() {
-        return state.data.depth_levels.map((depth) => {
+      function selectedSeries(depths = chartDepths()) {
+        return depths.map((depth) => {
           if (state.selection.type === "basin") return (depth.basins.find((b) => b.name === state.selection.id) || {})[state.metric] ?? null;
           if (state.selection.type === "cell") return (depth.grid_cells.find((c) => c.id === state.selection.id) || {})[state.metric] ?? null;
           return depth.global[state.metric] ?? null;
@@ -623,8 +841,9 @@ def _dashboard_html() -> str:
       }
       function renderProfileChart() {
         const svg = document.getElementById("profileChart");
-        const values = selectedSeries();
-        const labels = state.data.depth_levels.map((d) => d.label);
+        const depths = chartDepths();
+        const values = selectedSeries(depths);
+        const labels = depths.map((d) => d.label);
         lineChart(svg, values, labels);
       }
       function renderBasinChart() {
