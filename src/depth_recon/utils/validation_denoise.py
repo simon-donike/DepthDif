@@ -688,6 +688,70 @@ def _physical_band_to_plot_image(
     return image_plot.cpu().numpy().astype(np.float32)
 
 
+def _collapse_valid_mask_to_spatial(mask: torch.Tensor | None) -> torch.Tensor | None:
+    """Return a 2D mask where any depth channel contains a valid observation."""
+    if mask is None:
+        return None
+    mask_bool = mask.detach() > 0.5
+    if mask_bool.ndim == 3:
+        return mask_bool.any(dim=0)
+    if mask_bool.ndim == 2:
+        return mask_bool
+    return None
+
+
+def _plot_any_depth_observation_image(
+    tensor: torch.Tensor,
+    sample_idx: int,
+    *,
+    valid_mask_i: torch.Tensor | None,
+    land_band: torch.Tensor | None = None,
+    band_idx: int = 0,
+    plot_unit: str = "temperature",
+) -> np.ndarray:
+    """Render sparse input pixels wherever any depth channel is observed."""
+    if tensor.ndim != 4 or valid_mask_i is None or valid_mask_i.ndim != 3:
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    sample_t = tensor[sample_idx].detach().float()
+    if sample_t.shape != valid_mask_i.shape:
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    observed = (valid_mask_i > 0.5).to(device=sample_t.device)
+    spatial_observed = observed.any(dim=0)
+    if not bool(torch.any(spatial_observed)):
+        return _plot_band_image(
+            tensor,
+            sample_idx,
+            band_idx=band_idx,
+            mask=land_band,
+            plot_unit=plot_unit,
+        )
+
+    # Pick the shallowest observed channel at each profile location so the input panel
+    # shows every ARGO profile once without changing per-depth metric masks.
+    first_observed_depth = observed.float().argmax(dim=0).long()
+    image_t = torch.gather(sample_t, 0, first_observed_depth.unsqueeze(0)).squeeze(0)
+    plot_mask = spatial_observed
+    if land_band is not None:
+        land_bool = (land_band > 0.5).to(device=sample_t.device)
+        if land_bool.shape == plot_mask.shape:
+            plot_mask = plot_mask & land_bool
+    return _physical_band_to_plot_image(image_t, mask=plot_mask, plot_unit=plot_unit)
+
+
 def average_observed_argo_pixels_per_image(
     valid_mask: torch.Tensor | None,
 ) -> torch.Tensor:
@@ -826,8 +890,14 @@ def log_wandb_conditional_reconstruction_grid(
                 if land_band is not None and land_band.ndim == 3:
                     land_band = land_band[min(band_idx, int(land_band.size(0)) - 1)]
 
-                x_img = _plot_band_image(
-                    x, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
+                spatial_valid_band = _collapse_valid_mask_to_spatial(valid_mask_i)
+                x_img = _plot_any_depth_observation_image(
+                    x,
+                    i,
+                    valid_mask_i=valid_mask_i,
+                    land_band=land_band,
+                    band_idx=band_idx,
+                    plot_unit=plot_unit,
                 )
                 y_hat_img = _plot_band_image(
                     y_hat, i, band_idx=band_idx, mask=land_band, plot_unit=plot_unit
@@ -840,8 +910,11 @@ def log_wandb_conditional_reconstruction_grid(
                     plot_unit=plot_unit,
                 )
                 if valid_band is not None:
-                    # Keep full-panel x visualization sparse by zeroing invalid pixels at render time.
-                    valid_np = valid_band.detach().cpu().numpy() > 0.5
+                    # Keep full-panel x visualization sparse while marking any-depth profiles.
+                    valid_for_plot = spatial_valid_band
+                    if valid_for_plot is None:
+                        valid_for_plot = valid_band
+                    valid_np = valid_for_plot.detach().cpu().numpy() > 0.5
                     x_img[~valid_np] = invalid_value
                 if y is not None:
                     y_img = _plot_band_image(
@@ -909,16 +982,19 @@ def log_wandb_conditional_reconstruction_grid(
                     col += 1
 
                 if show_valid_panel:
-                    if valid_band is not None:
+                    valid_panel = spatial_valid_band
+                    if valid_panel is None:
+                        valid_panel = valid_band
+                    if valid_panel is not None:
                         axes[row_idx, col].imshow(
-                            valid_band.detach().float().cpu().numpy(),
+                            valid_panel.detach().float().cpu().numpy(),
                             cmap="gray",
                             vmin=0.0,
                             vmax=1.0,
                         )
                         axes[row_idx, col].set_axis_off()
                         if row_idx == 0:
-                            axes[row_idx, col].set_title("Valid mask")
+                            axes[row_idx, col].set_title("Valid mask (any depth)")
                     col += 1
 
                 if land_mask is not None and land_band is not None:
