@@ -44,10 +44,6 @@
           <span>Metric</span>
           <div id="analysis-metric-toggle" class="analysis-segmented" role="radiogroup"></div>
         </label>
-        <label>
-          <span>Focus</span>
-          <select id="analysis-focus-select"></select>
-        </label>
       </section>
 
       <section id="analysis-kpis" class="analysis-kpis" aria-label="Key error metrics"></section>
@@ -63,6 +59,11 @@
           </div>
           <canvas id="analysis-map" aria-label="World map of absolute-error grid cells"></canvas>
           <div id="analysis-map-tooltip" class="analysis-tooltip" hidden></div>
+          <div class="analysis-map-legend" aria-label="Map color scale">
+            <span>Lower error</span>
+            <span class="analysis-map-legend__ramp"></span>
+            <span id="analysis-map-legend-max">Higher error</span>
+          </div>
         </article>
 
         <aside class="analysis-panel analysis-panel--rankings">
@@ -75,10 +76,6 @@
           <div class="analysis-ranking-group">
             <h3>Basins</h3>
             <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
-          </div>
-          <div class="analysis-ranking-group">
-            <h3>Hotspot Cells</h3>
-            <div id="analysis-cell-ranking" class="analysis-ranking-list"></div>
           </div>
         </aside>
       </section>
@@ -97,7 +94,7 @@
           <div class="analysis-panel__header">
             <div>
               <h2>Basin Spread</h2>
-              <p>Regional comparison at the active depth</p>
+              <p id="analysis-basin-caption">Basin absolute-error comparison at the active depth</p>
             </div>
           </div>
           <svg id="analysis-basin-chart" role="img" aria-label="Basin error comparison"></svg>

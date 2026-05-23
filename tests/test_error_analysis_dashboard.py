@@ -179,6 +179,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn('id="analysis-depth-profile"', html)
         self.assertIn('id="analysis-basin-chart"', html)
         self.assertIn("analysis-dashboard.js", html)
+        self.assertIn("analysis-map-legend", html)
+        self.assertNotIn("analysis-focus-select", html)
+        self.assertNotIn("Hotspot Cells", html)
         self.assertIn("standalone-analysis-page", css)
         self.assertIn("#061726", css)
         self.assertIn("#7cc8ff", css)
@@ -190,6 +193,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("function renderLoadFailure", script)
         self.assertIn("validateAnalysisPayload", script)
         self.assertIn("analysis-load-failed", script)
+        self.assertIn("CONTINENT_OUTLINES", script)
+        self.assertIn("displayBasinName", script)
+        self.assertIn("function activeSelectionStats", script)
         self.assertNotIn('params.get("data")', script)
         self.assertIn(
             "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config

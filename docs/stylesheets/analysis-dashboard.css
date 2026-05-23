@@ -17,6 +17,7 @@ html.standalone-analysis-root,
   --analysis-yellow: #ffd166;
   --analysis-red: #ef5b5b;
   min-height: 100vh;
+  overflow: hidden;
   color: var(--analysis-text);
   font-family: Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
@@ -31,10 +32,12 @@ html.standalone-analysis-root,
 
 .analysis-shell {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  gap: 14px;
-  min-height: 100vh;
-  padding: 16px;
+  grid-template-rows: auto auto auto minmax(0, 1fr) clamp(220px, 24vh, 270px);
+  gap: 10px;
+  height: 100vh;
+  min-height: 0;
+  padding: 10px;
+  overflow: hidden;
   box-sizing: border-box;
 }
 
@@ -68,13 +71,13 @@ html.standalone-analysis-root,
 
 .analysis-header h1 {
   margin: 0.18rem 0 0;
-  font-size: clamp(2rem, 3.5vw, 4.5rem);
+  font-size: clamp(1.6rem, 2.1vw, 2.7rem);
   line-height: 0.95;
   letter-spacing: 0;
 }
 
 .analysis-header p {
-  margin: 0.55rem 0 0;
+  margin: 0.35rem 0 0;
   color: var(--analysis-muted);
   font-size: 0.98rem;
 }
@@ -107,7 +110,7 @@ html.standalone-analysis-root,
   align-items: end;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--analysis-border);
   border-radius: 8px;
   backdrop-filter: blur(18px);
@@ -123,8 +126,16 @@ html.standalone-analysis-root,
 
 .analysis-controls select {
   min-width: 11rem;
-  height: 2.45rem;
+  height: 2.2rem;
   padding: 0 0.7rem;
+  background: #071d2d;
+  color: var(--analysis-text);
+  color-scheme: dark;
+}
+
+.analysis-controls option {
+  background: #071d2d;
+  color: var(--analysis-text);
 }
 
 .analysis-segmented {
@@ -133,7 +144,7 @@ html.standalone-analysis-root,
 }
 
 .analysis-segmented button {
-  height: 2.45rem;
+  height: 2.2rem;
   min-width: 4.1rem;
   padding: 0 0.75rem;
   cursor: pointer;
@@ -163,41 +174,55 @@ html.standalone-analysis-root,
 }
 
 .analysis-kpi {
-  padding: 12px;
+  padding: 9px 10px;
   min-width: 0;
 }
 
 .analysis-kpi__value {
-  margin-top: 6px;
-  font-size: clamp(1.35rem, 1.5vw, 2.1rem);
+  margin-top: 4px;
+  font-size: clamp(1.05rem, 1.25vw, 1.55rem);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .analysis-kpi__sub {
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--analysis-muted);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
 }
 
 .analysis-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 14px;
+  gap: 10px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .analysis-charts {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  gap: 14px;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .analysis-panel {
   position: relative;
   min-width: 0;
   min-height: 0;
-  padding: 12px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.analysis-panel--map,
+.analysis-charts .analysis-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.analysis-charts .analysis-panel {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .analysis-panel__header {
@@ -205,7 +230,7 @@ html.standalone-analysis-root,
   align-items: start;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .analysis-panel__header h2 {
@@ -236,18 +261,36 @@ html.standalone-analysis-root,
 #analysis-map {
   display: block;
   width: 100%;
-  height: min(55vh, 620px);
-  min-height: 430px;
+  height: 100%;
+  min-height: 0;
   border-radius: 6px;
   background: #04131f;
   cursor: crosshair;
+}
+
+.analysis-map-legend {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 220px) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  color: var(--analysis-muted);
+  font-size: 0.76rem;
+}
+
+.analysis-map-legend__ramp {
+  height: 0.55rem;
+  border: 1px solid rgba(223, 244, 239, 0.24);
+  border-radius: 999px;
+  background: linear-gradient(90deg, #49d17d 0%, #f2c451 50%, #ed5b5b 100%);
 }
 
 .analysis-panel--rankings {
   display: grid;
   align-content: start;
   gap: 14px;
-  max-height: calc(min(55vh, 620px) + 62px);
+  max-height: none;
+  height: 100%;
   overflow: auto;
 }
 
@@ -277,6 +320,7 @@ html.standalone-analysis-root,
 }
 
 .analysis-ranking-name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -296,13 +340,29 @@ html.standalone-analysis-root,
 .analysis-charts svg {
   display: block;
   width: 100%;
-  height: 260px;
+  height: 100%;
+  min-height: 0;
   overflow: visible;
 }
 
 .analysis-axis {
   stroke: rgba(223, 244, 239, 0.24);
   stroke-width: 1;
+}
+
+.analysis-gridline {
+  stroke: rgba(223, 244, 239, 0.1);
+  stroke-width: 1;
+}
+
+.analysis-axis-label,
+.analysis-axis-tick {
+  fill: rgba(223, 244, 239, 0.66);
+  font-size: 10.5px;
+}
+
+.analysis-axis-label {
+  font-weight: 700;
 }
 
 .analysis-line {
@@ -322,12 +382,26 @@ html.standalone-analysis-root,
   stroke-width: 2;
 }
 
+.analysis-point--global {
+  fill: var(--analysis-cyan);
+  opacity: 0.74;
+}
+
+.analysis-point-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
 .analysis-bar {
   fill: var(--analysis-cyan);
 }
 
+.analysis-bar.is-active {
+  fill: var(--analysis-yellow);
+}
+
 .analysis-tooltip {
-  position: fixed;
+  position: absolute;
   z-index: 10;
   max-width: 300px;
   padding: 9px 10px;
@@ -375,6 +449,22 @@ html.standalone-analysis-root,
   .analysis-controls select,
   .analysis-segmented button {
     width: 100%;
+  }
+
+  .analysis-map-legend {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1100px), (max-height: 760px) {
+  .standalone-analysis-page {
+    overflow: auto;
+  }
+
+  .analysis-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 }
 
