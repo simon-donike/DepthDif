@@ -145,7 +145,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius for temperature or PSU for salinity on the finalized raster grid
 - optionally runs `uncertainty_step(..., num_samples=5)` via `--export-uncertainty` and writes one stitched 1-channel uncertainty GeoTIFF for the active variable
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
-- exports full-profile metadata for all observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable or a positive count to keep a capped subset
+- exports full-profile metadata for up to 1000 observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel PNG per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable, a positive count to change the cap, or a negative value to export all observed locations
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
 - optionally packages Cesium globe assets and uploads them with `rclone` in the same command
 
@@ -195,7 +195,7 @@ Run this wrapper once with two checkpoints: one checkpoint trained for `--scenar
   --rclone-sync-scope globe
 ```
 
-With `--rclone-sync-scope globe`, only the combined hosted globe bundle is synced to `r2:depth-data/inference_production/globe`; the raw temperature and salinity GeoTIFF run folders remain local. Use `--rclone-sync-scope run` when the raw paired run directory should be uploaded too. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json`.
+With `--rclone-sync-scope globe`, only the combined hosted globe bundle is synced to `r2:depth-data/inference_production/globe`; the raw temperature and salinity GeoTIFF run folders remain local. By default the wrapper passes a 1000 full-profile graph cap to each variable export, so the hosted bundle contains at most 1000 graph images per modality unless `--full-sample-count` is overridden. Use `--rclone-sync-scope run` when the raw paired run directory should be uploaded too. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json`.
 
 Default output layout:
 
@@ -252,14 +252,14 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 ## Workflow 1d: Package One Run for the Cesium Globe
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
-- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them with `gdal2tiles.py`
-- colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth's 2nd-98th percentile range, then tiles them beside prediction and GLORYS
+- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them as Cesium TMS WebP q95 with `gdal2tiles.py`
+- colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth-specific 2nd-98th percentile range, then tiles them beside prediction and GLORYS as WebP q95
 - colorizes and tiles the optional 1-channel uncertainty GeoTIFF when the run summary contains `uncertainty_tif_path`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
-- rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder
+- rewrites the sampled full-profile GeoJSON with rounded coordinates and only the popup properties, then copies its `graphs/` folder and converts hosted graph PNGs to WebP q95
 - merges both point exports into one hosted `argo_sample_locations.geojson` so the globe uses one toggleable ARGO layer with distinct markers for ordinary points and full-depth-profile points
 - rewrites the patch GeoJSON with rounded coordinates for the viewer overlay
-- writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider; paired exports also write a `variables` object used by the Temperature/Salinity selector; the viewer only shows the Uncertainty raster option when `uncertainty_tiles_url` is present
+- writes `globe/globe-config.json` with a `depth_levels` list used by the static Cesium page depth slider; paired exports also write a `variables` object used by the Temperature/Salinity selector; the viewer only shows the Uncertainty raster option when `uncertainty_tiles_url` is present; when the local Natural Earth TIFF exists, the config points the viewer at the hosted WebP basemap
 
 Typical run:
 ```bash
@@ -275,14 +275,15 @@ The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/glob
 - `argo_sample_locations.geojson`: hosted combined ARGO point overlay used by the single ARGO globe layer, with per-feature marker metadata for ordinary points versus full-depth profiles
 - `argo_points.geojson`: hosted raw observed-point overlay source retained alongside the combined file
 - `full_sample_locations.geojson`: hosted sampled-profile point overlay source retained alongside the combined file
-- `graphs/`: hosted PNGs opened by the sampled-profile popup
+- `graphs/`: hosted WebP profile-comparison images opened by the sampled-profile popup
 - `patch_splits.geojson`: hosted patch grid overlay rendered with transparent fill and hard borders in the globe viewer
 - `uncertainty_tiles/`: optional Cesium TMS tiles for the 1-channel uncertainty raster
+- `basemaps/natural_earth_ii_webp_q95/`: optional hosted Natural Earth WebP basemap when the local source TIFF exists
 - `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route
 
 Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for bucket upload.
 
-When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON.
+When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON. Make sure `.webp` files are served as `image/webp`.
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry points are:

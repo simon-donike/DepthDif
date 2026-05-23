@@ -1183,38 +1183,55 @@
     }
   }
 
-  function addBaseMap(viewer) {
+  function addBaseMap(viewer, config, configUrl) {
     const naturalEarthUrl = Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII");
-    // Prefer Cesium's bundled Natural Earth relief tiles for a lighter free basemap.
-    Cesium.TileMapServiceImageryProvider.fromUrl(naturalEarthUrl, {
-      credit: "Natural Earth II",
-    })
-      .then(function (provider) {
-        if (!viewer.isDestroyed()) {
-          const baseLayer = viewer.imageryLayers.addImageryProvider(provider);
-          // The basemap may resolve after overlay layers, so pin it to the bottom
-          // of the stack to keep prediction and GLORYS imagery visible above it.
-          viewer.imageryLayers.lowerToBottom(baseLayer);
-          viewer.scene.requestRender();
-        }
-      })
-      .catch(function (error) {
-        console.error(error);
-        if (viewer.isDestroyed()) {
-          return;
-        }
-        const fallbackLayer = viewer.imageryLayers.addImageryProvider(
-          new Cesium.OpenStreetMapImageryProvider({
-            url: "https://tile.openstreetmap.org/",
-            credit: "OpenStreetMap contributors",
-          })
-        );
-        viewer.imageryLayers.lowerToBottom(fallbackLayer);
-        viewer.scene.requestRender();
-      });
+
+    function addProvider(url, credit, fallback) {
+      Cesium.TileMapServiceImageryProvider.fromUrl(url, { credit: credit })
+        .then(function (provider) {
+          if (!viewer.isDestroyed()) {
+            const baseLayer = viewer.imageryLayers.addImageryProvider(provider);
+            // The basemap may resolve after overlay layers, so pin it to the bottom
+            // of the stack to keep prediction and GLORYS imagery visible above it.
+            viewer.imageryLayers.lowerToBottom(baseLayer);
+            viewer.scene.requestRender();
+          }
+        })
+        .catch(function (error) {
+          console.error(error);
+          fallback();
+        });
+    }
+
+    function addOpenStreetMapFallback() {
+      if (viewer.isDestroyed()) {
+        return;
+      }
+      const fallbackLayer = viewer.imageryLayers.addImageryProvider(
+        new Cesium.OpenStreetMapImageryProvider({
+          url: "https://tile.openstreetmap.org/",
+          credit: "OpenStreetMap contributors",
+        })
+      );
+      viewer.imageryLayers.lowerToBottom(fallbackLayer);
+      viewer.scene.requestRender();
+    }
+
+    function addBundledNaturalEarthFallback() {
+      addProvider(naturalEarthUrl, "Natural Earth II", addOpenStreetMapFallback);
+    }
+
+    const hostedBaseMapUrl = resolveAssetUrl(config && config.base_map_tiles_url, configUrl);
+    if (hostedBaseMapUrl) {
+      const hostedCredit =
+        config.base_map_credit || (config.credits && config.credits.base_map) || "Natural Earth II";
+      addProvider(hostedBaseMapUrl, hostedCredit, addBundledNaturalEarthFallback);
+      return;
+    }
+    addBundledNaturalEarthFallback();
   }
 
-  function buildViewer(container) {
+  function buildViewer(container, config, configUrl) {
     const viewer = new Cesium.Viewer(container, {
       animation: false,
       baseLayer: false,
@@ -1238,7 +1255,7 @@
     });
     viewer.useBrowserRecommendedResolution = false;
     viewer.resolutionScale = window.devicePixelRatio || 1;
-    addBaseMap(viewer);
+    addBaseMap(viewer, config, configUrl);
     viewer.scene.globe.enableLighting = false;
     viewer.clock.shouldAnimate = false;
     return viewer;
@@ -2453,7 +2470,7 @@
         return false;
       }
 
-      const viewer = buildViewer(elements.container);
+      const viewer = buildViewer(elements.container, loaded.config, loaded.configUrl);
       const state = {
         config: loaded.config,
         configUrl: loaded.configUrl,

@@ -19,17 +19,22 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_SALINITY_COLOR_RAMP_PATH,
     DEFAULT_TEMPLATE_PATH,
+    DEFAULT_WEBP_QUALITY,
     FULL_SAMPLE_PROPERTY_KEYS,
     _absolute_error_color_scale,
     _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
+    _convert_hosted_profile_graphs_to_webp,
     _estimate_native_zoom_level,
+    _export_base_map_tiles,
     _prefix_geojson_graph_paths,
     _prefix_variable_config_asset_urls,
     _read_raster_metadata,
+    _remove_gdal_auxiliary_files,
     _resolve_depth_export_artifacts,
     _resolve_rclone_sync_source,
+    _rewrite_geojson_graph_paths_to_webp,
     _rewrite_argo_sample_locations_geojson,
     _run_variable_metadata,
     _rewrite_geojson,
@@ -94,13 +99,15 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "argo_points_url": None,
             "patch_splits_url": None,
             "full_sample_points_url": None,
+            "base_map_tiles_url": None,
+            "base_map_credit": None,
             "west": -180.0,
             "south": -90.0,
             "east": 180.0,
             "north": 90.0,
             "default_camera_destination": {"lon": 0.0, "lat": 0.0, "height": 1.0},
             "raster_transparency": {},
-            "credits": {},
+            "credits": {"base_map": "Natural Earth II"},
         }
         bounds = {
             "west": 1.0,
@@ -210,6 +217,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["value_units"], "degree_Celsius")
         self.assertEqual(config["color_scale_min"], 0.0)
         self.assertEqual(config["color_scale_max"], 30.0)
+        self.assertNotIn("base_map_tiles_url", config)
+        self.assertNotIn("base_map_credit", config)
+        self.assertNotIn("base_map", config["credits"])
 
     def test_build_globe_config_keeps_multivariable_config_and_legacy_fields(
         self,
@@ -342,7 +352,12 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [1.0, 2.0]},
                     "properties": {"graph_png_path": "graphs/full_sample_001.png"},
-                }
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [3.0, 4.0]},
+                    "properties": {"graph_png_path": "graphs/full_sample_002.webp"},
+                },
             ],
         }
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -360,6 +375,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             rewritten["features"][0]["properties"]["graph_png_path"],
             "salinity/graphs/full_sample_001.png",
+        )
+        self.assertEqual(
+            rewritten["features"][1]["properties"]["graph_png_path"],
+            "salinity/graphs/full_sample_002.webp",
         )
 
     def test_run_variable_metadata_uses_salinity_defaults(self) -> None:
@@ -486,6 +505,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("argo_sample_locations_url", template)
         self.assertIn("patch_splits_url", template)
         self.assertIn("full_sample_points_url", template)
+        self.assertIn("base_map_tiles_url", template)
+        self.assertIn("base_map_credit", template)
         self.assertIn("default_camera_destination", template)
         self.assertIn("color_scale_min", template)
         self.assertIn("color_scale_min_c", template)
@@ -546,6 +567,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('document.querySelectorAll("script[src]")', loader)
         self.assertIn('new URL("/javascripts/", document.baseURI)', loader)
         self.assertIn("function resolveConfigUrl()", globe_script)
+        self.assertIn("base_map_tiles_url", globe_script)
+        self.assertIn("function addBundledNaturalEarthFallback()", globe_script)
         self.assertIn('const PATCH_FILL_COLOR = "#f97316";', globe_script)
         self.assertIn(
             'const titleText = "Ocean Variable Reconstruction";', globe_script
@@ -668,6 +691,148 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("near", command)
         self.assertIn("-z", command)
         self.assertIn("0-1", command)
+        self.assertIn("--tiledriver=WEBP", command)
+        self.assertIn(f"--webp-quality={DEFAULT_WEBP_QUALITY}", command)
+
+    def test_build_gdal2tiles_command_supports_bilinear_basemap_webp_tiles(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tif_path = Path(tmp_dir) / "base_map.tif"
+            output_dir = Path(tmp_dir) / "tiles"
+            with rasterio.open(
+                tif_path,
+                "w",
+                driver="GTiff",
+                height=8100,
+                width=16200,
+                count=3,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=from_origin(-180.0, 90.0, 360.0 / 16200.0, 180.0 / 8100.0),
+            ):
+                pass
+
+            with mock.patch(
+                "depth_recon.inference.export_cesium_globe_assets.shutil.which",
+                return_value="/usr/bin/gdal2tiles.py",
+            ):
+                command = _build_gdal2tiles_command(
+                    tif_path,
+                    output_dir,
+                    extra_zoom_levels=0,
+                    resampling="bilinear",
+                )
+
+        self.assertIn("bilinear", command)
+        self.assertIn("0-6", command)
+        self.assertIn("--tiledriver=WEBP", command)
+        self.assertIn(f"--webp-quality={DEFAULT_WEBP_QUALITY}", command)
+
+    def test_remove_gdal_auxiliary_files_deletes_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            sidecar = root / "0" / "0" / "0.webp.aux.xml"
+            sidecar.parent.mkdir(parents=True)
+            sidecar.write_text("aux", encoding="utf-8")
+            tile = root / "0" / "0" / "0.webp"
+            tile.write_text("tile", encoding="utf-8")
+
+            removed = _remove_gdal_auxiliary_files(root)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(sidecar.exists())
+            self.assertTrue(tile.exists())
+
+    def test_export_base_map_tiles_skips_missing_source_tif(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            globe_dir = root / "globe"
+
+            tiles_dir, tiles_url, credit = _export_base_map_tiles(
+                globe_dir,
+                public_base_url="https://example.test/globe",
+                base_map_raster_path=root / "missing.tif",
+            )
+
+        self.assertIsNone(tiles_dir)
+        self.assertIsNone(tiles_url)
+        self.assertIsNone(credit)
+
+    def test_export_base_map_tiles_uses_configured_hosted_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            tif_path = root / "base_map.tif"
+            tif_path.write_bytes(b"placeholder")
+            globe_dir = root / "globe"
+
+            with mock.patch(
+                "depth_recon.inference.export_cesium_globe_assets._run_gdal2tiles"
+            ) as run_gdal2tiles:
+                tiles_dir, tiles_url, credit = _export_base_map_tiles(
+                    globe_dir,
+                    public_base_url="https://example.test/globe",
+                    base_map_raster_path=tif_path,
+                )
+
+        self.assertEqual(
+            tiles_dir, globe_dir / "basemaps" / "natural_earth_ii_webp_q95"
+        )
+        self.assertEqual(
+            tiles_url,
+            "https://example.test/globe/basemaps/natural_earth_ii_webp_q95",
+        )
+        self.assertEqual(credit, "Natural Earth II")
+        run_gdal2tiles.assert_called_once_with(
+            tif_path,
+            globe_dir / "basemaps" / "natural_earth_ii_webp_q95",
+            extra_zoom_levels=0,
+            resampling="bilinear",
+        )
+
+    def test_profile_graphs_convert_to_webp_and_geojson_paths_are_rewritten(
+        self,
+    ) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            graphs_dir = root / "graphs"
+            graphs_dir.mkdir()
+            png_path = graphs_dir / "full_sample_001.png"
+            Image.new("RGB", (16, 16), color=(255, 255, 255)).save(png_path)
+            geojson_path = root / "full_sample_locations.geojson"
+            geojson_path.write_text(
+                json.dumps(
+                    {
+                        "type": "FeatureCollection",
+                        "features": [
+                            {
+                                "type": "Feature",
+                                "properties": {
+                                    "graph_png_path": "graphs/full_sample_001.png"
+                                },
+                                "geometry": {"type": "Point", "coordinates": [0, 0]},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            converted = _convert_hosted_profile_graphs_to_webp(graphs_dir)
+            _rewrite_geojson_graph_paths_to_webp(geojson_path)
+            payload = json.loads(geojson_path.read_text(encoding="utf-8"))
+            png_exists = png_path.exists()
+            webp_exists = png_path.with_suffix(".webp").exists()
+
+        self.assertEqual(converted, 1)
+        self.assertFalse(png_exists)
+        self.assertTrue(webp_exists)
+        self.assertEqual(
+            payload["features"][0]["properties"]["graph_png_path"],
+            "graphs/full_sample_001.webp",
+        )
 
     def test_build_parser_defaults_to_zero_extra_zoom_levels(self) -> None:
         parser = _build_parser()

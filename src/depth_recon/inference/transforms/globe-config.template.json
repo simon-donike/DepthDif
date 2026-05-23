@@ -10,6 +10,8 @@
   "argo_points_url": null,
   "patch_splits_url": null,
   "full_sample_points_url": null,
+  "base_map_tiles_url": null,
+  "base_map_credit": null,
   "west": -180.0,
   "south": -90.0,
   "east": 180.0,
@@ -42,6 +44,7 @@
     "points": "Observed Argo points",
     "patch_splits": "Inference patch grid",
     "full_sample_points": "Full-depth profiles",
+    "base_map": "Natural Earth II",
     "absolute_error": "Prediction absolute error overlay",
     "uncertainty": "Prediction uncertainty overlay"
   },

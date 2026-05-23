@@ -295,8 +295,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
             np.asarray([[[35.0, 34.0]], [[35.0, 36.0]]], dtype=np.float32),
         )
 
-    def test_default_full_sample_count_exports_all_locations(self) -> None:
-        self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, -1)
+    def test_default_full_sample_count_caps_graph_outputs(self) -> None:
+        self.assertEqual(DEFAULT_FULL_SAMPLE_COUNT, 1000)
 
     def test_default_inference_config_uses_super_config(self) -> None:
         self.assertTrue(
@@ -318,6 +318,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertIsNone(args.inference_prefetch_factor)
         self.assertFalse(args.export_uncertainty)
         self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
+        self.assertEqual(args.full_sample_count, DEFAULT_FULL_SAMPLE_COUNT)
 
     def test_build_inference_loader_collates_selected_grid_rows(self) -> None:
         rows = [

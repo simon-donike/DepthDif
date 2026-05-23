@@ -84,9 +84,9 @@ DEFAULT_INFERENCE_CONFIG = DEFAULT_PIXEL_INFERENCE_CONFIG_PATH
 DEFAULT_OUTPUT_ROOT = Path("inference/outputs")
 DEFAULT_PRODUCTION_RUN_DIR_NAME = "inference_production"
 DEFAULT_PRODUCTION_RUN_STEM = "global_top_band"
-# Default to all observed ARGO locations so every clickable full-profile marker
-# can open a hosted PNG without requiring a separate export override.
-DEFAULT_FULL_SAMPLE_COUNT = -1
+# Keep hosted graph bundles bounded by default; negative values still request all
+# observed ARGO locations for explicit full-profile exports.
+DEFAULT_FULL_SAMPLE_COUNT = 1000
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
 PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
@@ -2237,8 +2237,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_FULL_SAMPLE_COUNT,
         help=(
             "Number of observed Argo locations whose full depth profiles are saved "
-            "with graph PNGs for the globe viewer. Use 0 to disable and any "
-            "negative value to export all observed locations."
+            "with graph PNGs for the globe viewer. The default is 1000; use "
+            "0 to disable and any negative value to export all observed locations."
         ),
     )
     return parser

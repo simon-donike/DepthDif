@@ -56,6 +56,13 @@ DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_TILE_SIZE = 256
+DEFAULT_TILE_DRIVER = "WEBP"
+DEFAULT_WEBP_QUALITY = 95
+DEFAULT_BASE_MAP_RASTER_PATH = (
+    DEFAULT_REPO_ROOT / "src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif"
+)
+DEFAULT_BASE_MAP_TILES_PATH = Path("basemaps") / "natural_earth_ii_webp_q95"
+DEFAULT_BASE_MAP_CREDIT = "Natural Earth II"
 DEFAULT_CAMERA_LON = -38.55
 DEFAULT_CAMERA_LAT = 34.50
 DEFAULT_CAMERA_HEIGHT = 11_500_000.0
@@ -586,37 +593,149 @@ def _build_gdal2tiles_command(
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    resampling: str = "near",
+    tile_driver: str = DEFAULT_TILE_DRIVER,
+    webp_quality: int = DEFAULT_WEBP_QUALITY,
 ) -> list[str]:
     gdal2tiles_exe = shutil.which("gdal2tiles.py")
     if gdal2tiles_exe is None:
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
     max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
-    return [
+    command = [
         gdal2tiles_exe,
         "-p",
         "mercator",
         "-r",
-        "near",
+        str(resampling),
         "-z",
         f"0-{max_zoom}",
         "-w",
         "none",
-        str(input_path),
-        str(output_dir),
     ]
+    if tile_driver:
+        command.append(f"--tiledriver={tile_driver}")
+        if str(tile_driver).upper() == "WEBP":
+            command.append(f"--webp-quality={int(webp_quality)}")
+    command.extend([str(input_path), str(output_dir)])
+    return command
+
+
+def _remove_gdal_auxiliary_files(output_dir: Path) -> int:
+    """Delete GDAL sidecar metadata files that are not needed for hosted tiles."""
+    removed = 0
+    for path in Path(output_dir).rglob("*.aux.xml"):
+        path.unlink()
+        removed += 1
+    return removed
 
 
 def _run_gdal2tiles(
-    input_path: Path, output_dir: Path, *, extra_zoom_levels: int
+    input_path: Path,
+    output_dir: Path,
+    *,
+    extra_zoom_levels: int,
+    resampling: str = "near",
+    tile_driver: str = DEFAULT_TILE_DRIVER,
+    webp_quality: int = DEFAULT_WEBP_QUALITY,
 ) -> None:
     _ensure_clean_directory(output_dir)
     command = _build_gdal2tiles_command(
         input_path,
         output_dir,
         extra_zoom_levels=extra_zoom_levels,
+        resampling=resampling,
+        tile_driver=tile_driver,
+        webp_quality=webp_quality,
     )
     subprocess.run(command, check=True)
+    _remove_gdal_auxiliary_files(output_dir)
+
+
+def _export_base_map_tiles(
+    globe_dir: Path,
+    *,
+    public_base_url: str | None,
+    base_map_raster_path: Path = DEFAULT_BASE_MAP_RASTER_PATH,
+) -> tuple[Path | None, str | None, str | None]:
+    """Tile the optional hosted basemap and return its local path and config URL."""
+    base_map_raster_path = Path(base_map_raster_path)
+    if not base_map_raster_path.exists():
+        return None, None, None
+
+    output_dir = Path(globe_dir) / DEFAULT_BASE_MAP_TILES_PATH
+    _run_gdal2tiles(
+        base_map_raster_path,
+        output_dir,
+        extra_zoom_levels=0,
+        resampling="bilinear",
+    )
+    return (
+        output_dir,
+        _resolve_layer_url(
+            DEFAULT_BASE_MAP_TILES_PATH.as_posix(),
+            public_base_url=public_base_url,
+        ),
+        DEFAULT_BASE_MAP_CREDIT,
+    )
+
+
+def _convert_image_to_webp(
+    source_path: Path,
+    destination_path: Path,
+    *,
+    quality: int = DEFAULT_WEBP_QUALITY,
+) -> None:
+    """Convert one hosted image to WebP for smaller bucket assets."""
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError(
+            "Pillow with WebP support is required to convert profile graphs."
+        ) from exc
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(source_path) as image:
+        image.save(destination_path, "WEBP", quality=int(quality), method=6)
+
+
+def _convert_hosted_profile_graphs_to_webp(
+    graphs_dir: Path,
+    *,
+    quality: int = DEFAULT_WEBP_QUALITY,
+) -> int:
+    """Convert copied profile graph PNGs to WebP and remove the PNG copies."""
+    converted = 0
+    for png_path in sorted(Path(graphs_dir).rglob("*.png")):
+        webp_path = png_path.with_suffix(".webp")
+        _convert_image_to_webp(png_path, webp_path, quality=quality)
+        png_path.unlink()
+        converted += 1
+    return converted
+
+
+def _rewrite_geojson_graph_paths_to_webp(geojson_path: Path) -> None:
+    """Point hosted profile graph references at converted WebP images."""
+    if not Path(geojson_path).exists():
+        return
+    with Path(geojson_path).open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    changed = False
+    for feature in payload.get("features", []):
+        properties = feature.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        graph_path = properties.get("graph_png_path")
+        if not isinstance(graph_path, str) or not graph_path.lower().endswith(".png"):
+            continue
+        properties["graph_png_path"] = graph_path[:-4] + ".webp"
+        changed = True
+
+    if changed:
+        with Path(geojson_path).open("w", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+            f.write("\n")
 
 
 def _sync_with_rclone(local_dir: Path, remote: str) -> tuple[bool, str]:
@@ -885,6 +1004,8 @@ def build_globe_config(
     uncertainty_legend_max: int | None = None,
     uncertainty_value_units: str | None = None,
     uncertainty_value_unit_label: str | None = None,
+    base_map_tiles_url: str | None = None,
+    base_map_credit: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
     uncertainty_units = (
@@ -944,6 +1065,14 @@ def build_globe_config(
             "raster_transparency": dict(raster_transparency),
         }
     )
+    if base_map_tiles_url is not None:
+        config["base_map_tiles_url"] = str(base_map_tiles_url)
+    else:
+        config.pop("base_map_tiles_url", None)
+    if base_map_credit is not None:
+        config["base_map_credit"] = str(base_map_credit)
+    else:
+        config.pop("base_map_credit", None)
     if variables is not None:
         config["variables"] = dict(variables)
         config["default_variable"] = (
@@ -963,6 +1092,10 @@ def build_globe_config(
         credits["patch_splits"] = patch_splits_credit
     if full_sample_points_credit is not None:
         credits["full_sample_points"] = full_sample_points_credit
+    if base_map_credit is not None:
+        credits["base_map"] = str(base_map_credit)
+    else:
+        credits.pop("base_map", None)
     config["credits"] = credits
     return config
 
@@ -1048,6 +1181,7 @@ def export_cesium_globe_assets(
     rclone_remote: str | None = None,
     rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+    include_base_map: bool = True,
 ) -> dict[str, Any]:
     """Build Cesium globe assets for one global inference run and optionally upload."""
     run_dir = Path(run_dir).resolve()
@@ -1328,6 +1462,7 @@ def export_cesium_globe_assets(
             full_sample_points_path=full_sample_points_path,
         )
 
+    converted_profile_graph_count = 0
     copied_graphs_dir_path: Path | None = None
     if graphs_dir_path is not None and graphs_dir_path.exists():
         copied_graphs_dir_path = globe_dir / "graphs"
@@ -1335,6 +1470,26 @@ def export_cesium_globe_assets(
             if copied_graphs_dir_path.exists():
                 shutil.rmtree(copied_graphs_dir_path)
             shutil.copytree(graphs_dir_path, copied_graphs_dir_path)
+        converted_profile_graph_count = _convert_hosted_profile_graphs_to_webp(
+            copied_graphs_dir_path
+        )
+        for geojson_path in (
+            copied_full_sample_points_path,
+            copied_argo_sample_locations_path,
+        ):
+            if geojson_path is not None:
+                _rewrite_geojson_graph_paths_to_webp(geojson_path)
+
+    base_map_tiles_dir: Path | None = None
+    base_map_tiles_url: str | None = None
+    base_map_credit: str | None = None
+    if include_base_map:
+        base_map_tiles_dir, base_map_tiles_url, base_map_credit = (
+            _export_base_map_tiles(
+                globe_dir,
+                public_base_url=public_base_url,
+            )
+        )
 
     bounds_source_path = (
         prediction_path if prediction_path is not None else uncertainty_path
@@ -1470,6 +1625,8 @@ def export_cesium_globe_assets(
             if uncertainty_scale is None
             else int(uncertainty_scale["legend_max_c"])
         ),
+        base_map_tiles_url=base_map_tiles_url,
+        base_map_credit=base_map_credit,
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1488,6 +1645,8 @@ def export_cesium_globe_assets(
         print(f"- first absolute-error tiles: {absolute_error_tiles_dir}")
     if uncertainty_tiles_dir is not None:
         print(f"- uncertainty tiles: {uncertainty_tiles_dir}")
+    if base_map_tiles_dir is not None:
+        print(f"- hosted base map tiles: {base_map_tiles_dir}")
     if copied_argo_sample_locations_path is not None:
         print(
             "- combined ARGO sample locations GeoJSON: "
@@ -1500,7 +1659,10 @@ def export_cesium_globe_assets(
     if copied_full_sample_points_path is not None:
         print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
     if copied_graphs_dir_path is not None:
-        print(f"- full-sample graphs: {copied_graphs_dir_path}")
+        print(
+            f"- full-sample graphs: {copied_graphs_dir_path} "
+            f"({converted_profile_graph_count} WebP files)"
+        )
     print(f"- config: {config_path}")
     print(
         f"- fixed {variable_metadata['label']} color scale: "
@@ -1511,6 +1673,7 @@ def export_cesium_globe_assets(
     print(f"- color ramp: {color_ramp_path}")
     print(f"- transparent land mask: {land_mask_path}")
     print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
+    print(f"- tile format: {DEFAULT_TILE_DRIVER} q{DEFAULT_WEBP_QUALITY}")
     print("- tile resampling: nearest-neighbor")
     upload_ok: bool | None = None
     upload_message: str | None = None
@@ -1549,6 +1712,8 @@ def export_cesium_globe_assets(
             )
         ),
         "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
+        "base_map_tile_set_count": int(base_map_tiles_dir is not None),
+        "profile_graph_webp_count": int(converted_profile_graph_count),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
@@ -1699,6 +1864,7 @@ def export_cesium_globe_variable_assets(
             rclone_remote=None,
             rclone_sync_scope=DEFAULT_RCLONE_SYNC_SCOPE,
             extra_zoom_levels=extra_zoom_levels,
+            include_base_map=False,
         )
         source_globe_dir = Path(str(single_result["globe_dir"])).resolve()
         variable_globe_dir = globe_dir / variable
@@ -1729,7 +1895,18 @@ def export_cesium_globe_variable_assets(
     default_variable = (
         "temperature" if "temperature" in variables else next(iter(variables))
     )
+    base_map_tiles_dir, base_map_tiles_url, base_map_credit = _export_base_map_tiles(
+        globe_dir,
+        public_base_url=public_base_url,
+    )
     combined_config = dict(variables[default_variable])
+    if base_map_tiles_url is not None:
+        combined_config["base_map_tiles_url"] = base_map_tiles_url
+    if base_map_credit is not None:
+        combined_config["base_map_credit"] = base_map_credit
+        combined_credits = dict(combined_config.get("credits", {}))
+        combined_credits["base_map"] = base_map_credit
+        combined_config["credits"] = combined_credits
     combined_config["variables"] = variables
     combined_config["default_variable"] = default_variable
     combined_config["available_variables"] = list(variables.keys())
@@ -1761,12 +1938,15 @@ def export_cesium_globe_variable_assets(
 
     print(f"Wrote combined globe config: {combined_config_path}")
     print(f"- variables: {', '.join(variables.keys())}")
+    if base_map_tiles_dir is not None:
+        print(f"- hosted base map tiles: {base_map_tiles_dir}")
     return {
         "globe_dir": str(globe_dir),
         "config_path": str(combined_config_path),
         "variables": list(variables.keys()),
         "default_variable": default_variable,
         "single_results": single_results,
+        "base_map_tile_set_count": int(base_map_tiles_dir is not None),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
