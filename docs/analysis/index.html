@@ -9,12 +9,17 @@
       content="Standalone DepthDif dashboard for absolute-error geography, depth profiles, and regional diagnostics."
     />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://unpkg.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.plot.ly" crossorigin />
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
     />
     <link rel="icon" href="../assets/branding/website_icon.png" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="../stylesheets/analysis-dashboard.css" />
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <script defer src="../javascripts/analysis-dashboard.js"></script>
   </head>
   <body class="standalone-analysis-page">
@@ -57,8 +62,7 @@
             </div>
             <span id="analysis-selection-pill" class="analysis-pill">Global</span>
           </div>
-          <canvas id="analysis-map" aria-label="World map of absolute-error grid cells"></canvas>
-          <div id="analysis-map-tooltip" class="analysis-tooltip" hidden></div>
+          <div id="analysis-map" class="analysis-map" role="application" aria-label="World map of absolute-error grid cells"></div>
           <div class="analysis-map-legend" aria-label="Map color scale">
             <span>Lower error</span>
             <span class="analysis-map-legend__ramp"></span>
@@ -88,7 +92,7 @@
               <p id="analysis-profile-caption">Global accumulated error curve</p>
             </div>
           </div>
-          <svg id="analysis-depth-profile" role="img" aria-label="Error curve across depth levels"></svg>
+          <div id="analysis-depth-profile" class="analysis-chart" role="img" aria-label="Error curve across depth levels"></div>
         </article>
         <article class="analysis-panel">
           <div class="analysis-panel__header">
@@ -97,7 +101,7 @@
               <p id="analysis-basin-caption">Basin absolute-error comparison at the active depth</p>
             </div>
           </div>
-          <svg id="analysis-basin-chart" role="img" aria-label="Basin error comparison"></svg>
+          <div id="analysis-basin-chart" class="analysis-chart" role="img" aria-label="Basin error comparison"></div>
         </article>
       </section>
     </main>

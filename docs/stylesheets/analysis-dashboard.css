@@ -337,80 +337,43 @@ html.standalone-analysis-root,
   font-weight: 800;
 }
 
-.analysis-charts svg {
+.analysis-chart {
   display: block;
   width: 100%;
   height: 100%;
   min-height: 0;
-  overflow: visible;
 }
 
-.analysis-axis {
-  stroke: rgba(223, 244, 239, 0.24);
-  stroke-width: 1;
+#analysis-map.leaflet-container {
+  background: #04131f;
+  color: var(--analysis-text);
+  font-family: Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-.analysis-gridline {
-  stroke: rgba(223, 244, 239, 0.1);
-  stroke-width: 1;
+#analysis-map .leaflet-control-attribution,
+#analysis-map .leaflet-control-zoom a {
+  border-color: rgba(124, 200, 255, 0.22);
+  background: rgba(5, 20, 32, 0.9);
+  color: var(--analysis-text);
 }
 
-.analysis-axis-label,
-.analysis-axis-tick {
-  fill: rgba(223, 244, 239, 0.66);
-  font-size: 10.5px;
+#analysis-map .leaflet-control-attribution a,
+#analysis-map .leaflet-control-zoom a:hover {
+  color: var(--analysis-cyan);
 }
 
-.analysis-axis-label {
-  font-weight: 700;
-}
-
-.analysis-line {
-  fill: none;
-  stroke: var(--analysis-yellow);
-  stroke-width: 3;
-}
-
-.analysis-line--global {
-  stroke: rgba(124, 200, 255, 0.42);
-  stroke-width: 2;
-}
-
-.analysis-point {
-  fill: var(--analysis-yellow);
-  stroke: #04131f;
-  stroke-width: 2;
-}
-
-.analysis-point--global {
-  fill: var(--analysis-cyan);
-  opacity: 0.74;
-}
-
-.analysis-point-hit {
-  fill: transparent;
-  pointer-events: all;
-}
-
-.analysis-bar {
-  fill: var(--analysis-cyan);
-}
-
-.analysis-bar.is-active {
-  fill: var(--analysis-yellow);
-}
-
-.analysis-tooltip {
-  position: absolute;
-  z-index: 10;
+.leaflet-tooltip.analysis-leaflet-tooltip {
   max-width: 300px;
-  padding: 9px 10px;
   border: 1px solid var(--analysis-border);
   border-radius: 8px;
   background: rgba(5, 20, 32, 0.98);
   color: var(--analysis-text);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
   font-size: 0.78rem;
-  pointer-events: none;
+}
+
+.analysis-chart .modebar {
+  color: var(--analysis-muted);
 }
 
 @media (max-width: 1100px) {

@@ -10,145 +10,18 @@
     Arctic: "Arctic Ocean",
     Other: "Other Waters",
   };
-  const CONTINENT_OUTLINES = [
-    {
-      name: "North America",
-      points: [
-        [-168, 72],
-        [-140, 70],
-        [-125, 56],
-        [-124, 49],
-        [-110, 48],
-        [-97, 50],
-        [-82, 46],
-        [-66, 45],
-        [-52, 48],
-        [-59, 58],
-        [-76, 63],
-        [-86, 72],
-        [-112, 74],
-        [-135, 70],
-        [-168, 72],
-      ],
-    },
-    {
-      name: "Central America",
-      points: [
-        [-117, 32],
-        [-105, 24],
-        [-96, 19],
-        [-88, 18],
-        [-83, 10],
-        [-78, 9],
-        [-77, 18],
-        [-90, 22],
-        [-99, 26],
-        [-117, 32],
-      ],
-    },
-    {
-      name: "South America",
-      points: [
-        [-81, 12],
-        [-72, 8],
-        [-67, 3],
-        [-76, -12],
-        [-71, -30],
-        [-74, -53],
-        [-63, -55],
-        [-51, -36],
-        [-39, -20],
-        [-35, -7],
-        [-48, 2],
-        [-61, 8],
-        [-81, 12],
-      ],
-    },
-    {
-      name: "Greenland",
-      points: [
-        [-52, 60],
-        [-39, 64],
-        [-22, 70],
-        [-29, 81],
-        [-48, 83],
-        [-65, 76],
-        [-72, 67],
-        [-52, 60],
-      ],
-    },
-    {
-      name: "Africa",
-      points: [
-        [-17, 37],
-        [1, 36],
-        [15, 33],
-        [32, 31],
-        [43, 12],
-        [51, 11],
-        [43, -12],
-        [33, -27],
-        [20, -35],
-        [12, -29],
-        [3, -5],
-        [-10, 6],
-        [-17, 22],
-        [-17, 37],
-      ],
-    },
-    {
-      name: "Eurasia",
-      points: [
-        [-10, 36],
-        [-6, 50],
-        [12, 58],
-        [30, 70],
-        [62, 72],
-        [94, 74],
-        [132, 60],
-        [164, 56],
-        [180, 66],
-        [180, 24],
-        [121, 4],
-        [105, -6],
-        [82, 8],
-        [65, 24],
-        [45, 12],
-        [36, 31],
-        [20, 41],
-        [5, 43],
-        [-10, 36],
-      ],
-    },
-    {
-      name: "Australia",
-      points: [
-        [113, -11],
-        [126, -13],
-        [144, -11],
-        [154, -27],
-        [146, -39],
-        [130, -35],
-        [115, -34],
-        [112, -22],
-        [113, -11],
-      ],
-    },
-    {
-      name: "Antarctica",
-      points: [
-        [-180, -70],
-        [-130, -73],
-        [-70, -71],
-        [-20, -75],
-        [40, -70],
-        [100, -74],
-        [160, -70],
-        [180, -72],
-      ],
-      closed: false,
-    },
+  const MAP_BOUNDS = [
+    [-85, -180],
+    [85, 180],
   ];
+  const MAP_TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png";
+  const MAP_TILE_ATTRIBUTION =
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const PLOTLY_CONFIG = {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
+  };
   const state = {
     datasets: {},
     variables: [],
@@ -156,7 +29,8 @@
     depthIndex: 0,
     metric: "median",
     focus: { type: "global", id: "global", label: "Global" },
-    hitCells: [],
+    map: null,
+    mapCellLayer: null,
   };
 
   function $(id) {
@@ -170,6 +44,19 @@
       .replace(/>/g, "&gt;")
       .replace(/\"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  function requireDashboardLibraries() {
+    const missing = [];
+    if (!window.L) {
+      missing.push("Leaflet");
+    }
+    if (!window.Plotly) {
+      missing.push("Plotly");
+    }
+    if (missing.length > 0) {
+      throw new Error(`${missing.join(" and ")} did not load.`);
+    }
   }
 
   function data() {
@@ -207,14 +94,16 @@
     });
     ["analysis-depth-profile", "analysis-basin-chart"].forEach((id) => {
       const element = $(id);
-      if (element) {
+      if (element && window.Plotly) {
+        window.Plotly.purge(element);
+      } else if (element) {
         element.innerHTML = "";
       }
     });
-    const canvas = $("analysis-map");
-    if (canvas) {
-      const context = canvas.getContext("2d");
-      context.clearRect(0, 0, canvas.width, canvas.height);
+    if (state.map) {
+      state.map.remove();
+      state.map = null;
+      state.mapCellLayer = null;
     }
   }
 
@@ -234,7 +123,7 @@
     panel.className = "analysis-error-state";
     panel.innerHTML = [
       "<h2>Could not load the analysis dashboard data</h2>",
-      "<p>The page is working, but the packaged globe manifest or analysis JSON files could not be loaded.</p>",
+      "<p>The page is working, but the packaged globe manifest, analysis JSON files, or dashboard libraries could not be loaded.</p>",
       `<p><strong>Manifest URL:</strong> <code>${escapeHtml(sourceUrl)}</code></p>`,
       `<p><strong>Error:</strong> ${escapeHtml(error && error.message ? error.message : error)}</p>`,
       "<p>Run the normal globe packaging/export command. It writes <code>globe-config.json</code> plus <code>error-analysis.json</code> files for every packaged modality.</p>",
@@ -244,6 +133,10 @@
 
   function unitLabel() {
     return (data() && data().variable && data().variable.value_unit_label) || "";
+  }
+
+  function cssVar(name, fallback) {
+    return getComputedStyle(document.body).getPropertyValue(name).trim() || fallback;
   }
 
   function formatNumber(value, digits) {
@@ -318,7 +211,7 @@
   function setupControls() {
     const modalitySelect = $("analysis-modality-select");
     modalitySelect.innerHTML = state.variables
-      .map((variable) => `<option value="${variable.key}">${variable.label}</option>`)
+      .map((variable) => `<option value="${escapeHtml(variable.key)}">${escapeHtml(variable.label)}</option>`)
       .join("");
     modalitySelect.value = state.activeVariable;
     modalitySelect.addEventListener("change", function () {
@@ -357,7 +250,7 @@
   function populateDepthSelect() {
     const depthSelect = $("analysis-depth-select");
     depthSelect.innerHTML = data().depth_levels
-      .map((depth, index) => `<option value="${index}">${depth.label}</option>`)
+      .map((depth, index) => `<option value="${index}">${escapeHtml(depth.label)}</option>`)
       .join("");
     state.depthIndex = Math.min(state.depthIndex, data().depth_levels.length - 1);
     depthSelect.value = String(state.depthIndex);
@@ -372,7 +265,7 @@
     metricToggle.innerHTML = metrics
       .map(
         (metric) =>
-          `<button type="button" data-metric="${metric}" aria-pressed="${metric === state.metric}">${metricLabel(metric)}</button>`
+          `<button type="button" data-metric="${escapeHtml(metric)}" aria-pressed="${metric === state.metric}">${escapeHtml(metricLabel(metric))}</button>`
       )
       .join("");
   }
@@ -481,51 +374,6 @@
     return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
   }
 
-  function renderMap() {
-    const canvas = $("analysis-map");
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.fillStyle = "#07100f";
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    drawMapGrid(ctx, rect.width, rect.height);
-
-    const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
-    const max = Math.max(...cells.map((cell) => Number(cell[state.metric] || 0)), 1);
-    renderMapLegend(max);
-    state.hitCells = [];
-    for (const cell of cells) {
-      const x = ((cell.west + 180) / 360) * rect.width;
-      const y = ((90 - cell.north) / 180) * rect.height;
-      const w = ((cell.east - cell.west) / 360) * rect.width;
-      const h = ((cell.north - cell.south) / 180) * rect.height;
-      const basin = basinForCell(cell);
-      const basinIsActive = state.focus.type === "basin" && state.focus.id === basin;
-      const cellIsActive = state.focus.type === "cell" && state.focus.id === cell.id;
-      ctx.globalAlpha = 0.9;
-      if (state.focus.type === "basin") {
-        ctx.globalAlpha = basinIsActive ? 0.98 : 0.24;
-      } else if (state.focus.type === "cell") {
-        ctx.globalAlpha = cellIsActive ? 0.98 : 0.34;
-      }
-      ctx.fillStyle = colorFor(cell[state.metric], max);
-      ctx.fillRect(x, y, Math.max(1, w), Math.max(1, h));
-      if (basinIsActive || cellIsActive) {
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = cellIsActive ? "#edf8f4" : "rgba(255,209,102,0.92)";
-        ctx.lineWidth = cellIsActive ? 2 : 1.1;
-        ctx.strokeRect(x, y, Math.max(1, w), Math.max(1, h));
-      }
-      state.hitCells.push({ x, y, w: Math.max(1, w), h: Math.max(1, h), cell });
-    }
-    ctx.globalAlpha = 1;
-    drawContinentOutlines(ctx, rect.width, rect.height);
-  }
-
   function renderMapLegend(max) {
     const legendMax = $("analysis-map-legend-max");
     if (legendMax) {
@@ -533,101 +381,95 @@
     }
   }
 
-  function projectMapPoint(lon, lat, width, height) {
-    return [((lon + 180) / 360) * width, ((90 - lat) / 180) * height];
+  function createMap() {
+    const map = window.L.map("analysis-map", {
+      attributionControl: true,
+      maxBounds: MAP_BOUNDS,
+      maxBoundsViscosity: 0.65,
+      minZoom: 1,
+      preferCanvas: true,
+      worldCopyJump: false,
+      zoomSnap: 0.25,
+    });
+    window.L.tileLayer(MAP_TILE_URL, {
+      attribution: MAP_TILE_ATTRIBUTION,
+      maxZoom: 8,
+      noWrap: true,
+      subdomains: "abcd",
+    }).addTo(map);
+    map.fitBounds(MAP_BOUNDS, { animate: false, padding: [8, 8] });
+    state.mapCellLayer = window.L.layerGroup().addTo(map);
+    state.map = map;
+    return map;
   }
 
-  function drawContinentOutlines(ctx, width, height) {
-    ctx.save();
-    ctx.fillStyle = "rgba(4,19,31,0.2)";
-    ctx.strokeStyle = "rgba(237,248,244,0.8)";
-    ctx.lineWidth = 1.35;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    for (const outline of CONTINENT_OUTLINES) {
-      ctx.beginPath();
-      outline.points.forEach(([lon, lat], index) => {
-        const [x, y] = projectMapPoint(lon, lat, width, height);
-        if (index === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
+  function cellBounds(cell) {
+    return [
+      [Number(cell.south), Number(cell.west)],
+      [Number(cell.north), Number(cell.east)],
+    ];
+  }
+
+  function cellTooltipHtml(cell) {
+    return [
+      `<strong>${escapeHtml(cell.label)}</strong>`,
+      `Basin: ${escapeHtml(displayBasinName(basinForCell(cell)))}`,
+      `${escapeHtml(metricLabel(state.metric))}: ${escapeHtml(formatMetric(cell[state.metric]))}`,
+      `P95: ${escapeHtml(formatMetric(cell.p95))}`,
+      `Count: ${escapeHtml(formatPixelCount(cell.count))}`,
+    ].join("<br>");
+  }
+
+  function cellMapStyle(cell, max) {
+    const basin = basinForCell(cell);
+    const basinIsActive = state.focus.type === "basin" && state.focus.id === basin;
+    const cellIsActive = state.focus.type === "cell" && state.focus.id === cell.id;
+    let fillOpacity = 0.74;
+    let opacity = 0.46;
+    let color = "rgba(223,244,239,0.34)";
+    let weight = 0.6;
+    if (state.focus.type === "basin") {
+      fillOpacity = basinIsActive ? 0.92 : 0.17;
+      opacity = basinIsActive ? 0.9 : 0.18;
+      color = basinIsActive ? "#ffd166" : "rgba(223,244,239,0.18)";
+      weight = basinIsActive ? 1.2 : 0.4;
+    } else if (state.focus.type === "cell") {
+      fillOpacity = cellIsActive ? 0.96 : 0.22;
+      opacity = cellIsActive ? 1 : 0.22;
+      color = cellIsActive ? "#edf8f4" : "rgba(223,244,239,0.18)";
+      weight = cellIsActive ? 2 : 0.4;
+    }
+    return {
+      color,
+      fillColor: colorFor(cell[state.metric], max),
+      fillOpacity,
+      opacity,
+      weight,
+    };
+  }
+
+  function renderMap() {
+    const map = state.map || createMap();
+    const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
+    const max = Math.max(1, ...cells.map((cell) => Number(cell[state.metric] || 0)));
+    renderMapLegend(max);
+    state.mapCellLayer.clearLayers();
+    for (const cell of cells) {
+      const layer = window.L.rectangle(cellBounds(cell), cellMapStyle(cell, max));
+      layer.bindTooltip(cellTooltipHtml(cell), {
+        className: "analysis-leaflet-tooltip",
+        direction: "auto",
+        offset: [8, 8],
+        opacity: 0.96,
+        sticky: true,
       });
-      if (outline.closed !== false) {
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawMapGrid(ctx, width, height) {
-    ctx.strokeStyle = "rgba(223,244,239,0.12)";
-    ctx.lineWidth = 1;
-    for (let lon = -180; lon <= 180; lon += 30) {
-      const x = ((lon + 180) / 360) * width;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
-    for (let lat = -60; lat <= 60; lat += 30) {
-      const y = ((90 - lat) / 180) * height;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "rgba(223,244,239,0.34)";
-    ctx.font = "12px Roboto, sans-serif";
-    ctx.fillText("180 W", 10, height - 10);
-    ctx.fillText("0", width / 2 - 4, height - 10);
-    ctx.fillText("180 E", width - 48, height - 10);
-  }
-
-  function positionTooltip(tooltip, event) {
-    const margin = 8;
-    const offset = 8;
-    const containerRect = tooltip.parentElement.getBoundingClientRect();
-    const tooltipWidth = tooltip.offsetWidth || 0;
-    const tooltipHeight = tooltip.offsetHeight || 0;
-    const left = Math.min(event.clientX - containerRect.left + offset, containerRect.width - tooltipWidth - margin);
-    const top = Math.min(event.clientY - containerRect.top + offset, containerRect.height - tooltipHeight - margin);
-    tooltip.style.left = `${Math.max(margin, left)}px`;
-    tooltip.style.top = `${Math.max(margin, top)}px`;
-  }
-
-  function setupMapEvents() {
-    const canvas = $("analysis-map");
-    const tooltip = $("analysis-map-tooltip");
-    canvas.addEventListener("mousemove", function (event) {
-      const box = canvas.getBoundingClientRect();
-      const x = event.clientX - box.left;
-      const y = event.clientY - box.top;
-      const hit = state.hitCells.find((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h);
-      if (!hit) {
-        tooltip.hidden = true;
-        return;
-      }
-      tooltip.innerHTML = `<strong>${escapeHtml(hit.cell.label)}</strong><br>Basin: ${escapeHtml(displayBasinName(basinForCell(hit.cell)))}<br>${metricLabel(state.metric)}: ${formatMetric(hit.cell[state.metric])}<br>P95: ${formatMetric(hit.cell.p95)}<br>Count: ${formatPixelCount(hit.cell.count)}`;
-      tooltip.hidden = false;
-      positionTooltip(tooltip, event);
-    });
-    canvas.addEventListener("mouseleave", function () {
-      tooltip.hidden = true;
-    });
-    canvas.addEventListener("click", function (event) {
-      const box = canvas.getBoundingClientRect();
-      const x = event.clientX - box.left;
-      const y = event.clientY - box.top;
-      const hit = state.hitCells.find((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h);
-      if (hit) {
-        state.focus = { type: "cell", id: hit.cell.id, label: hit.cell.label };
+      layer.on("click", function () {
+        state.focus = { type: "cell", id: cell.id, label: cell.label };
         render();
-      }
-    });
+      });
+      state.mapCellLayer.addLayer(layer);
+    }
+    requestAnimationFrame(() => map.invalidateSize(false));
   }
 
   function selectedSeries() {
@@ -646,24 +488,42 @@
     return data().depth_levels.map((depth) => depth.global[state.metric] ?? null);
   }
 
-  function renderDepthProfile() {
-    const labels = data().depth_levels.map((depth) => depth.label);
-    const selected = selectedSeries();
-    const global = globalSeries();
-    const seriesList = state.focus.type === "global" ? [global] : [global, selected];
-    const seriesNames = state.focus.type === "global" ? ["Global"] : ["Global", focusLabel()];
-    $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth`;
-    drawLineChart($("analysis-depth-profile"), seriesList, labels, seriesNames);
+  function depthXValues() {
+    return data().depth_levels.map((depth, index) => {
+      const actualDepth = Number(depth.actual_depth_m);
+      return Number.isFinite(actualDepth) ? actualDepth : index;
+    });
   }
 
-  function renderBasinChart() {
-    const basins = activeDepth().basins.filter((basin) => basin[state.metric] !== null);
-    drawBarChart(
-      $("analysis-basin-chart"),
-      basins.map((basin) => basin[state.metric]),
-      basins.map((basin) => displayBasinName(basin.name)),
-      basins.map((basin) => basin.name)
-    );
+  function plotlyLayout(yAxisTitle) {
+    return {
+      autosize: true,
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      font: { color: cssVar("--analysis-text", "#d7e9f7"), family: "Roboto, sans-serif", size: 11 },
+      margin: { l: 58, r: 16, t: 12, b: 44 },
+      hoverlabel: {
+        bgcolor: "#071d2d",
+        bordercolor: cssVar("--analysis-border", "rgba(124,200,255,0.32)"),
+        font: { color: cssVar("--analysis-text", "#d7e9f7") },
+      },
+      legend: { orientation: "h", x: 0, y: 1.12, xanchor: "left", yanchor: "bottom" },
+      xaxis: {
+        automargin: true,
+        color: cssVar("--analysis-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(223,244,239,0.1)",
+        linecolor: "rgba(223,244,239,0.24)",
+        zerolinecolor: "rgba(223,244,239,0.18)",
+      },
+      yaxis: {
+        automargin: true,
+        color: cssVar("--analysis-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(223,244,239,0.1)",
+        linecolor: "rgba(223,244,239,0.24)",
+        title: { text: yAxisTitle, standoff: 8 },
+        zerolinecolor: "rgba(223,244,239,0.18)",
+      },
+    };
   }
 
   function chartAxisTitle() {
@@ -671,77 +531,89 @@
     return `${metricLabel(state.metric)} absolute error${unit ? ` (${unit})` : ""}`;
   }
 
-  function chartTicks(max) {
-    const top = Number.isFinite(Number(max)) && Number(max) > 0 ? Number(max) : 1;
-    return [0, 0.25, 0.5, 0.75, 1].map((fraction) => top * fraction);
+  function renderDepthProfile() {
+    const chart = $("analysis-depth-profile");
+    const labels = data().depth_levels.map((depth) => depth.label);
+    const selected = selectedSeries();
+    const global = globalSeries();
+    const xValues = depthXValues();
+    const traces = [
+      {
+        customdata: labels,
+        hovertemplate: "Global<br>%{customdata}<br>%{y:.2f} " + unitLabel() + "<extra></extra>",
+        line: { color: "rgba(124,200,255,0.72)", width: 2 },
+        marker: { color: "#7cc8ff", size: 7 },
+        mode: "lines+markers",
+        name: "Global",
+        x: xValues,
+        y: global,
+      },
+    ];
+    if (state.focus.type !== "global") {
+      traces.push({
+        customdata: labels,
+        hovertemplate: `${escapeHtml(focusLabel())}<br>%{customdata}<br>%{y:.2f} ${unitLabel()}<extra></extra>`,
+        line: { color: "#ffd166", width: 3 },
+        marker: { color: "#ffd166", size: 8 },
+        mode: "lines+markers",
+        name: focusLabel(),
+        x: xValues,
+        y: selected,
+      });
+    }
+    const layout = plotlyLayout(chartAxisTitle());
+    layout.hovermode = "closest";
+    layout.xaxis.title = { text: "Depth (m)", standoff: 8 };
+    $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth`;
+    window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG);
   }
 
-  function drawLineChart(svg, seriesList, labels, seriesNames) {
-    const width = svg.clientWidth || 700;
-    const height = 300;
-    const pad = { left: 68, right: 20, top: 26, bottom: 42 };
-    const values = seriesList
-      .flat()
-      .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
-      .map(Number);
-    const max = Math.max(...values, 1);
-    const xFor = (index) => pad.left + index * ((width - pad.left - pad.right) / Math.max(1, labels.length - 1));
-    const yFor = (value) => height - pad.bottom - (Number(value) / max) * (height - pad.top - pad.bottom);
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.innerHTML = `<line class="analysis-axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}"/><line class="analysis-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}"/><text class="analysis-axis-label" transform="translate(14 ${height / 2}) rotate(-90)" text-anchor="middle">${escapeHtml(chartAxisTitle())}</text>`;
-    chartTicks(max).forEach((tick) => {
-      const y = yFor(tick);
-      svg.insertAdjacentHTML("beforeend", `<line class="analysis-gridline" x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}"/><text class="analysis-axis-tick" x="${pad.left - 8}" y="${y + 3}" text-anchor="end">${formatNumber(tick, 2)}</text>`);
-    });
-    seriesList.forEach((series, seriesIndex) => {
-      const points = series.map((value, index) => (value === null || value === undefined ? null : [xFor(index), yFor(value), value]));
-      const path = points.filter(Boolean).map((point, index) => `${index ? "L" : "M"}${point[0]},${point[1]}`).join(" ");
-      if (path) {
-        svg.insertAdjacentHTML("beforeend", `<path class="analysis-line ${seriesIndex === 0 ? "analysis-line--global" : ""}" d="${path}"/>`);
+  function renderBasinChart() {
+    const chart = $("analysis-basin-chart");
+    const basins = activeDepth().basins.filter((basin) => basin[state.metric] !== null);
+    const labels = basins.map((basin) => displayBasinName(basin.name));
+    const basinIds = basins.map((basin) => basin.name);
+    const colors = basins.map((basin) => (state.focus.type === "basin" && state.focus.id === basin.name ? "#ffd166" : "#7cc8ff"));
+    const trace = {
+      customdata: basins.map((basin) => [basin.name, formatPixelCount(basin.count, true)]),
+      hovertemplate: "%{x}<br>" + metricLabel(state.metric) + ": %{y:.2f} " + unitLabel() + "<br>%{customdata[1]}<extra></extra>",
+      marker: { color: colors, line: { color: "rgba(223,244,239,0.36)", width: 1 } },
+      type: "bar",
+      x: labels,
+      y: basins.map((basin) => basin[state.metric]),
+    };
+    const layout = plotlyLayout(chartAxisTitle());
+    layout.showlegend = false;
+    layout.xaxis.automargin = true;
+    layout.xaxis.tickangle = -24;
+    $("analysis-basin-caption").textContent = `${metricLabel(state.metric)} absolute error by basin at ${activeDepth().label}`;
+    Promise.resolve(window.Plotly.react(chart, [trace], layout, PLOTLY_CONFIG)).then(() => {
+      if (typeof chart.removeAllListeners === "function") {
+        chart.removeAllListeners("plotly_click");
       }
-      points.forEach((point, index) => {
-        if (!point) {
-          return;
-        }
-        const title = `${seriesNames[seriesIndex]} ${labels[index]}: ${formatMetric(point[2])}`;
-        const pointClass = seriesIndex === 0 ? "analysis-point analysis-point--global" : "analysis-point";
-        svg.insertAdjacentHTML("beforeend", `<circle class="${pointClass}" cx="${point[0]}" cy="${point[1]}" r="4"><title>${escapeHtml(title)}</title></circle><circle class="analysis-point-hit" cx="${point[0]}" cy="${point[1]}" r="10"><title>${escapeHtml(title)}</title></circle>`);
-      });
-    });
-    labels.forEach((label, index) => {
-      if (index === 0 || index === labels.length - 1 || index % 2 === 0) {
-        svg.insertAdjacentHTML("beforeend", `<text class="analysis-axis-tick" x="${xFor(index)}" y="${height - 10}" text-anchor="middle">${escapeHtml(label)}</text>`);
+      if (typeof chart.on === "function") {
+        chart.on("plotly_click", function (event) {
+          const point = event.points && event.points[0];
+          if (!point) {
+            return;
+          }
+          const basinId = basinIds[point.pointIndex];
+          state.focus = { type: "basin", id: basinId, label: displayBasinName(basinId) };
+          render();
+        });
       }
     });
   }
 
-  function drawBarChart(svg, values, labels, basinIds) {
-    const width = svg.clientWidth || 520;
-    const height = 300;
-    const pad = { left: 70, right: 16, top: 24, bottom: 86 };
-    const finiteValues = values.filter((value) => Number.isFinite(Number(value))).map(Number);
-    const max = Math.max(...finiteValues, 1);
-    const barWidth = (width - pad.left - pad.right) / Math.max(1, values.length);
-    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    svg.innerHTML = `<line class="analysis-axis" x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}"/><line class="analysis-axis" x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}"/><text class="analysis-axis-label" transform="translate(14 ${height / 2}) rotate(-90)" text-anchor="middle">${escapeHtml(chartAxisTitle())}</text>`;
-    const yFor = (value) => height - pad.bottom - (Number(value) / max) * (height - pad.top - pad.bottom);
-    chartTicks(max).forEach((tick) => {
-      const y = yFor(tick);
-      svg.insertAdjacentHTML("beforeend", `<line class="analysis-gridline" x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}"/><text class="analysis-axis-tick" x="${pad.left - 8}" y="${y + 3}" text-anchor="end">${formatNumber(tick, 2)}</text>`);
-    });
-    values.forEach((value, index) => {
-      const barHeight = (Number(value) / max) * (height - pad.top - pad.bottom);
-      const x = pad.left + index * barWidth + 6;
-      const y = height - pad.bottom - barHeight;
-      const innerWidth = Math.max(6, barWidth - 12);
-      const active = state.focus.type === "basin" && state.focus.id === basinIds[index];
-      svg.insertAdjacentHTML("beforeend", `<rect class="analysis-bar ${active ? "is-active" : ""}" data-basin-id="${escapeHtml(basinIds[index])}" data-basin-label="${escapeHtml(labels[index])}" x="${x}" y="${y}" width="${innerWidth}" height="${barHeight}"><title>${escapeHtml(labels[index])}: ${formatMetric(value)}</title></rect><text class="analysis-axis-tick" transform="translate(${x + innerWidth / 2} ${height - 18}) rotate(-35)" text-anchor="end">${escapeHtml(labels[index])}</text>`);
-    });
-    svg.querySelectorAll("rect[data-basin-id]").forEach((bar) => {
-      bar.addEventListener("click", function () {
-        state.focus = { type: "basin", id: bar.dataset.basinId, label: bar.dataset.basinLabel };
-        render();
-      });
+  function resizeVisuals() {
+    if (state.map) {
+      state.map.invalidateSize(false);
+    }
+    ["analysis-depth-profile", "analysis-basin-chart"].forEach((id) => {
+      const chart = $(id);
+      if (chart && window.Plotly) {
+        window.Plotly.Plots.resize(chart);
+      }
     });
   }
 
@@ -753,7 +625,6 @@
     renderBasinChart();
     $("analysis-selection-pill").textContent = focusLabel();
     $("analysis-map-caption").textContent = `${activeDepth().label} ${metricLabel(state.metric).toLowerCase()} absolute error by ${data().grouping.grid_size_degrees} degree cell`;
-    $("analysis-basin-caption").textContent = `${metricLabel(state.metric)} absolute error by basin at ${activeDepth().label}`;
   }
 
   function analysisSourcesFromConfig(config) {
@@ -812,13 +683,13 @@
 
   async function init() {
     try {
+      requireDashboardLibraries();
       await loadAllAnalysisData();
       document.body.classList.remove("analysis-load-failed");
       setRunLabel();
       setupControls();
-      setupMapEvents();
       setControlsDisabled(false);
-      window.addEventListener("resize", render);
+      window.addEventListener("resize", resizeVisuals);
       render();
     } catch (error) {
       console.error(error);
