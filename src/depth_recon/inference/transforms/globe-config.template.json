@@ -63,6 +63,7 @@
   "variables": {},
   "uncertainty_tiles_url": null,
   "error_analysis_data_url": null,
+  "analysis_grid_geojson_url": null,
   "uncertainty_color_palette": "absolute_error_green_red",
   "uncertainty_value_units": "degree_Celsius",
   "uncertainty_value_unit_label": "\u00b0C",

@@ -13,6 +13,7 @@ from rasterio.transform import from_origin
 from depth_recon.inference.export_cesium_globe_assets import (
     ARGO_SAMPLE_LOCATION_PROPERTY_KEYS,
     ARGO_POINT_PROPERTY_KEYS,
+    DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
     DEFAULT_CAMERA_HEIGHT,
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
@@ -26,6 +27,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
+    _copy_precomputed_analysis_grid_geojson,
     _copy_precomputed_error_analysis_json,
     _estimate_native_zoom_level,
     _export_base_map_tiles,
@@ -165,6 +167,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             },
             template=template,
             error_analysis_data_url="./error-analysis.json",
+            analysis_grid_geojson_url="./analysis-grid.geojson",
         )
 
         self.assertEqual(config["selected_date"], 20260105)
@@ -223,6 +226,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertNotIn("base_map", config["credits"])
         self.assertNotIn("error_analysis_url", config)
         self.assertEqual(config["error_analysis_data_url"], "./error-analysis.json")
+        self.assertEqual(config["analysis_grid_geojson_url"], "./analysis-grid.geojson")
 
     def test_build_globe_config_keeps_multivariable_config_and_legacy_fields(
         self,
@@ -302,6 +306,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             "absolute_error_tiles_url": None,
             "uncertainty_tiles_url": "./uncertainty_tiles",
             "argo_sample_locations_url": "./argo_sample_locations.geojson",
+            "analysis_grid_geojson_url": "./analysis-grid.geojson",
             "depth_levels": [
                 {
                     "prediction_tiles_url": "./prediction_tiles_surface",
@@ -333,6 +338,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             prefixed["uncertainty_tiles_url"], "salinity/uncertainty_tiles"
         )
         self.assertEqual(
+            prefixed["analysis_grid_geojson_url"], "salinity/analysis-grid.geojson"
+        )
+        self.assertEqual(
             prefixed["depth_levels"][0]["absolute_error_tiles_url"],
             "salinity/absolute_error_tiles_surface",
         )
@@ -343,6 +351,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             hosted["uncertainty_tiles_url"],
             "https://example.test/globe/salinity/uncertainty_tiles",
+        )
+        self.assertEqual(
+            hosted["analysis_grid_geojson_url"],
+            "https://example.test/globe/salinity/analysis-grid.geojson",
         )
 
     def test_prefix_geojson_graph_paths_rewrites_combined_profile_graphs(
@@ -830,6 +842,34 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             self.assertEqual(
                 json.loads(copied_path.read_text(encoding="utf-8")),
                 {"depth_levels": ["precomputed"]},
+            )
+
+    def test_copy_precomputed_analysis_grid_geojson_prefers_run_summary_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            run_dir = root / "run"
+            globe_dir = run_dir / "globe"
+            run_dir.mkdir(parents=True)
+            source_path = run_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
+            source_path.write_text(
+                json.dumps({"type": "FeatureCollection", "features": []}) + "\n",
+                encoding="utf-8",
+            )
+
+            copied_path = _copy_precomputed_analysis_grid_geojson(
+                run_dir=run_dir,
+                globe_dir=globe_dir,
+                run_summary={"error_analysis_grid_geojson_path": source_path.name},
+            )
+
+            self.assertEqual(
+                copied_path, globe_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
+            )
+            self.assertEqual(
+                json.loads(copied_path.read_text(encoding="utf-8")),
+                {"type": "FeatureCollection", "features": []},
             )
 
     def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(

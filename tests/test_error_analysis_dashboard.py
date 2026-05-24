@@ -11,12 +11,15 @@ from rasterio.transform import from_origin
 import yaml
 
 from depth_recon.inference.export_error_analysis_dashboard import (
+    DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
     DEFAULT_GRID_SIZE_DEGREES,
     aggregate_by_grid,
     assign_ocean_basin,
+    build_analysis_grid_geojson_payload,
     build_error_analysis_payload,
     export_error_analysis_dashboard,
     summarize_values,
+    write_analysis_grid_geojson,
 )
 
 
@@ -58,6 +61,57 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertEqual(first["south"], -90.0)
         self.assertEqual(first["median"], 2.0)
         self.assertEqual(first["basin"], "Southern")
+
+    def test_analysis_grid_geojson_clips_cells_to_ocean_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mask_path = Path(tmp_dir) / "land_mask.tif"
+            with rasterio.open(
+                mask_path,
+                "w",
+                driver="GTiff",
+                height=4,
+                width=4,
+                count=1,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=from_origin(-180.0, 90.0, 90.0, 45.0),
+            ) as ds:
+                ds.write(
+                    np.asarray(
+                        [
+                            [1, 0, 0, 0],
+                            [0, 0, 0, 0],
+                            [0, 1, 1, 0],
+                            [0, 1, 1, 0],
+                        ],
+                        dtype=np.uint8,
+                    ).reshape(1, 4, 4)
+                )
+
+            payload = build_analysis_grid_geojson_payload(
+                land_mask_path=mask_path,
+                grid_size_degrees=90.0,
+            )
+            output_path = write_analysis_grid_geojson(
+                output_path=Path(tmp_dir) / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
+                land_mask_path=mask_path,
+                grid_size_degrees=90.0,
+            )
+            features_by_id = {
+                feature["properties"]["id"]: feature for feature in payload["features"]
+            }
+
+            self.assertTrue(output_path.is_file())
+            self.assertEqual(output_path.name, DEFAULT_ANALYSIS_GRID_GEOJSON_NAME)
+            self.assertIn("cell_1_0", features_by_id)
+            self.assertNotIn("cell_0_1", features_by_id)
+            clipped = features_by_id["cell_1_0"]
+            self.assertEqual(clipped["geometry"]["type"], "MultiPolygon")
+            self.assertEqual(clipped["properties"]["ocean_pixel_count"], 1)
+            self.assertEqual(clipped["properties"]["total_pixel_count"], 2)
+            self.assertAlmostEqual(clipped["properties"]["ocean_fraction"], 0.5)
+            exported = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(exported["features"], payload["features"])
 
     def test_build_payload_filters_land_mask_and_labels_grid_cells(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -309,6 +363,11 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysis-load-failed", script)
         self.assertIn("function requireDashboardLibraries", script)
         self.assertIn("function mapColorDomain", script)
+        self.assertIn("analysis_grid_geojson_url", script)
+        self.assertIn("function indexAnalysisGridGeoJson", script)
+        self.assertIn("function mapCellLayer", script)
+        self.assertIn("window.L.geoJSON", script)
+        self.assertIn("coast-clipped", script)
         self.assertIn("quantile(values, 0.95)", script)
         self.assertIn("cell.basin", script)
         self.assertIn("lonValue >= 100", script)
@@ -327,17 +386,14 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("function primaryMarkerSymbols", script)
         self.assertIn("Raster export depth", script)
         self.assertIn("function basinFanTraces", script)
-        self.assertIn("function deltaSeries", script)
-        self.assertIn("function deltaHoverData", script)
-        self.assertIn("positive is worse", script)
-        self.assertIn("delta vs global", script)
-        self.assertIn('layout.yaxis.rangemode = "tozero"', script)
+        self.assertIn("function selectedHoverData", script)
         self.assertIn("function selectDepthFromProfileClick", script)
         self.assertIn("!depth.is_aggregate", script)
         self.assertIn("primaryMarkerColors(depthLevels", script)
         self.assertIn('chart.on("plotly_click"', script)
         self.assertIn("state.depthIndex === clickedDepthIndex", script)
         self.assertIn("metricLabel(state.metric)", script)
+        self.assertIn("absolute error across depth", script)
         self.assertIn(
             'state.focus = { type: "global", id: "global", label: "Global" }', script
         )

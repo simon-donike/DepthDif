@@ -56,6 +56,7 @@ DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_ERROR_ANALYSIS_JSON_NAME = "error-analysis.json"
+DEFAULT_ANALYSIS_GRID_GEOJSON_NAME = "analysis-grid.geojson"
 DEFAULT_TILE_SIZE = 256
 DEFAULT_TILE_DRIVER = "WEBP"
 DEFAULT_WEBP_QUALITY = 95
@@ -208,6 +209,69 @@ def _copy_precomputed_error_analysis_json(
     if source_path.resolve() != output_path.resolve():
         shutil.copy2(source_path, output_path)
     return output_path
+
+
+def _copy_precomputed_analysis_grid_geojson(
+    *,
+    run_dir: Path,
+    globe_dir: Path,
+    run_summary: dict[str, Any],
+) -> Path | None:
+    """Copy inference-generated coast-clipped analysis grid GeoJSON."""
+    path_value = run_summary.get("error_analysis_grid_geojson_path")
+    if not isinstance(path_value, str) or path_value.strip() == "":
+        return None
+
+    source_path = _coerce_existing_path(path_value, run_dir=run_dir)
+    if source_path is None:
+        return None
+
+    globe_dir.mkdir(parents=True, exist_ok=True)
+    output_path = globe_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
+    if source_path.resolve() != output_path.resolve():
+        shutil.copy2(source_path, output_path)
+    return output_path
+
+
+def _error_analysis_grid_size(error_analysis_json_path: Path | None) -> float | None:
+    """Read the dashboard grid size from an error-analysis payload."""
+    if error_analysis_json_path is None or not Path(error_analysis_json_path).exists():
+        return None
+    with Path(error_analysis_json_path).open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    grouping = payload.get("grouping", {})
+    if not isinstance(grouping, dict):
+        return None
+    value = grouping.get("grid_size_degrees")
+    if value is None:
+        return None
+    return float(value)
+
+
+def _write_analysis_grid_geojson_from_mask(
+    *,
+    globe_dir: Path,
+    land_mask_path: Path | None,
+    error_analysis_json_path: Path | None,
+) -> Path | None:
+    """Create coast-clipped analysis grid geometry from the run land mask."""
+    if land_mask_path is None:
+        return None
+
+    from depth_recon.inference.export_error_analysis_dashboard import (
+        DEFAULT_GRID_SIZE_DEGREES,
+        write_analysis_grid_geojson,
+    )
+
+    grid_size = _error_analysis_grid_size(error_analysis_json_path)
+    globe_dir.mkdir(parents=True, exist_ok=True)
+    return write_analysis_grid_geojson(
+        output_path=globe_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
+        land_mask_path=land_mask_path,
+        grid_size_degrees=(
+            DEFAULT_GRID_SIZE_DEGREES if grid_size is None else float(grid_size)
+        ),
+    )
 
 
 def _resolve_land_mask_path(
@@ -972,6 +1036,7 @@ def build_globe_config(
     base_map_tiles_url: str | None = None,
     base_map_credit: str | None = None,
     error_analysis_data_url: str | None = None,
+    analysis_grid_geojson_url: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
     uncertainty_units = (
@@ -1049,6 +1114,10 @@ def build_globe_config(
         config["error_analysis_data_url"] = str(error_analysis_data_url)
     else:
         config.pop("error_analysis_data_url", None)
+    if analysis_grid_geojson_url is not None:
+        config["analysis_grid_geojson_url"] = str(analysis_grid_geojson_url)
+    else:
+        config.pop("analysis_grid_geojson_url", None)
     credits = dict(config.get("credits", {}))
     credits["prediction"] = prediction_credit
     if ground_truth_credit is not None:
@@ -1465,8 +1534,14 @@ def export_cesium_globe_assets(
         )
 
     copied_error_analysis_json_path: Path | None = None
+    copied_analysis_grid_geojson_path: Path | None = None
     if include_error_analysis:
         copied_error_analysis_json_path = _copy_precomputed_error_analysis_json(
+            run_dir=run_dir,
+            globe_dir=globe_dir,
+            run_summary=run_summary,
+        )
+        copied_analysis_grid_geojson_path = _copy_precomputed_analysis_grid_geojson(
             run_dir=run_dir,
             globe_dir=globe_dir,
             run_summary=run_summary,
@@ -1482,6 +1557,16 @@ def export_cesium_globe_assets(
             public_base_url=public_base_url,
         )
         copied_error_analysis_json_path = Path(error_analysis_result["json_path"])
+        if error_analysis_result.get("grid_geojson_path") is not None:
+            copied_analysis_grid_geojson_path = Path(
+                error_analysis_result["grid_geojson_path"]
+            )
+    if include_error_analysis and copied_analysis_grid_geojson_path is None:
+        copied_analysis_grid_geojson_path = _write_analysis_grid_geojson_from_mask(
+            globe_dir=globe_dir,
+            land_mask_path=land_mask_path,
+            error_analysis_json_path=copied_error_analysis_json_path,
+        )
 
     bounds_source_path = (
         prediction_path if prediction_path is not None else uncertainty_path
@@ -1627,6 +1712,14 @@ def export_cesium_globe_assets(
                 public_base_url=public_base_url,
             )
         ),
+        analysis_grid_geojson_url=(
+            None
+            if copied_analysis_grid_geojson_path is None
+            else _resolve_layer_url(
+                copied_analysis_grid_geojson_path.name,
+                public_base_url=public_base_url,
+            )
+        ),
     )
     config_path = globe_dir / "globe-config.json"
     with config_path.open("w", encoding="utf-8") as f:
@@ -1662,6 +1755,8 @@ def export_cesium_globe_assets(
         print(f"- full-sample graphs: {copied_graphs_dir_path}")
     if copied_error_analysis_json_path is not None:
         print(f"- error analysis data: {copied_error_analysis_json_path}")
+    if copied_analysis_grid_geojson_path is not None:
+        print(f"- analysis ocean grid: {copied_analysis_grid_geojson_path}")
     print(f"- config: {config_path}")
     print(
         f"- fixed {variable_metadata['label']} color scale: "
@@ -1729,6 +1824,7 @@ ASSET_URL_KEYS = (
     "argo_points_url",
     "patch_splits_url",
     "full_sample_points_url",
+    "analysis_grid_geojson_url",
 )
 
 
@@ -1915,6 +2011,16 @@ def export_cesium_globe_variable_assets(
         shutil.copy2(default_analysis_source, default_analysis_path)
         combined_config["error_analysis_data_url"] = _resolve_layer_url(
             default_analysis_path.name,
+            public_base_url=public_base_url,
+        )
+    default_analysis_grid_source = (
+        globe_dir / default_variable / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
+    )
+    if default_analysis_grid_source.exists():
+        default_analysis_grid_path = globe_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
+        shutil.copy2(default_analysis_grid_source, default_analysis_grid_path)
+        combined_config["analysis_grid_geojson_url"] = _resolve_layer_url(
+            default_analysis_grid_path.name,
             public_base_url=public_base_url,
         )
     combined_config_path = globe_dir / "globe-config.json"

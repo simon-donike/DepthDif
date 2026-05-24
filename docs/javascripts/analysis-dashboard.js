@@ -34,6 +34,7 @@
   const COMMON_SELECTOR_DEPTHS_M = [0, 10, 50, 100, 250, 500, 1000, 2000, 2500, 5000];
   const state = {
     datasets: {},
+    gridGeometries: {},
     variables: [],
     activeVariable: null,
     depthIndex: 0,
@@ -73,6 +74,31 @@
 
   function data() {
     return state.datasets[state.activeVariable];
+  }
+
+  function activeGridGeometryIndex() {
+    return state.gridGeometries[state.activeVariable] || null;
+  }
+
+  function indexAnalysisGridGeoJson(payload) {
+    if (!payload || !Array.isArray(payload.features)) {
+      return null;
+    }
+    const featuresById = {};
+    for (const feature of payload.features) {
+      const properties = feature && feature.properties;
+      const geometry = feature && feature.geometry;
+      const id = properties && properties.id;
+      if (!id || !geometry) {
+        continue;
+      }
+      featuresById[String(id)] = {
+        type: "Feature",
+        geometry,
+        properties,
+      };
+    }
+    return featuresById;
   }
 
   function setControlsDisabled(disabled) {
@@ -581,14 +607,31 @@
     };
   }
 
+  function mapCellLayer(cell, colorDomain, geometryIndex) {
+    const geometryFeature = geometryIndex ? geometryIndex[cell.id] : null;
+    if (geometryIndex && !geometryFeature) {
+      return null;
+    }
+    if (geometryFeature) {
+      return window.L.geoJSON(geometryFeature, {
+        style: cellMapStyle(cell, colorDomain),
+      });
+    }
+    return window.L.rectangle(cellBounds(cell), cellMapStyle(cell, colorDomain));
+  }
+
   function renderMap() {
     const map = state.map || createMap();
     const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
     const colorDomain = mapColorDomain(cells);
+    const geometryIndex = activeGridGeometryIndex();
     renderMapLegend(colorDomain);
     state.mapCellLayer.clearLayers();
     for (const cell of cells) {
-      const layer = window.L.rectangle(cellBounds(cell), cellMapStyle(cell, colorDomain));
+      const layer = mapCellLayer(cell, colorDomain, geometryIndex);
+      if (!layer) {
+        continue;
+      }
       layer.bindTooltip(cellTooltipHtml(cell), {
         className: "analysis-leaflet-tooltip",
         direction: "auto",
@@ -635,17 +678,6 @@
     return depthLevels.map((depth) => metricValue(focusedStats(depth)));
   }
 
-  function globalSeries(depthLevels = chartDepthLevels()) {
-    return depthLevels.map((depth) => metricValue(depth.global));
-  }
-
-  function deltaSeries(selectedValues, globalValues) {
-    return selectedValues.map((value, index) => {
-      const selectedValue = Number(value);
-      const globalValue = Number(globalValues[index]);
-      return Number.isFinite(selectedValue) && Number.isFinite(globalValue) ? selectedValue - globalValue : null;
-    });
-  }
 
   function basinSeries(depthLevels, basinName) {
     return depthLevels.map((depth) => metricValue(basinStatsForDepth(depth, basinName)));
@@ -741,14 +773,6 @@
     return depthLevels.map((_depth, index) => (rasterPoints.has(index) ? "<br>Raster export depth" : ""));
   }
 
-  function formatSignedMetric(value) {
-    const number = Number(value);
-    if (!Number.isFinite(number)) {
-      return "n/a";
-    }
-    const prefix = number > 0 ? "+" : "";
-    return `${prefix}${formatNumber(number, 2)} ${unitLabel()}`.trim();
-  }
 
   function globalHoverData(depthLevels) {
     const rasterTexts = rasterDepthHoverTexts(depthLevels);
@@ -773,15 +797,13 @@
     });
   }
 
-  function deltaHoverData(depthLevels, selectedValues, globalValues, deltaValues) {
+  function selectedHoverData(depthLevels, selectedValues) {
     const rasterTexts = rasterDepthHoverTexts(depthLevels);
     return depthLevels.map((depth, index) => {
       const stats = focusedStats(depth) || {};
       return [
         depth.label,
         formatMetric(selectedValues[index]),
-        formatMetric(globalValues[index]),
-        formatSignedMetric(deltaValues[index]),
         formatPixelCount(stats.count),
         rasterTexts[index],
       ];
@@ -836,11 +858,8 @@
     };
   }
 
-  function chartAxisTitle(deltaMode = false) {
+  function chartAxisTitle() {
     const unit = unitLabel();
-    if (deltaMode) {
-      return `${metricLabel(state.metric)} delta vs global${unit ? ` (${unit})` : ""}`;
-    }
     return `${metricLabel(state.metric)} absolute error${unit ? ` (${unit})` : ""}`;
   }
 
@@ -879,68 +898,33 @@
     const chart = $("analysis-depth-profile");
     const depthLevels = chartDepthLevels();
     const selected = selectedSeries(depthLevels);
-    const global = globalSeries(depthLevels);
-    const delta = deltaSeries(selected, global);
     const linearXValues = depthXValues(depthLevels);
     const xValues = state.depthProfileLogX ? logDepthXValues(linearXValues) : linearXValues;
-    const deltaMode = state.focus.type !== "global";
+    const globalFocus = state.focus.type === "global";
+    const primaryColor = globalFocus ? "#7cc8ff" : "#ffd166";
+    const primaryName = globalFocus ? "Global" : focusLabel();
     updateBasinFanToggle();
-    const traces = deltaMode
-      ? [
-          {
-            customdata: deltaHoverData(depthLevels, selected, global, delta),
-            hovertemplate:
-              `${escapeHtml(focusLabel())} vs Global<br>%{customdata[0]}<br>` +
-              `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
-              `Global ${escapeHtml(metricLabel(state.metric))}: %{customdata[2]}<br>` +
-              "Delta: %{customdata[3]}<br>" +
-              "Count: %{customdata[4]}%{customdata[5]}<extra></extra>",
-            line: { color: "#ffd166", width: 3 },
-            marker: primaryMarker(depthLevels, "#ffd166"),
-            mode: "lines+markers",
-            name: `${focusLabel()} - Global`,
-            x: xValues,
-            y: delta,
-          },
-        ]
-      : [
-          ...basinFanTraces(depthLevels, xValues),
-          {
-            customdata: globalHoverData(depthLevels),
-            hovertemplate:
-              "Global<br>%{customdata[0]}<br>" +
-              `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
-              "Count: %{customdata[2]}%{customdata[3]}<extra></extra>",
-            line: { color: "rgba(124,200,255,0.92)", width: 3 },
-            marker: primaryMarker(depthLevels, "#7cc8ff"),
-            mode: "lines+markers",
-            name: "Global",
-            x: xValues,
-            y: global,
-          },
-        ];
-    const layout = plotlyLayout(chartAxisTitle(deltaMode));
+    const traces = [
+      ...basinFanTraces(depthLevels, xValues),
+      {
+        customdata: globalFocus ? globalHoverData(depthLevels) : selectedHoverData(depthLevels, selected),
+        hovertemplate:
+          `${escapeHtml(primaryName)}<br>%{customdata[0]}<br>` +
+          `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
+          "Count: %{customdata[2]}%{customdata[3]}<extra></extra>",
+        line: { color: globalFocus ? "rgba(124,200,255,0.92)" : "#ffd166", width: 3 },
+        marker: primaryMarker(depthLevels, primaryColor),
+        mode: "lines+markers",
+        name: primaryName,
+        x: xValues,
+        y: selected,
+      },
+    ];
+    const layout = plotlyLayout(chartAxisTitle());
     layout.hovermode = "closest";
     layout.xaxis.type = state.depthProfileLogX ? "log" : "linear";
     layout.xaxis.title = { text: state.depthProfileLogX ? "Depth (m, log scale)" : "Depth (m)", standoff: 8 };
-    if (deltaMode) {
-      layout.yaxis.rangemode = "tozero";
-      layout.shapes = [
-        {
-          type: "line",
-          xref: "paper",
-          x0: 0,
-          x1: 1,
-          yref: "y",
-          y0: 0,
-          y1: 0,
-          line: { color: "rgba(248,242,216,0.5)", width: 1, dash: "dot" },
-        },
-      ];
-      $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error minus global across depth; positive is worse`;
-    } else {
-      $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth${state.showBasinFan ? " with basin fan" : ""}`;
-    }
+    $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth${globalFocus && state.showBasinFan ? " with basin fan" : ""}`;
     Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
       if (typeof chart.removeAllListeners === "function") {
         chart.removeAllListeners("plotly_click");
@@ -1011,7 +995,8 @@
     renderDepthProfile();
     renderBasinChart();
     $("analysis-selection-pill").textContent = focusLabel();
-    $("analysis-map-caption").textContent = `${activeDepth().label} ${metricLabel(state.metric).toLowerCase()} absolute error by ${data().grouping.grid_size_degrees} degree cell`;
+    const mapGeometryLabel = activeGridGeometryIndex() ? "coast-clipped " : "";
+    $("analysis-map-caption").textContent = `${activeDepth().label} ${metricLabel(state.metric).toLowerCase()} absolute error by ${mapGeometryLabel}${data().grouping.grid_size_degrees} degree cell`;
   }
 
   function analysisSourcesFromConfig(config) {
@@ -1022,6 +1007,7 @@
           key,
           label: variableConfig.variable_label || variableConfig.variable || key,
           url: variableConfig.error_analysis_data_url,
+          gridUrl: variableConfig.analysis_grid_geojson_url || config.analysis_grid_geojson_url,
         }))
         .filter((item) => item.url);
     }
@@ -1031,6 +1017,7 @@
           key: config.variable || "default",
           label: config.variable_label || config.variable || "Default",
           url: config.error_analysis_data_url,
+          gridUrl: config.analysis_grid_geojson_url,
         },
       ];
     }
@@ -1045,6 +1032,18 @@
     return response.json();
   }
 
+  async function fetchOptionalJson(url) {
+    if (!url) {
+      return null;
+    }
+    try {
+      return await fetchJson(url);
+    } catch (error) {
+      console.warn(`Optional dashboard asset failed to load: ${url}`, error);
+      return null;
+    }
+  }
+
   async function loadAllAnalysisData() {
     const config = await fetchJson(DEFAULT_GLOBE_CONFIG_URL);
     const sources = analysisSourcesFromConfig(config);
@@ -1053,17 +1052,25 @@
     }
     const loaded = await Promise.all(
       sources.map(async (source) => {
-        const payload = await fetchJson(new URL(source.url, DEFAULT_GLOBE_CONFIG_URL).toString());
+        const payloadUrl = new URL(source.url, DEFAULT_GLOBE_CONFIG_URL).toString();
+        const gridUrl = source.gridUrl ? new URL(source.gridUrl, DEFAULT_GLOBE_CONFIG_URL).toString() : null;
+        const [payload, gridPayload] = await Promise.all([fetchJson(payloadUrl), fetchOptionalJson(gridUrl)]);
         validateAnalysisPayload(payload);
         return {
           key: source.key,
           label: (payload.variable && payload.variable.label) || source.label,
           payload,
+          gridGeometryIndex: indexAnalysisGridGeoJson(gridPayload),
         };
       })
     );
     state.variables = loaded.map((item) => ({ key: item.key, label: item.label }));
     state.datasets = Object.fromEntries(loaded.map((item) => [item.key, item.payload]));
+    state.gridGeometries = Object.fromEntries(
+      loaded
+        .filter((item) => item.gridGeometryIndex)
+        .map((item) => [item.key, item.gridGeometryIndex])
+    );
     state.activeVariable =
       (config.default_variable && state.datasets[config.default_variable] && config.default_variable) || loaded[0].key;
   }

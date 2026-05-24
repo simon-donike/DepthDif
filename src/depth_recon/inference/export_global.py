@@ -64,8 +64,10 @@ from depth_recon.inference.export_cesium_globe_assets import (
     export_cesium_globe_assets,
 )
 from depth_recon.inference.export_error_analysis_dashboard import (
+    DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
     DEFAULT_ANALYSIS_JSON_NAME,
     build_error_analysis_payload_from_depth_arrays,
+    write_analysis_grid_geojson,
 )
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
@@ -3323,6 +3325,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             else _summary_artifact_path(uncertainty_tif_path)
         ),
         "error_analysis_json_path": None,
+        "error_analysis_grid_geojson_path": None,
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
             None
@@ -3352,8 +3355,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     }
     if export_full_depth_error_analysis:
         error_analysis_json_path = run_dir / DEFAULT_ANALYSIS_JSON_NAME
+        error_analysis_grid_geojson_path = run_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME
         run_summary["error_analysis_json_path"] = _summary_artifact_path(
             error_analysis_json_path
+        )
+        run_summary["error_analysis_grid_geojson_path"] = _summary_artifact_path(
+            error_analysis_grid_geojson_path
         )
         _write_full_depth_error_analysis_json(
             output_path=error_analysis_json_path,
@@ -3364,7 +3371,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             layout=layout,
             land_mask=land_mask,
         )
+        write_analysis_grid_geojson(
+            output_path=error_analysis_grid_geojson_path,
+            land_mask_path=effective_land_mask_path,
+        )
         print(f"Wrote full-depth error analysis JSON: {error_analysis_json_path}")
+        print(f"Wrote analysis ocean grid GeoJSON: {error_analysis_grid_geojson_path}")
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
 

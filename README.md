@@ -211,7 +211,7 @@ For a pooled validation-set depth summary, use `src/depth_recon/inference/export
   --device cuda
 ```
 
-The standalone Analysis Dashboard data is generated during inference when prediction and ground truth are both exported. The JSON groups stitched prediction-vs-GLORYS errors for every native depth channel by approximate ocean basin and fixed lat-lon cells, and the globe packager copies that precomputed `error-analysis.json` beside `globe-config.json` for `docs/analysis/index.html` to read. Older runs without the precomputed JSON still use the packager fallback, which can only analyze the exported absolute-error GeoTIFF depths.
+The standalone Analysis Dashboard data is generated during inference when prediction and ground truth are both exported. The JSON groups stitched prediction-vs-GLORYS errors for every native depth channel by approximate ocean basin and fixed lat-lon cells. A companion `analysis-grid.geojson` stores coast-clipped ocean geometry for those cells so the dashboard map follows the run land mask instead of drawing full rectangles over land. The globe packager copies those precomputed files beside `globe-config.json` for `docs/analysis/index.html` to read. Older runs without the precomputed JSON still use the packager fallback, which can only analyze the exported absolute-error GeoTIFF depths but can still generate the clipped grid geometry when a run land mask is available.
 
 To package one exported run for the Cesium globe viewer in the docs, use:
 

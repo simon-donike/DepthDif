@@ -13,6 +13,8 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 import rasterio
+import rasterio.features
+import rasterio.windows
 from tqdm import tqdm
 
 if __package__ in {None, ""}:
@@ -28,7 +30,9 @@ from depth_recon.inference.export_cesium_globe_assets import (
 
 DEFAULT_DASHBOARD_DIR_NAME = "error_analysis"
 DEFAULT_ANALYSIS_JSON_NAME = "error-analysis.json"
+DEFAULT_ANALYSIS_GRID_GEOJSON_NAME = "analysis-grid.geojson"
 DEFAULT_GRID_SIZE_DEGREES = 5.0
+DEFAULT_GEOJSON_COORD_PRECISION = 4
 METRIC_KEYS = ("median", "mean", "p90", "p95")
 BASIN_NAMES = ("Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other")
 
@@ -236,6 +240,200 @@ def _dominant_basin(labels: np.ndarray) -> str:
     return best_name
 
 
+def _grid_cell_id(lat_bin: int, lon_bin: int) -> str:
+    """Return the stable dashboard id for one analysis grid cell."""
+    return f"cell_{int(lat_bin)}_{int(lon_bin)}"
+
+
+def _grid_cell_bounds(
+    lat_bin: int,
+    lon_bin: int,
+    *,
+    grid_size_degrees: float,
+) -> tuple[float, float, float, float]:
+    """Return west/south/east/north bounds for one dashboard grid cell."""
+    grid_size = float(grid_size_degrees)
+    west = -180.0 + float(lon_bin) * grid_size
+    south = -90.0 + float(lat_bin) * grid_size
+    east = min(180.0, west + grid_size)
+    north = min(90.0, south + grid_size)
+    return float(west), float(south), float(east), float(north)
+
+
+def _round_geojson_coordinates(value: Any, *, decimals: int) -> Any:
+    """Round nested GeoJSON coordinates for compact dashboard geometry."""
+    if isinstance(value, (list, tuple)):
+        return [_round_geojson_coordinates(item, decimals=decimals) for item in value]
+    if isinstance(value, float):
+        return round(value, decimals)
+    return value
+
+
+def _cell_window_from_bounds(
+    dataset: rasterio.DatasetReader,
+    *,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+) -> rasterio.windows.Window | None:
+    """Return a raster window for the cell bounds clipped to the mask extent."""
+    bounds = dataset.bounds
+    clipped_west = max(float(west), float(bounds.left))
+    clipped_south = max(float(south), float(bounds.bottom))
+    clipped_east = min(float(east), float(bounds.right))
+    clipped_north = min(float(north), float(bounds.top))
+    if clipped_east <= clipped_west or clipped_north <= clipped_south:
+        return None
+
+    raw_window = rasterio.windows.from_bounds(
+        clipped_west,
+        clipped_south,
+        clipped_east,
+        clipped_north,
+        transform=dataset.transform,
+    )
+    row_off = max(0, int(np.floor(float(raw_window.row_off) + 1.0e-9)))
+    col_off = max(0, int(np.floor(float(raw_window.col_off) + 1.0e-9)))
+    row_stop = min(
+        int(dataset.height),
+        int(np.ceil(float(raw_window.row_off + raw_window.height) - 1.0e-9)),
+    )
+    col_stop = min(
+        int(dataset.width),
+        int(np.ceil(float(raw_window.col_off + raw_window.width) - 1.0e-9)),
+    )
+    if row_stop <= row_off or col_stop <= col_off:
+        return None
+    return rasterio.windows.Window(
+        col_off=col_off,
+        row_off=row_off,
+        width=col_stop - col_off,
+        height=row_stop - row_off,
+    )
+
+
+def _ocean_mask_from_land_window(
+    dataset: rasterio.DatasetReader,
+    window: rasterio.windows.Window,
+) -> np.ndarray:
+    """Read one land-mask window and return pixels that should draw as ocean."""
+    data = dataset.read(1, window=window, masked=True)
+    values = np.asarray(data.filled(1), dtype=np.float32)
+    valid = ~np.ma.getmaskarray(data)
+    if dataset.nodata is not None and np.isfinite(float(dataset.nodata)):
+        valid &= ~np.isclose(values, float(dataset.nodata), atol=0.0, rtol=0.0)
+    # The packaged world mask stores land as 1 and ocean as 0.
+    return (valid & (values <= 0.5)).astype(np.uint8, copy=False)
+
+
+def build_analysis_grid_geojson_payload(
+    *,
+    land_mask_path: Path,
+    grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
+    coordinate_precision: int = DEFAULT_GEOJSON_COORD_PRECISION,
+) -> dict[str, Any]:
+    """Build coast-clipped dashboard grid-cell geometries from a land mask."""
+    grid_size = float(grid_size_degrees)
+    if grid_size <= 0.0:
+        raise ValueError("grid_size_degrees must be positive.")
+
+    lon_bin_count = int(np.ceil(360.0 / grid_size))
+    lat_bin_count = int(np.ceil(180.0 / grid_size))
+    features: list[dict[str, Any]] = []
+    with rasterio.open(land_mask_path) as dataset:
+        for lat_bin in range(lat_bin_count):
+            for lon_bin in range(lon_bin_count):
+                west, south, east, north = _grid_cell_bounds(
+                    lat_bin,
+                    lon_bin,
+                    grid_size_degrees=grid_size,
+                )
+                window = _cell_window_from_bounds(
+                    dataset,
+                    west=west,
+                    south=south,
+                    east=east,
+                    north=north,
+                )
+                if window is None:
+                    continue
+
+                ocean_mask = _ocean_mask_from_land_window(dataset, window)
+                ocean_pixel_count = int(np.count_nonzero(ocean_mask))
+                if ocean_pixel_count <= 0:
+                    continue
+
+                transform = rasterio.windows.transform(window, dataset.transform)
+                polygons: list[Any] = []
+                for geometry, value in rasterio.features.shapes(
+                    ocean_mask,
+                    mask=ocean_mask.astype(bool),
+                    transform=transform,
+                ):
+                    if int(value) != 1 or geometry.get("type") != "Polygon":
+                        continue
+                    polygons.append(
+                        _round_geojson_coordinates(
+                            geometry.get("coordinates", []),
+                            decimals=int(coordinate_precision),
+                        )
+                    )
+                if not polygons:
+                    continue
+
+                total_pixel_count = int(ocean_mask.size)
+                features.append(
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "MultiPolygon",
+                            "coordinates": polygons,
+                        },
+                        "properties": {
+                            "id": _grid_cell_id(lat_bin, lon_bin),
+                            "west": float(west),
+                            "south": float(south),
+                            "east": float(east),
+                            "north": float(north),
+                            "ocean_pixel_count": ocean_pixel_count,
+                            "total_pixel_count": total_pixel_count,
+                            "ocean_fraction": float(
+                                ocean_pixel_count / float(total_pixel_count)
+                            ),
+                        },
+                    }
+                )
+
+    return {
+        "type": "FeatureCollection",
+        "name": "DepthDif analysis ocean grid",
+        "grid_size_degrees": grid_size,
+        "features": features,
+    }
+
+
+def write_analysis_grid_geojson(
+    *,
+    output_path: Path,
+    land_mask_path: Path,
+    grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
+    coordinate_precision: int = DEFAULT_GEOJSON_COORD_PRECISION,
+) -> Path:
+    """Write coast-clipped dashboard grid-cell geometries as GeoJSON."""
+    payload = build_analysis_grid_geojson_payload(
+        land_mask_path=Path(land_mask_path),
+        grid_size_degrees=grid_size_degrees,
+        coordinate_precision=coordinate_precision,
+    )
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+        f.write("\n")
+    return output_path
+
+
 def aggregate_by_grid(
     values: np.ndarray,
     lons: np.ndarray,
@@ -278,17 +476,18 @@ def aggregate_by_grid(
     for start, stop in zip(starts, stops):
         lat_bin = int(sorted_lat_bins[start])
         lon_bin = int(sorted_lon_bins[start])
-        west = -180.0 + float(lon_bin) * grid_size
-        south = -90.0 + float(lat_bin) * grid_size
-        east = min(180.0, west + grid_size)
-        north = min(90.0, south + grid_size)
+        west, south, east, north = _grid_cell_bounds(
+            lat_bin,
+            lon_bin,
+            grid_size_degrees=grid_size,
+        )
         cell_values = sorted_values[start:stop]
         stats = summarize_values(cell_values)
         if int(stats["count"]) <= 0:
             continue
         stats.update(
             {
-                "id": f"cell_{lat_bin}_{lon_bin}",
+                "id": _grid_cell_id(lat_bin, lon_bin),
                 "label": f"{south:.0f} to {north:.0f} lat, {west:.0f} to {east:.0f} lon",
                 "basin": _dominant_basin(sorted_labels[start:stop]),
                 "west": float(west),
@@ -767,12 +966,40 @@ def export_error_analysis_dashboard(
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, separators=(",", ":"))
         f.write("\n")
-    return {
+
+    (
+        _prediction_path,
+        _ground_truth_path,
+        _absolute_error_path,
+        _points_path,
+        _patch_splits_path,
+        _full_sample_points_path,
+        _graphs_dir_path,
+        _uncertainty_path,
+        run_summary,
+    ) = _resolve_run_artifacts(run_dir)
+    land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
+    grid_geojson_path: Path | None = None
+    if land_mask_path is not None:
+        grid_geojson_path = write_analysis_grid_geojson(
+            output_path=output_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
+            land_mask_path=land_mask_path,
+            grid_size_degrees=grid_size_degrees,
+        )
+
+    result = {
         "output_dir": str(output_dir),
         "json_path": str(json_path),
         "json_url": _resolve_layer_url(json_path.name, public_base_url=public_base_url),
         "depth_level_count": int(len(payload["depth_levels"])),
     }
+    if grid_geojson_path is not None:
+        result["grid_geojson_path"] = str(grid_geojson_path)
+        result["grid_geojson_url"] = _resolve_layer_url(
+            grid_geojson_path.name,
+            public_base_url=public_base_url,
+        )
+    return result
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -803,6 +1030,8 @@ def main() -> None:
     )
     print(f"Wrote error analysis data to: {result['output_dir']}")
     print(f"- data: {result['json_path']}")
+    if result.get("grid_geojson_path") is not None:
+        print(f"- ocean grid: {result['grid_geojson_path']}")
 
 
 if __name__ == "__main__":

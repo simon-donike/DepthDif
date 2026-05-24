@@ -250,10 +250,11 @@ Default outputs land under `inference/outputs/validation_error_summary/`:
 - `run_summary.yaml`: checkpoint/config/split metadata plus artifact filenames
 
 ## Workflow 1d: Export Absolute-Error Dashboard Data
-The standalone `/analysis/` dashboard data is generated during global inference when prediction and ground truth are both exported. The exporter accumulates signed prediction-minus-GLORYS mosaics for every native target depth channel, stitches overlaps with the same deterministic weights used by raster export, takes absolute error after stitching, filters with the run land mask, aggregates finite ocean pixels by approximate basin and fixed 5-degree lat-lon cells by default, prepends an `All Depths` view with count-weighted average metrics across native depths, and writes `error-analysis.json` in the run directory. The hosted dashboard page lives at `docs/analysis/index.html`; it loads the hosted `globe-config.json`, then fetches every packaged modality analysis dataset listed there.
+The standalone `/analysis/` dashboard data is generated during global inference when prediction and ground truth are both exported. The exporter accumulates signed prediction-minus-GLORYS mosaics for every native target depth channel, stitches overlaps with the same deterministic weights used by raster export, takes absolute error after stitching, filters with the run land mask, aggregates finite ocean pixels by approximate basin and fixed 5-degree lat-lon cells by default, prepends an `All Depths` view with count-weighted average metrics across native depths, and writes `error-analysis.json` plus a companion `analysis-grid.geojson` in the run directory. The GeoJSON stores coast-clipped ocean geometry keyed by the same grid-cell ids so the dashboard map can keep square analysis cells while following jagged coastlines. The hosted dashboard page lives at `docs/analysis/index.html`; it loads the hosted `globe-config.json`, then fetches every packaged modality analysis dataset listed there.
 
 Generated dashboard output copied into the hosted globe directory:
 - `error-analysis.json`: global, basin, and grid-cell absolute-error metrics for every native depth channel, plus a first `All Depths` aggregate level
+- `analysis-grid.geojson`: coast-clipped ocean geometry for dashboard grid cells, generated from the run land mask
 
 Existing runs need inference rerun to get true full-depth dashboard JSON. If a run has no precomputed `error_analysis_json_path`, the Cesium packager falls back to generating `error-analysis.json` from the existing absolute-error GeoTIFF depth exports only. The basin grouping is a land-filtered deterministic diagnostic bucket with a dominant basin label attached to every grid cell; it is still not a formal oceanographic boundary product. Use `--no-error-analysis` only when you explicitly want to skip this packaging output.
 
@@ -292,6 +293,7 @@ The hosted output lands under `inference/outputs/global_top_band_<YYYYMMDD>/glob
 - `basemaps/natural_earth_ii_webp_q95/`: optional hosted Natural Earth WebP basemap when the local source TIFF exists
 - `globe-config.json`: the viewer manifest consumed by the standalone `globe/` viewer route
 - `error-analysis.json`: hosted error dashboard data copied from the inference-generated full-depth analysis JSON, or generated from exported absolute-error rasters for older runs
+- `analysis-grid.geojson`: hosted coast-clipped dashboard grid geometry copied from the run or generated from the land mask
 
 Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for bucket upload.
 
