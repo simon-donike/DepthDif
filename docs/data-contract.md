@@ -44,7 +44,7 @@ batch dimension. `data.dataset.output.fields` controls which physical fields are
 | `coords` | `(2,)` | `(B, 2)` | `float32` | Optional patch-center latitude and longitude. |
 | `info` | dictionary | list-like | metadata | Optional debugging metadata, not part of the training model input. |
 
-`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is GLORYS-derived spatial ocean/domain support and gates the diffusion loss together with the task-valid mask; if GLORYS support is unavailable for mask construction, the loader falls back to finite OSTIA support and then the configured on-disk mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.
+`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is GLORYS-derived spatial ocean/domain support and gates the diffusion loss together with the task-valid mask; if GLORYS support is unavailable for mask construction, the loader falls back to finite EO support and then the configured on-disk mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.
 
 ## Salinity Scenarios
 
@@ -56,7 +56,7 @@ The active super-configs do not require users to maintain salinity flags by hand
 /work/envs/depth/bin/python train.py --scenario joint
 ```
 
-The resolver writes `dataset.output.fields` for the selected scenario and sets `dataset.output.include_salinity=false` for `temperature` and `true` for `salinity` and `joint`. It also derives `model.output_fields`, `model.generated_channels`, and `model.condition_channels`, so the GeoTIFF loader and model agree before batches are built.
+The resolver writes `dataset.output.fields` for the selected scenario and sets `dataset.output.include_salinity=false` for `temperature` and `true` for `salinity` and `joint`. It also derives the EO raster source (`ostia/analysed_sst` for temperature and joint, `sss/sos` for salinity), `model.output_fields`, `model.generated_channels`, and `model.condition_channels`, so the GeoTIFF loader and model agree before batches are built.
 
 ## Loading Steps
 
@@ -64,8 +64,7 @@ For each selected `(patch, date)` row, the GeoTIFF loader should:
 
 1. Build a rasterio window from the shared land-mask grid.
 2. Read `rasters/glorys/thetao/thetao_YYYYMMDD.tif` as `(D, H, W)`.
-3. Read `rasters/ostia/analysed_sst/analysed_sst_YYYYMMDD.tif` as `(H, W)` and
-   add the leading channel dimension.
+3. Read the resolved EO raster as `(H, W)` and add the leading channel dimension: `rasters/ostia/analysed_sst/...` for temperature/joint or `rasters/sss/sos/...` for salinity.
 4. If the resolved scenario enables salinity, read
    `rasters/glorys/so/so_YYYYMMDD.tif` as `(D, H, W)`.
 5. Query preprocessed ARGO profiles assigned to the same target date and patch
@@ -74,14 +73,11 @@ For each selected `(patch, date)` row, the GeoTIFF loader should:
    using precomputed `grid_row` and `grid_col`; average duplicate observations
    in the same depth/pixel cell.
 7. Build validity masks from GeoTIFF nodata codes and ARGO valid flags.
-8. Derive `land_mask` from finite GLORYS temperature support, with fallback to finite OSTIA support and then the configured on-disk mask.
+8. Derive `land_mask` from finite GLORYS target support, with fallback to finite EO support and then the configured on-disk mask.
 9. Normalize temperature, plus salinity when enabled, and replace NaN or
    infinite normalized values with `0.0`.
 
-Sea-level `adt` and SSS `sos`/`dos` are exported on the same grid for
-auxiliary experiments.
-They should only be added to model inputs with an explicit model/config change
-that defines channels and normalization.
+Sea-level `adt` and SSS `dos` are exported on the same grid for auxiliary experiments. SSS `sos` is the default salinity-scenario EO channel.
 
 ## Decoding
 

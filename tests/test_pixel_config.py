@@ -43,6 +43,8 @@ def _minimal_super_config(
                     "temporal_window_days": 7,
                     "glorys_var_name": "thetao",
                     "ostia_var_name": "analysed_sst",
+                    "eo_source": "ostia",
+                    "eo_var_name": "analysed_sst",
                 },
                 "selection": {
                     "require_argo_for_train": True,
@@ -134,6 +136,11 @@ class TestPixelConfig(unittest.TestCase):
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 50)
         self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 53)
         self.assertFalse(bundle.data_cfg["dataset"]["output"]["include_salinity"])
+        self.assertEqual(bundle.data_cfg["dataset"]["sampling"]["eo_source"], "ostia")
+        self.assertEqual(
+            bundle.data_cfg["dataset"]["sampling"]["eo_var_name"],
+            "analysed_sst",
+        )
 
     def test_super_config_derives_salinity_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,6 +161,8 @@ class TestPixelConfig(unittest.TestCase):
         self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 53)
         self.assertEqual(bundle.data_cfg["dataset"]["output"]["fields"], ["salinity"])
         self.assertTrue(bundle.data_cfg["dataset"]["output"]["include_salinity"])
+        self.assertEqual(bundle.data_cfg["dataset"]["sampling"]["eo_source"], "sss")
+        self.assertEqual(bundle.data_cfg["dataset"]["sampling"]["eo_var_name"], "sos")
 
     def test_super_config_derives_joint_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -223,18 +232,24 @@ class TestPixelConfig(unittest.TestCase):
                 "include_salinity": False,
                 "generated_channels": 50,
                 "condition_channels": 53,
+                "eo_source": "ostia",
+                "eo_var_name": "analysed_sst",
             },
             "salinity": {
                 "fields": ["salinity"],
                 "include_salinity": True,
                 "generated_channels": 50,
                 "condition_channels": 53,
+                "eo_source": "sss",
+                "eo_var_name": "sos",
             },
             "joint": {
                 "fields": ["temperature", "salinity"],
                 "include_salinity": True,
                 "generated_channels": 100,
                 "condition_channels": 103,
+                "eo_source": "ostia",
+                "eo_var_name": "analysed_sst",
             },
         }
         for selected_scenario, contract in expected.items():
@@ -283,6 +298,14 @@ class TestPixelConfig(unittest.TestCase):
                         self.assertEqual(
                             data_output["include_salinity"],
                             contract["include_salinity"],
+                        )
+                        self.assertEqual(
+                            effective_data["dataset"]["sampling"]["eo_source"],
+                            contract["eo_source"],
+                        )
+                        self.assertEqual(
+                            effective_data["dataset"]["sampling"]["eo_var_name"],
+                            contract["eo_var_name"],
                         )
 
     def test_invalid_scenario_and_override_fail_clearly(self) -> None:
@@ -337,15 +360,24 @@ class TestPixelConfig(unittest.TestCase):
 
     def test_inference_super_config_derives_all_scenarios(self) -> None:
         expected = {
-            "temperature": (["temperature"], 50, 53, False),
-            "salinity": (["salinity"], 50, 53, True),
-            "joint": (["temperature", "salinity"], 100, 103, True),
+            "temperature": (["temperature"], 50, 53, False, "ostia", "analysed_sst"),
+            "salinity": (["salinity"], 50, 53, True, "sss", "sos"),
+            "joint": (
+                ["temperature", "salinity"],
+                100,
+                103,
+                True,
+                "ostia",
+                "analysed_sst",
+            ),
         }
         for scenario, (
             fields,
             generated,
             condition,
             include_salinity,
+            eo_source,
+            eo_var_name,
         ) in expected.items():
             with self.subTest(scenario=scenario):
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -373,6 +405,14 @@ class TestPixelConfig(unittest.TestCase):
                     self.assertEqual(
                         bundle.data_cfg["dataset"]["output"]["include_salinity"],
                         include_salinity,
+                    )
+                    self.assertEqual(
+                        bundle.data_cfg["dataset"]["sampling"]["eo_source"],
+                        eo_source,
+                    )
+                    self.assertEqual(
+                        bundle.data_cfg["dataset"]["sampling"]["eo_var_name"],
+                        eo_var_name,
                     )
 
     def test_inference_super_config_materializes_and_propagates_settings(
@@ -427,6 +467,8 @@ class TestPixelConfig(unittest.TestCase):
             )
 
             self.assertGreater(len(dataset), 0)
+            self.assertEqual(dataset.eo_source, "sss")
+            self.assertEqual(dataset.eo_var_name, "sos")
             self.assertTrue(effective_data["dataloader"]["val_shuffle"])
             self.assertEqual(effective_model["model"]["output_fields"], ["salinity"])
             self.assertEqual(effective_model["model"]["generated_channels"], 2)

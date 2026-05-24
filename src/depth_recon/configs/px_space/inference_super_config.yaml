@@ -42,7 +42,9 @@ data:  # dataset, split, and loader inputs
     sampling:  # time and variable selection
       temporal_window_days: 7  # ARGO/EO date window
       glorys_var_name: thetao  # GLORYS temperature variable
-      ostia_var_name: analysed_sst  # OSTIA SST variable
+      ostia_var_name: analysed_sst  # legacy OSTIA SST variable key
+      eo_source: ostia  # scenario-derived EO raster group: ostia or sss
+      eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
       require_argo_for_train: true  # keep train rows with ARGO
       require_argo_for_val: true  # keep val rows with ARGO
@@ -70,7 +72,7 @@ model:  # pixel diffusion model settings
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
   condition_mask_channels: 1  # valid-mask condition channels
-  condition_include_eo: true  # add OSTIA EO channel
+  condition_include_eo: true  # add scenario-selected EO channel
   condition_use_valid_mask: true  # add ARGO support mask
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling

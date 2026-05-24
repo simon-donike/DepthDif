@@ -17,6 +17,12 @@ PIXEL_SCENARIOS: dict[str, list[str]] = {
     "joint": ["temperature", "salinity"],
 }
 
+PIXEL_SCENARIO_EO: dict[str, tuple[str, str]] = {
+    "temperature": ("ostia", "analysed_sst"),
+    "salinity": ("sss", "sos"),
+    "joint": ("ostia", "analysed_sst"),
+}
+
 DEFAULT_PIXEL_TRAINING_CONFIG_PATH = str(
     config_path("px_space", "training_super_config.yaml")
 )
@@ -165,8 +171,12 @@ def apply_pixel_scenario(
     output_section = dataset_section.setdefault("output", {})
     if not isinstance(output_section, dict):
         raise ValueError("data.dataset.output must be a mapping.")
+    sampling_section = dataset_section.setdefault("sampling", {})
+    if not isinstance(sampling_section, dict):
+        raise ValueError("data.dataset.sampling must be a mapping.")
 
     output_fields = PIXEL_SCENARIOS[scenario]
+    eo_source, eo_var_name = PIXEL_SCENARIO_EO[scenario]
     depth_channels = int(model_section.get("depth_channels", 50))
     if depth_channels < 1:
         raise ValueError("model.depth_channels must be >= 1 when scenario is set.")
@@ -187,6 +197,8 @@ def apply_pixel_scenario(
     model_section["condition_channels"] = condition_channels
     output_section["fields"] = list(output_fields)
     output_section["include_salinity"] = "salinity" in output_fields
+    sampling_section["eo_source"] = eo_source
+    sampling_section["eo_var_name"] = eo_var_name
 
 
 def _require_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:

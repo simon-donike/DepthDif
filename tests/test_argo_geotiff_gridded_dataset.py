@@ -100,6 +100,24 @@ def _write_ostia(root_dir: Path, *, date_value: int, base: float) -> None:
     ds.to_netcdf(root_dir / f"{int(date_value)}120000-ostia.nc", engine="h5netcdf")
 
 
+def _write_sss(root_dir: Path, *, date_value: int, base: float) -> None:
+    """Write a tiny SSS-like surface salinity source file."""
+    lat = np.asarray([0.5, 1.5], dtype=np.float32)
+    lon = np.asarray([10.5, 11.5], dtype=np.float32)
+    offsets = np.asarray([[0.0, 0.1], [0.2, 0.3]], dtype=np.float32)
+    values = (np.float32(base) + offsets)[None, ...]
+    ds = xr.Dataset(
+        {"sos": (("time", "lat", "lon"), values.astype(np.float32))},
+        coords={
+            "time": np.asarray([0.0], dtype=np.float64),
+            "lat": lat,
+            "lon": lon,
+        },
+    )
+    root_dir.mkdir(parents=True, exist_ok=True)
+    ds.to_netcdf(root_dir / f"sss_{int(date_value)}.nc", engine="h5netcdf")
+
+
 def _write_sealevel(root_dir: Path, *, date_value: int, base: float) -> None:
     """Write a tiny sea-level source file with ADT."""
     lat = np.asarray([0.5, 1.5], dtype=np.float32)
@@ -148,24 +166,27 @@ def _make_geotiff_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
     glorys_dir = tmp_path / "glorys"
     ostia_dir = tmp_path / "ostia"
     sealevel_dir = tmp_path / "sealevel"
+    sss_dir = tmp_path / "sss"
     land_mask_path = _write_land_mask(
         tmp_path / "land_mask.tif",
         values=np.asarray([[0, 0], [0, 1]], dtype=np.uint8),
     )
     enriched_argo = tmp_path / "aligned_argo" / "enriched_argo_profiles.zarr"
     _write_glorys(glorys_dir, date_value=20240108)
-    for date_value, ostia_base, sea_base in (
-        (20240105, 280.0, 0.0),
-        (20240108, 290.0, 1.0),
-        (20240111, 300.0, 2.0),
+    for date_value, ostia_base, sea_base, sss_base in (
+        (20240105, 280.0, 0.0, 34.0),
+        (20240108, 290.0, 1.0, 35.0),
+        (20240111, 300.0, 2.0, 36.0),
     ):
         _write_ostia(ostia_dir, date_value=date_value, base=ostia_base)
         _write_sealevel(sealevel_dir, date_value=date_value, base=sea_base)
+        _write_sss(sss_dir, date_value=date_value, base=sss_base)
     _write_enriched_argo_zarr(enriched_argo)
     output_dir = export_training_geotiff_dataset(
         glorys_dir=glorys_dir,
         ostia_dir=ostia_dir,
         sealevel_dir=sealevel_dir,
+        sss_dir=sss_dir,
         enriched_argo_zarr=enriched_argo,
         land_mask_path=land_mask_path,
         output_dir=tmp_path / "geotiff_training",
@@ -289,11 +310,15 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                 return_coords=True,
                 include_salinity=True,
                 output_fields=("salinity",),
+                eo_source="sss",
+                eo_var_name="sos",
             )
 
             sample = dataset[0]
 
             self.assertEqual(dataset.output_fields, ("salinity",))
+            self.assertEqual(dataset.eo_source, "sss")
+            self.assertEqual(dataset.eo_var_name, "sos")
             self.assertNotIn("x", sample)
             self.assertNotIn("y", sample)
             self.assertNotIn("x_valid_mask", sample)
@@ -310,6 +335,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             y_salinity_psu = salinity_normalize(
                 mode="denorm", tensor=sample["y_salinity"]
             )
+            eo_salinity_psu = salinity_normalize(mode="denorm", tensor=sample["eo"])
             self.assertTrue(
                 torch.allclose(
                     x_salinity_psu[:, 0, 0],
@@ -319,6 +345,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             )
             self.assertAlmostEqual(float(y_salinity_psu[0, 0, 0]), 35.2, delta=0.05)
             self.assertAlmostEqual(float(y_salinity_psu[1, 0, 0]), 36.2, delta=0.05)
+            self.assertAlmostEqual(float(eo_salinity_psu[0, 0, 0]), 35.2, delta=0.05)
 
     def test_land_mask_fallback_uses_ostia_then_on_disk_mask(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

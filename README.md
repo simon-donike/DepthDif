@@ -83,7 +83,7 @@ publishing credentials.
   - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
   - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST, ARGO observation support, GLORYS spatial support, plus coordinate/date context.
+DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context.
 
 Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
@@ -119,7 +119,7 @@ Ambient-occlusion objective example:
 
 Notes:
 - Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `model.generated_channels`, and `model.condition_channels`.
+- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `data.dataset.sampling.eo_source`/`eo_var_name`, `model.generated_channels`, and `model.condition_channels`.
 - `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
 - `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.

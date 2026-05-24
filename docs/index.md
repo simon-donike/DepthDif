@@ -32,12 +32,9 @@ The repository currently supports:
 
 ![depthdif_schema](assets/figures/depthdif_schema.png)
 
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on OSTIA surface SST, ARGO observation support, GLORYS spatial support, plus coordinate/date context. See the full model details in [Model](model.md).
+DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context. See the full model details in [Model](model.md).
 
-In the GeoTIFF training workflow, EO surface conditioning comes from OSTIA,
-subsurface targets come from GLORYS, and sparse inputs come from ARGO/EN4
-profiles after depth alignment. Temperature is always present; salinity is an
-scenario-selected field: `--scenario salinity` trains salinity only, and `--scenario joint` trains temperature and salinity together.
+In the GeoTIFF training workflow, EO surface conditioning comes from the scenario-selected surface raster, subsurface targets come from GLORYS, and sparse inputs come from ARGO/EN4 profiles after depth alignment. Salinity is a scenario-selected field: `--scenario salinity` trains salinity only, and `--scenario joint` trains temperature and salinity together.
 
 Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.
 For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize

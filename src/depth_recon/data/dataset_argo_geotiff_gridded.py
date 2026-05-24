@@ -549,6 +549,11 @@ DEFAULT_DATASET_ROOT_DIR = Path("/work/data/OceanVariableReconstruction")
 DEFAULT_GEOTIFF_ROOT_DIR = DEFAULT_DATASET_ROOT_DIR.as_posix()
 DEFAULT_METADATA_CACHE_DIR = (DEFAULT_DATASET_ROOT_DIR / "depthdif_cache").as_posix()
 DEFAULT_LAND_MASK_RELATIVE_PATH = "masks/world_land_mask_glorys_0p1.tif"
+EO_SOURCE_DEFAULTS = {"ostia": "analysed_sst", "sss": "sos"}
+EO_STRETCH_BY_SOURCE_VAR = {
+    ("ostia", "analysed_sst"): ("temperature_kelvin", "temperature"),
+    ("sss", "sos"): ("salinity", "salinity"),
+}
 
 
 class ArgoGeoTIFFGriddedPatchDataset(Dataset):
@@ -576,6 +581,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
         ostia_var_name: str = "analysed_sst",
+        eo_source: str = "ostia",
+        eo_var_name: str | None = None,
         require_argo_for_train: bool = True,
         require_argo_for_val: bool = True,
         require_argo_for_all: bool = False,
@@ -622,6 +629,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
         self.ostia_var_name = str(ostia_var_name)
+        self.eo_source, self.eo_var_name = self._normalize_eo_selection(
+            eo_source=eo_source,
+            eo_var_name=eo_var_name,
+            ostia_var_name=self.ostia_var_name,
+        )
+        self.eo_stretch_name, self.eo_normalization = self._resolve_eo_metadata(
+            self.eo_source, self.eo_var_name
+        )
         self.return_info = bool(return_info)
         self.return_coords = bool(return_coords)
         self.output_fields = self._normalize_output_fields(
@@ -655,10 +670,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "ARGO profile zarr depth axis does not match GeoTIFF manifest depth_axis_m."
             )
 
-        self.glorys_store, self.salinity_store, self.ostia_store = (
+        self.glorys_store, self.salinity_store, self.eo_store = (
             self._build_raster_stores()
         )
-        self.available_dates = sorted(self.glorys_store.dates & self.ostia_store.dates)
+        # Backward-compatible alias for callers that still inspect the old name.
+        self.ostia_store = self.eo_store
+        self.available_dates = sorted(self.glorys_store.dates & self.eo_store.dates)
         if not self.available_dates:
             raise RuntimeError("No overlapping GeoTIFF raster dates were found.")
         if self.include_salinity:
@@ -700,6 +717,41 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             raise RuntimeError("Dataset is empty after split/ARGO filtering.")
         self._rows = rows
 
+    @staticmethod
+    def _normalize_eo_selection(
+        *,
+        eo_source: str,
+        eo_var_name: str | None,
+        ostia_var_name: str,
+    ) -> tuple[str, str]:
+        """Resolve the dense surface EO raster group and variable."""
+        source = str(eo_source or "ostia").strip().lower()
+        if not source:
+            source = "ostia"
+        var_name = eo_var_name
+        if var_name is None:
+            var_name = (
+                ostia_var_name if source == "ostia" else EO_SOURCE_DEFAULTS.get(source)
+            )
+        if var_name is None or not str(var_name).strip():
+            raise ValueError(f"No EO variable configured for source {source!r}.")
+        return source, str(var_name).strip()
+
+    @staticmethod
+    def _resolve_eo_metadata(eo_source: str, eo_var_name: str) -> tuple[str, str]:
+        """Return manifest stretch and normalization family for one EO raster."""
+        key = (str(eo_source).strip().lower(), str(eo_var_name).strip())
+        metadata = EO_STRETCH_BY_SOURCE_VAR.get(key)
+        if metadata is None:
+            supported = ", ".join(
+                f"{source}/{var}" for source, var in sorted(EO_STRETCH_BY_SOURCE_VAR)
+            )
+            raise ValueError(
+                "Unsupported EO raster selection "
+                f"{key[0]!r}/{key[1]!r}. Supported selections: {supported}."
+            )
+        return metadata
+
     def _open_argo_store(self) -> ArgoGeoTIFFProfileStore | None:
         """Open the optional compact ARGO zarr profile store."""
         argo_info = self.manifest.get("argo", {})
@@ -722,21 +774,26 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             raise RuntimeError(
                 "GeoTIFF manifest is missing temperature_kelvin stretch."
             )
+        eo_stretch = stretch.get(self.eo_stretch_name)
+        if not isinstance(eo_stretch, dict):
+            raise RuntimeError(
+                "GeoTIFF manifest is missing EO stretch "
+                f"{self.eo_stretch_name!r} for {self.eo_source}/{self.eo_var_name}."
+            )
         glorys_rasters = rasters.get("glorys", {})
         glorys_entries = (
             glorys_rasters.get(self.glorys_var_name, [])
             if isinstance(glorys_rasters, dict)
             else []
         )
-        ostia_entries = (
-            rasters.get("ostia", {}).get(self.ostia_var_name, [])
-            if isinstance(rasters.get("ostia", {}), dict)
-            else []
+        eo_rasters = rasters.get(self.eo_source, {})
+        eo_entries = (
+            eo_rasters.get(self.eo_var_name, []) if isinstance(eo_rasters, dict) else []
         )
-        if not glorys_entries or not ostia_entries:
+        if not glorys_entries or not eo_entries:
             raise RuntimeError(
-                "GeoTIFF manifest is missing GLORYS/OSTIA raster entries for "
-                f"{self.glorys_var_name!r}/{self.ostia_var_name!r}."
+                "GeoTIFF manifest is missing GLORYS/EO raster entries for "
+                f"{self.glorys_var_name!r}/{self.eo_source}/{self.eo_var_name}."
             )
         salinity_store = None
         if self.include_salinity:
@@ -765,10 +822,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             ),
             salinity_store,
             GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(ostia_entries, self.root_dir),
-                stretch=temp_stretch,
+                paths_by_date=_records_by_date(eo_entries, self.root_dir),
+                stretch=eo_stretch,
                 cache=self.raster_cache,
-                kelvin_temperature=True,
+                kelvin_temperature=self.eo_normalization == "temperature",
             ),
         )
 
@@ -880,6 +937,20 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "ostia_var_name",
                     default="analysed_sst",
                 )
+            ),
+            eo_source=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.eo_source",
+                    "eo_source",
+                    default="ostia",
+                )
+            ),
+            eo_var_name=cls._cfg_get(
+                ds_cfg,
+                "sampling.eo_var_name",
+                "eo_var_name",
+                default=None,
             ),
             val_fraction=float(cfg.get("split", {}).get("val_fraction", 0.2)),
             val_year=cls._optional_int(cfg.get("split", {}).get("val_year", None)),
@@ -1095,8 +1166,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         )[None, ...]
 
     def _load_eo_patch(self, row: dict[str, Any]) -> np.ndarray:
-        """Load the dense OSTIA surface-context patch."""
-        eo_np = self.ostia_store.read_patch(
+        """Load the configured dense surface-context patch."""
+        eo_np = self.eo_store.read_patch(
             target_date=int(row["date"]),
             grid_y0=int(row["grid_y0"]),
             grid_x0=int(row["grid_x0"]),
@@ -1106,9 +1177,17 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             eo_np = eo_np[0]
         if eo_np.ndim != 2:
             raise RuntimeError(
-                f"Expected OSTIA patch shape (H,W), got {tuple(eo_np.shape)}"
+                f"Expected EO patch shape (H,W), got {tuple(eo_np.shape)}"
             )
         return eo_np.astype(np.float32, copy=False)[None, ...]
+
+    def _normalize_eo_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Normalize the EO channel according to its physical variable family."""
+        if self.eo_normalization == "temperature":
+            return temperature_normalize(mode="norm", tensor=tensor)
+        if self.eo_normalization == "salinity":
+            return salinity_normalize(mode="norm", tensor=tensor)
+        raise RuntimeError(f"Unsupported EO normalization: {self.eo_normalization}")
 
     def _spatial_support_from_valid_mask(
         self,
@@ -1142,7 +1221,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         y_valid_mask_np: np.ndarray | None,
         eo_np: np.ndarray | None,
     ) -> np.ndarray:
-        """Build one spatial ocean mask from GLORYS, OSTIA, or the on-disk mask."""
+        """Build one spatial ocean mask from GLORYS, EO, or the on-disk mask."""
         if y_valid_mask_np is not None:
             return self._spatial_support_from_valid_mask(
                 y_valid_mask_np,
@@ -1151,13 +1230,13 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         if eo_np is not None:
             return self._spatial_support_from_valid_mask(
                 np.isfinite(eo_np),
-                source_name="OSTIA surface context",
+                source_name="EO surface context",
             )
         if self.land_mask_path.exists():
             return self._load_land_mask_patch(row)
         raise RuntimeError(
             "Could not build land_mask: GLORYS target support was unavailable, "
-            "OSTIA support was unavailable, and the configured on-disk land mask "
+            "EO support was unavailable, and the configured on-disk land mask "
             f"does not exist: {self.land_mask_path}"
         )
 
@@ -1396,7 +1475,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             y_valid_mask_np=land_support_np,
             eo_np=eo_np,
         )
-        eo = temperature_normalize(mode="norm", tensor=torch.from_numpy(eo_np))
+        eo = self._normalize_eo_tensor(torch.from_numpy(eo_np))
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
         sample: dict[str, Any] = {
             "eo": eo,

@@ -14,13 +14,13 @@ Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config
 
 Select the pixel task with `--scenario temperature|salinity|joint` or with the top-level `scenario` key in the super-config. CLI `--scenario` wins over the file. The resolver lives in `depth_recon.configs.config_resolver_pixel` and materializes effective split configs for existing dataset/model constructors.
 
-| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Derived `model.generated_channels` | Derived `model.condition_channels` |
-| --- | --- | --- | ---: | ---: | ---: |
-| `temperature` | `['temperature']` | `['temperature']` | `false` | `50` | `53` |
-| `salinity` | `['salinity']` | `['salinity']` | `true` | `50` | `53` |
-| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `100` | `103` |
+| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Derived EO source | Derived `model.generated_channels` | Derived `model.condition_channels` |
+| --- | --- | --- | ---: | --- | ---: | ---: |
+| `temperature` | `['temperature']` | `['temperature']` | `false` | `ostia/analysed_sst` | `50` | `53` |
+| `salinity` | `['salinity']` | `['salinity']` | `true` | `sss/sos` | `50` | `53` |
+| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `ostia/analysed_sst` | `100` | `103` |
 
-`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
+`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `eo_source`, `eo_var_name`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
 
 Examples:
 
@@ -64,7 +64,9 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.grid.force_include_regions` | named regional boxes | Relaxed patch-inclusion rules for specific ocean regions. |
 | `data.dataset.sampling.temporal_window_days` | `7` | Centered ARGO/OSTIA/auxiliary window around each GLORYS date. |
 | `data.dataset.sampling.glorys_var_name` | `thetao` | Dense GLORYS temperature target variable. |
-| `data.dataset.sampling.ostia_var_name` | `analysed_sst` | Dense OSTIA surface-temperature EO variable. |
+| `data.dataset.sampling.ostia_var_name` | `analysed_sst` | Legacy OSTIA variable key used when `eo_source=ostia`. |
+| `data.dataset.sampling.eo_source` | scenario-derived | Dense surface EO raster group: `ostia` for temperature/joint, `sss` for salinity. |
+| `data.dataset.sampling.eo_var_name` | scenario-derived | Dense surface EO raster variable: `analysed_sst` for OSTIA, `sos` for SSS. |
 | `data.dataset.selection.require_argo_for_train` | `true` | Drops train rows without ARGO support. |
 | `data.dataset.selection.require_argo_for_val` | `true` | Drops validation rows without ARGO support. |
 | `data.dataset.selection.require_argo_for_all` | `false` | Keeps no-ARGO rows for full-grid inference. |
@@ -96,7 +98,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.generated_channels` | scenario-derived | Number of generated output channels. Derived from scenario. |
 | `model.condition_channels` | scenario-derived | Total input channels to the denoiser. Derived from scenario and conditioning toggles. |
 | `model.condition_mask_channels` | `1` | Number of valid-mask channels appended to conditioning when enabled. |
-| `model.condition_include_eo` | `true` | Prepends the OSTIA EO channel to model conditioning. |
+| `model.condition_include_eo` | `true` | Prepends the scenario-selected EO channel to model conditioning. |
 | `model.condition_use_valid_mask` | `true` | Appends ARGO observation support to conditioning. |
 | `model.condition_use_land_mask` | `true` | Appends GLORYS spatial support to conditioning. |
 | `model.clamp_known_pixels` | `false` | Re-injects known values during reverse sampling when enabled. |

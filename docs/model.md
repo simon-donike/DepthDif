@@ -14,9 +14,9 @@ The model learns to generate `y` while conditioning on observed channels (`x`), 
 ## Conditioning Setup
 Three conditioning layouts are selected by the pixel scenario resolver:
 
-- Single-band task: `x -> y`
-- EO multiband task: `[eo, x, x_valid_mask, land_mask] -> y`
-- Joint temperature/salinity task: `[eo, cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)` when `--scenario joint` is selected.
+- Temperature task: `[OSTIA analysed_sst, x, x_valid_mask, land_mask] -> y`
+- Salinity task: `[SSS sos, x_salinity, x_salinity_valid_mask, land_mask] -> y_salinity`
+- Joint temperature/salinity task: `[OSTIA analysed_sst, cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)` when `--scenario joint` is selected.
 
 Condition assembly happens in `_prepare_condition_for_model`:
 - optionally prepend `eo` (`condition_include_eo=true`)

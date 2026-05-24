@@ -2609,11 +2609,13 @@ class PixelDiffusionConditional(pl.LightningModule):
                 x_denorm = temperature_normalize(mode="denorm", tensor=x)
                 y_denorm = temperature_normalize(mode="denorm", tensor=y)
                 target_denorm = temperature_normalize(mode="denorm", tensor=target)
-            eo_denorm = (
-                temperature_normalize(mode="denorm", tensor=eo)
-                if eo is not None
-                else None
-            )
+            eo_denorm = None
+            if eo is not None:
+                eo_denorm = (
+                    salinity_normalize(mode="denorm", tensor=eo)
+                    if primary_field == "salinity"
+                    else temperature_normalize(mode="denorm", tensor=eo)
+                )
             eval_mask = self._build_task_supervision_mask(
                 reference=target_denorm,
                 x_valid_mask=x_valid_mask,
