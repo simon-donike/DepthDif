@@ -16,6 +16,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_CAMERA_HEIGHT,
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
+    DEFAULT_ERROR_ANALYSIS_JSON_NAME,
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_SALINITY_COLOR_RAMP_PATH,
     DEFAULT_TEMPLATE_PATH,
@@ -25,6 +26,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _apply_alpha_mask_to_colorized_raster,
     _build_parser,
     _build_gdal2tiles_command,
+    _copy_precomputed_error_analysis_json,
     _estimate_native_zoom_level,
     _export_base_map_tiles,
     _prefix_geojson_graph_paths,
@@ -803,6 +805,32 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             ["--run-dir", "inference/outputs/example", "--no-error-analysis"]
         )
         self.assertFalse(args.include_error_analysis)
+
+    def test_copy_precomputed_error_analysis_json_prefers_run_summary_path(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            run_dir = root / "run"
+            globe_dir = run_dir / "globe"
+            run_dir.mkdir(parents=True)
+            source_path = run_dir / DEFAULT_ERROR_ANALYSIS_JSON_NAME
+            source_path.write_text(
+                json.dumps({"depth_levels": ["precomputed"]}) + "\n",
+                encoding="utf-8",
+            )
+
+            copied_path = _copy_precomputed_error_analysis_json(
+                run_dir=run_dir,
+                globe_dir=globe_dir,
+                run_summary={"error_analysis_json_path": source_path.name},
+            )
+
+            self.assertEqual(copied_path, globe_dir / DEFAULT_ERROR_ANALYSIS_JSON_NAME)
+            self.assertEqual(
+                json.loads(copied_path.read_text(encoding="utf-8")),
+                {"depth_levels": ["precomputed"]},
+            )
 
     def test_resolve_depth_export_artifacts_uses_run_summary_depth_exports(
         self,

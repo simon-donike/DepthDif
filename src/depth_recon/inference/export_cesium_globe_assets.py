@@ -55,6 +55,7 @@ DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
 DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
+DEFAULT_ERROR_ANALYSIS_JSON_NAME = "error-analysis.json"
 DEFAULT_TILE_SIZE = 256
 DEFAULT_TILE_DRIVER = "WEBP"
 DEFAULT_WEBP_QUALITY = 95
@@ -185,6 +186,28 @@ def _coerce_existing_path(path_value: str | None, *, run_dir: Path) -> Path | No
         if run_relative.exists():
             return run_relative
     return None
+
+
+def _copy_precomputed_error_analysis_json(
+    *,
+    run_dir: Path,
+    globe_dir: Path,
+    run_summary: dict[str, Any],
+) -> Path | None:
+    """Copy inference-generated error analysis JSON into the globe bundle."""
+    path_value = run_summary.get("error_analysis_json_path")
+    if not isinstance(path_value, str) or path_value.strip() == "":
+        return None
+
+    source_path = _coerce_existing_path(path_value, run_dir=run_dir)
+    if source_path is None:
+        return None
+
+    globe_dir.mkdir(parents=True, exist_ok=True)
+    output_path = globe_dir / DEFAULT_ERROR_ANALYSIS_JSON_NAME
+    if source_path.resolve() != output_path.resolve():
+        shutil.copy2(source_path, output_path)
+    return output_path
 
 
 def _resolve_land_mask_path(
@@ -1123,8 +1146,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=True,
         dest="include_error_analysis",
         help=(
-            "Generate error-analysis.{html,json} into the globe directory and add "
-            "dashboard URLs to globe-config.json."
+            "Copy or generate error-analysis.json into the globe directory and add "
+            "the dashboard data URL to globe-config.json."
         ),
     )
     return parser
@@ -1443,6 +1466,12 @@ def export_cesium_globe_assets(
 
     copied_error_analysis_json_path: Path | None = None
     if include_error_analysis:
+        copied_error_analysis_json_path = _copy_precomputed_error_analysis_json(
+            run_dir=run_dir,
+            globe_dir=globe_dir,
+            run_summary=run_summary,
+        )
+    if include_error_analysis and copied_error_analysis_json_path is None:
         from depth_recon.inference.export_error_analysis_dashboard import (
             export_error_analysis_dashboard,
         )

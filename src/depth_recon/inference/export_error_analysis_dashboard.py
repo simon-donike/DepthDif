@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 import rasterio
@@ -420,20 +420,56 @@ def _build_all_depths_analysis(
     }
 
 
-def _build_depth_level_analysis(
+def _valid_array_points(
+    data: np.ndarray,
+    *,
+    transform: Any,
+    land_mask: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean array values and their lon/lat pixel-center coordinates."""
+    array = np.asarray(data, dtype=np.float64)
+    if array.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D analysis array, got shape {tuple(array.shape)}."
+        )
+
+    valid = np.isfinite(array)
+    if land_mask is not None:
+        land = np.asarray(land_mask, dtype=bool)
+        if land.shape != array.shape:
+            raise ValueError(
+                "land_mask shape must match analysis array shape: "
+                f"{tuple(land.shape)} != {tuple(array.shape)}."
+            )
+        valid &= ~land
+
+    row_idx, col_idx = np.nonzero(valid)
+    if row_idx.size == 0:
+        return (
+            np.asarray([], dtype=np.float64),
+            np.asarray([], dtype=np.float64),
+            np.asarray([], dtype=np.float64),
+        )
+
+    xs, ys = rasterio.transform.xy(transform, row_idx, col_idx, offset="center")
+    return (
+        array[row_idx, col_idx].astype(np.float64, copy=False),
+        np.asarray(xs, dtype=np.float64),
+        np.asarray(ys, dtype=np.float64),
+    )
+
+
+def _build_depth_level_analysis_from_values(
     depth_index: int,
-    depth_export: dict[str, Any],
+    depth_metadata: dict[str, Any],
+    values: np.ndarray,
+    lons: np.ndarray,
+    lats: np.ndarray,
     *,
     grid_size_degrees: float,
     top_cell_count: int,
-    land_mask_path: Path | None,
 ) -> dict[str, Any]:
-    """Build exact error-analysis summaries for one depth export."""
-    suffix = str(depth_export["suffix"])
-    values, lons, lats = _valid_raster_arrays(
-        Path(depth_export["absolute_error_path"]),
-        land_mask_path=land_mask_path,
-    )
+    """Build exact error-analysis summaries for one depth from point values."""
     basin_labels = _basin_label_array(lons, lats)
     grid_cells = aggregate_by_grid(
         values,
@@ -454,16 +490,40 @@ def _build_depth_level_analysis(
     }
     return {
         "index": int(depth_index),
-        "suffix": suffix,
-        "label": str(depth_export["label"]),
-        "requested_depth_m": float(depth_export["requested_depth_m"]),
-        "actual_depth_m": float(depth_export["actual_depth_m"]),
-        "channel_index": int(depth_export["channel_index"]),
+        "suffix": str(depth_metadata["suffix"]),
+        "label": str(depth_metadata["label"]),
+        "requested_depth_m": float(depth_metadata["requested_depth_m"]),
+        "actual_depth_m": float(depth_metadata["actual_depth_m"]),
+        "channel_index": int(depth_metadata["channel_index"]),
         "global": global_stats,
         "basins": basin_stats,
         "grid_cells": grid_cells,
         "top_cells": top_cells,
     }
+
+
+def _build_depth_level_analysis(
+    depth_index: int,
+    depth_export: dict[str, Any],
+    *,
+    grid_size_degrees: float,
+    top_cell_count: int,
+    land_mask_path: Path | None,
+) -> dict[str, Any]:
+    """Build exact error-analysis summaries for one depth export."""
+    values, lons, lats = _valid_raster_arrays(
+        Path(depth_export["absolute_error_path"]),
+        land_mask_path=land_mask_path,
+    )
+    return _build_depth_level_analysis_from_values(
+        depth_index,
+        depth_export,
+        values,
+        lons,
+        lats,
+        grid_size_degrees=grid_size_degrees,
+        top_cell_count=top_cell_count,
+    )
 
 
 def _build_depth_level_analysis_worker(
@@ -579,6 +639,85 @@ def build_error_analysis_payload(
         ),
         "run": {
             "run_dir": str(run_dir),
+            "selected_date": run_summary.get("selected_date"),
+            "target_date": run_summary.get(
+                "target_date", run_summary.get("selected_date")
+            ),
+            "iso_year": run_summary.get("iso_year"),
+            "iso_week": run_summary.get("iso_week"),
+        },
+        "variable": {
+            "name": str(variable_metadata["name"]),
+            "label": str(variable_metadata["label"]),
+            "value_units": str(variable_metadata["value_units"]),
+            "value_unit_label": str(variable_metadata["value_unit_label"]),
+        },
+        "metrics": list(METRIC_KEYS),
+        "grouping": {
+            "basins": list(BASIN_NAMES),
+            "grid_size_degrees": float(grid_size_degrees),
+            "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
+        },
+        "depth_levels": displayed_depth_levels,
+    }
+
+
+def build_error_analysis_payload_from_depth_arrays(
+    *,
+    run_summary: dict[str, Any],
+    variable_metadata: dict[str, Any],
+    depth_levels_metadata: Sequence[dict[str, Any]],
+    absolute_error_arrays: Iterable[np.ndarray],
+    transform: Any,
+    land_mask: np.ndarray | None = None,
+    grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
+    top_cell_count: int = 24,
+) -> dict[str, Any]:
+    """Build dashboard analysis payload from stitched per-depth error arrays."""
+    depth_levels: list[dict[str, Any]] = []
+    progress = tqdm(
+        total=len(depth_levels_metadata),
+        desc=f"{variable_metadata['label']} full-depth error analysis",
+        unit="depth",
+    )
+    try:
+        for depth_index, (depth_metadata, error_array) in enumerate(
+            zip(depth_levels_metadata, absolute_error_arrays, strict=True)
+        ):
+            progress.set_postfix_str(str(depth_metadata["suffix"]))
+            values, lons, lats = _valid_array_points(
+                error_array,
+                transform=transform,
+                land_mask=land_mask,
+            )
+            depth_levels.append(
+                _build_depth_level_analysis_from_values(
+                    depth_index,
+                    depth_metadata,
+                    values,
+                    lons,
+                    lats,
+                    grid_size_degrees=grid_size_degrees,
+                    top_cell_count=top_cell_count,
+                )
+            )
+            progress.update(1)
+    finally:
+        progress.close()
+
+    displayed_depth_levels = [
+        _build_all_depths_analysis(depth_levels, top_cell_count=top_cell_count),
+        *depth_levels,
+    ]
+    return {
+        "schema_version": 1,
+        "title": "DepthDif Error Analysis",
+        "description": (
+            "Aggregated prediction-vs-GLORYS absolute error diagnostics for one "
+            "global inference export."
+        ),
+        "run": {
+            "run_dir": str(run_summary.get("run_dir", "")),
             "selected_date": run_summary.get("selected_date"),
             "target_date": run_summary.get(
                 "target_date", run_summary.get("selected_date")

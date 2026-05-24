@@ -13,6 +13,7 @@ from rasterio.transform import from_origin
 from torch import nn
 
 from depth_recon.inference.export_global import (
+    DEFAULT_ANALYSIS_JSON_NAME,
     DEFAULT_INFERENCE_CONFIG,
     DEFAULT_PROFILE_GRAPH_WEBP_QUALITY,
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
@@ -30,6 +31,7 @@ from depth_recon.inference.export_global import (
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _write_full_profile_sample_artifacts,
+    _write_full_depth_error_analysis_json,
     _default_run_stem,
     filter_selection_by_rectangle,
     _normalize_cli_args,
@@ -46,6 +48,7 @@ from depth_recon.inference.export_global import (
     build_global_mosaic,
     global_inference_dataset_overrides,
     resolve_depth_export_levels,
+    resolve_full_depth_analysis_levels,
     select_export_indices,
     write_absolute_error_geotiff,
     write_global_top_band_geotiff,
@@ -1178,6 +1181,90 @@ class TestGlobalInferenceExport(unittest.TestCase):
         )
         self.assertAlmostEqual(levels[3].requested_depth_m, 100.0)
         self.assertAlmostEqual(levels[3].actual_depth_m, 97.0)
+
+    def test_full_depth_error_analysis_json_includes_every_native_depth(self) -> None:
+        depth_levels = resolve_full_depth_analysis_levels(
+            np.asarray([0.5, 1.5, 10.0], dtype=np.float64)
+        )
+
+        self.assertEqual(
+            [level.label for level in depth_levels],
+            ["Surface", "1.5m", "10m"],
+        )
+        self.assertEqual(
+            [level.suffix for level in depth_levels],
+            ["depth_000", "depth_001", "depth_002"],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=-180.0,
+                bottom=-90.0,
+                right=0.0,
+                top=90.0,
+                pixel_width=90.0,
+                pixel_height=90.0,
+                width=2,
+                height=2,
+                patch_width=2,
+                patch_height=2,
+                transform=from_origin(-180.0, 90.0, 90.0, 90.0),
+            )
+            accumulators = {
+                level.suffix: create_raster_accumulator(
+                    root_dir=tmp_path / "scratch",
+                    stem=f"signed_error_{level.suffix}",
+                    layout=layout,
+                )
+                for level in depth_levels
+            }
+            try:
+                signed_errors = [
+                    np.asarray([[-99.0, -1.0], [2.0, -3.0]], dtype=np.float64),
+                    np.asarray([[99.0, -5.0], [10.0, -10.0]], dtype=np.float64),
+                    np.asarray([[99.0, -2.0], [4.0, -6.0]], dtype=np.float64),
+                ]
+                for level, signed_error in zip(
+                    depth_levels, signed_errors, strict=True
+                ):
+                    accumulators[level.suffix].sum_array[:] = signed_error
+                    accumulators[level.suffix].count_array[:] = 1.0
+
+                json_path = tmp_path / DEFAULT_ANALYSIS_JSON_NAME
+                _write_full_depth_error_analysis_json(
+                    output_path=json_path,
+                    run_summary={
+                        "run_dir": str(tmp_path),
+                        "selected_date": 20260105,
+                        "target_date": 20260105,
+                        "iso_year": 2026,
+                        "iso_week": 2,
+                    },
+                    variable_spec=EXPORT_VARIABLE_SPECS["temperature"],
+                    analysis_depth_levels=depth_levels,
+                    signed_error_accumulators=accumulators,
+                    layout=layout,
+                    land_mask=np.asarray(
+                        [[True, False], [False, False]],
+                        dtype=bool,
+                    ),
+                )
+
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+            finally:
+                for accumulator in accumulators.values():
+                    _cleanup_accumulator(accumulator)
+
+        self.assertEqual(
+            [depth["label"] for depth in payload["depth_levels"]],
+            ["All Depths", "Surface", "1.5m", "10m"],
+        )
+        self.assertEqual(payload["depth_levels"][0]["depth_count"], 3)
+        self.assertEqual(payload["depth_levels"][0]["global"]["count"], 9)
+        self.assertEqual(payload["depth_levels"][1]["global"]["count"], 3)
+        self.assertEqual(payload["depth_levels"][1]["global"]["median"], 2.0)
+        self.assertEqual(payload["depth_levels"][3]["channel_index"], 2)
 
     def test_depth_geotiff_metadata_records_requested_and_actual_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -22,12 +22,14 @@
     displaylogo: false,
     modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
   };
+  const COMMON_SELECTOR_DEPTHS_M = [0, 10, 50, 100, 250, 500, 1000, 2000, 2500, 5000];
   const state = {
     datasets: {},
     variables: [],
     activeVariable: null,
     depthIndex: 0,
     metric: "median",
+    depthProfileLogX: false,
     focus: { type: "global", id: "global", label: "Global" },
     map: null,
     mapCellLayer: null,
@@ -66,7 +68,7 @@
   function setControlsDisabled(disabled) {
     document
       .querySelectorAll(
-        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button, #analysis-reset-focus"
+        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button, #analysis-reset-focus, #analysis-depth-scale-toggle"
       )
       .forEach((element) => {
         element.disabled = Boolean(disabled);
@@ -196,6 +198,38 @@
     return depthLevels.length > 0 ? depthLevels : data().depth_levels;
   }
 
+  function selectableDepthIndices() {
+    const levels = data().depth_levels;
+    const selected = new Set();
+    const aggregateIndex = levels.findIndex((depth) => depth.is_aggregate);
+    if (aggregateIndex >= 0) {
+      selected.add(aggregateIndex);
+    }
+    const nativeDepths = levels
+      .map((depth, index) => ({ depth, index }))
+      .filter((item) => !item.depth.is_aggregate);
+    for (const targetDepth of COMMON_SELECTOR_DEPTHS_M) {
+      let best = null;
+      for (const item of nativeDepths) {
+        const actualDepth = Number(item.depth.actual_depth_m);
+        if (!Number.isFinite(actualDepth)) {
+          continue;
+        }
+        const distance = Math.abs(actualDepth - targetDepth);
+        if (best === null || distance < best.distance) {
+          best = { index: item.index, distance };
+        }
+      }
+      if (best !== null) {
+        selected.add(best.index);
+      }
+    }
+    if (state.depthIndex >= 0 && state.depthIndex < levels.length) {
+      selected.add(state.depthIndex);
+    }
+    return Array.from(selected).sort((left, right) => left - right);
+  }
+
   function metricLabel(metric) {
     return METRIC_LABELS[metric] || metric;
   }
@@ -241,6 +275,13 @@
       render();
     });
 
+    const depthScaleToggle = $("analysis-depth-scale-toggle");
+    depthScaleToggle.addEventListener("click", function () {
+      state.depthProfileLogX = !state.depthProfileLogX;
+      updateDepthScaleToggle();
+      renderDepthProfile();
+    });
+
     const metricToggle = $("analysis-metric-toggle");
     metricToggle.addEventListener("click", function (event) {
       const button = event.target.closest("button[data-metric]");
@@ -256,14 +297,16 @@
 
     populateDepthSelect();
     populateMetricToggle();
+    updateDepthScaleToggle();
   }
 
   function populateDepthSelect() {
     const depthSelect = $("analysis-depth-select");
-    depthSelect.innerHTML = data().depth_levels
-      .map((depth, index) => `<option value="${index}">${escapeHtml(depth.label)}</option>`)
+    const depthLevels = data().depth_levels;
+    state.depthIndex = Math.max(0, Math.min(state.depthIndex, depthLevels.length - 1));
+    depthSelect.innerHTML = selectableDepthIndices()
+      .map((index) => `<option value="${index}">${escapeHtml(depthLevels[index].label)}</option>`)
       .join("");
-    state.depthIndex = Math.min(state.depthIndex, data().depth_levels.length - 1);
     depthSelect.value = String(state.depthIndex);
   }
 
@@ -279,6 +322,18 @@
           `<button type="button" data-metric="${escapeHtml(metric)}" aria-pressed="${metric === state.metric}">${escapeHtml(metricLabel(metric))}</button>`
       )
       .join("");
+  }
+
+  function updateDepthScaleToggle() {
+    const button = $("analysis-depth-scale-toggle");
+    if (!button) {
+      return;
+    }
+    const logScaleEnabled = Boolean(state.depthProfileLogX);
+    button.setAttribute("aria-pressed", String(logScaleEnabled));
+    button.textContent = logScaleEnabled ? "Linear X" : "Log X";
+    button.setAttribute("aria-label", logScaleEnabled ? "Use linear depth axis" : "Use logarithmic depth axis");
+    button.title = logScaleEnabled ? "Use linear depth axis" : "Use logarithmic depth axis";
   }
 
   function focusLabel() {
@@ -545,6 +600,52 @@
     });
   }
 
+  function logDepthXValues(xValues) {
+    const positiveDepths = xValues.filter((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    const firstPositiveDepth = positiveDepths.length > 0 ? Math.min(...positiveDepths) : 1;
+    const surfaceDepth = Math.max(firstPositiveDepth / 2, 1e-6);
+    return xValues.map((value) => {
+      const depth = Number(value);
+      // Plotly log axes cannot draw x <= 0; keep surface points just left of the first measured depth.
+      return Number.isFinite(depth) && depth > 0 ? depth : surfaceDepth;
+    });
+  }
+
+  function selectedDepthPointIndex(depthLevels = chartDepthLevels()) {
+    const depth = activeDepth();
+    if (depth.is_aggregate) {
+      return -1;
+    }
+    return depthLevels.indexOf(depth);
+  }
+
+  function depthMarkerValues(depthLevels, normalValue, activeValue) {
+    const selectedPoint = selectedDepthPointIndex(depthLevels);
+    return depthLevels.map((_depth, index) => (index === selectedPoint ? activeValue : normalValue));
+  }
+
+  function depthMarkerColors(depthLevels, normalColor) {
+    const selectedPoint = selectedDepthPointIndex(depthLevels);
+    return depthLevels.map((_depth, index) => (index === selectedPoint ? "#ffd166" : normalColor));
+  }
+
+  function selectDepthFromProfileClick(event, depthLevels) {
+    const point = event.points && event.points[0];
+    if (!point) {
+      return;
+    }
+    const pointIndex = Number.isInteger(point.pointIndex) ? point.pointIndex : point.pointNumber;
+    const clickedDepth = depthLevels[pointIndex];
+    const clickedDepthIndex = data().depth_levels.indexOf(clickedDepth);
+    if (clickedDepthIndex < 0) {
+      return;
+    }
+    const aggregateIndex = data().depth_levels.findIndex((depth) => depth.is_aggregate);
+    state.depthIndex = state.depthIndex === clickedDepthIndex ? Math.max(0, aggregateIndex) : clickedDepthIndex;
+    populateDepthSelect();
+    render();
+  }
+
   function plotlyLayout(yAxisTitle) {
     return {
       autosize: true,
@@ -587,13 +688,18 @@
     const labels = depthLevels.map((depth) => depth.label);
     const selected = selectedSeries(depthLevels);
     const global = globalSeries(depthLevels);
-    const xValues = depthXValues(depthLevels);
+    const linearXValues = depthXValues(depthLevels);
+    const xValues = state.depthProfileLogX ? logDepthXValues(linearXValues) : linearXValues;
     const traces = [
       {
         customdata: labels,
         hovertemplate: "Global<br>%{customdata}<br>%{y:.2f} " + unitLabel() + "<extra></extra>",
         line: { color: "rgba(124,200,255,0.72)", width: 2 },
-        marker: { color: "#7cc8ff", size: 7 },
+        marker: {
+          color: depthMarkerColors(depthLevels, "#7cc8ff"),
+          line: { color: "#f8f2d8", width: depthMarkerValues(depthLevels, 0, 1.8) },
+          size: depthMarkerValues(depthLevels, 7, 12),
+        },
         mode: "lines+markers",
         name: "Global",
         x: xValues,
@@ -605,7 +711,11 @@
         customdata: labels,
         hovertemplate: `${escapeHtml(focusLabel())}<br>%{customdata}<br>%{y:.2f} ${unitLabel()}<extra></extra>`,
         line: { color: "#ffd166", width: 3 },
-        marker: { color: "#ffd166", size: 8 },
+        marker: {
+          color: depthMarkerColors(depthLevels, "#ffd166"),
+          line: { color: "#f8f2d8", width: depthMarkerValues(depthLevels, 0, 1.8) },
+          size: depthMarkerValues(depthLevels, 8, 13),
+        },
         mode: "lines+markers",
         name: focusLabel(),
         x: xValues,
@@ -614,9 +724,19 @@
     }
     const layout = plotlyLayout(chartAxisTitle());
     layout.hovermode = "closest";
-    layout.xaxis.title = { text: "Depth (m)", standoff: 8 };
+    layout.xaxis.type = state.depthProfileLogX ? "log" : "linear";
+    layout.xaxis.title = { text: state.depthProfileLogX ? "Depth (m, log scale)" : "Depth (m)", standoff: 8 };
     $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth`;
-    window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG);
+    Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
+      if (typeof chart.removeAllListeners === "function") {
+        chart.removeAllListeners("plotly_click");
+      }
+      if (typeof chart.on === "function") {
+        chart.on("plotly_click", function (event) {
+          selectDepthFromProfileClick(event, depthLevels);
+        });
+      }
+    });
   }
 
   function renderBasinChart() {

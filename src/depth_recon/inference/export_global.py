@@ -30,7 +30,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -62,6 +62,10 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_EXTRA_ZOOM_LEVELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_assets,
+)
+from depth_recon.inference.export_error_analysis_dashboard import (
+    DEFAULT_ANALYSIS_JSON_NAME,
+    build_error_analysis_payload_from_depth_arrays,
 )
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,
@@ -499,6 +503,7 @@ def _rewrite_summary_for_production(
         "ground_truth_tif_path",
         "absolute_error_tif_path",
         "uncertainty_tif_path",
+        "error_analysis_json_path",
         "argo_points_geojson_path",
         "full_sample_locations_geojson_path",
         "patch_splits_geojson_path",
@@ -1179,6 +1184,105 @@ def resolve_depth_export_levels(depth_axis_m: np.ndarray) -> list[DepthExportLev
             )
         )
     return levels
+
+
+def _format_native_depth_label(depth_m: float, *, channel_index: int) -> str:
+    """Return a compact dashboard label for a native depth channel."""
+    depth_value = float(depth_m)
+    if int(channel_index) == 0 or np.isclose(depth_value, 0.0):
+        return "Surface"
+    label = f"{depth_value:.1f}".rstrip("0").rstrip(".")
+    return f"{label}m"
+
+
+def resolve_full_depth_analysis_levels(
+    depth_axis_m: np.ndarray,
+) -> list[DepthExportLevel]:
+    """Return one analysis depth level for every native model target channel."""
+    depth_values = np.asarray(depth_axis_m, dtype=np.float64).reshape(-1)
+    if depth_values.size < 1:
+        raise RuntimeError("Cannot resolve analysis depths from an empty depth axis.")
+    if not np.all(np.isfinite(depth_values)):
+        raise RuntimeError("GLORYS depth axis must contain only finite values.")
+
+    return [
+        DepthExportLevel(
+            suffix=f"depth_{channel_index:03d}",
+            label=_format_native_depth_label(
+                float(depth_m),
+                channel_index=channel_index,
+            ),
+            requested_depth_m=float(depth_m),
+            actual_depth_m=float(depth_m),
+            channel_index=int(channel_index),
+        )
+        for channel_index, depth_m in enumerate(depth_values.tolist())
+    ]
+
+
+def _absolute_error_array_from_signed_accumulator(
+    accumulator: RasterAccumulator,
+) -> np.ndarray:
+    """Finalize one signed-error accumulator to absolute stitched error."""
+    counts = np.asarray(accumulator.count_array, dtype=np.float64)
+    values = np.full(counts.shape, np.nan, dtype=np.float32)
+    valid = counts > 0.0
+    if np.any(valid):
+        signed_mean = (
+            np.asarray(accumulator.sum_array, dtype=np.float64)[valid] / counts[valid]
+        )
+        values[valid] = np.abs(signed_mean).astype(np.float32, copy=False)
+    return values
+
+
+def _write_full_depth_error_analysis_json(
+    *,
+    output_path: Path,
+    run_summary: dict[str, Any],
+    variable_spec: ExportVariableSpec,
+    analysis_depth_levels: Sequence[DepthExportLevel],
+    signed_error_accumulators: dict[str, RasterAccumulator],
+    layout: MosaicLayout,
+    land_mask: np.ndarray | None,
+) -> Path:
+    """Write full-native-depth error analysis JSON from signed-error mosaics."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    depth_metadata = [
+        {
+            "suffix": level.suffix,
+            "label": level.label,
+            "requested_depth_m": float(level.requested_depth_m),
+            "actual_depth_m": float(level.actual_depth_m),
+            "channel_index": int(level.channel_index),
+        }
+        for level in analysis_depth_levels
+    ]
+
+    def _absolute_error_arrays() -> Iterable[np.ndarray]:
+        for level in analysis_depth_levels:
+            # Errors are accumulated as signed prediction-minus-GLORYS values so
+            # overlapping patches are stitched before the absolute value is taken.
+            yield _absolute_error_array_from_signed_accumulator(
+                signed_error_accumulators[level.suffix]
+            )
+
+    payload = build_error_analysis_payload_from_depth_arrays(
+        run_summary=run_summary,
+        variable_metadata={
+            "name": variable_spec.name,
+            "label": variable_spec.label,
+            "value_units": variable_spec.value_units,
+            "value_unit_label": variable_spec.value_unit_label,
+        },
+        depth_levels_metadata=depth_metadata,
+        absolute_error_arrays=_absolute_error_arrays(),
+        transform=layout.transform,
+        land_mask=land_mask,
+    )
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+        f.write("\n")
+    return output_path
 
 
 def _profile_to_json_list(
@@ -2426,6 +2530,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         expected_size=int(sample_target.shape[0]),
     )
     depth_export_levels = resolve_depth_export_levels(depth_axis_m)
+    analysis_depth_levels = resolve_full_depth_analysis_levels(depth_axis_m)
+    export_full_depth_error_analysis = bool(export_prediction and export_ground_truth)
     depth_channel_indices = tuple(
         int(level.channel_index) for level in depth_export_levels
     )
@@ -2468,6 +2574,18 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             for level in depth_export_levels
         }
         if export_ground_truth
+        else {}
+    )
+    signed_error_accumulators = (
+        {
+            level.suffix: create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem=f"signed_error_{level.suffix}",
+                layout=layout,
+            )
+            for level in analysis_depth_levels
+        }
+        if export_full_depth_error_analysis
         else {}
     )
     uncertainty_accumulator = (
@@ -2519,6 +2637,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"inference_num_workers={inference_num_workers}, "
         f"inference_prefetch_factor={inference_prefetch_factor}, "
         f"export_ground_truth={export_ground_truth}, "
+        f"full_depth_error_analysis={export_full_depth_error_analysis}, "
         f"uncertainty_only={uncertainty_only}, "
         f"full_sample_count="
         f"{'all' if export_all_full_samples else full_sample_count}, "
@@ -2580,7 +2699,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         model,
         variable_spec=variable_spec,
         export_ground_truth=export_ground_truth,
-        export_full_prediction_stack=export_full_profiles,
+        export_full_prediction_stack=(
+            export_full_profiles or export_full_depth_error_analysis
+        ),
         export_prediction=export_prediction,
         export_uncertainty=export_uncertainty,
         uncertainty_num_samples=uncertainty_num_samples,
@@ -2620,7 +2741,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
         prediction_full_stack_batch = (
             outputs["prediction_full_stack"].detach().float().cpu().numpy()
-            if export_full_profiles
+            if export_full_profiles or export_full_depth_error_analysis
             else None
         )
         ground_truth_batch = (
@@ -2657,7 +2778,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             .float()
             .cpu()
             .numpy()
-            if export_full_profiles
+            if export_full_profiles or export_full_depth_error_analysis
+            else None
+        )
+        target_valid_full_mask_batch = (
+            batch[variable_spec.y_valid_mask_key].detach().cpu().numpy().astype(bool)
+            if export_full_depth_error_analysis
             else None
         )
         selected_row_batch = inference_items["rows"]
@@ -2701,6 +2827,38 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                             patch_values=gt_patch_values,
                             layout=layout,
                         )
+            if (
+                export_full_depth_error_analysis
+                and prediction_full_stack_batch is not None
+                and y_denorm_batch is not None
+                and target_valid_full_mask_batch is not None
+            ):
+                for level in analysis_depth_levels:
+                    channel_index = int(level.channel_index)
+                    pred_patch_values = _prediction_zeros_to_nan(
+                        prediction_full_stack_batch[local_idx, channel_index]
+                    )
+                    gt_patch_values = (
+                        ground_truth_patch[channel_index]
+                        if ground_truth_patch is not None
+                        else y_denorm_batch[local_idx, channel_index]
+                    )
+                    target_valid_mask = target_valid_full_mask_batch[
+                        local_idx, channel_index
+                    ]
+                    gt_patch_values = np.where(
+                        target_valid_mask,
+                        gt_patch_values,
+                        np.nan,
+                    )
+                    signed_error_accumulator = signed_error_accumulators[level.suffix]
+                    _accumulate_patch_into_arrays(
+                        signed_error_accumulator.sum_array,
+                        signed_error_accumulator.count_array,
+                        row=row,
+                        patch_values=pred_patch_values - gt_patch_values,
+                        layout=layout,
+                    )
             if uncertainty_batch is not None and uncertainty_accumulator is not None:
                 _accumulate_patch_into_arrays(
                     uncertainty_accumulator.sum_array,
@@ -2813,6 +2971,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     for accumulator in pred_accumulators.values():
         _flush_accumulator(accumulator)
     for accumulator in gt_accumulators.values():
+        _flush_accumulator(accumulator)
+    for accumulator in signed_error_accumulators.values():
         _flush_accumulator(accumulator)
     if uncertainty_accumulator is not None:
         _flush_accumulator(uncertainty_accumulator)
@@ -3162,6 +3322,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             if uncertainty_tif_path is None
             else _summary_artifact_path(uncertainty_tif_path)
         ),
+        "error_analysis_json_path": None,
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
             None
@@ -3189,12 +3350,29 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "patch_split_count": int(patch_splits_writer.feature_count),
         "globe_packaging": None,
     }
+    if export_full_depth_error_analysis:
+        error_analysis_json_path = run_dir / DEFAULT_ANALYSIS_JSON_NAME
+        run_summary["error_analysis_json_path"] = _summary_artifact_path(
+            error_analysis_json_path
+        )
+        _write_full_depth_error_analysis_json(
+            output_path=error_analysis_json_path,
+            run_summary=run_summary,
+            variable_spec=variable_spec,
+            analysis_depth_levels=analysis_depth_levels,
+            signed_error_accumulators=signed_error_accumulators,
+            layout=layout,
+            land_mask=land_mask,
+        )
+        print(f"Wrote full-depth error analysis JSON: {error_analysis_json_path}")
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
 
     for accumulator in pred_accumulators.values():
         _cleanup_accumulator(accumulator)
     for accumulator in gt_accumulators.values():
+        _cleanup_accumulator(accumulator)
+    for accumulator in signed_error_accumulators.values():
         _cleanup_accumulator(accumulator)
     if uncertainty_accumulator is not None:
         _cleanup_accumulator(uncertainty_accumulator)

@@ -266,6 +266,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("Analysis Dashboard", html)
         self.assertIn('id="analysis-map"', html)
         self.assertIn('id="analysis-depth-profile"', html)
+        self.assertIn('id="analysis-depth-scale-toggle"', html)
         self.assertIn('id="analysis-basin-chart"', html)
         self.assertIn("analysis-panel--depth-profile", html)
         self.assertIn("Basin Selector", html)
@@ -293,6 +294,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysis-error-state", css)
         self.assertIn("analysis-leaflet-tooltip", css)
         self.assertIn("analysis-ranking-reset", css)
+        self.assertIn("analysis-scale-toggle", css)
         self.assertIn("analysis-panel--depth-profile", css)
         self.assertIn("repeat(2, minmax(0, 1fr))", css)
         self.assertIn("analysis-chart", css)
@@ -309,14 +311,27 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("cell.basin", script)
         self.assertIn("lonValue >= 100", script)
         self.assertIn("analysis-reset-focus", script)
+        self.assertIn("depthProfileLogX", script)
+        self.assertIn("function logDepthXValues", script)
+        self.assertIn("COMMON_SELECTOR_DEPTHS_M", script)
         self.assertIn("function chartDepthLevels", script)
+        self.assertIn("function selectableDepthIndices", script)
+        self.assertIn("function selectedDepthPointIndex", script)
+        self.assertIn("function selectDepthFromProfileClick", script)
         self.assertIn("!depth.is_aggregate", script)
+        self.assertIn("depthMarkerColors(depthLevels", script)
+        self.assertIn('chart.on("plotly_click"', script)
+        self.assertIn("state.depthIndex === clickedDepthIndex", script)
         self.assertIn(
             'state.focus = { type: "global", id: "global", label: "Global" }', script
         )
         self.assertIn("window.L.map", script)
         self.assertIn("window.Plotly.react", script)
         self.assertIn("displayBasinName", script)
+        self.assertIn(
+            'layout.xaxis.type = state.depthProfileLogX ? "log" : "linear"',
+            script,
+        )
         self.assertNotIn("function renderKpis", script)
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
