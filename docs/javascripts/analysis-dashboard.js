@@ -10,6 +10,15 @@
     Arctic: "Arctic Ocean",
     Other: "Other Waters",
   };
+  const BASIN_ORDER = ["Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other"];
+  const BASIN_FAN_COLORS = {
+    Pacific: "#7cc8ff",
+    Atlantic: "#f6c85f",
+    Indian: "#6cc4a1",
+    Southern: "#e17c78",
+    Arctic: "#b39ddb",
+    Other: "#d7e9f7",
+  };
   const MAP_BOUNDS = [
     [-85, -180],
     [85, 180],
@@ -30,6 +39,7 @@
     depthIndex: 0,
     metric: "median",
     depthProfileLogX: false,
+    showBasinFan: true,
     focus: { type: "global", id: "global", label: "Global" },
     map: null,
     mapCellLayer: null,
@@ -68,7 +78,7 @@
   function setControlsDisabled(disabled) {
     document
       .querySelectorAll(
-        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button, #analysis-reset-focus, #analysis-depth-scale-toggle"
+        "#analysis-modality-select, #analysis-depth-select, #analysis-metric-toggle button, #analysis-reset-focus, #analysis-depth-scale-toggle, #analysis-basin-fan-toggle"
       )
       .forEach((element) => {
         element.disabled = Boolean(disabled);
@@ -282,6 +292,13 @@
       renderDepthProfile();
     });
 
+    const basinFanToggle = $("analysis-basin-fan-toggle");
+    basinFanToggle.addEventListener("click", function () {
+      state.showBasinFan = !state.showBasinFan;
+      updateBasinFanToggle();
+      renderDepthProfile();
+    });
+
     const metricToggle = $("analysis-metric-toggle");
     metricToggle.addEventListener("click", function (event) {
       const button = event.target.closest("button[data-metric]");
@@ -298,6 +315,7 @@
     populateDepthSelect();
     populateMetricToggle();
     updateDepthScaleToggle();
+    updateBasinFanToggle();
   }
 
   function populateDepthSelect() {
@@ -334,6 +352,19 @@
     button.textContent = logScaleEnabled ? "Linear X" : "Log X";
     button.setAttribute("aria-label", logScaleEnabled ? "Use linear depth axis" : "Use logarithmic depth axis");
     button.title = logScaleEnabled ? "Use linear depth axis" : "Use logarithmic depth axis";
+  }
+
+  function updateBasinFanToggle() {
+    const button = $("analysis-basin-fan-toggle");
+    if (!button) {
+      return;
+    }
+    const basinFanAvailable = state.focus.type === "global";
+    const basinFanEnabled = basinFanAvailable && state.showBasinFan;
+    button.disabled = !basinFanAvailable;
+    button.setAttribute("aria-pressed", String(basinFanEnabled));
+    button.setAttribute("aria-label", state.showBasinFan ? "Hide basin fan curves" : "Show basin fan curves");
+    button.title = basinFanAvailable ? button.getAttribute("aria-label") : "Basin fan is available only in global focus";
   }
 
   function focusLabel() {
@@ -577,20 +608,47 @@
     requestAnimationFrame(() => map.invalidateSize(false));
   }
 
+  function basinStatsForDepth(depth, basinName) {
+    return depth.basins.find((basin) => basin.name === basinName) || null;
+  }
+
+  function cellStatsForDepth(depth, cellId) {
+    return depth.grid_cells.find((cell) => cell.id === cellId) || null;
+  }
+
+  function focusedStats(depth) {
+    if (state.focus.type === "basin") {
+      return basinStatsForDepth(depth, state.focus.id);
+    }
+    if (state.focus.type === "cell") {
+      return cellStatsForDepth(depth, state.focus.id);
+    }
+    return depth.global;
+  }
+
+  function metricValue(stats) {
+    const value = Number(stats && stats[state.metric]);
+    return Number.isFinite(value) ? value : null;
+  }
+
   function selectedSeries(depthLevels = chartDepthLevels()) {
-    return depthLevels.map((depth) => {
-      if (state.focus.type === "basin") {
-        return (depth.basins.find((basin) => basin.name === state.focus.id) || {})[state.metric] ?? null;
-      }
-      if (state.focus.type === "cell") {
-        return (depth.grid_cells.find((cell) => cell.id === state.focus.id) || {})[state.metric] ?? null;
-      }
-      return depth.global[state.metric] ?? null;
-    });
+    return depthLevels.map((depth) => metricValue(focusedStats(depth)));
   }
 
   function globalSeries(depthLevels = chartDepthLevels()) {
-    return depthLevels.map((depth) => depth.global[state.metric] ?? null);
+    return depthLevels.map((depth) => metricValue(depth.global));
+  }
+
+  function deltaSeries(selectedValues, globalValues) {
+    return selectedValues.map((value, index) => {
+      const selectedValue = Number(value);
+      const globalValue = Number(globalValues[index]);
+      return Number.isFinite(selectedValue) && Number.isFinite(globalValue) ? selectedValue - globalValue : null;
+    });
+  }
+
+  function basinSeries(depthLevels, basinName) {
+    return depthLevels.map((depth) => metricValue(basinStatsForDepth(depth, basinName)));
   }
 
   function depthXValues(depthLevels = chartDepthLevels()) {
@@ -611,6 +669,27 @@
     });
   }
 
+  function commonRasterDepthPointIndices(depthLevels) {
+    const selected = new Set();
+    for (const targetDepth of COMMON_SELECTOR_DEPTHS_M) {
+      let best = null;
+      depthLevels.forEach((depth, index) => {
+        const actualDepth = Number(depth.actual_depth_m);
+        if (!Number.isFinite(actualDepth)) {
+          return;
+        }
+        const distance = Math.abs(actualDepth - targetDepth);
+        if (best === null || distance < best.distance) {
+          best = { index, distance };
+        }
+      });
+      if (best !== null) {
+        selected.add(best.index);
+      }
+    }
+    return selected;
+  }
+
   function selectedDepthPointIndex(depthLevels = chartDepthLevels()) {
     const depth = activeDepth();
     if (depth.is_aggregate) {
@@ -619,14 +698,94 @@
     return depthLevels.indexOf(depth);
   }
 
-  function depthMarkerValues(depthLevels, normalValue, activeValue) {
+  function primaryMarkerValues(depthLevels, normalValue, rasterValue, activeValue) {
     const selectedPoint = selectedDepthPointIndex(depthLevels);
-    return depthLevels.map((_depth, index) => (index === selectedPoint ? activeValue : normalValue));
+    const rasterPoints = commonRasterDepthPointIndices(depthLevels);
+    return depthLevels.map((_depth, index) => {
+      if (index === selectedPoint) {
+        return activeValue;
+      }
+      return rasterPoints.has(index) ? rasterValue : normalValue;
+    });
   }
 
-  function depthMarkerColors(depthLevels, normalColor) {
+  function primaryMarkerColors(depthLevels, normalColor) {
     const selectedPoint = selectedDepthPointIndex(depthLevels);
-    return depthLevels.map((_depth, index) => (index === selectedPoint ? "#ffd166" : normalColor));
+    return depthLevels.map((_depth, index) => (index === selectedPoint ? "#f8f2d8" : normalColor));
+  }
+
+  function primaryMarkerLineColors(depthLevels) {
+    const selectedPoint = selectedDepthPointIndex(depthLevels);
+    const rasterPoints = commonRasterDepthPointIndices(depthLevels);
+    return depthLevels.map((_depth, index) => {
+      if (index === selectedPoint) {
+        return "#ffd166";
+      }
+      return rasterPoints.has(index) ? "#f8f2d8" : "rgba(248,242,216,0)";
+    });
+  }
+
+  function primaryMarkerSymbols(depthLevels) {
+    const selectedPoint = selectedDepthPointIndex(depthLevels);
+    const rasterPoints = commonRasterDepthPointIndices(depthLevels);
+    return depthLevels.map((_depth, index) => {
+      if (index === selectedPoint) {
+        return "diamond";
+      }
+      return rasterPoints.has(index) ? "circle-open" : "circle";
+    });
+  }
+
+  function rasterDepthHoverTexts(depthLevels) {
+    const rasterPoints = commonRasterDepthPointIndices(depthLevels);
+    return depthLevels.map((_depth, index) => (rasterPoints.has(index) ? "<br>Raster export depth" : ""));
+  }
+
+  function formatSignedMetric(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return "n/a";
+    }
+    const prefix = number > 0 ? "+" : "";
+    return `${prefix}${formatNumber(number, 2)} ${unitLabel()}`.trim();
+  }
+
+  function globalHoverData(depthLevels) {
+    const rasterTexts = rasterDepthHoverTexts(depthLevels);
+    return depthLevels.map((depth, index) => [
+      depth.label,
+      formatMetric(depth.global[state.metric]),
+      formatPixelCount(depth.global.count),
+      rasterTexts[index],
+    ]);
+  }
+
+  function basinHoverData(depthLevels, basinName) {
+    const rasterTexts = rasterDepthHoverTexts(depthLevels);
+    return depthLevels.map((depth, index) => {
+      const stats = basinStatsForDepth(depth, basinName) || {};
+      return [
+        depth.label,
+        formatMetric(stats[state.metric]),
+        formatPixelCount(stats.count),
+        rasterTexts[index],
+      ];
+    });
+  }
+
+  function deltaHoverData(depthLevels, selectedValues, globalValues, deltaValues) {
+    const rasterTexts = rasterDepthHoverTexts(depthLevels);
+    return depthLevels.map((depth, index) => {
+      const stats = focusedStats(depth) || {};
+      return [
+        depth.label,
+        formatMetric(selectedValues[index]),
+        formatMetric(globalValues[index]),
+        formatSignedMetric(deltaValues[index]),
+        formatPixelCount(stats.count),
+        rasterTexts[index],
+      ];
+    });
   }
 
   function selectDepthFromProfileClick(event, depthLevels) {
@@ -677,56 +836,111 @@
     };
   }
 
-  function chartAxisTitle() {
+  function chartAxisTitle(deltaMode = false) {
     const unit = unitLabel();
+    if (deltaMode) {
+      return `${metricLabel(state.metric)} delta vs global${unit ? ` (${unit})` : ""}`;
+    }
     return `${metricLabel(state.metric)} absolute error${unit ? ` (${unit})` : ""}`;
+  }
+
+  function primaryMarker(depthLevels, color) {
+    return {
+      color: primaryMarkerColors(depthLevels, color),
+      line: {
+        color: primaryMarkerLineColors(depthLevels),
+        width: primaryMarkerValues(depthLevels, 0, 1.5, 2.2),
+      },
+      size: primaryMarkerValues(depthLevels, 6, 10, 13),
+      symbol: primaryMarkerSymbols(depthLevels),
+    };
+  }
+
+  function basinFanTraces(depthLevels, xValues) {
+    if (state.focus.type !== "global" || !state.showBasinFan) {
+      return [];
+    }
+    return BASIN_ORDER.map((basinName) => ({
+      customdata: basinHoverData(depthLevels, basinName),
+      hovertemplate:
+        `${escapeHtml(displayBasinName(basinName))}<br>%{customdata[0]}<br>` +
+        `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
+        "Count: %{customdata[2]}%{customdata[3]}<extra></extra>",
+      line: { color: BASIN_FAN_COLORS[basinName], width: 1 },
+      mode: "lines",
+      name: displayBasinName(basinName),
+      opacity: 0.36,
+      x: xValues,
+      y: basinSeries(depthLevels, basinName),
+    }));
   }
 
   function renderDepthProfile() {
     const chart = $("analysis-depth-profile");
     const depthLevels = chartDepthLevels();
-    const labels = depthLevels.map((depth) => depth.label);
     const selected = selectedSeries(depthLevels);
     const global = globalSeries(depthLevels);
+    const delta = deltaSeries(selected, global);
     const linearXValues = depthXValues(depthLevels);
     const xValues = state.depthProfileLogX ? logDepthXValues(linearXValues) : linearXValues;
-    const traces = [
-      {
-        customdata: labels,
-        hovertemplate: "Global<br>%{customdata}<br>%{y:.2f} " + unitLabel() + "<extra></extra>",
-        line: { color: "rgba(124,200,255,0.72)", width: 2 },
-        marker: {
-          color: depthMarkerColors(depthLevels, "#7cc8ff"),
-          line: { color: "#f8f2d8", width: depthMarkerValues(depthLevels, 0, 1.8) },
-          size: depthMarkerValues(depthLevels, 7, 12),
-        },
-        mode: "lines+markers",
-        name: "Global",
-        x: xValues,
-        y: global,
-      },
-    ];
-    if (state.focus.type !== "global") {
-      traces.push({
-        customdata: labels,
-        hovertemplate: `${escapeHtml(focusLabel())}<br>%{customdata}<br>%{y:.2f} ${unitLabel()}<extra></extra>`,
-        line: { color: "#ffd166", width: 3 },
-        marker: {
-          color: depthMarkerColors(depthLevels, "#ffd166"),
-          line: { color: "#f8f2d8", width: depthMarkerValues(depthLevels, 0, 1.8) },
-          size: depthMarkerValues(depthLevels, 8, 13),
-        },
-        mode: "lines+markers",
-        name: focusLabel(),
-        x: xValues,
-        y: selected,
-      });
-    }
-    const layout = plotlyLayout(chartAxisTitle());
+    const deltaMode = state.focus.type !== "global";
+    updateBasinFanToggle();
+    const traces = deltaMode
+      ? [
+          {
+            customdata: deltaHoverData(depthLevels, selected, global, delta),
+            hovertemplate:
+              `${escapeHtml(focusLabel())} vs Global<br>%{customdata[0]}<br>` +
+              `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
+              `Global ${escapeHtml(metricLabel(state.metric))}: %{customdata[2]}<br>` +
+              "Delta: %{customdata[3]}<br>" +
+              "Count: %{customdata[4]}%{customdata[5]}<extra></extra>",
+            line: { color: "#ffd166", width: 3 },
+            marker: primaryMarker(depthLevels, "#ffd166"),
+            mode: "lines+markers",
+            name: `${focusLabel()} - Global`,
+            x: xValues,
+            y: delta,
+          },
+        ]
+      : [
+          ...basinFanTraces(depthLevels, xValues),
+          {
+            customdata: globalHoverData(depthLevels),
+            hovertemplate:
+              "Global<br>%{customdata[0]}<br>" +
+              `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
+              "Count: %{customdata[2]}%{customdata[3]}<extra></extra>",
+            line: { color: "rgba(124,200,255,0.92)", width: 3 },
+            marker: primaryMarker(depthLevels, "#7cc8ff"),
+            mode: "lines+markers",
+            name: "Global",
+            x: xValues,
+            y: global,
+          },
+        ];
+    const layout = plotlyLayout(chartAxisTitle(deltaMode));
     layout.hovermode = "closest";
     layout.xaxis.type = state.depthProfileLogX ? "log" : "linear";
     layout.xaxis.title = { text: state.depthProfileLogX ? "Depth (m, log scale)" : "Depth (m)", standoff: 8 };
-    $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth`;
+    if (deltaMode) {
+      layout.yaxis.rangemode = "tozero";
+      layout.shapes = [
+        {
+          type: "line",
+          xref: "paper",
+          x0: 0,
+          x1: 1,
+          yref: "y",
+          y0: 0,
+          y1: 0,
+          line: { color: "rgba(248,242,216,0.5)", width: 1, dash: "dot" },
+        },
+      ];
+      $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error minus global across depth; positive is worse`;
+    } else {
+      $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth${state.showBasinFan ? " with basin fan" : ""}`;
+    }
     Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
       if (typeof chart.removeAllListeners === "function") {
         chart.removeAllListeners("plotly_click");

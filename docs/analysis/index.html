@@ -74,7 +74,10 @@
               <h2>Error Across Depth</h2>
               <p id="analysis-profile-caption">Global accumulated error curve</p>
             </div>
-            <button id="analysis-depth-scale-toggle" class="analysis-scale-toggle" type="button" aria-pressed="false">Log X</button>
+            <div class="analysis-depth-actions" aria-label="Depth profile display controls">
+              <button id="analysis-basin-fan-toggle" class="analysis-scale-toggle" type="button" aria-pressed="true">Basin Fan</button>
+              <button id="analysis-depth-scale-toggle" class="analysis-scale-toggle" type="button" aria-pressed="false">Log X</button>
+            </div>
           </div>
           <div id="analysis-depth-profile" class="analysis-chart" role="img" aria-label="Error curve across depth levels"></div>
         </article>

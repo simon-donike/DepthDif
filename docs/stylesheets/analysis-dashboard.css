@@ -222,6 +222,13 @@ html.standalone-analysis-root,
   font-weight: 400;
 }
 
+.analysis-depth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .analysis-pill {
   display: inline-flex;
   max-width: 18rem;
