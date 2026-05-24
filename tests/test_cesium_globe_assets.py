@@ -162,7 +162,6 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 "valid_alpha": 255,
             },
             template=template,
-            error_analysis_url="./error-analysis.html",
             error_analysis_data_url="./error-analysis.json",
         )
 
@@ -220,7 +219,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertNotIn("base_map_tiles_url", config)
         self.assertNotIn("base_map_credit", config)
         self.assertNotIn("base_map", config["credits"])
-        self.assertEqual(config["error_analysis_url"], "./error-analysis.html")
+        self.assertNotIn("error_analysis_url", config)
         self.assertEqual(config["error_analysis_data_url"], "./error-analysis.json")
 
     def test_build_globe_config_keeps_multivariable_config_and_legacy_fields(

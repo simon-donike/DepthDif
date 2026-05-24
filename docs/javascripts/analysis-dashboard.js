@@ -86,7 +86,7 @@
   }
 
   function clearDashboardContent() {
-    ["analysis-kpis", "analysis-basin-ranking"].forEach((id) => {
+    ["analysis-basin-ranking"].forEach((id) => {
       const element = $(id);
       if (element) {
         element.innerHTML = "";
@@ -196,14 +196,6 @@
     return depthLevels.length > 0 ? depthLevels : data().depth_levels;
   }
 
-  function depthSubtitle(depth) {
-    if (depth.is_aggregate) {
-      const depthCount = Number(depth.depth_count || Math.max(0, data().depth_levels.length - 1));
-      return `${formatCount(depthCount)} depth levels pooled`;
-    }
-    return `${formatNumber(depth.actual_depth_m, 1)} m actual`;
-  }
-
   function metricLabel(metric) {
     return METRIC_LABELS[metric] || metric;
   }
@@ -293,17 +285,6 @@
     return state.focus.type === "basin" ? displayBasinName(state.focus.id) : state.focus.label;
   }
 
-  function activeSelectionStats() {
-    const depth = activeDepth();
-    if (state.focus.type === "basin") {
-      return depth.basins.find((basin) => basin.name === state.focus.id) || null;
-    }
-    if (state.focus.type === "cell") {
-      return depth.grid_cells.find((cell) => cell.id === state.focus.id) || null;
-    }
-    return depth.global;
-  }
-
   function basinForCoordinate(lon, lat) {
     const lonValue = ((((Number(lon) + 180) % 360) + 360) % 360) - 180;
     const latValue = Number(lat);
@@ -348,26 +329,6 @@
     return basinForCoordinate(lon, lat);
   }
 
-  function renderKpis() {
-    const depth = activeDepth();
-    const stats = activeSelectionStats() || {};
-    const count = Number(stats.count || 0);
-    const countLabel = count > 0 ? `${formatPixelCount(count, state.focus.type === "basin")} valid` : "No valid pixels at this depth";
-    const values = [
-      ["Active Depth", depth.label, depthSubtitle(depth)],
-      ["Statistics", focusLabel(), countLabel],
-      ["Median Error", formatMetric(stats.median), `${metricLabel(state.metric)} metric active`],
-      ["Mean Error", formatMetric(stats.mean), "Average absolute error"],
-      ["P95 Error", formatMetric(stats.p95), "Tail absolute error"],
-    ];
-    $("analysis-kpis").innerHTML = values
-      .map(
-        ([label, value, sub]) =>
-          `<article class="analysis-kpi"><div class="analysis-kpi__label">${escapeHtml(label)}</div><div class="analysis-kpi__value">${escapeHtml(value)}</div><div class="analysis-kpi__sub">${escapeHtml(sub)}</div></article>`
-      )
-      .join("");
-  }
-
   function rankingButton(item, type, label) {
     const id = item.id || item.name;
     const active = state.focus.type === type && state.focus.id === id;
@@ -383,15 +344,16 @@
       resetFocus.disabled = state.focus.type === "global";
     }
     const depth = activeDepth();
-    const basins = depth.basins
-      .filter((basin) => basin[state.metric] !== null)
-      .sort((a, b) => Number(b[state.metric]) - Number(a[state.metric]));
+    const basins = depth.basins.filter((basin) => basin[state.metric] !== null);
     $("analysis-basin-ranking").innerHTML = basins
       .map((basin) => rankingButton(basin, "basin", displayBasinName(basin.name)))
       .join("");
     document.querySelectorAll(".analysis-ranking-button").forEach((button) => {
       button.addEventListener("click", function () {
-        state.focus = { type: button.dataset.type, id: button.dataset.id, label: button.dataset.label };
+        const active = state.focus.type === button.dataset.type && state.focus.id === button.dataset.id;
+        state.focus = active
+          ? { type: "global", id: "global", label: "Global" }
+          : { type: button.dataset.type, id: button.dataset.id, label: button.dataset.label };
         render();
       });
     });
@@ -549,7 +511,10 @@
         sticky: true,
       });
       layer.on("click", function () {
-        state.focus = { type: "cell", id: cell.id, label: cell.label };
+        const active = state.focus.type === "cell" && state.focus.id === cell.id;
+        state.focus = active
+          ? { type: "global", id: "global", label: "Global" }
+          : { type: "cell", id: cell.id, label: cell.label };
         render();
       });
       state.mapCellLayer.addLayer(layer);
@@ -684,7 +649,10 @@
             return;
           }
           const basinId = basinIds[point.pointIndex];
-          state.focus = { type: "basin", id: basinId, label: displayBasinName(basinId) };
+          const active = state.focus.type === "basin" && state.focus.id === basinId;
+          state.focus = active
+            ? { type: "global", id: "global", label: "Global" }
+            : { type: "basin", id: basinId, label: displayBasinName(basinId) };
           render();
         });
       }
@@ -704,7 +672,6 @@
   }
 
   function render() {
-    renderKpis();
     renderRankings();
     renderMap();
     renderDepthProfile();

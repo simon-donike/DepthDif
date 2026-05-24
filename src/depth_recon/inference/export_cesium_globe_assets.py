@@ -948,7 +948,6 @@ def build_globe_config(
     uncertainty_value_unit_label: str | None = None,
     base_map_tiles_url: str | None = None,
     base_map_credit: str | None = None,
-    error_analysis_url: str | None = None,
     error_analysis_data_url: str | None = None,
 ) -> dict[str, Any]:
     config = dict(template)
@@ -1022,10 +1021,7 @@ def build_globe_config(
         config["default_variable"] = (
             str(default_variable) if default_variable is not None else str(variable)
         )
-    if error_analysis_url is not None:
-        config["error_analysis_url"] = str(error_analysis_url)
-    else:
-        config.pop("error_analysis_url", None)
+    config.pop("error_analysis_url", None)
     if error_analysis_data_url is not None:
         config["error_analysis_data_url"] = str(error_analysis_data_url)
     else:
@@ -1445,7 +1441,6 @@ def export_cesium_globe_assets(
             )
         )
 
-    copied_error_analysis_html_path: Path | None = None
     copied_error_analysis_json_path: Path | None = None
     if include_error_analysis:
         from depth_recon.inference.export_error_analysis_dashboard import (
@@ -1457,7 +1452,6 @@ def export_cesium_globe_assets(
             output_dir=globe_dir,
             public_base_url=public_base_url,
         )
-        copied_error_analysis_html_path = Path(error_analysis_result["html_path"])
         copied_error_analysis_json_path = Path(error_analysis_result["json_path"])
 
     bounds_source_path = (
@@ -1596,14 +1590,6 @@ def export_cesium_globe_assets(
         ),
         base_map_tiles_url=base_map_tiles_url,
         base_map_credit=base_map_credit,
-        error_analysis_url=(
-            None
-            if copied_error_analysis_html_path is None
-            else _resolve_layer_url(
-                copied_error_analysis_html_path.name,
-                public_base_url=public_base_url,
-            )
-        ),
         error_analysis_data_url=(
             None
             if copied_error_analysis_json_path is None
@@ -1645,8 +1631,8 @@ def export_cesium_globe_assets(
         print(f"- full-sample locations GeoJSON: {copied_full_sample_points_path}")
     if copied_graphs_dir_path is not None:
         print(f"- full-sample graphs: {copied_graphs_dir_path}")
-    if copied_error_analysis_html_path is not None:
-        print(f"- error analysis dashboard: {copied_error_analysis_html_path}")
+    if copied_error_analysis_json_path is not None:
+        print(f"- error analysis data: {copied_error_analysis_json_path}")
     print(f"- config: {config_path}")
     print(
         f"- fixed {variable_metadata['label']} color scale: "
@@ -1754,7 +1740,7 @@ def _prefix_variable_config_asset_urls(
 ) -> dict[str, Any]:
     """Rewrite one variable config so URLs resolve from the combined config."""
     rewritten = dict(variable_config)
-    for key in ASSET_URL_KEYS + ("error_analysis_url", "error_analysis_data_url"):
+    for key in ASSET_URL_KEYS + ("error_analysis_data_url",):
         rewritten[key] = _prefix_variable_asset_url(
             rewritten.get(key),
             variable=variable,

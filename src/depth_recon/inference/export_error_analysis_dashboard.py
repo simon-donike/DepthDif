@@ -1,6 +1,6 @@
 # Example:
 # /work/envs/depth/bin/python -m depth_recon.inference.export_error_analysis_dashboard --run-dir inference/outputs/global_top_band_20150615 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe
-"""Export a standalone absolute-error analysis dashboard for one inference run."""
+"""Export absolute-error analysis data for one inference run."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from depth_recon.inference.export_cesium_globe_assets import (
 
 DEFAULT_DASHBOARD_DIR_NAME = "error_analysis"
 DEFAULT_ANALYSIS_JSON_NAME = "error-analysis.json"
-DEFAULT_ANALYSIS_HTML_NAME = "error-analysis.html"
 DEFAULT_GRID_SIZE_DEGREES = 5.0
 METRIC_KEYS = ("median", "mean", "p90", "p95")
 BASIN_NAMES = ("Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other")
@@ -603,293 +602,6 @@ def build_error_analysis_payload(
     }
 
 
-def _dashboard_html() -> str:
-    """Return the standalone dashboard HTML document."""
-    return r"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DepthDif Error Analysis</title>
-    <style>
-      :root { color-scheme: dark; --bg: #071114; --panel: #101a1d; --line: #26363a; --text: #edf7f5; --muted: #9fb7b3; --cyan: #69d7d0; --red: #ef5b5b; --yellow: #f4c95d; --green: #3ddc84; }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      button, select { font: inherit; }
-      .app { display: grid; grid-template-rows: auto auto 1fr auto; gap: 12px; min-height: 100vh; padding: 14px; }
-      header { display: flex; gap: 16px; align-items: end; justify-content: space-between; }
-      h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
-      .subtitle { margin-top: 4px; color: var(--muted); font-size: 13px; }
-      .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-      .control { display: grid; gap: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-      select, .segmented button { border: 1px solid var(--line); border-radius: 6px; background: #111f23; color: var(--text); padding: 8px 10px; }
-      .segmented { display: flex; gap: 4px; }
-      .segmented button[aria-pressed="true"] { border-color: var(--cyan); color: #051112; background: var(--cyan); }
-      .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-      .kpi, .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-      .kpi { padding: 12px; }
-      .kpi-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
-      .kpi-value { margin-top: 6px; font-size: 23px; font-weight: 700; }
-      .main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 12px; min-height: 0; }
-      .panel { min-height: 0; padding: 12px; }
-      .panel-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-      #map { width: 100%; height: min(58vh, 560px); border-radius: 6px; background: #071013; cursor: crosshair; }
-      .rankings { display: grid; gap: 12px; overflow: auto; max-height: min(58vh, 560px); }
-      .rank-list { display: grid; gap: 6px; }
-      .rank-item { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: #0b1619; text-align: left; cursor: pointer; }
-      .rank-item:hover, .rank-item.is-active { border-color: var(--cyan); }
-      .rank-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .rank-meta { color: var(--muted); font-size: 12px; }
-      .charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-      svg { width: 100%; height: 230px; display: block; overflow: visible; }
-      .axis { stroke: #4a5d62; stroke-width: 1; }
-      .bar { fill: var(--cyan); }
-      .line { fill: none; stroke: var(--yellow); stroke-width: 2.5; }
-      .point { fill: var(--yellow); }
-      .tooltip { position: fixed; z-index: 5; display: none; max-width: 280px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #071114; color: var(--text); font-size: 12px; pointer-events: none; box-shadow: 0 12px 30px rgba(0,0,0,.35); }
-      @media (max-width: 980px) { .main, .charts, .kpis { grid-template-columns: 1fr; } header { align-items: start; flex-direction: column; } #map, .rankings { max-height: none; height: 420px; } }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <header>
-        <div>
-          <h1>DepthDif Error Analysis</h1>
-          <div id="subtitle" class="subtitle">Loading absolute-error dashboard...</div>
-        </div>
-        <div class="controls">
-          <label class="control">Depth <select id="depthSelect"></select></label>
-          <div class="control">Metric <div class="segmented" id="metricButtons"></div></div>
-        </div>
-      </header>
-      <section class="kpis" id="kpis"></section>
-      <main class="main">
-        <section class="panel">
-          <div class="panel-title"><span>Geographic Hotspots</span><span id="selectionLabel">Global</span></div>
-          <canvas id="map"></canvas>
-        </section>
-        <aside class="panel rankings">
-          <div>
-            <div class="panel-title">Worst Basins</div>
-            <div id="basinRanking" class="rank-list"></div>
-          </div>
-          <div>
-            <div class="panel-title">Worst Grid Cells</div>
-            <div id="cellRanking" class="rank-list"></div>
-          </div>
-        </aside>
-      </main>
-      <section class="charts">
-        <div class="panel">
-          <div class="panel-title">Depth Profile</div>
-          <svg id="profileChart" role="img" aria-label="Error by depth"></svg>
-        </div>
-        <div class="panel">
-          <div class="panel-title">Basin Comparison</div>
-          <svg id="basinChart" role="img" aria-label="Basin error comparison"></svg>
-        </div>
-      </section>
-    </div>
-    <div id="tooltip" class="tooltip"></div>
-    <script>
-      const state = { data: null, depthIndex: 0, metric: "median", selection: { type: "global", id: "global", label: "Global" }, hitCells: [] };
-      const fmt = (value) => value === null || value === undefined || Number.isNaN(Number(value)) ? "n/a" : Number(value).toFixed(2);
-      const countFmt = (value) => Number(value || 0).toLocaleString();
-      function metricLabel(metric) { return metric === "p90" ? "P90" : metric === "p95" ? "P95" : metric[0].toUpperCase() + metric.slice(1); }
-      function unit() { return state.data.variable.value_unit_label || ""; }
-      function activeDepth() { return state.data.depth_levels[state.depthIndex]; }
-      function chartDepths() {
-        const depths = state.data.depth_levels.filter((depth) => !depth.is_aggregate);
-        return depths.length ? depths : state.data.depth_levels;
-      }
-      async function init() {
-        const response = await fetch(new URL("error-analysis.json", window.location.href));
-        state.data = await response.json();
-        document.getElementById("subtitle").textContent = `${state.data.variable.label} absolute error | ${state.data.run.iso_year || ""} W${state.data.run.iso_week || ""}`;
-        setupControls();
-        window.addEventListener("resize", render);
-        render();
-      }
-      function setupControls() {
-        const select = document.getElementById("depthSelect");
-        select.innerHTML = state.data.depth_levels.map((d, i) => `<option value="${i}">${d.label}</option>`).join("");
-        select.addEventListener("change", () => { state.depthIndex = Number(select.value); render(); });
-        const buttons = document.getElementById("metricButtons");
-        buttons.innerHTML = state.data.metrics.map((metric) => `<button type="button" data-metric="${metric}" aria-pressed="${metric === state.metric}">${metricLabel(metric)}</button>`).join("");
-        buttons.addEventListener("click", (event) => {
-          const button = event.target.closest("button[data-metric]");
-          if (!button) return;
-          state.metric = button.dataset.metric;
-          document.querySelectorAll("#metricButtons button").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-          render();
-        });
-      }
-      function render() {
-        renderKpis();
-        renderRankings();
-        renderMap();
-        renderProfileChart();
-        renderBasinChart();
-        document.getElementById("selectionLabel").textContent = state.selection.label;
-      }
-      function renderKpis() {
-        const g = activeDepth().global;
-        const cards = [
-          ["Median", `${fmt(g.median)} ${unit()}`],
-          ["Mean", `${fmt(g.mean)} ${unit()}`],
-          ["P95", `${fmt(g.p95)} ${unit()}`],
-          ["Valid Pixels", countFmt(g.count)],
-        ];
-        document.getElementById("kpis").innerHTML = cards.map(([label, value]) => `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div></div>`).join("");
-      }
-      function itemButton(item, type, label) {
-        const active = state.selection.type === type && state.selection.id === (item.id || item.name);
-        return `<button class="rank-item ${active ? "is-active" : ""}" data-type="${type}" data-id="${item.id || item.name}" data-label="${label}"><span><span class="rank-name">${label}</span><span class="rank-meta">${countFmt(item.count)} px</span></span><strong>${fmt(item[state.metric])}</strong></button>`;
-      }
-      function renderRankings() {
-        const depth = activeDepth();
-        const basins = [...depth.basins].filter((b) => b[state.metric] !== null).sort((a, b) => b[state.metric] - a[state.metric]);
-        document.getElementById("basinRanking").innerHTML = basins.map((b) => itemButton(b, "basin", b.name)).join("");
-        document.getElementById("cellRanking").innerHTML = (depth.top_cells[state.metric] || []).map((c) => itemButton(c, "cell", c.label)).join("");
-        document.querySelectorAll(".rank-item").forEach((button) => {
-          button.addEventListener("click", () => {
-            state.selection = { type: button.dataset.type, id: button.dataset.id, label: button.dataset.label };
-            render();
-          });
-        });
-      }
-      function quantile(sortedValues, fraction) {
-        if (sortedValues.length === 0) return null;
-        const index = (sortedValues.length - 1) * Math.max(0, Math.min(1, fraction));
-        const lower = Math.floor(index), upper = Math.ceil(index);
-        if (lower === upper) return sortedValues[lower];
-        const weight = index - lower;
-        return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
-      }
-      function colorDomain(cells) {
-        const values = cells.map((cell) => Number(cell[state.metric])).filter(Number.isFinite).sort((a, b) => a - b);
-        if (values.length === 0) return { lower: 0, upper: 1 };
-        const lower = Math.max(0, quantile(values, 0.05) ?? values[0]);
-        let upper = quantile(values, 0.95) ?? values[values.length - 1];
-        if (!Number.isFinite(upper) || upper <= lower) upper = values[values.length - 1] > lower ? values[values.length - 1] : lower + 1;
-        return { lower, upper };
-      }
-      function colorFor(value, domain) {
-        const normalized = Math.max(0, Math.min(1, (Number(value || 0) - domain.lower) / Math.max(1e-9, domain.upper - domain.lower)));
-        const t = Math.pow(normalized, 0.72);
-        const stops = [[44,123,182], [0,166,202], [127,211,78], [253,174,97], [215,25,28]];
-        const scaled = t * (stops.length - 1);
-        const lowerIndex = Math.min(stops.length - 2, Math.floor(scaled));
-        const upperIndex = lowerIndex + 1;
-        const local = scaled - lowerIndex;
-        const lower = stops[lowerIndex], upper = stops[upperIndex];
-        const rgb = lower.map((channel, index) => Math.round(channel + (upper[index] - channel) * local));
-        return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-      }
-      function renderMap() {
-        const canvas = document.getElementById("map");
-        const rect = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.max(1, Math.round(rect.width * dpr));
-        canvas.height = Math.max(1, Math.round(rect.height * dpr));
-        const ctx = canvas.getContext("2d");
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        ctx.fillStyle = "#071013";
-        ctx.fillRect(0, 0, rect.width, rect.height);
-        ctx.strokeStyle = "#213137";
-        ctx.lineWidth = 1;
-        for (let lon = -180; lon <= 180; lon += 30) { const x = (lon + 180) / 360 * rect.width; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke(); }
-        for (let lat = -60; lat <= 60; lat += 30) { const y = (90 - lat) / 180 * rect.height; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke(); }
-        const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
-        const domain = colorDomain(cells);
-        state.hitCells = [];
-        for (const cell of cells) {
-          const x = (cell.west + 180) / 360 * rect.width;
-          const y = (90 - cell.north) / 180 * rect.height;
-          const w = (cell.east - cell.west) / 360 * rect.width;
-          const h = (cell.north - cell.south) / 180 * rect.height;
-          ctx.fillStyle = colorFor(cell[state.metric], domain);
-          ctx.globalAlpha = state.selection.type === "cell" && state.selection.id !== cell.id ? 0.45 : 0.88;
-          ctx.fillRect(x, y, Math.max(1, w), Math.max(1, h));
-          if (state.selection.type === "cell" && state.selection.id === cell.id) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h); }
-          state.hitCells.push({ x, y, w, h, cell });
-        }
-        ctx.globalAlpha = 1;
-        canvas.onmousemove = (event) => {
-          const box = canvas.getBoundingClientRect();
-          const x = event.clientX - box.left;
-          const y = event.clientY - box.top;
-          const hit = state.hitCells.find((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h);
-          showTooltip(event, hit ? `${hit.cell.label}<br>${metricLabel(state.metric)}: ${fmt(hit.cell[state.metric])} ${unit()}<br>Count: ${countFmt(hit.cell.count)}` : "");
-        };
-        canvas.onclick = (event) => {
-          const box = canvas.getBoundingClientRect();
-          const x = event.clientX - box.left;
-          const y = event.clientY - box.top;
-          const hit = state.hitCells.find((item) => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h);
-          if (hit) { state.selection = { type: "cell", id: hit.cell.id, label: hit.cell.label }; render(); }
-        };
-        canvas.onmouseleave = () => showTooltip(null, "");
-      }
-      function selectedSeries(depths = chartDepths()) {
-        return depths.map((depth) => {
-          if (state.selection.type === "basin") return (depth.basins.find((b) => b.name === state.selection.id) || {})[state.metric] ?? null;
-          if (state.selection.type === "cell") return (depth.grid_cells.find((c) => c.id === state.selection.id) || {})[state.metric] ?? null;
-          return depth.global[state.metric] ?? null;
-        });
-      }
-      function renderProfileChart() {
-        const svg = document.getElementById("profileChart");
-        const depths = chartDepths();
-        const values = selectedSeries(depths);
-        const labels = depths.map((d) => d.label);
-        lineChart(svg, values, labels);
-      }
-      function renderBasinChart() {
-        const svg = document.getElementById("basinChart");
-        const basins = activeDepth().basins.filter((b) => b[state.metric] !== null);
-        barChart(svg, basins.map((b) => b[state.metric]), basins.map((b) => b.name));
-      }
-      function lineChart(svg, values, labels) {
-        const width = svg.clientWidth || 500, height = 230, pad = 34;
-        const nums = values.filter((v) => v !== null).map(Number);
-        const max = Math.max(...nums, 1);
-        const points = values.map((v, i) => v === null ? null : [pad + i * ((width - pad * 2) / Math.max(1, values.length - 1)), height - pad - (Number(v) / max) * (height - pad * 2)]);
-        svg.innerHTML = `<line class="axis" x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}"/><line class="axis" x1="${pad}" y1="${pad}" x2="${pad}" y2="${height-pad}"/>`;
-        const path = points.filter(Boolean).map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ");
-        svg.insertAdjacentHTML("beforeend", `<path class="line" d="${path}"/>`);
-        points.forEach((p, i) => { if (p) svg.insertAdjacentHTML("beforeend", `<circle class="point" cx="${p[0]}" cy="${p[1]}" r="4"><title>${labels[i]}: ${fmt(values[i])} ${unit()}</title></circle>`); });
-      }
-      function barChart(svg, values, labels) {
-        const width = svg.clientWidth || 500, height = 230, pad = 34;
-        const max = Math.max(...values.map(Number), 1);
-        const barW = (width - pad * 2) / Math.max(1, values.length);
-        svg.innerHTML = `<line class="axis" x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}"/>`;
-        values.forEach((v, i) => {
-          const h = (Number(v) / max) * (height - pad * 2);
-          const x = pad + i * barW + 4;
-          const y = height - pad - h;
-          svg.insertAdjacentHTML("beforeend", `<rect class="bar" x="${x}" y="${y}" width="${Math.max(4, barW - 8)}" height="${h}"><title>${labels[i]}: ${fmt(v)} ${unit()}</title></rect><text x="${x}" y="${height-8}" fill="#9fb7b3" font-size="10">${labels[i].slice(0, 3)}</text>`);
-        });
-      }
-      function showTooltip(event, html) {
-        const tip = document.getElementById("tooltip");
-        if (!html) { tip.style.display = "none"; return; }
-        tip.innerHTML = html;
-        tip.style.display = "block";
-        tip.style.left = `${event.clientX + 14}px`;
-        tip.style.top = `${event.clientY + 14}px`;
-      }
-      init().catch((error) => {
-        document.getElementById("subtitle").textContent = `Failed to load dashboard data: ${error.message}`;
-      });
-    </script>
-  </body>
-</html>
-"""
-
-
 def export_error_analysis_dashboard(
     *,
     run_dir: Path,
@@ -899,7 +611,7 @@ def export_error_analysis_dashboard(
     top_cell_count: int = 24,
     analysis_workers: int = 1,
 ) -> dict[str, Any]:
-    """Write `error-analysis.json` and `error-analysis.html` for one run."""
+    """Write `error-analysis.json` for one run."""
     run_dir = Path(run_dir).resolve()
     if output_dir is None:
         output_dir = run_dir / DEFAULT_DASHBOARD_DIR_NAME
@@ -913,26 +625,19 @@ def export_error_analysis_dashboard(
         analysis_workers=analysis_workers,
     )
     json_path = output_dir / DEFAULT_ANALYSIS_JSON_NAME
-    html_path = output_dir / DEFAULT_ANALYSIS_HTML_NAME
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, separators=(",", ":"))
         f.write("\n")
-    html_path.write_text(_dashboard_html(), encoding="utf-8")
-
     return {
         "output_dir": str(output_dir),
         "json_path": str(json_path),
-        "html_path": str(html_path),
         "json_url": _resolve_layer_url(json_path.name, public_base_url=public_base_url),
-        "html_url": _resolve_layer_url(html_path.name, public_base_url=public_base_url),
         "depth_level_count": int(len(payload["depth_levels"])),
     }
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Export a standalone absolute-error analysis dashboard."
-    )
+    parser = argparse.ArgumentParser(description="Export absolute-error analysis data.")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--public-base-url", type=str, default=None)
@@ -947,7 +652,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the error-analysis dashboard exporter from the command line."""
+    """Run the error-analysis data exporter from the command line."""
     args = _build_parser().parse_args()
     result = export_error_analysis_dashboard(
         run_dir=args.run_dir,
@@ -957,9 +662,8 @@ def main() -> None:
         top_cell_count=args.top_cell_count,
         analysis_workers=args.analysis_workers,
     )
-    print(f"Wrote error analysis dashboard to: {result['output_dir']}")
+    print(f"Wrote error analysis data to: {result['output_dir']}")
     print(f"- data: {result['json_path']}")
-    print(f"- html: {result['html_path']}")
 
 
 if __name__ == "__main__":

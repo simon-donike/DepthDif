@@ -246,15 +246,11 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             self.assertEqual(len(payload["depth_levels"][0]["top_cells"]["p95"]), 3)
 
             json_path = Path(result["json_path"])
-            html_path = Path(result["html_path"])
             self.assertTrue(json_path.is_file())
-            self.assertTrue(html_path.is_file())
+            self.assertNotIn("html_path", result)
+            self.assertFalse((json_path.parent / "error-analysis.html").exists())
             exported = json.loads(json_path.read_text(encoding="utf-8"))
-            html = html_path.read_text(encoding="utf-8")
             self.assertEqual(exported["schema_version"], 1)
-            self.assertIn("error-analysis.json", html)
-            self.assertIn("depthSelect", html)
-            self.assertIn("metricButtons", html)
 
     def test_standalone_analysis_dashboard_page_is_nav_linked(self) -> None:
         html = Path("docs/analysis/index.html").read_text(encoding="utf-8")
@@ -272,6 +268,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn('id="analysis-depth-profile"', html)
         self.assertIn('id="analysis-basin-chart"', html)
         self.assertIn("analysis-panel--depth-profile", html)
+        self.assertIn("Basin Selector", html)
+        self.assertNotIn("Rankings", html)
+        self.assertNotIn("analysis-kpis", html)
         self.assertLess(
             html.index("analysis-panel--depth-profile"),
             html.index('class="analysis-charts"'),
@@ -312,14 +311,14 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysis-reset-focus", script)
         self.assertIn("function chartDepthLevels", script)
         self.assertIn("!depth.is_aggregate", script)
-        self.assertIn("function depthSubtitle", script)
         self.assertIn(
             'state.focus = { type: "global", id: "global", label: "Global" }', script
         )
         self.assertIn("window.L.map", script)
         self.assertIn("window.Plotly.react", script)
         self.assertIn("displayBasinName", script)
-        self.assertIn("function activeSelectionStats", script)
+        self.assertNotIn("function renderKpis", script)
+        self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
         self.assertIn(
             "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config
