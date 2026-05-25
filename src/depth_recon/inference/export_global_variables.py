@@ -14,6 +14,8 @@ import yaml
 from depth_recon.configs.config_resolver_pixel import PIXEL_SCENARIOS
 from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_EXTRA_ZOOM_LEVELS,
+    DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_variable_assets,
 )
@@ -132,6 +134,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--extra-zoom-levels", type=int, default=DEFAULT_EXTRA_ZOOM_LEVELS
+    )
+    parser.add_argument(
+        "--raster-edge-erosion-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        help="Valid-support pixels removed from raster edges in globe tiles.",
+    )
+    parser.add_argument(
+        "--raster-edge-feather-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        help="Width of the inward alpha ramp in globe tiles.",
     )
     parser.add_argument("--strict-load", action="store_true")
     parser.add_argument(
@@ -509,6 +523,8 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
         rclone_remote=args.rclone_remote,
         rclone_sync_scope=args.rclone_sync_scope,
         extra_zoom_levels=args.extra_zoom_levels,
+        raster_edge_erosion_pixels=args.raster_edge_erosion_pixels,
+        raster_edge_feather_pixels=args.raster_edge_feather_pixels,
     )
     temporal_consistency_result = None
     if bool(args.export_temporal_consistency):

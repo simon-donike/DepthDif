@@ -508,6 +508,10 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 "globe",
                 "--extra-zoom-levels",
                 "1",
+                "--raster-edge-erosion-pixels",
+                "2",
+                "--raster-edge-feather-pixels",
+                "4",
                 "--min-ocean-fraction",
                 "0.10",
             ]
@@ -518,6 +522,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(args.public_base_url, "https://example.test/globe")
         self.assertEqual(args.rclone_remote, "r2:bucket/globe")
         self.assertEqual(args.extra_zoom_levels, 1)
+        self.assertEqual(args.raster_edge_erosion_pixels, 2)
+        self.assertEqual(args.raster_edge_feather_pixels, 4)
         self.assertEqual(args.min_ocean_fraction, 0.10)
         self.assertFalse(args.export_uncertainty)
 

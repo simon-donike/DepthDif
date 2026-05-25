@@ -34,9 +34,13 @@
     "valid_alpha": 255,
     "color_scale_min_c": 0.0,
     "color_scale_max_c": 30.0,
-    "note": "Land-masked source pixels use the GeoTIFF nodata value before color relief so 0 C remains a valid ocean color in the globe tiles.",
+    "note": "Land-masked source pixels use the GeoTIFF nodata value before color relief so 0 C remains a valid ocean color in the globe tiles; hosted tiles erode and feather valid-support edges for smoother coastlines.",
     "color_scale_min": 0.0,
-    "color_scale_max": 30.0
+    "color_scale_max": 30.0,
+    "edge_alpha_mode": "valid_support_erosion_feather",
+    "edge_support_mode": "finite_non_nodata",
+    "edge_erosion_pixels": 2,
+    "edge_feather_pixels": 4
   },
   "credits": {
     "prediction": "DepthDif prediction overlay",

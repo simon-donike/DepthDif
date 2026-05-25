@@ -60,6 +60,8 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_COLOR_SCALE_MAX_C,
     DEFAULT_COLOR_SCALE_MIN_C,
     DEFAULT_EXTRA_ZOOM_LEVELS,
+    DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_assets,
 )
@@ -2335,6 +2337,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Extra Cesium tile zoom levels beyond the raster native estimate.",
     )
     parser.add_argument(
+        "--raster-edge-erosion-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        help=(
+            "Valid-support pixels removed from raster edges when packaging "
+            "Cesium globe tiles. Use 0 to disable edge erosion."
+        ),
+    )
+    parser.add_argument(
+        "--raster-edge-feather-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        help=(
+            "Width of the inward alpha ramp when packaging Cesium globe tiles. "
+            "Use 0 to disable edge feathering."
+        ),
+    )
+    parser.add_argument(
         "--strict-load",
         action="store_true",
         help="Load checkpoint weights with strict=True instead of the repo default strict=False.",
@@ -3431,6 +3451,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             rclone_remote=args.rclone_remote,
             rclone_sync_scope=args.rclone_sync_scope,
             extra_zoom_levels=args.extra_zoom_levels,
+            raster_edge_erosion_pixels=args.raster_edge_erosion_pixels,
+            raster_edge_feather_pixels=args.raster_edge_feather_pixels,
         )
         summary_path = run_dir / "run_summary.yaml"
         with summary_path.open("r", encoding="utf-8") as f:

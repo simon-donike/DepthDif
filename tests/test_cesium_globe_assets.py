@@ -18,6 +18,8 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
     DEFAULT_ERROR_ANALYSIS_JSON_NAME,
+    DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_SALINITY_COLOR_RAMP_PATH,
     DEFAULT_TEMPLATE_PATH,
@@ -450,6 +452,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             _apply_alpha_mask_to_colorized_raster(
                 input_path,
                 colorized_path,
+                raster_edge_erosion_pixels=0,
+                raster_edge_feather_pixels=0,
             )
 
             with rasterio.open(colorized_path) as ds:
@@ -458,6 +462,65 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(int(rgba[3, 0, 1]), 0)
         self.assertEqual(int(rgba[3, 1, 1]), 255)
         self.assertEqual(int(rgba[3, 0, 2]), 255)
+
+    def test_apply_alpha_mask_to_colorized_raster_erodes_and_feathers_edges(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "input.tif"
+            colorized_path = tmp_path / "colorized.tif"
+            transform = from_origin(0.0, 13.0, 1.0, 1.0)
+            data = np.full((1, 13, 13), -9999.0, dtype=np.float32)
+            data[:, 1:12, 1:12] = 10.0
+
+            with rasterio.open(
+                input_path,
+                "w",
+                driver="GTiff",
+                height=13,
+                width=13,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(data)
+
+            with rasterio.open(
+                colorized_path,
+                "w",
+                driver="GTiff",
+                height=13,
+                width=13,
+                count=4,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(np.full((4, 13, 13), 200, dtype=np.uint8))
+
+            _apply_alpha_mask_to_colorized_raster(
+                input_path,
+                colorized_path,
+                raster_edge_erosion_pixels=2,
+                raster_edge_feather_pixels=4,
+            )
+
+            with rasterio.open(colorized_path) as ds:
+                rgba = ds.read()
+
+        self.assertEqual(int(rgba[3, 0, 6]), 0)
+        self.assertEqual(int(rgba[3, 1, 6]), 0)
+        self.assertEqual(int(rgba[3, 2, 6]), 0)
+        self.assertEqual(int(rgba[3, 3, 6]), 64)
+        self.assertEqual(int(rgba[3, 4, 6]), 128)
+        self.assertEqual(int(rgba[3, 6, 6]), 255)
+        self.assertEqual(int(rgba[0, 0, 6]), 0)
+        self.assertEqual(int(rgba[0, 2, 6]), 0)
+        self.assertEqual(int(rgba[0, 3, 6]), 200)
+        self.assertEqual(int(rgba[0, 6, 6]), 200)
 
     def test_validate_raster_transparency_contract_rejects_zeroed_land(
         self,
@@ -533,6 +596,14 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             None,
         )
         self.assertEqual(template["raster_transparency"]["land_mask_mode"], "none")
+        self.assertEqual(
+            template["raster_transparency"]["edge_erosion_pixels"],
+            DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        )
+        self.assertEqual(
+            template["raster_transparency"]["edge_feather_pixels"],
+            DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        )
 
     def test_standalone_globe_page_uses_full_window_root_shell(self) -> None:
         html = Path("docs/globe/index.html").read_text(encoding="utf-8")
@@ -810,6 +881,14 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         args = parser.parse_args(["--run-dir", "inference/outputs/example"])
 
         self.assertEqual(args.extra_zoom_levels, 0)
+        self.assertEqual(
+            args.raster_edge_erosion_pixels,
+            DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        )
+        self.assertEqual(
+            args.raster_edge_feather_pixels,
+            DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        )
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
         self.assertTrue(args.include_error_analysis)
 
