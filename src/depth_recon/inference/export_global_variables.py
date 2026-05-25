@@ -1,17 +1,22 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables --year 2018 --iso-week 25 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe --rclone-remote r2:depth-data/inference_production/globe --rclone-sync-scope globe --output-root inference/outputs --output-name global_variables_2018_W25 --sigma 0 --extra-zoom-levels 0 --full-sample-count 1000
+# /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables --year 2018 --iso-week 25 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --sampler ddim --ddim-steps 200 --uncertainty-sampler ddim --uncertainty-ddim-steps 50 --temporal-sampler ddim --temporal-ddim-steps 50 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe --rclone-remote r2:depth-data/inference_production/globe --rclone-sync-scope globe --output-root inference/outputs --output-name global_variables_2018_W25 --sigma 0 --extra-zoom-levels 0 --full-sample-count 1000
 """Run and package paired temperature/salinity global inference exports."""
 
 from __future__ import annotations
 
 import argparse
 from datetime import date, timedelta
+import os
 from pathlib import Path
 from typing import Any, Sequence
 
 import yaml
 
-from depth_recon.configs.config_resolver_pixel import PIXEL_SCENARIOS
+from depth_recon.configs.config_resolver_pixel import (
+    PIXEL_SCENARIOS,
+    load_pixel_inference_config,
+)
+from depth_recon.inference.core import INFERENCE_SAMPLERS
 from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_EXTRA_ZOOM_LEVELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
@@ -89,6 +94,58 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--sampler",
+        "--sampling-method",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help="Sampler override passed to both variable exports.",
+    )
+    parser.add_argument(
+        "--ddim-steps",
+        "--ddim-num-timesteps",
+        dest="ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM step count passed to both variable exports.",
+    )
+    parser.add_argument(
+        "--uncertainty-sampler",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help=(
+            "Sampler override used only by ensemble uncertainty exports. "
+            "Defaults to the reconstruction sampler."
+        ),
+    )
+    parser.add_argument(
+        "--uncertainty-ddim-steps",
+        "--uncertainty-ddim-num-timesteps",
+        dest="uncertainty_ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM step count used only by ensemble uncertainty exports.",
+    )
+    parser.add_argument(
+        "--temporal-sampler",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help=(
+            "Sampler override used for temporal consistency runs. Defaults to "
+            "the uncertainty sampler, then the reconstruction sampler."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-ddim-steps",
+        "--temporal-ddim-num-timesteps",
+        dest="temporal_ddim_num_timesteps",
+        type=int,
+        default=None,
+        help=(
+            "DDIM step count used for temporal consistency runs. Defaults to "
+            "the uncertainty DDIM steps, then the reconstruction DDIM steps."
+        ),
+    )
     parser.add_argument(
         "--export-uncertainty",
         action=argparse.BooleanOptionalAction,
@@ -242,6 +299,81 @@ def _sibling_asset_location(value: str | None, sibling_name: str) -> str | None:
     return f"{raw}/{sibling_name}"
 
 
+def _auxiliary_sampler(args: argparse.Namespace) -> str | None:
+    """Return sampler used by auxiliary uncertainty/temporal runs by default."""
+    return (
+        args.uncertainty_sampler
+        if args.uncertainty_sampler is not None
+        else args.sampler
+    )
+
+
+def _auxiliary_ddim_num_timesteps(args: argparse.Namespace) -> int | None:
+    """Return DDIM steps used by auxiliary uncertainty/temporal runs by default."""
+    if args.uncertainty_ddim_num_timesteps is not None:
+        return args.uncertainty_ddim_num_timesteps
+    return args.ddim_num_timesteps
+
+
+def _temporal_sampler(args: argparse.Namespace) -> str | None:
+    """Return sampler used by extra temporal reconstruction runs."""
+    if args.temporal_sampler is not None:
+        return args.temporal_sampler
+    return _auxiliary_sampler(args)
+
+
+def _temporal_ddim_num_timesteps(args: argparse.Namespace) -> int | None:
+    """Return DDIM steps used by extra temporal reconstruction runs."""
+    if args.temporal_ddim_num_timesteps is not None:
+        return args.temporal_ddim_num_timesteps
+    return _auxiliary_ddim_num_timesteps(args)
+
+
+def _apply_sampling_defaults_from_config(
+    args: argparse.Namespace,
+) -> argparse.Namespace:
+    """Populate omitted paired-run sampling options from the inference config."""
+    config_bundle = load_pixel_inference_config(
+        config_path_value=args.config,
+        scenario_override="temperature",
+        overrides=list(args.config_overrides or []),
+        runtime_config_dir=Path("/tmp/depthdif_inference_configs")
+        / f"paired_sampling_{os.getpid()}",
+        write_snapshots=False,
+    )
+    inference_section = config_bundle.inference_cfg.get("inference", {})
+    if not isinstance(inference_section, dict):
+        return args
+    sampling_cfg = inference_section.get("sampling", {})
+    uncertainty_sampling_cfg = inference_section.get("uncertainty_sampling", {})
+    if not isinstance(sampling_cfg, dict):
+        sampling_cfg = {}
+    if not isinstance(uncertainty_sampling_cfg, dict):
+        uncertainty_sampling_cfg = {}
+
+    # The paired wrapper must materialize YAML defaults before it decides which
+    # sampler settings should be forwarded to lower-cost temporal runs.
+    if args.sampler is None:
+        args.sampler = sampling_cfg.get("sampler")
+    if args.ddim_num_timesteps is None:
+        args.ddim_num_timesteps = sampling_cfg.get("ddim_num_timesteps")
+    if args.uncertainty_sampler is None:
+        args.uncertainty_sampler = uncertainty_sampling_cfg.get("sampler")
+    if args.uncertainty_ddim_num_timesteps is None:
+        args.uncertainty_ddim_num_timesteps = uncertainty_sampling_cfg.get(
+            "ddim_num_timesteps"
+        )
+    return args
+
+
+def _temporal_sampling_matches_reconstruction(args: argparse.Namespace) -> bool:
+    """Return whether current-week reconstruction runs can serve temporal metrics."""
+    return (
+        _temporal_sampler(args) == args.sampler
+        and _temporal_ddim_num_timesteps(args) == args.ddim_num_timesteps
+    )
+
+
 def _temporal_public_base_url(args: argparse.Namespace) -> str | None:
     """Resolve the hosted URL base for temporal dashboard assets."""
     if args.temporal_public_base_url is not None:
@@ -306,6 +438,12 @@ def _single_export_args(
         argv.append("--strict-load")
     for override in args.config_overrides or []:
         argv.extend(["--set", str(override)])
+    _append_optional_arg(argv, "--sampler", args.sampler)
+    _append_optional_arg(argv, "--ddim-steps", args.ddim_num_timesteps)
+    _append_optional_arg(argv, "--uncertainty-sampler", _auxiliary_sampler(args))
+    _append_optional_arg(
+        argv, "--uncertainty-ddim-steps", _auxiliary_ddim_num_timesteps(args)
+    )
     _append_optional_arg(argv, "--batch-size", args.batch_size)
     _append_optional_arg(argv, "--inference-num-workers", args.inference_num_workers)
     _append_optional_arg(
@@ -361,6 +499,8 @@ def _temporal_single_export_args(
         argv.append("--strict-load")
     for override in args.config_overrides or []:
         argv.extend(["--set", str(override)])
+    _append_optional_arg(argv, "--sampler", _temporal_sampler(args))
+    _append_optional_arg(argv, "--ddim-steps", _temporal_ddim_num_timesteps(args))
     _append_optional_arg(argv, "--batch-size", args.batch_size)
     _append_optional_arg(argv, "--inference-num-workers", args.inference_num_workers)
     _append_optional_arg(
@@ -426,12 +566,15 @@ def _export_temporal_consistency_for_standard_run(
         "temperature": str(args.temperature_checkpoint),
         "salinity": str(args.salinity_checkpoint),
     }
+    reuse_main_week = _temporal_sampling_matches_reconstruction(args)
     variable_run_dirs: dict[str, list[Path]] = {"temperature": [], "salinity": []}
     for variable in ("temperature", "salinity"):
         temporal_root = paired_run_dir / "temporal_runs" / variable
         temporal_root.mkdir(parents=True, exist_ok=True)
         for year, iso_week in weeks:
-            if (int(year), int(iso_week)) == main_week:
+            if (int(year), int(iso_week)) == main_week and reuse_main_week:
+                # Reuse the website reconstruction only when it was sampled with
+                # the same settings requested for temporal diagnostics.
                 variable_run_dirs[variable].append(existing_main_runs[variable])
                 continue
             variable_run_dirs[variable].append(
@@ -473,6 +616,7 @@ def _export_temporal_consistency_for_standard_run(
 
 def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
     """Run paired variable exports and package one combined globe directory."""
+    args = _apply_sampling_defaults_from_config(args)
     output_name = args.output_name or _default_output_name(args.year, args.iso_week)
     paired_run_dir = Path(args.output_root) / output_name
     paired_run_dir.mkdir(parents=True, exist_ok=True)

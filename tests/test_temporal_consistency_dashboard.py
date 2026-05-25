@@ -19,7 +19,9 @@ from depth_recon.inference.export_temporal_consistency_dashboard import (
     export_temporal_dashboard_assets,
 )
 from depth_recon.inference.export_global_variables import (
+    _apply_sampling_defaults_from_config,
     _build_parser as _build_standard_variable_parser,
+    _temporal_single_export_args,
     run_global_variable_inference,
 )
 from depth_recon.inference.export_temporal_global_variables import (
@@ -266,6 +268,10 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     str(output_root),
                     "--output-name",
                     "temporal_test",
+                    "--temporal-sampler",
+                    "ddim",
+                    "--temporal-ddim-steps",
+                    "50",
                     "--batch-size",
                     "2",
                     "--patch-stride",
@@ -306,6 +312,8 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(first_call_args.year, 2018)
         self.assertEqual(first_call_args.iso_week, 52)
         self.assertEqual(first_call_args.full_sample_count, 0)
+        self.assertEqual(first_call_args.sampler, "ddim")
+        self.assertEqual(first_call_args.ddim_num_timesteps, 50)
         self.assertEqual(first_call_args.batch_size, 2)
         self.assertEqual(first_call_args.patch_stride, 64)
         self.assertEqual(first_call_args.rectangle, [-10.0, 30.0, 10.0, 45.0])
@@ -344,6 +352,16 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     "--export-temporal-consistency",
                     "--temporal-week-count",
                     "3",
+                    "--sampler",
+                    "ddim",
+                    "--ddim-steps",
+                    "200",
+                    "--uncertainty-sampler",
+                    "ddim",
+                    "--uncertainty-ddim-steps",
+                    "50",
+                    "--temporal-ddim-steps",
+                    "25",
                     "--batch-size",
                     "2",
                     "--no-multi-gpu",
@@ -385,7 +403,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             ):
                 summary = run_global_variable_inference(args)
 
-        self.assertEqual(run_mock.call_count, 6)
+        self.assertEqual(run_mock.call_count, 8)
         self.assertEqual(globe_mock.call_count, 1)
         first_call_args = run_mock.call_args_list[0].args[0]
         extra_call_args = run_mock.call_args_list[2].args[0]
@@ -393,11 +411,17 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(first_call_args.scenario, "temperature")
         self.assertEqual(first_call_args.output_name, "temperature")
         self.assertEqual(first_call_args.full_sample_count, 1000)
+        self.assertEqual(first_call_args.sampler, "ddim")
+        self.assertEqual(first_call_args.ddim_num_timesteps, 200)
+        self.assertEqual(first_call_args.uncertainty_sampler, "ddim")
+        self.assertEqual(first_call_args.uncertainty_ddim_num_timesteps, 50)
         self.assertEqual(extra_call_args.scenario, "temperature")
-        self.assertEqual(extra_call_args.year, 2019)
-        self.assertEqual(extra_call_args.iso_week, 1)
-        self.assertEqual(extra_call_args.output_name, "2019_W01")
+        self.assertEqual(extra_call_args.year, 2018)
+        self.assertEqual(extra_call_args.iso_week, 52)
+        self.assertEqual(extra_call_args.output_name, "2018_W52")
         self.assertEqual(extra_call_args.full_sample_count, 0)
+        self.assertEqual(extra_call_args.sampler, "ddim")
+        self.assertEqual(extra_call_args.ddim_num_timesteps, 25)
         self.assertIsNone(extra_call_args.public_base_url)
         self.assertIsNone(extra_call_args.rclone_remote)
         self.assertFalse(extra_call_args.multi_gpu)
@@ -422,7 +446,11 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["salinity"]), 3)
         self.assertEqual(
             temporal_kwargs["variable_run_dirs"]["temperature"][0],
-            output_root / "standard_temporal" / "temperature",
+            output_root
+            / "standard_temporal"
+            / "temporal_runs"
+            / "temperature"
+            / "2018_W52",
         )
         self.assertTrue(summary["temporal_consistency"]["enabled"])
         self.assertEqual(
@@ -433,6 +461,64 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             summary["temporal_consistency"]["dashboard"],
             {"output_dir": "temporal", "upload_ok": True},
         )
+
+    def test_standard_variable_temporal_sampling_defaults_use_yaml_uncertainty(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir)
+            args = _build_standard_variable_parser().parse_args(
+                [
+                    "--year",
+                    "2018",
+                    "--iso-week",
+                    "22",
+                    "--temperature-checkpoint",
+                    "temperature.ckpt",
+                    "--salinity-checkpoint",
+                    "salinity.ckpt",
+                    "--device",
+                    "cpu",
+                    "--output-root",
+                    str(output_root),
+                ]
+            )
+
+            config_bundle = SimpleNamespace(
+                inference_cfg={
+                    "inference": {
+                        "sampling": {
+                            "sampler": "ddim",
+                            "ddim_num_timesteps": 100,
+                        },
+                        "uncertainty_sampling": {
+                            "sampler": "ddim",
+                            "ddim_num_timesteps": 50,
+                        },
+                    }
+                }
+            )
+            with mock.patch(
+                "depth_recon.inference.export_global_variables.load_pixel_inference_config",
+                return_value=config_bundle,
+            ):
+                resolved_args = _apply_sampling_defaults_from_config(args)
+
+            temporal_args = _temporal_single_export_args(
+                resolved_args,
+                scenario="temperature",
+                checkpoint_path="temperature.ckpt",
+                year=2018,
+                iso_week=23,
+                output_root=output_root,
+            )
+
+        self.assertEqual(resolved_args.sampler, "ddim")
+        self.assertEqual(resolved_args.ddim_num_timesteps, 100)
+        self.assertEqual(resolved_args.uncertainty_sampler, "ddim")
+        self.assertEqual(resolved_args.uncertainty_ddim_num_timesteps, 50)
+        self.assertEqual(temporal_args.sampler, "ddim")
+        self.assertEqual(temporal_args.ddim_num_timesteps, 50)
 
     def test_temporal_dashboard_page_is_standalone_and_nav_linked(self) -> None:
         html = Path("docs/temporal/index.html").read_text(encoding="utf-8")

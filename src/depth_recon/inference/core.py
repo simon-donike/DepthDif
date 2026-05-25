@@ -17,12 +17,68 @@ from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import resolve_config_path
 
 VARIABLE_SCENARIO_KEY = "variable_scenario"
+INFERENCE_SAMPLERS = ("ddpm", "ddim")
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
     """Load and return yaml data."""
     with resolve_config_path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def apply_inference_sampling_config(
+    training_cfg: dict[str, Any],
+    *,
+    sampler: str | None = None,
+    ddim_num_timesteps: int | None = None,
+) -> dict[str, Any]:
+    """Apply inference sampler overrides to a mutable training config."""
+    training_section = training_cfg.setdefault("training", {})
+    if not isinstance(training_section, dict):
+        raise ValueError("training config root must contain a 'training' mapping.")
+    validation_sampling = training_section.setdefault("validation_sampling", {})
+    if not isinstance(validation_sampling, dict):
+        raise ValueError("training.validation_sampling must be a mapping.")
+
+    if ddim_num_timesteps is not None and sampler is None:
+        # Passing --ddim-steps alone is treated as an explicit DDIM request.
+        sampler = "ddim"
+    if sampler is not None:
+        normalized_sampler = str(sampler).strip().lower()
+        if normalized_sampler not in INFERENCE_SAMPLERS:
+            supported = ", ".join(INFERENCE_SAMPLERS)
+            raise ValueError(
+                f"inference sampler must be one of {{{supported}}} "
+                f"(got {sampler!r})."
+            )
+        validation_sampling["sampler"] = normalized_sampler
+    if ddim_num_timesteps is not None:
+        steps = int(ddim_num_timesteps)
+        if steps < 1:
+            raise ValueError("ddim_num_timesteps must be >= 1.")
+        validation_sampling["ddim_num_timesteps"] = steps
+
+    resolved_sampler = str(validation_sampling.get("sampler", "ddpm")).strip().lower()
+    if resolved_sampler not in INFERENCE_SAMPLERS:
+        supported = ", ".join(INFERENCE_SAMPLERS)
+        raise ValueError(
+            "training.validation_sampling.sampler must be one of "
+            f"{{{supported}}} (got {resolved_sampler!r})."
+        )
+    noise_cfg = training_section.get("noise", {})
+    if not isinstance(noise_cfg, dict):
+        noise_cfg = {}
+    diffusion_steps = int(noise_cfg.get("num_timesteps", 1000))
+    ddim_steps = int(validation_sampling.get("ddim_num_timesteps", diffusion_steps))
+    if ddim_steps < 1:
+        raise ValueError(
+            "training.validation_sampling.ddim_num_timesteps must be >= 1."
+        )
+    return {
+        "sampler": resolved_sampler,
+        "diffusion_num_timesteps": diffusion_steps,
+        "ddim_num_timesteps": ddim_steps,
+    }
 
 
 def ds_cfg_value(

@@ -13,6 +13,8 @@ Typical CLI:
   --split all \
   --checkpoint logs/selection/argo_in_glorys_target/last.ckpt \
   --device cuda \
+  --sampler ddim \
+  --ddim-steps 100 \
   --export-ground-truth \
   --sigma 0 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
@@ -75,12 +77,17 @@ from depth_recon.configs.config_resolver_pixel import (
     load_pixel_inference_config,
 )
 from depth_recon.inference.core import (
+    INFERENCE_SAMPLERS,
+    apply_inference_sampling_config,
     build_dataset,
     build_model,
     choose_device,
     load_checkpoint_weights,
     load_yaml,
     resolve_checkpoint_path,
+)
+from depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers import (
+    DDIM_Sampler,
 )
 from depth_recon.paths import resolve_config_path
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
@@ -351,6 +358,55 @@ class SelectedInferencePatchDataset(Dataset):
         }
 
 
+def _sampling_metadata_from_overrides(
+    training_cfg: dict[str, Any],
+    *,
+    sampler: str | None,
+    ddim_num_timesteps: int | None,
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve sampler metadata without mutating the caller's training config."""
+    if sampler is None and ddim_num_timesteps is None and fallback is not None:
+        return dict(fallback)
+    training_copy = json.loads(json.dumps(training_cfg))
+    return apply_inference_sampling_config(
+        training_copy,
+        sampler=sampler,
+        ddim_num_timesteps=ddim_num_timesteps,
+    )
+
+
+def _build_sampler_for_metadata(
+    model: nn.Module, metadata: dict[str, Any]
+) -> nn.Module | None:
+    """Build a sampler module matching resolved inference metadata."""
+    sampler_name = str(metadata["sampler"]).strip().lower()
+    if sampler_name == "ddpm":
+        # The diffusion process already owns the full-chain DDPM sampler. Reuse it so
+        # a DDPM override still works when the model default sampler is DDIM.
+        return getattr(getattr(model, "model", None), "sampler", None)
+    if sampler_name != "ddim":
+        raise ValueError(f"Unsupported sampler metadata: {sampler_name!r}.")
+
+    diffusion_process = getattr(model, "model", None)
+    forward_process = getattr(diffusion_process, "forward_process", None)
+    if forward_process is None or not hasattr(forward_process, "betas"):
+        raise RuntimeError("Cannot build DDIM sampler without model diffusion betas.")
+    train_betas = forward_process.betas.detach().clone()
+    return DDIM_Sampler(
+        num_timesteps=min(
+            int(metadata["ddim_num_timesteps"]),
+            int(train_betas.numel()),
+        ),
+        train_timesteps=int(train_betas.numel()),
+        betas=train_betas,
+        parameterization=str(getattr(diffusion_process, "parameterization", "epsilon")),
+        clip_sample=False,
+        eta=float(getattr(model, "val_ddim_eta", 0.0)),
+        temperature=float(getattr(model, "val_ddim_temperature", 1.0)),
+    )
+
+
 class ExportInferenceWrapper(nn.Module):
     """Thin wrapper so DataParallel can fan out batch-level inference."""
 
@@ -364,6 +420,7 @@ class ExportInferenceWrapper(nn.Module):
         export_prediction: bool = True,
         export_uncertainty: bool = False,
         uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+        uncertainty_sampler: nn.Module | None = None,
         depth_channel_indices: Sequence[int] = (),
     ) -> None:
         super().__init__()
@@ -374,6 +431,7 @@ class ExportInferenceWrapper(nn.Module):
         self.export_prediction = bool(export_prediction)
         self.export_uncertainty = bool(export_uncertainty)
         self.uncertainty_num_samples = int(uncertainty_num_samples)
+        self.uncertainty_sampler = uncertainty_sampler
         self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -408,6 +466,7 @@ class ExportInferenceWrapper(nn.Module):
                 batch,
                 batch_idx=0,
                 num_samples=int(self.uncertainty_num_samples),
+                sampler=self.uncertainty_sampler,
             )
             uncertainty_map = uncertainty.get(
                 f"uncertainty_{self.variable_spec.name}",
@@ -2217,6 +2276,44 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Torch RNG seed so stochastic samplers remain reproducible.",
     )
     parser.add_argument(
+        "--sampler",
+        "--sampling-method",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help=(
+            "Inference sampler override. Defaults to inference.sampling.sampler "
+            "then training.validation_sampling.sampler."
+        ),
+    )
+    parser.add_argument(
+        "--ddim-steps",
+        "--ddim-num-timesteps",
+        dest="ddim_num_timesteps",
+        type=int,
+        default=None,
+        help=(
+            "DDIM inference step count. Passing this without --sampler also "
+            "selects DDIM."
+        ),
+    )
+    parser.add_argument(
+        "--uncertainty-sampler",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help=(
+            "Sampler override used only by --export-uncertainty. Defaults to "
+            "inference.uncertainty_sampling.sampler, then the reconstruction sampler."
+        ),
+    )
+    parser.add_argument(
+        "--uncertainty-ddim-steps",
+        "--uncertainty-ddim-num-timesteps",
+        dest="uncertainty_ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM step count used only by --export-uncertainty.",
+    )
+    parser.add_argument(
         "--export-uncertainty",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -2389,10 +2486,49 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     inference_section = _inference_section(inference_cfg)
     inference_grid_cfg = inference_section.get("grid", {})
     inference_dataloader_cfg = inference_section.get("dataloader", {})
+    inference_sampling_cfg = inference_section.get("sampling", {})
+    inference_uncertainty_sampling_cfg = inference_section.get(
+        "uncertainty_sampling", {}
+    )
     if not isinstance(inference_grid_cfg, dict):
         inference_grid_cfg = {}
     if not isinstance(inference_dataloader_cfg, dict):
         inference_dataloader_cfg = {}
+    if not isinstance(inference_sampling_cfg, dict):
+        inference_sampling_cfg = {}
+    if not isinstance(inference_uncertainty_sampling_cfg, dict):
+        inference_uncertainty_sampling_cfg = {}
+    sampler_override = getattr(args, "sampler", None)
+    if sampler_override is None:
+        sampler_override = inference_sampling_cfg.get("sampler")
+    ddim_steps_override = getattr(args, "ddim_num_timesteps", None)
+    if ddim_steps_override is None:
+        ddim_steps_override = inference_sampling_cfg.get("ddim_num_timesteps")
+    sampling_metadata = apply_inference_sampling_config(
+        training_cfg,
+        sampler=sampler_override,
+        ddim_num_timesteps=ddim_steps_override,
+    )
+    uncertainty_sampler_override = getattr(args, "uncertainty_sampler", None)
+    if uncertainty_sampler_override is None:
+        uncertainty_sampler_override = inference_uncertainty_sampling_cfg.get("sampler")
+    uncertainty_ddim_steps_override = getattr(
+        args, "uncertainty_ddim_num_timesteps", None
+    )
+    if uncertainty_ddim_steps_override is None:
+        uncertainty_ddim_steps_override = inference_uncertainty_sampling_cfg.get(
+            "ddim_num_timesteps"
+        )
+    uncertainty_sampling_metadata = _sampling_metadata_from_overrides(
+        training_cfg,
+        sampler=uncertainty_sampler_override,
+        ddim_num_timesteps=uncertainty_ddim_steps_override,
+        fallback=sampling_metadata,
+    )
+    # The model is constructed from the materialized split config, so persist any
+    # inference-only sampler overrides before build_model reads the file.
+    with Path(args.train_config).open("w", encoding="utf-8") as f:
+        yaml.safe_dump(training_cfg, f, sort_keys=False)
     raw_land_mask_path = (
         args.land_mask_path
         if args.land_mask_path is not None
@@ -2647,6 +2783,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
         f"export_uncertainty={export_uncertainty}, "
         f"uncertainty_num_samples={uncertainty_num_samples}, "
+        f"uncertainty_sampler={uncertainty_sampling_metadata['sampler']}, "
+        f"uncertainty_ddim_num_timesteps="
+        f"{int(uncertainty_sampling_metadata['ddim_num_timesteps'])}, "
         f"patch_stride={inference_grid_metadata['patch_stride']}, "
         f"patch_overlap_fraction={inference_grid_metadata['patch_overlap_fraction']:.2f}, "
         f"longitude_wrap_blend_width={longitude_wrap_blend_width}, "
@@ -2695,6 +2834,13 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     )
     model = model.to(device)
     model.eval()
+    uncertainty_sampler = None
+    if export_uncertainty:
+        uncertainty_sampler = _build_sampler_for_metadata(
+            model, uncertainty_sampling_metadata
+        )
+        if uncertainty_sampler is not None:
+            uncertainty_sampler = uncertainty_sampler.to(device)
     print(f"Loaded checkpoint: {ckpt_path} ({weight_source} weights)")
 
     inference_module = ExportInferenceWrapper(
@@ -2707,6 +2853,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         export_prediction=export_prediction,
         export_uncertainty=export_uncertainty,
         uncertainty_num_samples=uncertainty_num_samples,
+        uncertainty_sampler=uncertainty_sampler,
         depth_channel_indices=depth_channel_indices,
     )
     if use_multi_gpu:
@@ -3071,6 +3218,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
                 "prediction_runs_per_patch": "1",
+                "sampler": str(sampling_metadata["sampler"]),
+                "diffusion_num_timesteps": str(
+                    int(sampling_metadata["diffusion_num_timesteps"])
+                ),
+                "ddim_num_timesteps": str(int(sampling_metadata["ddim_num_timesteps"])),
                 "extra_gaussian_blur_sigma": f"{float(args.sigma):.3f}",
                 "extra_gaussian_blur_kernel_size": str(
                     int(DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE)
@@ -3210,6 +3362,13 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 "kind": "uncertainty",
                 "uncertainty_stat": "std",
                 "uncertainty_num_samples": str(int(uncertainty_num_samples)),
+                "sampler": str(uncertainty_sampling_metadata["sampler"]),
+                "diffusion_num_timesteps": str(
+                    int(uncertainty_sampling_metadata["diffusion_num_timesteps"])
+                ),
+                "ddim_num_timesteps": str(
+                    int(uncertainty_sampling_metadata["ddim_num_timesteps"])
+                ),
                 "source_value_transform": (
                     "std(model_prediction_denormalized_repeated_samples)"
                 ),
@@ -3291,6 +3450,16 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "visible_gpus": int(visible_gpu_count),
         "multi_gpu_enabled": bool(use_multi_gpu),
         "batch_size": int(batch_size),
+        "sampler": str(sampling_metadata["sampler"]),
+        "diffusion_num_timesteps": int(sampling_metadata["diffusion_num_timesteps"]),
+        "ddim_num_timesteps": int(sampling_metadata["ddim_num_timesteps"]),
+        "uncertainty_sampler": str(uncertainty_sampling_metadata["sampler"]),
+        "uncertainty_diffusion_num_timesteps": int(
+            uncertainty_sampling_metadata["diffusion_num_timesteps"]
+        ),
+        "uncertainty_ddim_num_timesteps": int(
+            uncertainty_sampling_metadata["ddim_num_timesteps"]
+        ),
         "prediction_runs_per_patch": 1 if export_prediction else 0,
         "export_uncertainty": bool(export_uncertainty),
         "uncertainty_num_samples": (

@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_global_variables --start-year 2018 --start-iso-week 22 --week-count 7 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --output-root inference/outputs --output-name temporal_variables_2018_W22_W28 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal --rclone-remote r2:depth-data/inference_production/temporal
+# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_global_variables --start-year 2018 --start-iso-week 22 --week-count 7 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --temporal-sampler ddim --temporal-ddim-steps 50 --output-root inference/outputs --output-name temporal_variables_2018_W22_W28 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal --rclone-remote r2:depth-data/inference_production/temporal
 """Run weekly temperature/salinity exports and package temporal diagnostics."""
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any, Sequence
 import yaml
 
 from depth_recon.configs.config_resolver_pixel import PIXEL_SCENARIOS
+from depth_recon.inference.core import INFERENCE_SAMPLERS
 from depth_recon.inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_INFERENCE_CONFIG,
@@ -119,6 +120,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
+        "--sampler",
+        "--sampling-method",
+        "--temporal-sampler",
+        choices=INFERENCE_SAMPLERS,
+        dest="sampler",
+        default=None,
+        help="Sampler override passed to every weekly variable export.",
+    )
+    parser.add_argument(
+        "--ddim-steps",
+        "--ddim-num-timesteps",
+        "--temporal-ddim-steps",
+        "--temporal-ddim-num-timesteps",
+        dest="ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM step count passed to every weekly variable export.",
+    )
+    parser.add_argument(
         "--sigma",
         type=float,
         default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
@@ -211,6 +231,8 @@ def _single_export_args(
         argv.append("--strict-load")
     for override in args.config_overrides or []:
         argv.extend(["--set", str(override)])
+    _append_optional_arg(argv, "--sampler", args.sampler)
+    _append_optional_arg(argv, "--ddim-steps", args.ddim_num_timesteps)
     _append_optional_arg(argv, "--batch-size", args.batch_size)
     _append_optional_arg(argv, "--inference-num-workers", args.inference_num_workers)
     _append_optional_arg(
