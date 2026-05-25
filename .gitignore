@@ -25,6 +25,7 @@ tok.txt
 src/depth_recon/inference/outputs
 commands.txt
 src/depth_recon/data/local_data/
+temp/
 
 # Packages
 *.egg-info

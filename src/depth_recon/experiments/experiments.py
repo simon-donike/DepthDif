@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python experiments.py \
+# /work/envs/depth/bin/python src/depth_recon/experiments/experiments.py \
 #   --model-config src/depth_recon/configs/px_space/model_config.yaml \
 #   --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
 #   --train-config src/depth_recon/configs/px_space/training_config.yaml \
@@ -16,7 +16,7 @@ conditioning cases, runs `predict_step` on each one, and saves comparison plots
 plus compact metrics and tensor summaries for quick debugging.
 
 Typical CLI:
-    /work/envs/depth/bin/python experiments.py
+    /work/envs/depth/bin/python src/depth_recon/experiments/experiments.py
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ import numpy as np
 import torch
 
 if __package__ in {None, ""}:
-    # Keep the root-level experiment script runnable from a fresh src-layout checkout.
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+    # Keep this package-local experiment script runnable from a fresh src-layout checkout.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from depth_recon.inference.core import (
     build_datamodule,

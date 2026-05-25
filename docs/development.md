@@ -21,7 +21,8 @@ Potential mitigation directions already identified:
 - installable package code lives under `src/depth_recon/`  
 - bundled configs live under `src/depth_recon/configs/`  
 - local launcher scripts live under `src/depth_recon/scripts/`  
-- root-level `train.py`, `train_autoencoder.py`, and `experiments.py` remain direct local entry points  
+- root-level `train.py` and `train_autoencoder.py` remain direct local entry points
+- package-local experiment scripts live under `src/depth_recon/experiments/`  
 - package modules should be imported through the `depth_recon.*` namespace  
 - generated runtime outputs default to root-level `inference/outputs/`; historical moved outputs under `src/depth_recon/inference/outputs/` are also ignored and excluded from package builds  
   

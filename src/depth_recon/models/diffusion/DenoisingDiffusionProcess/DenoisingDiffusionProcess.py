@@ -185,7 +185,13 @@ class DenoisingDiffusionProcess(nn.Module):
         )
 
         for i in (
-            tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
+            tqdm(
+                it,
+                desc=str(getattr(sampler, "progress_desc", "diffusion sampling")),
+                total=num_timesteps,
+            )
+            if verbose
+            else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             prediction = self.model(x_t, t)
@@ -460,7 +466,13 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             intermediates.append((0, x_t.detach().clone()))
 
         for step_index, i in enumerate(
-            tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
+            tqdm(
+                it,
+                desc=str(getattr(sampler, "progress_desc", "diffusion sampling")),
+                total=num_timesteps,
+            )
+            if verbose
+            else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
             model_input = torch.cat([x_t, condition], 1).to(device)

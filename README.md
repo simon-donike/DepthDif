@@ -258,15 +258,15 @@ For the production globe with both variables, run separate temperature and salin
 
 ## Experiment Script
 
-Use `experiments.py` for quick qualitative ablations on a single dataloader sample. It loads the configured model and checkpoint, runs a few fixed conditioning cases (`eo_plus_x`, `x_only_no_eo`, `coords_date_only_no_eo_no_x`), saves comparison plots under `temp/images/`, and prints compact tensor statistics for each case.
+Use `src/depth_recon/experiments/experiments.py` for quick qualitative ablations on a single dataloader sample. It loads the configured model and checkpoint, runs a few fixed conditioning cases (`eo_plus_x`, `x_only_no_eo`, `coords_date_only_no_eo_no_x`), saves comparison plots under `temp/images/`, and prints compact tensor statistics for each case.
 
 Typical run:
 
 ```bash
-/work/envs/depth/bin/python experiments.py
+/work/envs/depth/bin/python src/depth_recon/experiments/experiments.py
 ```
 
-Before running, check the config and checkpoint constants at the top of `experiments.py` if you want a different model, dataset split, or checkpoint.
+Before running, check the config and checkpoint constants at the top of `src/depth_recon/experiments/experiments.py` if you want a different model, dataset split, or checkpoint.
 
 ## Documentation
 

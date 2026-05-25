@@ -1970,6 +1970,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         clamp_known_pixels = batch.get("clamp_known_pixels", None)
         return_intermediates = bool(batch.get("return_intermediates", False))
         intermediate_step_indices = batch.get("intermediate_step_indices")
+        verbose = bool(batch.get("verbose", False))
 
         condition_x = x
         condition_valid_mask = valid_mask
@@ -1998,6 +1999,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_hat, denoise_samples, x0_denoise_samples = self(
                 model_condition,
                 sampler=sampler,
+                verbose=verbose,
                 clamp_known_pixels=clamp_known_pixels,
                 known_mask=known_mask,
                 known_values=known_values,
@@ -2011,6 +2013,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_hat = self(
                 model_condition,
                 sampler=sampler,
+                verbose=verbose,
                 clamp_known_pixels=clamp_known_pixels,
                 known_mask=known_mask,
                 known_values=known_values,
