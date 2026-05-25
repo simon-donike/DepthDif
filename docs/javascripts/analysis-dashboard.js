@@ -8,16 +8,14 @@
     Indian: "Indian Ocean",
     Southern: "Southern Ocean",
     Arctic: "Arctic Ocean",
-    Other: "Other Waters",
   };
-  const BASIN_ORDER = ["Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other"];
+  const BASIN_ORDER = ["Pacific", "Atlantic", "Indian", "Southern", "Arctic"];
   const BASIN_FAN_COLORS = {
     Pacific: "#7cc8ff",
     Atlantic: "#f6c85f",
     Indian: "#6cc4a1",
     Southern: "#e17c78",
     Arctic: "#b39ddb",
-    Other: "#d7e9f7",
   };
   const MAP_BOUNDS = [
     [-85, -180],
@@ -361,6 +359,10 @@
     return METRIC_LABELS[metric] || metric;
   }
 
+  function isDisplayBasin(name) {
+    return name !== "Other";
+  }
+
   function displayBasinName(name) {
     return BASIN_LABELS[name] || name;
   }
@@ -567,7 +569,7 @@
       resetFocus.disabled = state.focus.type === "global";
     }
     const depth = activeDepth();
-    const basins = depth.basins.filter((basin) => hasMetricSupport(basin));
+    const basins = depth.basins.filter((basin) => isDisplayBasin(basin.name) && hasMetricSupport(basin));
     $("analysis-basin-ranking").innerHTML = basins
       .map((basin) => rankingButton(basin, "basin", displayBasinName(basin.name)))
       .join("");
@@ -681,13 +683,17 @@
   }
 
   function cellTooltipHtml(cell) {
-    return [
-      `<strong>${escapeHtml(cell.label)}</strong>`,
-      `Basin: ${escapeHtml(displayBasinName(basinForCell(cell)))}`,
+    const basin = basinForCell(cell);
+    const lines = [`<strong>${escapeHtml(cell.label)}</strong>`];
+    if (isDisplayBasin(basin)) {
+      lines.push(`Basin: ${escapeHtml(displayBasinName(basin))}`);
+    }
+    lines.push(
       `${escapeHtml(metricLabel(state.metric))}: ${escapeHtml(formatMetric(cell[state.metric]))}`,
       `P95: ${escapeHtml(formatMetric(cell.p95))}`,
-      `Count: ${escapeHtml(formatPixelCount(cell.count))}`,
-    ].join("<br>");
+      `Count: ${escapeHtml(formatPixelCount(cell.count))}`
+    );
+    return lines.join("<br>");
   }
 
   function cellMapStyle(cell, domain) {
@@ -813,6 +819,39 @@
       // Plotly log axes cannot draw x <= 0; keep surface points just left of the first measured depth.
       return Number.isFinite(depth) && depth > 0 ? depth : surfaceDepth;
     });
+  }
+
+  function finitePlotValue(value) {
+    if (value === null || value === undefined || value === "") {
+      return false;
+    }
+    return Number.isFinite(Number(value));
+  }
+
+  function visibleDepthAxisRange(traces) {
+    const visibleDepths = [];
+    traces.forEach((trace) => {
+      (trace.x || []).forEach((xValue, index) => {
+        const yValue = (trace.y || [])[index];
+        const depth = Number(xValue);
+        if (finitePlotValue(yValue) && Number.isFinite(depth)) {
+          visibleDepths.push(depth);
+        }
+      });
+    });
+    if (visibleDepths.length === 0) {
+      return null;
+    }
+    if (!state.depthProfileLogX) {
+      const maxDepth = Math.max(...visibleDepths);
+      return [0, maxDepth > 0 ? maxDepth : 1];
+    }
+    const positiveDepths = visibleDepths.filter((value) => value > 0);
+    if (positiveDepths.length === 0) {
+      return null;
+    }
+    // Plotly log ranges are expressed as log10 values, while trace values stay in depth meters.
+    return [Math.log10(Math.min(...positiveDepths)), Math.log10(Math.max(...positiveDepths))];
   }
 
   function commonRasterDepthPointIndices(depthLevels) {
@@ -1038,6 +1077,10 @@
     layout.hovermode = "closest";
     layout.xaxis.type = state.depthProfileLogX ? "log" : "linear";
     layout.xaxis.title = { text: state.depthProfileLogX ? "Depth (m, log scale)" : "Depth (m)", standoff: 8 };
+    const axisRange = visibleDepthAxisRange(traces);
+    if (axisRange) {
+      layout.xaxis.range = axisRange;
+    }
     $("analysis-profile-caption").textContent = `${focusLabel()} ${metricLabel(state.metric).toLowerCase()} absolute error across depth${globalFocus && state.showBasinFan ? " with basin fan" : ""}`;
     Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
       if (typeof chart.removeAllListeners === "function") {
