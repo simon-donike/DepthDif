@@ -830,3 +830,31 @@
     flex-direction: column;
   }
 }
+
+.globe-toolbar--temporal .globe-layer-section__controls--vector {
+  align-items: center;
+}
+
+.globe-toolbar__group--temporal-week {
+  gap: 12px;
+}
+
+.globe-temporal-speed {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.globe-temporal-speed select {
+  background: rgba(4, 19, 31, 0.86);
+  border: 1px solid rgba(124, 200, 255, 0.28);
+  border-radius: 8px;
+  color: #eaf8ff;
+  font: inherit;
+  min-height: 34px;
+  padding: 0 28px 0 10px;
+}
+
+.standalone-temporal-globe-page .globe-range__control input[type="range"] {
+  min-width: 220px;
+}

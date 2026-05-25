@@ -2,21 +2,7 @@
   const DEFAULT_GLOBE_CONFIG_URL =
     "https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json";
   const METRIC_LABELS = { median: "Median", mean: "Mean", p90: "P90", p95: "P95" };
-  const BASIN_LABELS = {
-    Pacific: "Pacific Ocean",
-    Atlantic: "Atlantic Ocean",
-    Indian: "Indian Ocean",
-    Southern: "Southern Ocean",
-    Arctic: "Arctic Ocean",
-  };
-  const BASIN_ORDER = ["Pacific", "Atlantic", "Indian", "Southern", "Arctic"];
-  const BASIN_FAN_COLORS = {
-    Pacific: "#7cc8ff",
-    Atlantic: "#f6c85f",
-    Indian: "#6cc4a1",
-    Southern: "#e17c78",
-    Arctic: "#b39ddb",
-  };
+  const BASIN_FAN_COLORS = ["#7cc8ff", "#f6c85f", "#6cc4a1", "#e17c78", "#b39ddb", "#9ad6cb", "#f2a65a", "#88a7ff", "#c7e75f"];
   const MAP_BOUNDS = [
     [-85, -180],
     [85, 180],
@@ -360,11 +346,32 @@
   }
 
   function isDisplayBasin(name) {
-    return name !== "Other";
+    return name && name !== "Other";
   }
 
   function displayBasinName(name) {
-    return BASIN_LABELS[name] || name;
+    return name || "Other";
+  }
+
+  function displayBasinNames() {
+    const grouping = (data() && data().grouping) || {};
+    const configured = Array.isArray(grouping.basins) ? grouping.basins.filter(isDisplayBasin) : [];
+    if (configured.length > 0) {
+      return configured;
+    }
+    const names = new Set();
+    data().depth_levels.forEach((depth) => {
+      (depth.basins || []).forEach((basin) => {
+        if (isDisplayBasin(basin.name)) {
+          names.add(basin.name);
+        }
+      });
+    });
+    return Array.from(names);
+  }
+
+  function basinFanColor(index) {
+    return BASIN_FAN_COLORS[index % BASIN_FAN_COLORS.length];
   }
 
   function setRunLabel() {
@@ -510,48 +517,8 @@
     return state.focus.type === "basin" ? displayBasinName(state.focus.id) : state.focus.label;
   }
 
-  function basinForCoordinate(lon, lat) {
-    const lonValue = ((((Number(lon) + 180) % 360) + 360) % 360) - 180;
-    const latValue = Number(lat);
-    if (!Number.isFinite(lonValue) || !Number.isFinite(latValue)) {
-      return "Other";
-    }
-    if (latValue >= 66) {
-      return "Arctic";
-    }
-    if (latValue <= -60) {
-      return "Southern";
-    }
-    const atlantic =
-      (lonValue >= -70 && lonValue < 20) ||
-      (lonValue >= -10 && lonValue < 42 && latValue >= 30 && latValue < 48) ||
-      (lonValue >= -25 && lonValue < 32 && latValue >= 48);
-    if (atlantic && latValue > -60 && latValue < 66) {
-      return "Atlantic";
-    }
-    const indian =
-      (lonValue >= 20 && lonValue < 120 && latValue < 32) ||
-      (lonValue >= 120 && lonValue < 147 && latValue < 0);
-    if (indian && latValue > -60 && latValue < 66) {
-      return "Indian";
-    }
-    const pacific =
-      lonValue < -70 ||
-      lonValue >= 120 ||
-      (lonValue >= 100 && lonValue < 120 && latValue > -15 && latValue < 32);
-    if (pacific && latValue > -60 && latValue < 66) {
-      return "Pacific";
-    }
-    return "Other";
-  }
-
   function basinForCell(cell) {
-    if (cell.basin) {
-      return cell.basin;
-    }
-    const lon = Number.isFinite(Number(cell.center_lon)) ? Number(cell.center_lon) : (Number(cell.west) + Number(cell.east)) / 2;
-    const lat = Number.isFinite(Number(cell.center_lat)) ? Number(cell.center_lat) : (Number(cell.south) + Number(cell.north)) / 2;
-    return basinForCoordinate(lon, lat);
+    return cell.basin || "Other";
   }
 
   function rankingButton(item, type, label) {
@@ -1032,13 +999,13 @@
     if (state.focus.type !== "global" || !state.showBasinFan) {
       return [];
     }
-    return BASIN_ORDER.map((basinName) => ({
+    return displayBasinNames().map((basinName, index) => ({
       customdata: basinHoverData(depthLevels, basinName),
       hovertemplate:
         `${escapeHtml(displayBasinName(basinName))}<br>%{customdata[0]}<br>` +
         `${escapeHtml(metricLabel(state.metric))}: %{customdata[1]}<br>` +
         "Count: %{customdata[2]}%{customdata[3]}<extra></extra>",
-      line: { color: BASIN_FAN_COLORS[basinName], width: 1 },
+      line: { color: basinFanColor(index), width: 1 },
       mode: "lines",
       name: displayBasinName(basinName),
       opacity: 0.36,

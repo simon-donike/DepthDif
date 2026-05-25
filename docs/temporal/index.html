@@ -6,7 +6,7 @@
     <title>DepthDif Temporal Dashboard</title>
     <meta
       name="description"
-      content="Standalone DepthDif dashboard for temporal consistency, week-to-week change error, and generation stability."
+      content="Standalone DepthDif dashboard for validation-year basin depth-error summaries."
     />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />
@@ -28,12 +28,14 @@
         <div>
           <span class="temporal-eyebrow">DepthDif Diagnostics</span>
           <h1>Temporal Dashboard</h1>
-          <p id="temporal-run-label">Loading temporal consistency diagnostics...</p>
+          <p id="temporal-run-label">Loading validation-year basin errors...</p>
         </div>
         <nav class="temporal-links" aria-label="Dashboard links">
           <a href="../">Docs</a>
-          <a href="../analysis/">Analysis</a>
+          <a href="../visualizations/">Analysis</a>
+          <a href="../analysis/">Spatial Dashboard</a>
           <a href="../globe/">Globe</a>
+          <a href="../temporal-globe/">Temporal Globe</a>
         </nav>
       </header>
 
@@ -42,102 +44,39 @@
           <span>Dashboard</span>
           <select id="temporal-dashboard-select" aria-label="Dashboard">
             <option value="analysis">Absolute Error</option>
-            <option value="temporal" selected>Temporal Consistency</option>
+            <option value="temporal" selected>Temporal</option>
           </select>
         </label>
         <label>
-          <span>Modality</span>
-          <select id="temporal-modality-select"></select>
+          <span>Basin</span>
+          <select id="temporal-basin-select"></select>
         </label>
         <label>
-          <span>Temporal Field</span>
-          <select id="temporal-field-select"></select>
-        </label>
-        <label>
-          <span>Interval</span>
-          <select id="temporal-period-select"></select>
-        </label>
-        <label>
-          <span>Depth</span>
-          <select id="temporal-depth-select"></select>
-        </label>
-        <label>
-          <span>Metric</span>
-          <div id="temporal-metric-toggle" class="temporal-segmented" role="radiogroup"></div>
+          <span>Variable</span>
+          <select id="temporal-variable-select"></select>
         </label>
       </section>
 
-      <section class="temporal-grid">
+      <section class="temporal-workspace">
         <article class="temporal-panel temporal-panel--map">
           <div class="temporal-panel__header">
             <div>
-              <h2>Temporal Error Field</h2>
-              <p id="temporal-map-caption">Global temporal grid-cell metric</p>
+              <h2>Basin Map</h2>
+              <p id="temporal-map-caption">Approximate validation basin selection</p>
             </div>
             <span id="temporal-selection-pill" class="temporal-pill">Global</span>
           </div>
-          <div class="temporal-map-layout">
-            <div class="temporal-map-stack">
-              <div id="temporal-map" class="temporal-map" role="application" aria-label="World map of temporal grid cells"></div>
-              <div class="temporal-map-legend" aria-label="Map color scale">
-                <span id="temporal-map-legend-min">Lower value</span>
-                <span class="temporal-map-legend__ramp"></span>
-                <span id="temporal-map-legend-max">Higher value</span>
-              </div>
-            </div>
-            <aside class="temporal-basin-selector" aria-label="Basin selector">
-              <div class="temporal-basin-selector__header">
-                <div>
-                  <h2>Basin Selector</h2>
-                  <p>Choose a basin for the active temporal field</p>
-                </div>
-                <button id="temporal-reset-focus" class="temporal-ranking-reset" type="button" disabled>Reset</button>
-              </div>
-              <div id="temporal-basin-ranking" class="temporal-ranking-list"></div>
-            </aside>
-          </div>
+          <div id="temporal-map" class="temporal-map" role="application" aria-label="World map of validation basins"></div>
         </article>
 
-        <article class="temporal-panel temporal-panel--time-series">
+        <article class="temporal-panel temporal-panel--chart">
           <div class="temporal-panel__header">
             <div>
-              <h2>Time Series</h2>
-              <p id="temporal-series-caption">Global temporal metric over exported weeks</p>
+              <h2>Depth Error</h2>
+              <p id="temporal-depth-caption">Mean absolute error across the 2018 validation year</p>
             </div>
           </div>
-          <div id="temporal-time-series" class="temporal-chart" role="img" aria-label="Temporal metric time series"></div>
-        </article>
-      </section>
-
-      <section class="temporal-charts">
-        <article class="temporal-panel temporal-panel--summary">
-          <div class="temporal-panel__header">
-            <div>
-              <h2>Interval Summary</h2>
-              <p id="temporal-summary-caption">Active temporal selection summary</p>
-            </div>
-          </div>
-          <div id="temporal-summary" class="temporal-summary" aria-label="Temporal interval summary"></div>
-        </article>
-
-        <article class="temporal-panel temporal-panel--depth-profile">
-          <div class="temporal-panel__header">
-            <div>
-              <h2>Depth Profile</h2>
-              <p id="temporal-depth-caption">Temporal metric across depth for the active interval</p>
-            </div>
-          </div>
-          <div id="temporal-depth-profile" class="temporal-chart" role="img" aria-label="Temporal metric curve across depth levels"></div>
-        </article>
-
-        <article class="temporal-panel">
-          <div class="temporal-panel__header">
-            <div>
-              <h2>Basin Spread</h2>
-              <p id="temporal-basin-caption">Basin temporal metric comparison</p>
-            </div>
-          </div>
-          <div id="temporal-basin-chart" class="temporal-chart" role="img" aria-label="Basin temporal metric comparison"></div>
+          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by depth"></div>
         </article>
       </section>
     </main>
