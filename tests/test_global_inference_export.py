@@ -12,6 +12,7 @@ import yaml
 from rasterio.transform import from_origin
 from torch import nn
 
+from depth_recon.inference.core import apply_inference_sampling_config
 from depth_recon.inference.export_global import (
     DEFAULT_ANALYSIS_JSON_NAME,
     DEFAULT_INFERENCE_CONFIG,
@@ -113,10 +114,12 @@ class _UncertaintyPredictModel(nn.Module):
         batch: dict[str, torch.Tensor],
         batch_idx: int,
         num_samples: int,
+        sampler: nn.Module | None = None,
     ) -> dict[str, torch.Tensor]:
         """Return one field-specific 1-channel uncertainty map."""
         _ = batch
         self.uncertainty_calls.append((int(batch_idx), int(num_samples)))
+        self.last_uncertainty_sampler = sampler
         return {
             "uncertainty_salinity": torch.tensor(
                 [[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32
@@ -264,6 +267,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
             export_full_prediction_stack=False,
             export_uncertainty=True,
             uncertainty_num_samples=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+            uncertainty_sampler=nn.Identity(),
             depth_channel_indices=(0,),
         )
 
@@ -272,6 +276,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(
             model.uncertainty_calls, [(0, DEFAULT_UNCERTAINTY_NUM_SAMPLES)]
         )
+        self.assertIsInstance(model.last_uncertainty_sampler, nn.Identity)
         torch.testing.assert_close(
             outputs["uncertainty_map"],
             torch.tensor([[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32),
@@ -323,9 +328,60 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(args.config_overrides, [])
         self.assertIsNone(args.inference_num_workers)
         self.assertIsNone(args.inference_prefetch_factor)
+        self.assertIsNone(args.sampler)
+        self.assertIsNone(args.ddim_num_timesteps)
+        self.assertIsNone(args.uncertainty_sampler)
+        self.assertIsNone(args.uncertainty_ddim_num_timesteps)
         self.assertFalse(args.export_uncertainty)
         self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
         self.assertEqual(args.full_sample_count, DEFAULT_FULL_SAMPLE_COUNT)
+
+    def test_parser_accepts_ddim_sampler_options(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "--year",
+                "2026",
+                "--iso-week",
+                "2",
+                "--sampler",
+                "ddim",
+                "--ddim-steps",
+                "100",
+                "--uncertainty-sampler",
+                "ddim",
+                "--uncertainty-ddim-steps",
+                "50",
+            ]
+        )
+
+        self.assertEqual(args.sampler, "ddim")
+        self.assertEqual(args.ddim_num_timesteps, 100)
+        self.assertEqual(args.uncertainty_sampler, "ddim")
+        self.assertEqual(args.uncertainty_ddim_num_timesteps, 50)
+
+    def test_apply_inference_sampling_config_selects_ddim_from_steps(self) -> None:
+        training_cfg = {
+            "training": {
+                "noise": {"num_timesteps": 1000},
+                "validation_sampling": {
+                    "sampler": "ddpm",
+                    "ddim_num_timesteps": 200,
+                },
+            }
+        }
+
+        metadata = apply_inference_sampling_config(training_cfg, ddim_num_timesteps=50)
+
+        self.assertEqual(metadata["sampler"], "ddim")
+        self.assertEqual(metadata["diffusion_num_timesteps"], 1000)
+        self.assertEqual(metadata["ddim_num_timesteps"], 50)
+        self.assertEqual(
+            training_cfg["training"]["validation_sampling"]["sampler"], "ddim"
+        )
+        self.assertEqual(
+            training_cfg["training"]["validation_sampling"]["ddim_num_timesteps"],
+            50,
+        )
 
     def test_build_inference_loader_collates_selected_grid_rows(self) -> None:
         rows = [

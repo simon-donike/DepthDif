@@ -34,6 +34,8 @@ from depth_recon.data.dataset_argo_netcdf_gridded import (
     _parse_force_include_regions,
 )
 from depth_recon.inference.core import (
+    INFERENCE_SAMPLERS,
+    apply_inference_sampling_config,
     build_model,
     choose_device,
     load_checkpoint_weights,
@@ -50,6 +52,8 @@ from depth_recon.inference.export_global import (
     _accumulate_patch_into_arrays,
     _argo_point_features_for_patch,
     _build_parser as _build_export_parser,
+    _build_sampler_for_metadata,
+    _sampling_metadata_from_overrides,
     _cleanup_accumulator,
     _flush_accumulator,
     _periodic_longitude_blend_width_for_layout,
@@ -1140,6 +1144,10 @@ def _export_args_from_public_api(
     land_mask_path: str | Path,
     min_ocean_fraction: float,
     sigma: float,
+    sampler: str | None,
+    ddim_num_timesteps: int | None,
+    uncertainty_sampler: str | None,
+    uncertainty_ddim_num_timesteps: int | None,
     strict_load: bool,
     export_uncertainty: bool = False,
     uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
@@ -1175,6 +1183,10 @@ def _export_args_from_public_api(
     args.land_mask_path = Path(land_mask_path)
     args.min_ocean_fraction = float(min_ocean_fraction)
     args.sigma = float(sigma)
+    args.sampler = sampler
+    args.ddim_num_timesteps = ddim_num_timesteps
+    args.uncertainty_sampler = uncertainty_sampler
+    args.uncertainty_ddim_num_timesteps = uncertainty_ddim_num_timesteps
     args.strict_load = bool(strict_load)
     args.export_uncertainty = bool(export_uncertainty) or bool(uncertainty_only)
     args.uncertainty_num_samples = int(uncertainty_num_samples)
@@ -1209,6 +1221,10 @@ def run_week_inference(
     land_mask_path: str | Path = DEFAULT_LAND_MASK_PATH,
     min_ocean_fraction: float = 0.05,
     sigma: float = DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
+    sampler: str | None = None,
+    ddim_num_timesteps: int | None = None,
+    uncertainty_sampler: str | None = None,
+    uncertainty_ddim_num_timesteps: int | None = None,
     export_uncertainty: bool = False,
     uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     uncertainty_only: bool = False,
@@ -1246,6 +1262,10 @@ def run_week_inference(
             land_mask_path=public_land_mask_path,
             min_ocean_fraction=min_ocean_fraction,
             sigma=sigma,
+            sampler=sampler,
+            ddim_num_timesteps=ddim_num_timesteps,
+            uncertainty_sampler=uncertainty_sampler,
+            uncertainty_ddim_num_timesteps=uncertainty_ddim_num_timesteps,
             export_uncertainty=export_uncertainty,
             uncertainty_num_samples=uncertainty_num_samples,
             uncertainty_only=uncertainty_only,
@@ -1328,6 +1348,10 @@ def run_week_inference(
         land_mask_path=land_mask_path,
         min_ocean_fraction=min_ocean_fraction,
         sigma=sigma,
+        sampler=sampler,
+        ddim_num_timesteps=ddim_num_timesteps,
+        uncertainty_sampler=uncertainty_sampler,
+        uncertainty_ddim_num_timesteps=uncertainty_ddim_num_timesteps,
         strict_load=strict_load,
         export_uncertainty=export_uncertainty,
         uncertainty_num_samples=uncertainty_num_samples,
@@ -1362,6 +1386,10 @@ def run_argo_week_inference(
     land_mask_path: str | Path | None = None,
     min_ocean_fraction: float = 0.05,
     sigma: float = DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
+    sampler: str | None = None,
+    ddim_num_timesteps: int | None = None,
+    uncertainty_sampler: str | None = None,
+    uncertainty_ddim_num_timesteps: int | None = None,
     export_uncertainty: bool = False,
     uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     uncertainty_only: bool = False,
@@ -1443,6 +1471,15 @@ def run_argo_week_inference(
     data_cfg = load_yaml(assets.data_config)
     training_cfg = load_yaml(assets.train_config)
     model_cfg = load_yaml(assets.model_config)
+    sampling_metadata = apply_inference_sampling_config(
+        training_cfg, sampler=sampler, ddim_num_timesteps=ddim_num_timesteps
+    )
+    uncertainty_sampling_metadata = _sampling_metadata_from_overrides(
+        training_cfg,
+        sampler=uncertainty_sampler,
+        ddim_num_timesteps=uncertainty_ddim_num_timesteps,
+        fallback=sampling_metadata,
+    )
     if progress_callback is not None:
         progress_callback(
             "patch_grid_start", "Selecting inference patches", Path(land_mask_path)
@@ -1504,6 +1541,11 @@ def run_argo_week_inference(
     output_root_path = Path(output_root)
     run_dir = output_root_path / run_stem
     run_dir.mkdir(parents=True, exist_ok=True)
+    train_config_path = Path(assets.train_config)
+    if sampler is not None or ddim_num_timesteps is not None:
+        train_config_path = run_dir / "depthdif_public_train_config_effective.yaml"
+        with train_config_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(training_cfg, f, sort_keys=False)
     scratch_dir = run_dir / ".scratch"
 
     depth_axis_m = np.asarray(DEFAULT_GLORYS_DEPTH_AXIS_M, dtype=np.float64)
@@ -1566,7 +1608,7 @@ def run_argo_week_inference(
     model = build_model(
         model_config_path=str(assets.model_config),
         data_config_path=str(assets.data_config),
-        training_config_path=str(assets.train_config),
+        training_config_path=str(train_config_path),
         model_cfg=model_cfg,
         datamodule=None,
     )
@@ -1581,6 +1623,13 @@ def run_argo_week_inference(
     target_device = choose_device(device)
     model = model.to(target_device)
     model.eval()
+    uncertainty_sampler_module = None
+    if uncertainty_accumulator is not None:
+        uncertainty_sampler_module = _build_sampler_for_metadata(
+            model, uncertainty_sampling_metadata
+        )
+        if uncertainty_sampler_module is not None:
+            uncertainty_sampler_module = uncertainty_sampler_module.to(target_device)
     if progress_callback is not None:
         progress_callback(
             "profile_alignment_start",
@@ -1603,6 +1652,12 @@ def run_argo_week_inference(
         f"uncertainty_only={bool(uncertainty_only)}, "
         f"export_uncertainty={bool(export_uncertainty)}, "
         f"uncertainty_num_samples={int(uncertainty_num_samples)}, "
+        f"sampler={sampling_metadata['sampler']}, "
+        f"diffusion_num_timesteps={int(sampling_metadata['diffusion_num_timesteps'])}, "
+        f"ddim_num_timesteps={int(sampling_metadata['ddim_num_timesteps'])}, "
+        f"uncertainty_sampler={uncertainty_sampling_metadata['sampler']}, "
+        f"uncertainty_ddim_num_timesteps="
+        f"{int(uncertainty_sampling_metadata['ddim_num_timesteps'])}, "
         f"ostia_conditioning={'enabled' if use_ostia_conditioning else 'disabled'}, "
         f"rectangle={rectangle}"
     )
@@ -1648,6 +1703,7 @@ def run_argo_week_inference(
                     model_batch,
                     batch_idx=0,
                     num_samples=int(uncertainty_num_samples),
+                    sampler=uncertainty_sampler_module,
                 )
                 if uncertainty_accumulator is not None
                 else None
@@ -1749,6 +1805,11 @@ def run_argo_week_inference(
                 "checkpoint_path": str(ckpt_path),
                 "kind": "prediction",
                 "prediction_runs_per_patch": "1",
+                "sampler": str(sampling_metadata["sampler"]),
+                "diffusion_num_timesteps": str(
+                    int(sampling_metadata["diffusion_num_timesteps"])
+                ),
+                "ddim_num_timesteps": str(int(sampling_metadata["ddim_num_timesteps"])),
                 "extra_gaussian_blur_sigma": f"{float(sigma):.3f}",
             },
             extra_gaussian_blur_sigma=float(sigma),
@@ -1792,6 +1853,13 @@ def run_argo_week_inference(
                 "kind": "uncertainty",
                 "uncertainty_stat": "std",
                 "uncertainty_num_samples": str(int(uncertainty_num_samples)),
+                "sampler": str(uncertainty_sampling_metadata["sampler"]),
+                "diffusion_num_timesteps": str(
+                    int(uncertainty_sampling_metadata["diffusion_num_timesteps"])
+                ),
+                "ddim_num_timesteps": str(
+                    int(uncertainty_sampling_metadata["ddim_num_timesteps"])
+                ),
                 "source_value_transform": (
                     "std(model_prediction_denormalized_repeated_samples)"
                 ),
@@ -1820,7 +1888,7 @@ def run_argo_week_inference(
         "checkpoint_path": str(ckpt_path),
         "model_config": str(assets.model_config),
         "data_config": str(assets.data_config),
-        "train_config": str(assets.train_config),
+        "train_config": str(train_config_path),
         "device": str(target_device),
         "run_dir": str(run_dir),
         "prediction_tif_path": (
@@ -1842,6 +1910,16 @@ def run_argo_week_inference(
         "ostia_dir": None if ostia_dir is None else str(ostia_dir),
         "ostia_conditioning": bool(use_ostia_conditioning),
         "uncertainty_only": bool(uncertainty_only),
+        "sampler": str(sampling_metadata["sampler"]),
+        "diffusion_num_timesteps": int(sampling_metadata["diffusion_num_timesteps"]),
+        "ddim_num_timesteps": int(sampling_metadata["ddim_num_timesteps"]),
+        "uncertainty_sampler": str(uncertainty_sampling_metadata["sampler"]),
+        "uncertainty_diffusion_num_timesteps": int(
+            uncertainty_sampling_metadata["diffusion_num_timesteps"]
+        ),
+        "uncertainty_ddim_num_timesteps": int(
+            uncertainty_sampling_metadata["ddim_num_timesteps"]
+        ),
         "prediction_runs_per_patch": 1 if export_prediction else 0,
         "export_uncertainty": bool(export_uncertainty),
         "uncertainty_num_samples": (
@@ -1898,6 +1976,35 @@ def _build_public_parser() -> argparse.ArgumentParser:
     infer.add_argument("--min-ocean-fraction", type=float, default=0.05)
     infer.add_argument(
         "--sigma", type=float, default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA
+    )
+    infer.add_argument(
+        "--sampler",
+        "--sampling-method",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help="Inference sampler override; passing --ddim-steps alone selects DDIM.",
+    )
+    infer.add_argument(
+        "--ddim-steps",
+        "--ddim-num-timesteps",
+        dest="ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM inference step count.",
+    )
+    infer.add_argument(
+        "--uncertainty-sampler",
+        choices=INFERENCE_SAMPLERS,
+        default=None,
+        help="Sampler override used only by ensemble uncertainty exports.",
+    )
+    infer.add_argument(
+        "--uncertainty-ddim-steps",
+        "--uncertainty-ddim-num-timesteps",
+        dest="uncertainty_ddim_num_timesteps",
+        type=int,
+        default=None,
+        help="DDIM step count used only by ensemble uncertainty exports.",
     )
     infer.add_argument(
         "--export-uncertainty",
@@ -1967,6 +2074,10 @@ def infer_week_cli(argv: Sequence[str] | None = None) -> None:
         land_mask_path=args.land_mask_path,
         min_ocean_fraction=args.min_ocean_fraction,
         sigma=args.sigma,
+        sampler=args.sampler,
+        ddim_num_timesteps=args.ddim_num_timesteps,
+        uncertainty_sampler=args.uncertainty_sampler,
+        uncertainty_ddim_num_timesteps=args.uncertainty_ddim_num_timesteps,
         export_uncertainty=args.export_uncertainty,
         uncertainty_num_samples=args.uncertainty_num_samples,
         uncertainty_only=args.uncertainty_only,
@@ -2042,6 +2153,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             land_mask_path=args.land_mask_path,
             min_ocean_fraction=args.min_ocean_fraction,
             sigma=args.sigma,
+            sampler=args.sampler,
+            ddim_num_timesteps=args.ddim_num_timesteps,
+            uncertainty_sampler=args.uncertainty_sampler,
+            uncertainty_ddim_num_timesteps=args.uncertainty_ddim_num_timesteps,
             export_uncertainty=args.export_uncertainty,
             uncertainty_num_samples=args.uncertainty_num_samples,
             uncertainty_only=args.uncertainty_only,

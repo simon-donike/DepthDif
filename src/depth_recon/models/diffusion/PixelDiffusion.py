@@ -2048,6 +2048,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         batch_idx: int,
         dataloader_idx: int = 0,
         num_samples: int = 8,
+        sampler: torch.nn.Module | None = None,
     ) -> dict[str, Any]:
         """Estimate pixel-wise generation uncertainty from repeated predictions.
 
@@ -2056,6 +2057,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_idx (int): Zero-based index for selecting a sample or batch.
             dataloader_idx (int): Dataloader index passed through to prediction.
             num_samples (int): Number of repeated generations used for uncertainty.
+            sampler (torch.nn.Module | None): Optional sampler used only for this uncertainty pass.
 
         Returns:
             dict[str, Any]: Dictionary containing uncertainty maps and metadata.
@@ -2065,6 +2067,8 @@ class PixelDiffusionConditional(pl.LightningModule):
 
         prediction_batch = dict(batch)
         prediction_batch["return_intermediates"] = False
+        if sampler is not None:
+            prediction_batch["sampler"] = sampler
 
         samples_by_field: dict[str, list[torch.Tensor]] = {
             field: [] for field in self.output_fields

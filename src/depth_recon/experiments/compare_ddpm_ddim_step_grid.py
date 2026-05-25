@@ -6,7 +6,7 @@
 #   --loader-split val \
 #   --device auto \
 #   --seed 7 \
-#   --batch-size 5 \
+#   --batch-size 10 \
 #   --depth-level 0 \
 #   --ddim-steps 1000,800,500,200,100,50 \
 #   --ddim-eta 0.0 \
@@ -64,7 +64,8 @@ LOADER_SPLIT = "val"
 DEVICE = "auto"
 SEED = 7
 STRICT_LOAD = False
-BATCH_SIZE = 5
+BATCH_SIZE = 10
+MAX_BATCH_SIZE = 10
 DEPTH_LEVEL = 0
 DDIM_STEPS: tuple[int, ...] = (1000, 800, 500, 200, 100, 50)
 DDIM_ETA = 0.0
@@ -88,7 +89,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--seed", type=int, default=SEED)
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help=f"Number of batch rows to plot, capped at {MAX_BATCH_SIZE}.",
+    )
     parser.add_argument("--depth-level", type=int, default=DEPTH_LEVEL)
     parser.add_argument(
         "--ddim-steps",
@@ -312,7 +318,7 @@ def _save_grid(
     fig, axes = plt.subplots(
         len(rows),
         len(columns),
-        figsize=(2.6 * len(columns), 2.6 * len(rows)),
+        figsize=(2.55 * len(columns), 2.35 * len(rows)),
         squeeze=False,
     )
     try:
@@ -376,7 +382,9 @@ def main() -> None:
     setup_progress.set_postfix_str("loaded configs")
     setup_progress.update()
 
-    batch_size = min(int(args.batch_size), 5)
+    batch_size = min(int(args.batch_size), MAX_BATCH_SIZE)
+    if batch_size < int(args.batch_size):
+        print(f"Capped --batch-size to {MAX_BATCH_SIZE} plotted rows.")
     dataloader_cfg = training_cfg.setdefault("dataloader", {})
     data_dataloader_cfg = data_cfg.setdefault("dataloader", {})
     batch_size_key = "val_batch_size" if args.loader_split == "val" else "batch_size"

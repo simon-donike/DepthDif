@@ -192,6 +192,12 @@ training:  # optimizer, trainer, and logging
       eps: 1.0e-08  # minimum LR change
 
 inference:  # inference-only overrides
+  sampling:  # reverse-diffusion sampler overrides
+    sampler: ddim  # null uses training.validation_sampling.sampler; set ddpm or ddim
+    ddim_num_timesteps: 100  # null uses training.validation_sampling.ddim_num_timesteps
+  uncertainty_sampling:  # sampler overrides only for ensemble uncertainty exports
+    sampler: ddim  # null uses inference.sampling.sampler
+    ddim_num_timesteps: 50  # null uses inference.sampling.ddim_num_timesteps
   grid:  # inference patch grid
     patch_stride: 96  # prediction patch stride
     min_ocean_fraction: 0.05  # minimum ocean coverage

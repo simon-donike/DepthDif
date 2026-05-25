@@ -226,6 +226,31 @@ class TestPublicInferenceApi(unittest.TestCase):
             kwargs["uncertainty_num_samples"], DEFAULT_UNCERTAINTY_NUM_SAMPLES
         )
 
+    def test_run_week_inference_forwards_public_sampling_options(self) -> None:
+        with mock.patch(
+            "depth_recon.inference.api.run_argo_week_inference"
+        ) as run_public:
+            run_public.return_value = Path("outputs/public")
+
+            run_week_inference(
+                year=2024,
+                iso_week=2,
+                output_root="outputs",
+                device="cpu",
+                cache_dir="cache",
+                auto_download_ostia=False,
+                sampler="ddim",
+                ddim_num_timesteps=100,
+                uncertainty_sampler="ddim",
+                uncertainty_ddim_num_timesteps=50,
+            )
+
+        kwargs = run_public.call_args.kwargs
+        self.assertEqual(kwargs["sampler"], "ddim")
+        self.assertEqual(kwargs["ddim_num_timesteps"], 100)
+        self.assertEqual(kwargs["uncertainty_sampler"], "ddim")
+        self.assertEqual(kwargs["uncertainty_ddim_num_timesteps"], 50)
+
     def test_run_week_inference_forwards_public_uncertainty_options(self) -> None:
         with mock.patch(
             "depth_recon.inference.api.run_argo_week_inference"
@@ -268,6 +293,10 @@ class TestPublicInferenceApi(unittest.TestCase):
             land_mask_path="mask.tif",
             min_ocean_fraction=0.2,
             sigma=0.0,
+            sampler="ddim",
+            ddim_num_timesteps=100,
+            uncertainty_sampler="ddim",
+            uncertainty_ddim_num_timesteps=50,
             strict_load=True,
         )
 
@@ -280,6 +309,10 @@ class TestPublicInferenceApi(unittest.TestCase):
         self.assertFalse(args.export_ground_truth)
         self.assertEqual(args.full_sample_count, 0)
         self.assertEqual(args.min_ocean_fraction, 0.2)
+        self.assertEqual(args.sampler, "ddim")
+        self.assertEqual(args.ddim_num_timesteps, 100)
+        self.assertEqual(args.uncertainty_sampler, "ddim")
+        self.assertEqual(args.uncertainty_ddim_num_timesteps, 50)
         self.assertFalse(args.export_uncertainty)
         self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
         self.assertTrue(args.strict_load)
