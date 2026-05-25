@@ -146,8 +146,6 @@ def _tile_prediction_frame(
     extra_zoom_levels: int,
     max_zoom_level: int | None,
     webp_quality: int,
-    raster_edge_erosion_pixels: int,
-    raster_edge_feather_pixels: int,
 ) -> None:
     """Colorize and tile one 10m prediction raster."""
     _validate_raster_transparency_contract(input_path)
@@ -156,8 +154,6 @@ def _tile_prediction_frame(
         input_path,
         colorized_path,
         color_ramp_path=color_ramp_path,
-        raster_edge_erosion_pixels=raster_edge_erosion_pixels,
-        raster_edge_feather_pixels=raster_edge_feather_pixels,
     )
     _run_gdal2tiles(
         colorized_path,
@@ -177,8 +173,6 @@ def _tile_error_frame(
     extra_zoom_levels: int,
     max_zoom_level: int | None,
     webp_quality: int,
-    raster_edge_erosion_pixels: int,
-    raster_edge_feather_pixels: int,
 ) -> None:
     """Colorize and tile one 10m absolute-error raster."""
     _validate_raster_transparency_contract(input_path)
@@ -187,8 +181,6 @@ def _tile_error_frame(
         input_path,
         colorized_path,
         color_ramp_path=error_ramp_path,
-        raster_edge_erosion_pixels=raster_edge_erosion_pixels,
-        raster_edge_feather_pixels=raster_edge_feather_pixels,
     )
     _run_gdal2tiles(
         colorized_path,
@@ -233,8 +225,6 @@ def _build_variable_frames(
     extra_zoom_levels: int,
     max_zoom_level: int | None,
     webp_quality: int,
-    raster_edge_erosion_pixels: int,
-    raster_edge_feather_pixels: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Tile every weekly 10m frame for one variable and return manifest data."""
     variable_metadata = _run_variable_metadata(runs[0].run_summary)
@@ -270,8 +260,6 @@ def _build_variable_frames(
             extra_zoom_levels=extra_zoom_levels,
             max_zoom_level=max_zoom_level,
             webp_quality=webp_quality,
-            raster_edge_erosion_pixels=raster_edge_erosion_pixels,
-            raster_edge_feather_pixels=raster_edge_feather_pixels,
         )
         _tile_error_frame(
             input_path=error_path,
@@ -281,8 +269,6 @@ def _build_variable_frames(
             extra_zoom_levels=extra_zoom_levels,
             max_zoom_level=max_zoom_level,
             webp_quality=webp_quality,
-            raster_edge_erosion_pixels=raster_edge_erosion_pixels,
-            raster_edge_feather_pixels=raster_edge_feather_pixels,
         )
         frames.append(
             {
@@ -343,8 +329,6 @@ def export_temporal_cesium_globe_assets(
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
     max_zoom_level: int | None = DEFAULT_TEMPORAL_GLOBE_MAX_ZOOM_LEVEL,
     webp_quality: int = DEFAULT_TEMPORAL_GLOBE_WEBP_QUALITY,
-    raster_edge_erosion_pixels: int = 2,
-    raster_edge_feather_pixels: int = 4,
     include_base_map: bool = True,
 ) -> dict[str, Any]:
     """Write a lightweight temporal Cesium globe bundle from weekly 10m rasters."""
@@ -369,8 +353,6 @@ def export_temporal_cesium_globe_assets(
             extra_zoom_levels=extra_zoom_levels,
             max_zoom_level=max_zoom_level,
             webp_quality=webp_quality,
-            raster_edge_erosion_pixels=max(0, int(raster_edge_erosion_pixels)),
-            raster_edge_feather_pixels=max(0, int(raster_edge_feather_pixels)),
         )
         payload_variable = str(variable_config["variable"])
         if payload_variable != str(variable):
@@ -542,8 +524,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TEMPORAL_GLOBE_WEBP_QUALITY,
         help="WebP quality passed to gdal2tiles for weekly frames.",
     )
-    parser.add_argument("--raster-edge-erosion-pixels", type=int, default=2)
-    parser.add_argument("--raster-edge-feather-pixels", type=int, default=4)
     parser.add_argument(
         "--base-map",
         action=argparse.BooleanOptionalAction,
@@ -574,8 +554,6 @@ def main() -> None:
         extra_zoom_levels=int(args.extra_zoom_levels),
         max_zoom_level=args.max_zoom_level,
         webp_quality=int(args.webp_quality),
-        raster_edge_erosion_pixels=int(args.raster_edge_erosion_pixels),
-        raster_edge_feather_pixels=int(args.raster_edge_feather_pixels),
         include_base_map=bool(args.include_base_map),
     )
     print(f"Wrote temporal globe assets to: {result['output_dir']}")

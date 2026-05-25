@@ -693,6 +693,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         mkdocs_config = Path("mkdocs.yml").read_text(encoding="utf-8")
 
         self.assertIn("Temporal Globe", html)
+        self.assertIn('href="../visualizations/"', html)
         self.assertIn('id="temporal-globe-week-slider"', html)
         self.assertIn('id="temporal-globe-play-toggle"', html)
         self.assertIn('name="temporal-globe-variable"', html)
@@ -708,6 +709,10 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("uncertainty", script)
         self.assertIn(".globe-toolbar--temporal", css)
         self.assertIn(
+            "Analysis: https://depthdif.donike.net/visualizations/",
+            mkdocs_config,
+        )
+        self.assertNotIn(
             "Temporal Globe: https://depthdif.donike.net/temporal-globe/",
             mkdocs_config,
         )
@@ -724,6 +729,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
 
         self.assertIn('class="standalone-temporal-root"', html)
         self.assertIn("Temporal Dashboard", html)
+        self.assertIn('href="../visualizations/"', html)
         self.assertIn('id="temporal-map"', html)
         self.assertIn('id="temporal-dashboard-select"', html)
         self.assertIn('id="temporal-basin-select"', html)
@@ -748,6 +754,10 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("change_error", script)
         self.assertNotIn("temporal-analysis.json", script)
         self.assertIn(
+            "Analysis: https://depthdif.donike.net/visualizations/",
+            mkdocs_config,
+        )
+        self.assertNotIn(
             "Temporal Dashboard: https://depthdif.donike.net/temporal/",
             mkdocs_config,
         )

@@ -357,6 +357,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('id="analysis-dashboard-select"'),
             html.index('id="analysis-modality-select"'),
         )
+        self.assertIn('href="../visualizations/"', html)
         self.assertIn('href="../temporal/"', html)
         self.assertIn("analysis-map-layout", html)
         self.assertIn("analysis-basin-selector", html)
@@ -478,9 +479,28 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
         self.assertIn(
+            "Analysis: https://depthdif.donike.net/visualizations/", mkdocs_config
+        )
+        self.assertNotIn(
             "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config
         )
-        self.assertIn("3D Globe: https://depthdif.donike.net/globe/", mkdocs_config)
+        self.assertNotIn("3D Globe: https://depthdif.donike.net/globe/", mkdocs_config)
+
+    def test_analysis_landing_page_links_visualizations(self) -> None:
+        html = Path("docs/visualizations/index.html").read_text(encoding="utf-8")
+        css = Path("docs/stylesheets/analysis-landing.css").read_text(encoding="utf-8")
+        extra_css = Path("docs/stylesheets/extra.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="analysis-landing-root"', html)
+        self.assertIn("<h1>Analysis</h1>", html)
+        self.assertIn('href="../globe/"', html)
+        self.assertIn('href="../temporal-globe/"', html)
+        self.assertIn('href="../analysis/"', html)
+        self.assertIn('href="../temporal/"', html)
+        self.assertIn("One-Week Globe", html)
+        self.assertIn("Temporal Error Dashboard", html)
+        self.assertIn("analysis-landing-grid", css)
+        self.assertIn('href$="/visualizations/"', extra_css)
 
 
 if __name__ == "__main__":

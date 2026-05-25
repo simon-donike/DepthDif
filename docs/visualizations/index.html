@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" class="analysis-landing-root">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DepthDif Analysis</title>
+    <meta
+      name="description"
+      content="Standalone DepthDif analysis landing page for globe and dashboard visualizations."
+    />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
+    />
+    <link rel="icon" href="../assets/branding/website_icon.png" />
+    <link rel="stylesheet" href="../stylesheets/analysis-landing.css" />
+  </head>
+  <body class="analysis-landing-page">
+    <main class="analysis-landing-shell">
+      <header class="analysis-landing-header">
+        <div>
+          <span class="analysis-landing-eyebrow">DepthDif Visualizations</span>
+          <h1>Analysis</h1>
+          <p>Global and temporal diagnostics for reconstructed ocean states.</p>
+        </div>
+        <nav class="analysis-landing-links" aria-label="Analysis links">
+          <a href="../">Docs</a>
+        </nav>
+      </header>
+
+      <section class="analysis-landing-grid" aria-label="Analysis visualizations">
+        <a class="analysis-landing-tile analysis-landing-tile--globe" href="../globe/">
+          <span class="analysis-landing-tile__media" aria-hidden="true"></span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">3D Globe</span>
+            <span class="analysis-landing-tile__title">One-Week Globe</span>
+            <span class="analysis-landing-tile__text">
+              Weekly reconstruction layers with GLORYS, uncertainty, and Argo context.
+            </span>
+          </span>
+        </a>
+
+        <a class="analysis-landing-tile analysis-landing-tile--temporal-globe" href="../temporal-globe/">
+          <span class="analysis-landing-tile__media" aria-hidden="true"></span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">3D Animation</span>
+            <span class="analysis-landing-tile__title">Temporal Globe</span>
+            <span class="analysis-landing-tile__text">
+              Validation-year 10m prediction and absolute-error animation.
+            </span>
+          </span>
+        </a>
+
+        <a class="analysis-landing-tile analysis-landing-tile--spatial-error" href="../analysis/">
+          <span class="analysis-landing-tile__media" aria-hidden="true"></span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">Spatial Error</span>
+            <span class="analysis-landing-tile__title">One-Week Error Dashboard</span>
+            <span class="analysis-landing-tile__text">
+              Basin, grid-cell, depth-profile, and uncertainty reliability diagnostics.
+            </span>
+          </span>
+        </a>
+
+        <a class="analysis-landing-tile analysis-landing-tile--temporal-error" href="../temporal/">
+          <span class="analysis-landing-tile__media" aria-hidden="true"></span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">Temporal Error</span>
+            <span class="analysis-landing-tile__title">Temporal Error Dashboard</span>
+            <span class="analysis-landing-tile__text">
+              Validation-year basin and depth error summaries across variables.
+            </span>
+          </span>
+        </a>
+      </section>
+    </main>
+  </body>
+</html>
