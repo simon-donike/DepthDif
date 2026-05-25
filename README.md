@@ -211,7 +211,22 @@ For a pooled validation-set depth summary, use `src/depth_recon/inference/export
   --device cuda
 ```
 
-The standalone Analysis Dashboard data is generated during inference when prediction and ground truth are both exported. The JSON groups stitched prediction-vs-GLORYS errors for every native depth channel by approximate ocean basin and fixed lat-lon cells. A companion `analysis-grid.geojson` stores coast-clipped ocean geometry for those cells so the dashboard map follows the run land mask instead of drawing full rectangles over land. The globe packager copies those precomputed files beside `globe-config.json` for `docs/analysis/index.html` to read. Older runs without the precomputed JSON still use the packager fallback, which can only analyze the exported absolute-error GeoTIFF depths but can still generate the clipped grid geometry when a run land mask is available.
+The standalone Analysis Dashboard data is generated during inference when prediction and ground truth are both exported. The JSON groups stitched prediction-vs-GLORYS errors for every native depth channel by approximate ocean basin and fixed lat-lon cells. A companion `analysis-grid.geojson` stores coast-clipped ocean geometry for those cells so the dashboard map follows the run land mask instead of drawing full rectangles over land. When `--export-uncertainty` is enabled, the absolute-error dashboard also packages a top-band uncertainty reliability payload comparing stochastic uncertainty against realized absolute error; this is not used by the temporal dashboard. The globe packager copies those precomputed files beside `globe-config.json` for `docs/analysis/index.html` to read. Older runs without the precomputed JSON still use the packager fallback, which can only analyze the exported absolute-error GeoTIFF depths but can still generate the clipped grid geometry when a run land mask is available.
+
+For temporal consistency diagnostics during the standard dual-variable production inference, pass `--export-temporal-consistency` to `src/depth_recon/inference/export_global_variables.py`. It runs any extra consecutive weekly temperature and salinity exports needed for the temporal window, aggregates week-to-week prediction/GLORYS change error plus 3-week prediction flicker, writes `temporal-config.json` with per-variable `temporal-analysis.json` files for `docs/temporal/index.html`, and uploads the `temporal/` bundle to the sibling bucket prefix when `--rclone-remote` is set. The standalone `src/depth_recon/inference/export_temporal_global_variables.py` command remains available for temporal-only runs.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
+  --year 2018 \
+  --iso-week 22 \
+  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
+  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
+  --device cuda \
+  --export-temporal-consistency \
+  --temporal-week-count 7 \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
+  --rclone-remote r2:depth-data/inference_production/globe
+```
 
 To package one exported run for the Cesium globe viewer in the docs, use:
 
@@ -225,7 +240,7 @@ To package one exported run for the Cesium globe viewer in the docs, use:
 
 The globe packager copies the precomputed `error-analysis.json` by default, tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready WebP folders, tiles optional uncertainty rasters when present, copies exported WebP profile-comparison graphs, and uploads those assets, GeoJSON, and `globe-config.json` when `--rclone-sync-scope globe` is used. When `src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif` exists locally, the same bundle also includes a higher-quality Natural Earth basemap under `basemaps/natural_earth_ii_webp_q95/`. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/globe/index.html` and can load a hosted `globe-config.json`.
 
-For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector. By default each variable export writes at most 1000 full-profile graph images. Add `--export-uncertainty` to generate and tile one uncertainty map for each variable; the viewer hides the Uncertainty option when a manifest does not include `uncertainty_tiles_url`.
+For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector. By default each variable export writes at most 1000 full-profile graph images. Add `--export-uncertainty` to generate and tile one uncertainty map for each variable; the viewer hides the Uncertainty option when a manifest does not include `uncertainty_tiles_url`. Add `--export-temporal-consistency` to also write and upload `inference/outputs/global_variables_<YYYY>_W<WW>/temporal/`; when the normal hosted path ends in `/globe`, the temporal upload path defaults to the sibling `/temporal` prefix.
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
@@ -234,6 +249,8 @@ For the production globe with both variables, run separate temperature and salin
   --temperature-checkpoint logs/<temperature-run>/best.ckpt \
   --salinity-checkpoint logs/<salinity-run>/best.ckpt \
   --device cuda \
+  --export-temporal-consistency \
+  --temporal-week-count 7 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
   --rclone-remote r2:depth-data/inference_production/globe \
   --rclone-sync-scope globe

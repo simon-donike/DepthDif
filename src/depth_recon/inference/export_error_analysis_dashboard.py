@@ -515,6 +515,383 @@ def _top_cells(
     return ranked[: int(limit)]
 
 
+def _unavailable_uncertainty_reliability(reason: str) -> dict[str, Any]:
+    """Return the dashboard payload used when uncertainty calibration is unavailable."""
+    return {"available": False, "reason": str(reason)}
+
+
+def _filter_ocean_paired_points(
+    error_values: np.ndarray,
+    uncertainty_values: np.ndarray,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    land_mask_path: Path | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Drop paired uncertainty/error points that fall on land-mask pixels."""
+    if land_mask_path is None:
+        return error_values, uncertainty_values, lons, lats
+
+    with rasterio.open(land_mask_path) as mask_ds:
+        land_mask = mask_ds.read(1, masked=False)
+        rows, cols = rasterio.transform.rowcol(
+            mask_ds.transform,
+            _normalize_longitudes(lons),
+            lats,
+        )
+
+    rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+    inside = (
+        (rows >= 0)
+        & (rows < land_mask.shape[0])
+        & (cols >= 0)
+        & (cols < land_mask.shape[1])
+    )
+    ocean = np.zeros_like(inside, dtype=bool)
+    if np.any(inside):
+        # The packaged world mask stores land as 1 and ocean as 0.
+        land = np.asarray(land_mask[rows[inside], cols[inside]], dtype=np.float32) > 0.5
+        ocean[inside] = ~land
+    return error_values[ocean], uncertainty_values[ocean], lons[ocean], lats[ocean]
+
+
+def _valid_paired_raster_arrays(
+    *,
+    error_path: Path,
+    uncertainty_path: Path,
+    land_mask_path: Path | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return aligned finite ocean uncertainty/error values and lon/lat coordinates."""
+    with (
+        rasterio.open(error_path) as error_ds,
+        rasterio.open(uncertainty_path) as uncertainty_ds,
+    ):
+        if (error_ds.height, error_ds.width) != (
+            uncertainty_ds.height,
+            uncertainty_ds.width,
+        ):
+            raise ValueError(
+                "Uncertainty raster shape must match absolute-error raster shape: "
+                f"{(uncertainty_ds.height, uncertainty_ds.width)} != "
+                f"{(error_ds.height, error_ds.width)}."
+            )
+        if error_ds.crs != uncertainty_ds.crs:
+            raise ValueError(
+                "Uncertainty raster CRS must match absolute-error raster CRS: "
+                f"{uncertainty_ds.crs} != {error_ds.crs}."
+            )
+        if not error_ds.transform.almost_equals(uncertainty_ds.transform):
+            raise ValueError(
+                "Uncertainty raster transform must match absolute-error raster transform."
+            )
+
+        error_data = error_ds.read(1, masked=False).astype(np.float64, copy=False)
+        uncertainty_data = uncertainty_ds.read(1, masked=False).astype(
+            np.float64, copy=False
+        )
+        valid = np.isfinite(error_data) & np.isfinite(uncertainty_data)
+        if error_ds.nodata is not None and np.isfinite(float(error_ds.nodata)):
+            valid &= ~np.isclose(error_data, float(error_ds.nodata), atol=0.0, rtol=0.0)
+        if uncertainty_ds.nodata is not None and np.isfinite(
+            float(uncertainty_ds.nodata)
+        ):
+            valid &= ~np.isclose(
+                uncertainty_data,
+                float(uncertainty_ds.nodata),
+                atol=0.0,
+                rtol=0.0,
+            )
+        row_idx, col_idx = np.nonzero(valid)
+        if row_idx.size == 0:
+            return (
+                np.asarray([], dtype=np.float64),
+                np.asarray([], dtype=np.float64),
+                np.asarray([], dtype=np.float64),
+                np.asarray([], dtype=np.float64),
+            )
+        xs, ys = rasterio.transform.xy(
+            error_ds.transform,
+            row_idx,
+            col_idx,
+            offset="center",
+        )
+
+    errors = error_data[row_idx, col_idx].astype(np.float64, copy=False)
+    uncertainties = uncertainty_data[row_idx, col_idx].astype(np.float64, copy=False)
+    lons = np.asarray(xs, dtype=np.float64)
+    lats = np.asarray(ys, dtype=np.float64)
+    return _filter_ocean_paired_points(
+        errors,
+        uncertainties,
+        lons,
+        lats,
+        land_mask_path=land_mask_path,
+    )
+
+
+def _paired_summary(
+    error_values: np.ndarray, uncertainty_values: np.ndarray
+) -> dict[str, float | int | None]:
+    """Summarize paired actual-error and uncertainty values."""
+    errors = np.asarray(error_values, dtype=np.float64)
+    uncertainties = np.asarray(uncertainty_values, dtype=np.float64)
+    valid = np.isfinite(errors) & np.isfinite(uncertainties)
+    errors = errors[valid]
+    uncertainties = uncertainties[valid]
+    if errors.size == 0:
+        return {
+            "count": 0,
+            "error_median": None,
+            "error_mean": None,
+            "error_p90": None,
+            "error_p95": None,
+            "uncertainty_median": None,
+            "uncertainty_mean": None,
+            "uncertainty_p90": None,
+            "uncertainty_p95": None,
+            "calibration_bias": None,
+            "calibration_ratio": None,
+            "mean_absolute_gap": None,
+        }
+
+    error_mean = float(np.nanmean(errors))
+    uncertainty_mean = float(np.nanmean(uncertainties))
+    return {
+        "count": int(errors.size),
+        "error_median": float(np.nanmedian(errors)),
+        "error_mean": error_mean,
+        "error_p90": float(np.nanpercentile(errors, 90.0)),
+        "error_p95": float(np.nanpercentile(errors, 95.0)),
+        "uncertainty_median": float(np.nanmedian(uncertainties)),
+        "uncertainty_mean": uncertainty_mean,
+        "uncertainty_p90": float(np.nanpercentile(uncertainties, 90.0)),
+        "uncertainty_p95": float(np.nanpercentile(uncertainties, 95.0)),
+        "calibration_bias": float(error_mean - uncertainty_mean),
+        "calibration_ratio": (
+            None
+            if abs(uncertainty_mean) <= 1.0e-12
+            else float(error_mean / uncertainty_mean)
+        ),
+        "mean_absolute_gap": float(np.nanmean(np.abs(errors - uncertainties))),
+    }
+
+
+def _aggregate_paired_by_basin(
+    error_values: np.ndarray,
+    uncertainty_values: np.ndarray,
+    basin_labels: np.ndarray,
+) -> list[dict[str, Any]]:
+    """Aggregate paired uncertainty calibration values by ocean basin."""
+    rows: list[dict[str, Any]] = []
+    for basin in BASIN_NAMES:
+        mask = basin_labels == basin
+        row = _paired_summary(error_values[mask], uncertainty_values[mask])
+        row["name"] = basin
+        rows.append(row)
+    return rows
+
+
+def _aggregate_paired_by_grid(
+    error_values: np.ndarray,
+    uncertainty_values: np.ndarray,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    grid_size_degrees: float,
+    basin_labels: np.ndarray,
+) -> list[dict[str, Any]]:
+    """Aggregate paired uncertainty calibration values into fixed grid cells."""
+    grid_size = float(grid_size_degrees)
+    if grid_size <= 0.0:
+        raise ValueError("grid_size_degrees must be positive.")
+    if error_values.size == 0:
+        return []
+
+    normalized_lons = _normalize_longitudes(lons)
+    lon_bins = np.floor((normalized_lons + 180.0) / grid_size).astype(np.int64)
+    lat_bins = np.floor((np.asarray(lats) + 90.0) / grid_size).astype(np.int64)
+    lon_bins = np.clip(lon_bins, 0, int(np.ceil(360.0 / grid_size)) - 1)
+    lat_bins = np.clip(lat_bins, 0, int(np.ceil(180.0 / grid_size)) - 1)
+
+    order = np.lexsort((lon_bins, lat_bins))
+    sorted_lat_bins = lat_bins[order]
+    sorted_lon_bins = lon_bins[order]
+    sorted_errors = error_values[order]
+    sorted_uncertainties = uncertainty_values[order]
+    sorted_labels = basin_labels[order]
+    key_changes = np.flatnonzero(
+        (np.diff(sorted_lat_bins) != 0) | (np.diff(sorted_lon_bins) != 0)
+    )
+    starts = np.concatenate(([0], key_changes + 1))
+    stops = np.concatenate((key_changes + 1, [sorted_errors.size]))
+
+    cells: list[dict[str, Any]] = []
+    for start, stop in zip(starts, stops):
+        lat_bin = int(sorted_lat_bins[start])
+        lon_bin = int(sorted_lon_bins[start])
+        west, south, east, north = _grid_cell_bounds(
+            lat_bin,
+            lon_bin,
+            grid_size_degrees=grid_size,
+        )
+        stats = _paired_summary(
+            sorted_errors[start:stop],
+            sorted_uncertainties[start:stop],
+        )
+        if int(stats["count"] or 0) <= 0:
+            continue
+        stats.update(
+            {
+                "id": _grid_cell_id(lat_bin, lon_bin),
+                "label": f"{south:.0f} to {north:.0f} lat, {west:.0f} to {east:.0f} lon",
+                "basin": _dominant_basin(sorted_labels[start:stop]),
+                "west": float(west),
+                "south": float(south),
+                "east": float(east),
+                "north": float(north),
+                "center_lon": float((west + east) / 2.0),
+                "center_lat": float((south + north) / 2.0),
+            }
+        )
+        cells.append(stats)
+    cells.sort(key=lambda cell: (float(cell["south"]), float(cell["west"])))
+    return cells
+
+
+def _build_uncertainty_bins(
+    error_values: np.ndarray,
+    uncertainty_values: np.ndarray,
+    *,
+    bin_count: int = 10,
+) -> list[dict[str, Any]]:
+    """Build quantile-binned reliability rows sorted by uncertainty."""
+    if error_values.size == 0:
+        return []
+    order = np.argsort(uncertainty_values)
+    groups = np.array_split(order, max(1, min(int(bin_count), int(order.size))))
+    bins: list[dict[str, Any]] = []
+    for bin_index, group in enumerate(groups):
+        if group.size == 0:
+            continue
+        uncertainties = uncertainty_values[group]
+        row = _paired_summary(error_values[group], uncertainties)
+        row.update(
+            {
+                "bin_index": int(bin_index),
+                "uncertainty_min": float(np.nanmin(uncertainties)),
+                "uncertainty_max": float(np.nanmax(uncertainties)),
+            }
+        )
+        bins.append(row)
+    return bins
+
+
+def _highlight_uncertainty_cells(
+    cells: list[dict[str, Any]],
+    *,
+    error_values: np.ndarray,
+    uncertainty_values: np.ndarray,
+    top_cell_count: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return cells where uncertainty and realized error disagree most visibly."""
+    if not cells or error_values.size == 0:
+        return {"low_uncertainty_high_error": [], "high_uncertainty_low_error": []}
+
+    error_p75 = float(np.nanpercentile(error_values, 75.0))
+    error_p25 = float(np.nanpercentile(error_values, 25.0))
+    uncertainty_p75 = float(np.nanpercentile(uncertainty_values, 75.0))
+    uncertainty_p25 = float(np.nanpercentile(uncertainty_values, 25.0))
+
+    overconfident = [
+        cell
+        for cell in cells
+        if cell.get("uncertainty_median") is not None
+        and cell.get("error_median") is not None
+        and float(cell["uncertainty_median"]) <= uncertainty_p25
+        and float(cell["error_median"]) >= error_p75
+    ]
+    if not overconfident:
+        overconfident = [
+            cell
+            for cell in cells
+            if cell.get("calibration_bias") is not None
+            and float(cell["calibration_bias"]) > 0.0
+        ]
+    overconfident.sort(
+        key=lambda cell: float(cell.get("calibration_bias") or 0.0),
+        reverse=True,
+    )
+
+    conservative = [
+        cell
+        for cell in cells
+        if cell.get("uncertainty_median") is not None
+        and cell.get("error_median") is not None
+        and float(cell["uncertainty_median"]) >= uncertainty_p75
+        and float(cell["error_median"]) <= error_p25
+    ]
+    if not conservative:
+        conservative = [
+            cell
+            for cell in cells
+            if cell.get("calibration_bias") is not None
+            and float(cell["calibration_bias"]) < 0.0
+        ]
+    conservative.sort(key=lambda cell: -float(cell.get("calibration_bias") or 0.0))
+
+    limit = max(1, int(top_cell_count))
+    return {
+        "low_uncertainty_high_error": overconfident[:limit],
+        "high_uncertainty_low_error": conservative[:limit],
+    }
+
+
+def build_uncertainty_reliability_payload(
+    *,
+    error_path: Path,
+    uncertainty_path: Path,
+    depth_label: str,
+    grid_size_degrees: float,
+    top_cell_count: int,
+    land_mask_path: Path | None,
+) -> dict[str, Any]:
+    """Build uncertainty-vs-actual-error calibration data for the dashboard."""
+    error_values, uncertainty_values, lons, lats = _valid_paired_raster_arrays(
+        error_path=Path(error_path),
+        uncertainty_path=Path(uncertainty_path),
+        land_mask_path=land_mask_path,
+    )
+    basin_labels = _basin_label_array(lons, lats)
+    grid_cells = _aggregate_paired_by_grid(
+        error_values,
+        uncertainty_values,
+        lons,
+        lats,
+        grid_size_degrees=grid_size_degrees,
+        basin_labels=basin_labels,
+    )
+    return {
+        "available": True,
+        "description": "Paired stochastic uncertainty standard deviation compared with realized absolute error for the exported uncertainty raster.",
+        "depth_label": str(depth_label),
+        "error_raster": str(error_path),
+        "uncertainty_raster": str(uncertainty_path),
+        "global": _paired_summary(error_values, uncertainty_values),
+        "bins": _build_uncertainty_bins(error_values, uncertainty_values),
+        "basins": _aggregate_paired_by_basin(
+            error_values, uncertainty_values, basin_labels
+        ),
+        "grid_cells": grid_cells,
+        "highlights": _highlight_uncertainty_cells(
+            grid_cells,
+            error_values=error_values,
+            uncertainty_values=uncertainty_values,
+            top_cell_count=top_cell_count,
+        ),
+    }
+
+
 def _aggregate_summary_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Average per-depth metric summaries and sum their valid pixel counts."""
     total_count = sum(int(row.get("count", 0) or 0) for row in rows)
@@ -776,6 +1153,23 @@ def build_error_analysis_payload(
         raise FileNotFoundError(
             "No absolute-error GeoTIFFs were found in the run summary."
         )
+    reliability_error_path = _absolute_error_path or Path(
+        depth_exports[0]["absolute_error_path"]
+    )
+    reliability_depth_label = str(depth_exports[0].get("label", "Exported depth"))
+    if _uncertainty_path is None:
+        uncertainty_reliability = _unavailable_uncertainty_reliability(
+            "No uncertainty GeoTIFF was exported for this run."
+        )
+    else:
+        uncertainty_reliability = build_uncertainty_reliability_payload(
+            error_path=Path(reliability_error_path),
+            uncertainty_path=Path(_uncertainty_path),
+            depth_label=reliability_depth_label,
+            grid_size_degrees=grid_size_degrees,
+            top_cell_count=top_cell_count,
+            land_mask_path=land_mask_path,
+        )
 
     worker_count = max(1, int(analysis_workers))
     worker_count = min(worker_count, len(depth_exports))
@@ -858,6 +1252,7 @@ def build_error_analysis_payload(
             "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
         },
         "depth_levels": displayed_depth_levels,
+        "uncertainty_reliability": uncertainty_reliability,
     }
 
 
@@ -937,6 +1332,9 @@ def build_error_analysis_payload_from_depth_arrays(
             "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
         },
         "depth_levels": displayed_depth_levels,
+        "uncertainty_reliability": _unavailable_uncertainty_reliability(
+            "No uncertainty arrays were supplied for this in-memory analysis payload."
+        ),
     }
 
 

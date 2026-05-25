@@ -93,5 +93,6 @@ nav:
       - Second Dataset Results: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
   - Analysis Dashboard: https://depthdif.donike.net/analysis/
+  - Temporal Dashboard: https://depthdif.donike.net/temporal/
   - 3D Globe: https://depthdif.donike.net/globe/
   - API Reference: api.md

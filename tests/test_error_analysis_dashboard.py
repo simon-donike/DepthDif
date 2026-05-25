@@ -199,6 +199,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             error_10m = run_dir / "10m_error.tif"
             prediction = run_dir / "surface_prediction.tif"
             ground_truth = run_dir / "surface_glorys.tif"
+            uncertainty = run_dir / "surface_uncertainty.tif"
             transform = from_origin(-180.0, 90.0, 90.0, 45.0)
             data = np.asarray(
                 [
@@ -231,6 +232,22 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
                     raster[data == -9999.0] = -9999.0
                     ds.write(raster.reshape(1, 4, 4))
 
+            with rasterio.open(
+                uncertainty,
+                "w",
+                driver="GTiff",
+                height=4,
+                width=4,
+                count=1,
+                dtype="float32",
+                crs="EPSG:4326",
+                transform=transform,
+                nodata=-9999.0,
+            ) as ds:
+                raster = data * 0.5
+                raster[data == -9999.0] = -9999.0
+                ds.write(raster.reshape(1, 4, 4))
+
             (run_dir / "run_summary.yaml").write_text(
                 yaml.safe_dump(
                     {
@@ -240,6 +257,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
                         "variable": "temperature",
                         "prediction_tif_path": prediction.name,
                         "ground_truth_tif_path": ground_truth.name,
+                        "uncertainty_tif_path": uncertainty.name,
                         "depth_exports": [
                             {
                                 "suffix": "surface",
@@ -295,6 +313,15 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             self.assertEqual(payload["depth_levels"][0]["depth_count"], 2)
             self.assertEqual(payload["depth_levels"][0]["global"]["count"], 30)
             self.assertEqual(payload["depth_levels"][1]["global"]["count"], 15)
+            reliability = payload["uncertainty_reliability"]
+            self.assertTrue(reliability["available"])
+            self.assertEqual(reliability["depth_label"], "Surface")
+            self.assertEqual(reliability["global"]["count"], 15)
+            self.assertGreater(len(reliability["bins"]), 0)
+            self.assertGreater(len(reliability["grid_cells"]), 0)
+            self.assertIn("low_uncertainty_high_error", reliability["highlights"])
+            self.assertIn("high_uncertainty_low_error", reliability["highlights"])
+            self.assertIn("basins", reliability)
             self.assertIn("basins", payload["depth_levels"][0])
             self.assertIn("grid_cells", payload["depth_levels"][0])
             self.assertEqual(len(payload["depth_levels"][0]["top_cells"]["p95"]), 3)
@@ -319,11 +346,31 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn('class="standalone-analysis-root"', html)
         self.assertIn("Analysis Dashboard", html)
         self.assertIn('id="analysis-map"', html)
+        self.assertIn('id="analysis-dashboard-select"', html)
+        self.assertLess(
+            html.index('id="analysis-dashboard-select"'),
+            html.index('id="analysis-modality-select"'),
+        )
+        self.assertIn('href="../temporal/"', html)
+        self.assertIn("analysis-map-layout", html)
+        self.assertIn("analysis-basin-selector", html)
+        self.assertLess(
+            html.index('id="analysis-map"'),
+            html.index('id="analysis-basin-ranking"'),
+        )
+        self.assertLess(
+            html.index('id="analysis-basin-ranking"'),
+            html.index('class="analysis-charts"'),
+        )
         self.assertIn('id="analysis-depth-profile"', html)
         self.assertIn('id="analysis-depth-scale-toggle"', html)
         self.assertIn('id="analysis-basin-fan-toggle"', html)
         self.assertIn('id="analysis-basin-chart"', html)
+        self.assertIn('id="analysis-uncertainty-chart"', html)
+        self.assertIn('id="analysis-uncertainty-highlights"', html)
+        self.assertIn('id="analysis-detail-summary"', html)
         self.assertIn("analysis-panel--depth-profile", html)
+        self.assertIn("analysis-panel--detail", html)
         self.assertIn("Basin Selector", html)
         self.assertNotIn("Rankings", html)
         self.assertNotIn("analysis-kpis", html)
@@ -332,8 +379,8 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('class="analysis-charts"'),
         )
         self.assertLess(
-            html.index("analysis-panel--rankings"),
-            html.index('id="analysis-basin-chart"'),
+            html.index("analysis-panel--uncertainty"),
+            html.index('id="analysis-detail-summary"'),
         )
         self.assertIn("analysis-dashboard.js", html)
         self.assertIn("leaflet@1.9.4", html)
@@ -352,12 +399,25 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysis-scale-toggle", css)
         self.assertIn("analysis-depth-actions", css)
         self.assertIn("analysis-panel--depth-profile", css)
+        self.assertIn("analysis-map-layout", css)
+        self.assertIn("analysis-basin-selector", css)
+        self.assertIn("analysis-uncertainty-highlights", css)
+        self.assertIn("analysis-detail-summary", css)
         self.assertIn("repeat(2, minmax(0, 1fr))", css)
+        self.assertIn("minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr)", css)
         self.assertIn("analysis-chart", css)
         self.assertIn("DEFAULT_GLOBE_CONFIG_URL", script)
         self.assertIn("function loadAllAnalysisData", script)
         self.assertIn("analysisSourcesFromConfig", script)
         self.assertIn("analysis-modality-select", script)
+        self.assertIn("function setupDashboardSelect", script)
+        self.assertIn('window.location.href = "../temporal/"', script)
+        self.assertIn("function renderDetailSummary", script)
+        self.assertIn("function renderUncertaintyReliability", script)
+        self.assertIn("uncertainty_reliability", script)
+        self.assertIn("low_uncertainty_high_error", script)
+        self.assertIn("analysis-uncertainty-chart", script)
+        self.assertIn("analysis-detail-summary", script)
         self.assertIn("function renderLoadFailure", script)
         self.assertIn("validateAnalysisPayload", script)
         self.assertIn("analysis-load-failed", script)

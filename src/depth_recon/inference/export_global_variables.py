@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -24,6 +25,11 @@ from depth_recon.inference.export_global import (
     DEFAULT_UNCERTAINTY_NUM_SAMPLES,
     _build_parser as _build_single_export_parser,
     run_global_inference,
+)
+from depth_recon.inference.export_temporal_consistency_dashboard import (
+    DEFAULT_GRID_SIZE_DEGREES,
+    DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME,
+    export_temporal_dashboard_assets,
 )
 
 
@@ -128,6 +134,65 @@ def _build_parser() -> argparse.ArgumentParser:
         "--extra-zoom-levels", type=int, default=DEFAULT_EXTRA_ZOOM_LEVELS
     )
     parser.add_argument("--strict-load", action="store_true")
+    parser.add_argument(
+        "--export-temporal-consistency",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Also run consecutive weekly exports and package temporal consistency "
+            "dashboard assets under <output-name>/temporal/."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-week-count",
+        type=int,
+        default=3,
+        help="Number of consecutive ISO weeks included when temporal consistency is enabled.",
+    )
+    parser.add_argument(
+        "--temporal-start-year",
+        type=int,
+        default=None,
+        help="Optional temporal window start ISO year. Defaults to --year.",
+    )
+    parser.add_argument(
+        "--temporal-start-iso-week",
+        type=int,
+        default=None,
+        help="Optional temporal window start ISO week. Defaults to --iso-week.",
+    )
+    parser.add_argument(
+        "--temporal-public-base-url",
+        type=str,
+        default=None,
+        help=(
+            "Optional hosted base URL for temporal dashboard assets. Defaults to a "
+            "sibling 'temporal' URL next to --public-base-url when provided."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-rclone-remote",
+        type=str,
+        default=None,
+        help=(
+            "Optional rclone destination for temporal dashboard assets. Defaults to "
+            "a sibling 'temporal' remote next to --rclone-remote when provided."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-grid-size-degrees",
+        type=float,
+        default=DEFAULT_GRID_SIZE_DEGREES,
+    )
+    parser.add_argument("--temporal-top-cell-count", type=int, default=24)
+    parser.add_argument(
+        "--reuse-existing-temporal-runs",
+        action="store_true",
+        help=(
+            "Reuse already exported extra temporal week folders when their "
+            "run_summary.yaml files exist."
+        ),
+    )
     return parser
 
 
@@ -140,6 +205,55 @@ def _append_optional_arg(argv: list[str], flag: str, value: Any) -> None:
         argv.extend(str(item) for item in value)
         return
     argv.extend([flag, str(value)])
+
+
+def _iso_week_sequence(
+    *,
+    start_year: int,
+    start_iso_week: int,
+    week_count: int,
+) -> list[tuple[int, int]]:
+    """Return consecutive ISO `(year, week)` pairs for temporal exports."""
+    if int(week_count) < 2:
+        raise ValueError("--temporal-week-count must be at least 2.")
+    start = date.fromisocalendar(int(start_year), int(start_iso_week), 3)
+    weeks: list[tuple[int, int]] = []
+    for offset in range(int(week_count)):
+        iso = (start + timedelta(weeks=offset)).isocalendar()
+        weeks.append((int(iso.year), int(iso.week)))
+    return weeks
+
+
+def _weekly_output_name(year: int, iso_week: int) -> str:
+    """Return a stable output folder name for one temporal week."""
+    return f"{int(year)}_W{int(iso_week):02d}"
+
+
+def _sibling_asset_location(value: str | None, sibling_name: str) -> str | None:
+    """Return a sibling URL/remote path with the final path component replaced."""
+    if value is None:
+        return None
+    raw = str(value).rstrip("/")
+    prefix, separator, leaf = raw.rpartition("/")
+    if leaf == sibling_name:
+        return raw
+    if separator and leaf in {"globe", "temporal"}:
+        return f"{prefix}/{sibling_name}"
+    return f"{raw}/{sibling_name}"
+
+
+def _temporal_public_base_url(args: argparse.Namespace) -> str | None:
+    """Resolve the hosted URL base for temporal dashboard assets."""
+    if args.temporal_public_base_url is not None:
+        return str(args.temporal_public_base_url)
+    return _sibling_asset_location(args.public_base_url, "temporal")
+
+
+def _temporal_rclone_remote(args: argparse.Namespace) -> str | None:
+    """Resolve the rclone destination for temporal dashboard assets."""
+    if args.temporal_rclone_remote is not None:
+        return str(args.temporal_rclone_remote)
+    return _sibling_asset_location(args.rclone_remote, "temporal")
 
 
 def _single_export_args(
@@ -203,6 +317,160 @@ def _single_export_args(
     return _build_single_export_parser().parse_args(argv)
 
 
+def _temporal_single_export_args(
+    args: argparse.Namespace,
+    *,
+    scenario: str,
+    checkpoint_path: str,
+    year: int,
+    iso_week: int,
+    output_root: Path,
+) -> argparse.Namespace:
+    """Materialize argparse args for one extra temporal week export."""
+    argv = [
+        "--config",
+        str(args.config),
+        "--scenario",
+        scenario,
+        "--checkpoint",
+        str(checkpoint_path),
+        "--year",
+        str(int(year)),
+        "--iso-week",
+        str(int(iso_week)),
+        "--split",
+        "all",
+        "--device",
+        str(args.device),
+        "--output-root",
+        str(output_root),
+        "--output-name",
+        _weekly_output_name(year, iso_week),
+        "--sigma",
+        str(float(args.sigma)),
+        "--full-sample-count",
+        "0",
+        "--seed",
+        str(int(args.seed)),
+        "--export-ground-truth",
+        "--no-export-uncertainty",
+    ]
+    if not bool(args.multi_gpu):
+        argv.append("--no-multi-gpu")
+    if bool(args.strict_load):
+        argv.append("--strict-load")
+    for override in args.config_overrides or []:
+        argv.extend(["--set", str(override)])
+    _append_optional_arg(argv, "--batch-size", args.batch_size)
+    _append_optional_arg(argv, "--inference-num-workers", args.inference_num_workers)
+    _append_optional_arg(
+        argv, "--inference-prefetch-factor", args.inference_prefetch_factor
+    )
+    _append_optional_arg(argv, "--patch-stride", args.patch_stride)
+    _append_optional_arg(argv, "--min-ocean-fraction", args.min_ocean_fraction)
+    _append_optional_arg(argv, "--rectangle", args.rectangle)
+    return _build_single_export_parser().parse_args(argv)
+
+
+def _run_or_reuse_temporal_week(
+    args: argparse.Namespace,
+    *,
+    scenario: str,
+    checkpoint_path: str,
+    year: int,
+    iso_week: int,
+    output_root: Path,
+) -> Path:
+    """Run or reuse one extra week needed for temporal aggregation."""
+    run_dir = output_root / _weekly_output_name(year, iso_week)
+    if (
+        bool(args.reuse_existing_temporal_runs)
+        and (run_dir / "run_summary.yaml").exists()
+    ):
+        print(f"Reusing existing temporal {scenario} run: {run_dir}")
+        return run_dir
+    result = run_global_inference(
+        _temporal_single_export_args(
+            args,
+            scenario=scenario,
+            checkpoint_path=checkpoint_path,
+            year=year,
+            iso_week=iso_week,
+            output_root=output_root,
+        )
+    )
+    return Path(result.run_dir)
+
+
+def _export_temporal_consistency_for_standard_run(
+    args: argparse.Namespace,
+    *,
+    paired_run_dir: Path,
+    temperature_result: Any,
+    salinity_result: Any,
+) -> dict[str, Any]:
+    """Run extra temporal weeks and package temporal dashboard assets."""
+    start_year = int(args.temporal_start_year or args.year)
+    start_iso_week = int(args.temporal_start_iso_week or args.iso_week)
+    weeks = _iso_week_sequence(
+        start_year=start_year,
+        start_iso_week=start_iso_week,
+        week_count=int(args.temporal_week_count),
+    )
+    main_week = (int(args.year), int(args.iso_week))
+    existing_main_runs = {
+        "temperature": Path(temperature_result.run_dir),
+        "salinity": Path(salinity_result.run_dir),
+    }
+    checkpoints = {
+        "temperature": str(args.temperature_checkpoint),
+        "salinity": str(args.salinity_checkpoint),
+    }
+    variable_run_dirs: dict[str, list[Path]] = {"temperature": [], "salinity": []}
+    for variable in ("temperature", "salinity"):
+        temporal_root = paired_run_dir / "temporal_runs" / variable
+        temporal_root.mkdir(parents=True, exist_ok=True)
+        for year, iso_week in weeks:
+            if (int(year), int(iso_week)) == main_week:
+                variable_run_dirs[variable].append(existing_main_runs[variable])
+                continue
+            variable_run_dirs[variable].append(
+                _run_or_reuse_temporal_week(
+                    args,
+                    scenario=variable,
+                    checkpoint_path=checkpoints[variable],
+                    year=year,
+                    iso_week=iso_week,
+                    output_root=temporal_root,
+                )
+            )
+
+    temporal_result = export_temporal_dashboard_assets(
+        variable_run_dirs=variable_run_dirs,
+        output_dir=paired_run_dir / DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME,
+        public_base_url=_temporal_public_base_url(args),
+        grid_size_degrees=float(args.temporal_grid_size_degrees),
+        top_cell_count=int(args.temporal_top_cell_count),
+        rclone_remote=_temporal_rclone_remote(args),
+        copy_dashboard=True,
+    )
+    return {
+        "enabled": True,
+        "start_iso_year": start_year,
+        "start_iso_week": start_iso_week,
+        "week_count": int(args.temporal_week_count),
+        "weeks": [
+            {"iso_year": int(year), "iso_week": int(iso_week)}
+            for year, iso_week in weeks
+        ],
+        "variable_run_dirs": {
+            variable: [str(run_dir) for run_dir in run_dirs]
+            for variable, run_dirs in variable_run_dirs.items()
+        },
+        "dashboard": temporal_result,
+    }
+
+
 def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
     """Run paired variable exports and package one combined globe directory."""
     output_name = args.output_name or _default_output_name(args.year, args.iso_week)
@@ -242,6 +510,15 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
         rclone_sync_scope=args.rclone_sync_scope,
         extra_zoom_levels=args.extra_zoom_levels,
     )
+    temporal_consistency_result = None
+    if bool(args.export_temporal_consistency):
+        temporal_consistency_result = _export_temporal_consistency_for_standard_run(
+            args,
+            paired_run_dir=paired_run_dir,
+            temperature_result=temperature_result,
+            salinity_result=salinity_result,
+        )
+
     summary = {
         "selected_date": int(temperature_result.selected_date),
         "iso_year": int(temperature_result.iso_year),
@@ -272,6 +549,7 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
             int(args.uncertainty_num_samples) if bool(args.export_uncertainty) else None
         ),
         "globe_packaging": packaging_result,
+        "temporal_consistency": temporal_consistency_result,
     }
     summary_path = paired_run_dir / "run_summary.yaml"
     with summary_path.open("w", encoding="utf-8") as f:

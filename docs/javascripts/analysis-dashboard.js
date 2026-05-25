@@ -124,13 +124,13 @@
   }
 
   function clearDashboardContent() {
-    ["analysis-basin-ranking"].forEach((id) => {
+    ["analysis-basin-ranking", "analysis-detail-summary", "analysis-uncertainty-highlights"].forEach((id) => {
       const element = $(id);
       if (element) {
         element.innerHTML = "";
       }
     });
-    ["analysis-depth-profile", "analysis-basin-chart"].forEach((id) => {
+    ["analysis-depth-profile", "analysis-uncertainty-chart", "analysis-basin-chart"].forEach((id) => {
       const element = $(id);
       if (element && window.Plotly) {
         window.Plotly.purge(element);
@@ -152,6 +152,8 @@
     $("analysis-run-label").textContent = "Analysis data is unavailable";
     $("analysis-map-caption").textContent = "No analysis data loaded";
     $("analysis-profile-caption").textContent = "No depth profile loaded";
+    $("analysis-detail-caption").textContent = "No selected depth loaded";
+    $("analysis-uncertainty-caption").textContent = "No uncertainty reliability data loaded";
     $("analysis-selection-pill").textContent = "Unavailable";
     const existing = document.querySelector(".analysis-error-state");
     if (existing) {
@@ -281,6 +283,21 @@
     const date = run.target_date || run.selected_date || "unknown date";
     const week = run.iso_year && run.iso_week ? `ISO ${run.iso_year}-W${String(run.iso_week).padStart(2, "0")}` : "single run";
     $("analysis-run-label").textContent = `${variable.label || state.activeVariable || "Variable"} absolute error | ${date} | ${week}`;
+  }
+
+  function setupDashboardSelect() {
+    const dashboardSelect = $("analysis-dashboard-select");
+    if (!dashboardSelect) {
+      return;
+    }
+    dashboardSelect.value = "analysis";
+    dashboardSelect.addEventListener("change", function () {
+      if (dashboardSelect.value === "temporal") {
+        window.location.href = "../temporal/";
+        return;
+      }
+      dashboardSelect.value = "analysis";
+    });
   }
 
   function setupControls() {
@@ -937,6 +954,159 @@
     });
   }
 
+  function detailCard(label, value) {
+    return `<div class="analysis-detail-card"><span class="analysis-detail-label">${escapeHtml(label)}</span><span class="analysis-detail-value">${escapeHtml(value)}</span></div>`;
+  }
+
+  function renderDetailSummary() {
+    const depth = activeDepth();
+    const stats = focusedStats(depth) || {};
+    const details = [
+      ["Focus", focusLabel()],
+      ["Depth", depth.label],
+      [metricLabel(state.metric), formatMetric(stats[state.metric])],
+      ["Mean", formatMetric(stats.mean)],
+      ["P95", formatMetric(stats.p95)],
+      ["Count", formatPixelCount(stats.count, true)],
+    ];
+    $("analysis-detail-caption").textContent = `${focusLabel()} summary at ${depth.label}`;
+    $("analysis-detail-summary").innerHTML = details.map((item) => detailCard(item[0], item[1])).join("");
+  }
+
+  function uncertaintyReliability() {
+    return data().uncertainty_reliability || { available: false, reason: "No uncertainty reliability payload was packaged." };
+  }
+
+  function uncertaintyValue(value) {
+    const formatted = formatNumber(value, 2);
+    return formatted === "n/a" ? formatted : `${formatted} ${unitLabel()}`.trim();
+  }
+
+  function highlightButton(title, cell) {
+    if (!cell) {
+      return `<div class="analysis-uncertainty-empty">${escapeHtml(title)}: n/a</div>`;
+    }
+    const bias = uncertaintyValue(cell.calibration_bias);
+    return `<button type="button" class="analysis-highlight-button" data-cell-id="${escapeHtml(cell.id)}" data-label="${escapeHtml(cell.label)}">
+      <span><span class="analysis-highlight-title">${escapeHtml(title)}</span><span class="analysis-highlight-name">${escapeHtml(cell.label)}</span></span>
+      <span class="analysis-highlight-value">${escapeHtml(bias)}</span>
+    </button>`;
+  }
+
+  function renderUncertaintyHighlights(reliability) {
+    const highlights = reliability.highlights || {};
+    const lowUncertaintyHighError = (highlights.low_uncertainty_high_error || [])[0] || null;
+    const highUncertaintyLowError = (highlights.high_uncertainty_low_error || [])[0] || null;
+    $("analysis-uncertainty-highlights").innerHTML = [
+      highlightButton("Low uncertainty / high error", lowUncertaintyHighError),
+      highlightButton("High uncertainty / low error", highUncertaintyLowError),
+    ].join("");
+    document.querySelectorAll(".analysis-highlight-button[data-cell-id]").forEach((button) => {
+      button.addEventListener("click", function () {
+        state.focus = { type: "cell", id: button.dataset.cellId, label: button.dataset.label };
+        render();
+      });
+    });
+  }
+
+  function finiteReliabilityValues(reliability) {
+    const values = [];
+    for (const cell of reliability.grid_cells || []) {
+      for (const key of ["uncertainty_median", "error_median"]) {
+        const value = Number(cell[key]);
+        if (Number.isFinite(value)) {
+          values.push(value);
+        }
+      }
+    }
+    return values;
+  }
+
+  function renderUncertaintyReliability() {
+    const reliability = uncertaintyReliability();
+    const chart = $("analysis-uncertainty-chart");
+    if (!reliability.available) {
+      if (chart && window.Plotly) {
+        window.Plotly.purge(chart);
+      }
+      $("analysis-uncertainty-caption").textContent = reliability.reason || "No uncertainty reliability data available";
+      $("analysis-uncertainty-highlights").innerHTML = '<div class="analysis-uncertainty-empty">Run with <code>--export-uncertainty</code> to enable calibration diagnostics.</div>';
+      return;
+    }
+
+    const cells = (reliability.grid_cells || []).filter(
+      (cell) => Number.isFinite(Number(cell.uncertainty_median)) && Number.isFinite(Number(cell.error_median))
+    );
+    const bins = (reliability.bins || []).filter(
+      (bin) => Number.isFinite(Number(bin.uncertainty_mean)) && Number.isFinite(Number(bin.error_mean))
+    );
+    const maxValue = Math.max(1.0e-6, ...finiteReliabilityValues(reliability));
+    const unit = unitLabel();
+    const traces = [
+      {
+        customdata: cells.map((cell) => [cell.id, cell.label, formatPixelCount(cell.count, true), uncertaintyValue(cell.calibration_bias)]),
+        hovertemplate:
+          "%{customdata[1]}<br>" +
+          `Uncertainty: %{x:.2f} ${escapeHtml(unit)}<br>` +
+          `Actual error: %{y:.2f} ${escapeHtml(unit)}<br>` +
+          "Gap: %{customdata[3]}<br>%{customdata[2]}<extra></extra>",
+        marker: {
+          color: cells.map((cell) => (Number(cell.calibration_bias) > 0 ? "#ef5b5b" : "#7cc8ff")),
+          line: { color: "rgba(223,244,239,0.34)", width: 1 },
+          opacity: 0.72,
+          size: 8,
+        },
+        mode: "markers",
+        name: "Grid cells",
+        type: "scatter",
+        x: cells.map((cell) => cell.uncertainty_median),
+        y: cells.map((cell) => cell.error_median),
+      },
+      {
+        hovertemplate:
+          `Mean uncertainty: %{x:.2f} ${escapeHtml(unit)}<br>` +
+          `Mean error: %{y:.2f} ${escapeHtml(unit)}<extra>Binned reliability</extra>`,
+        line: { color: "#ffd166", width: 3 },
+        marker: { color: "#ffd166", size: 8 },
+        mode: "lines+markers",
+        name: "Binned reliability",
+        type: "scatter",
+        x: bins.map((bin) => bin.uncertainty_mean),
+        y: bins.map((bin) => bin.error_mean),
+      },
+      {
+        hoverinfo: "skip",
+        line: { color: "rgba(215,233,247,0.36)", dash: "dot", width: 1.5 },
+        mode: "lines",
+        name: "Ideal",
+        type: "scatter",
+        x: [0, maxValue],
+        y: [0, maxValue],
+      },
+    ];
+    const layout = plotlyLayout(`Actual error${unit ? ` (${unit})` : ""}`);
+    layout.xaxis.title = { text: `Uncertainty std${unit ? ` (${unit})` : ""}`, standoff: 8 };
+    layout.showlegend = true;
+    layout.legend = { orientation: "h", x: 0, y: 1.14, xanchor: "left", yanchor: "bottom" };
+    $("analysis-uncertainty-caption").textContent = `${reliability.depth_label || "Exported depth"} uncertainty vs realized error | ${formatPixelCount((reliability.global || {}).count, true)}`;
+    renderUncertaintyHighlights(reliability);
+    Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
+      if (typeof chart.removeAllListeners === "function") {
+        chart.removeAllListeners("plotly_click");
+      }
+      if (typeof chart.on === "function") {
+        chart.on("plotly_click", function (event) {
+          const point = event.points && event.points[0];
+          if (!point || !point.customdata || !point.customdata[0]) {
+            return;
+          }
+          state.focus = { type: "cell", id: point.customdata[0], label: point.customdata[1] };
+          render();
+        });
+      }
+    });
+  }
+
   function renderBasinChart() {
     const chart = $("analysis-basin-chart");
     const basins = activeDepth().basins.filter((basin) => basin[state.metric] !== null);
@@ -981,7 +1151,7 @@
     if (state.map) {
       state.map.invalidateSize(false);
     }
-    ["analysis-depth-profile", "analysis-basin-chart"].forEach((id) => {
+    ["analysis-depth-profile", "analysis-uncertainty-chart", "analysis-basin-chart"].forEach((id) => {
       const chart = $(id);
       if (chart && window.Plotly) {
         window.Plotly.Plots.resize(chart);
@@ -993,6 +1163,8 @@
     renderRankings();
     renderMap();
     renderDepthProfile();
+    renderUncertaintyReliability();
+    renderDetailSummary();
     renderBasinChart();
     $("analysis-selection-pill").textContent = focusLabel();
     const mapGeometryLabel = activeGridGeometryIndex() ? "coast-clipped " : "";
@@ -1076,6 +1248,7 @@
   }
 
   async function init() {
+    setupDashboardSelect();
     try {
       requireDashboardLibraries();
       await loadAllAnalysisData();
