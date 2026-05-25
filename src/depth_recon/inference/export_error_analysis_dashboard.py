@@ -21,6 +21,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from depth_recon.inference.export_cesium_globe_assets import (
+    _coerce_existing_path,
     _resolve_depth_export_artifacts,
     _resolve_land_mask_path,
     _resolve_layer_url,
@@ -518,6 +519,51 @@ def _top_cells(
 def _unavailable_uncertainty_reliability(reason: str) -> dict[str, Any]:
     """Return the dashboard payload used when uncertainty calibration is unavailable."""
     return {"available": False, "reason": str(reason)}
+
+
+def _run_summary_path(
+    run_summary: dict[str, Any],
+    key: str,
+) -> Path | None:
+    """Resolve an existing file path stored in a run summary."""
+    path_value = run_summary.get(key)
+    if not isinstance(path_value, str) or path_value.strip() == "":
+        return None
+    run_dir_value = run_summary.get("run_dir")
+    run_dir = Path(str(run_dir_value)) if run_dir_value is not None else Path.cwd()
+    return _coerce_existing_path(path_value, run_dir=run_dir)
+
+
+def _uncertainty_reliability_from_run_summary(
+    *,
+    run_summary: dict[str, Any],
+    depth_levels_metadata: Sequence[dict[str, Any]],
+    grid_size_degrees: float,
+    top_cell_count: int,
+) -> dict[str, Any]:
+    """Build uncertainty reliability from run-summary GeoTIFFs when available."""
+    uncertainty_path = _run_summary_path(run_summary, "uncertainty_tif_path")
+    if uncertainty_path is None:
+        return _unavailable_uncertainty_reliability(
+            "No uncertainty GeoTIFF was exported for this run."
+        )
+
+    error_path = _run_summary_path(run_summary, "absolute_error_tif_path")
+    if error_path is None:
+        return _unavailable_uncertainty_reliability(
+            "No absolute-error GeoTIFF was available for uncertainty calibration."
+        )
+
+    first_depth = depth_levels_metadata[0] if depth_levels_metadata else {}
+    land_mask_path = _run_summary_path(run_summary, "land_mask_path")
+    return build_uncertainty_reliability_payload(
+        error_path=error_path,
+        uncertainty_path=uncertainty_path,
+        depth_label=str(first_depth.get("label", "Exported depth")),
+        grid_size_degrees=grid_size_degrees,
+        top_cell_count=top_cell_count,
+        land_mask_path=land_mask_path,
+    )
 
 
 def _filter_ocean_paired_points(
@@ -1332,8 +1378,11 @@ def build_error_analysis_payload_from_depth_arrays(
             "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
         },
         "depth_levels": displayed_depth_levels,
-        "uncertainty_reliability": _unavailable_uncertainty_reliability(
-            "No uncertainty arrays were supplied for this in-memory analysis payload."
+        "uncertainty_reliability": _uncertainty_reliability_from_run_summary(
+            run_summary=run_summary,
+            depth_levels_metadata=depth_levels_metadata,
+            grid_size_degrees=grid_size_degrees,
+            top_cell_count=top_cell_count,
         ),
     }
 

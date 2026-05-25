@@ -365,7 +365,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn('id="analysis-depth-profile"', html)
         self.assertIn('id="analysis-depth-scale-toggle"', html)
         self.assertIn('id="analysis-basin-fan-toggle"', html)
-        self.assertIn('id="analysis-basin-chart"', html)
+        self.assertNotIn('id="analysis-basin-chart"', html)
         self.assertIn('id="analysis-uncertainty-chart"', html)
         self.assertIn('id="analysis-uncertainty-highlights"', html)
         self.assertIn('id="analysis-detail-summary"', html)
@@ -379,8 +379,8 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('class="analysis-charts"'),
         )
         self.assertLess(
-            html.index("analysis-panel--uncertainty"),
             html.index('id="analysis-detail-summary"'),
+            html.index("analysis-panel--uncertainty"),
         )
         self.assertIn("analysis-dashboard.js", html)
         self.assertIn("leaflet@1.9.4", html)
@@ -404,7 +404,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysis-uncertainty-highlights", css)
         self.assertIn("analysis-detail-summary", css)
         self.assertIn("repeat(2, minmax(0, 1fr))", css)
-        self.assertIn("minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr)", css)
+        self.assertIn("minmax(250px, 0.9fr) minmax(0, 1.1fr)", css)
         self.assertIn("analysis-chart", css)
         self.assertIn("DEFAULT_GLOBE_CONFIG_URL", script)
         self.assertIn("function loadAllAnalysisData", script)
@@ -418,6 +418,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("low_uncertainty_high_error", script)
         self.assertIn("analysis-uncertainty-chart", script)
         self.assertIn("analysis-detail-summary", script)
+        self.assertIn("hasMetricSupport", script)
+        self.assertIn("commonSelectorDepthLabel", script)
+        self.assertIn("formatDateLabel", script)
         self.assertIn("function renderLoadFailure", script)
         self.assertIn("validateAnalysisPayload", script)
         self.assertIn("analysis-load-failed", script)
@@ -439,6 +442,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("BASIN_ORDER", script)
         self.assertIn("BASIN_FAN_COLORS", script)
         self.assertIn("function chartDepthLevels", script)
+        self.assertIn("function selectableDepthOptions", script)
         self.assertIn("function selectableDepthIndices", script)
         self.assertIn("function updateBasinFanToggle", script)
         self.assertIn("function selectedDepthPointIndex", script)

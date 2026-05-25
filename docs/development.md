@@ -6,7 +6,7 @@ This page tracks current limitations, implementation status, and roadmap items.
 - Patches with large land coverage can degrade generation quality across the full patch.  
   
 Potential mitigation directions already identified:  
-- DDIM sampling for better compute/fidelity tradeoff  
+- tune DDIM step counts for each checkpoint/runtime budget  
 - structure-aware or frequency-aware losses  
 - parameterization/schedule tuning  
   
@@ -16,6 +16,7 @@ Potential mitigation directions already identified:
 - lightweight dataset + datamodule path: implemented and working  
 - `x0` parameterization: implemented and working well in current experiments  
 - combined date + coordinate embedding: implemented, now exercised in EO config  
+- DDIM sampling: implemented and working; 50 steps is the current practical minimum for acceptable qualitative results  
 
 ## Repository Layout  
 - installable package code lives under `src/depth_recon/`  
@@ -27,7 +28,6 @@ Potential mitigation directions already identified:
 - generated runtime outputs default to root-level `inference/outputs/`; historical moved outputs under `src/depth_recon/inference/outputs/` are also ignored and excluded from package builds  
   
 ## ToDos  
-- [ ] DDIM sampling path still needs deeper validation across checkpoints/settings  
 - [ ] Increase U-Net capacity (for example `dim: 64 -> 96/128`, deeper `dim_mults`)  
 - [ ] Add frequency-aware objectives (for example gradient/PSD losses) to reduce speckle noise  
 - [ ] Validate and tune EMA weights in full training runs  
@@ -37,6 +37,7 @@ Potential mitigation directions already identified:
 - [x] Add and test `x0` parameterization path  
 - [x] Establish geographically consistent window split tooling  
 - [x] Implement known-pixel clamping mechanism for sampling  
+- [x] Validate DDIM sampling path for inference/validation  
 - [x] Use larger corruption patches instead of isolated single pixels  
 - [x] Add dataset-to-disk export pipeline  
 - [x] Implement masked loss support for land/validity handling  

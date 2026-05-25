@@ -176,7 +176,7 @@ html.standalone-analysis-root,
 
 .analysis-charts {
   display: grid;
-  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.1fr);
   gap: 10px;
   min-height: 0;
   overflow: hidden;

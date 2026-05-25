@@ -10,8 +10,11 @@ Observed DDPM tradeoff:
 - many early steps remain highly noisy  
 - compute is spent on low-visual-information stages  
   
+Current DDIM status:  
+- DDIM sampling works for validation and inference and gives the intended compute/fidelity tradeoff.  
+- In current qualitative checks, 50 DDIM steps is the practical minimum that still gives acceptable results; use more steps when visual fidelity matters more than runtime.  
+
 Potential improvement directions:  
-- DDIM sampling for faster useful denoising trajectory  
 - alternate schedules  
 - parameterization choices (`x0` vs `epsilon`)  
   

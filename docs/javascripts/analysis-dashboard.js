@@ -130,7 +130,7 @@
         element.innerHTML = "";
       }
     });
-    ["analysis-depth-profile", "analysis-uncertainty-chart", "analysis-basin-chart"].forEach((id) => {
+    ["analysis-depth-profile", "analysis-uncertainty-chart"].forEach((id) => {
       const element = $(id);
       if (element && window.Plotly) {
         window.Plotly.purge(element);
@@ -227,25 +227,52 @@
     return `${compact ? formatCompactCount(count) : formatCount(count)} ${label}`;
   }
 
-  function activeDepth() {
-    return data().depth_levels[state.depthIndex];
+  function formatDateLabel(value) {
+    const raw = String(value || "").trim();
+    return raw.replace(/\b(\d{4})(\d{2})(\d{2})\b/g, "$1-$2-$3");
   }
 
-  function chartDepthLevels() {
-    const depthLevels = data().depth_levels.filter((depth) => !depth.is_aggregate);
-    return depthLevels.length > 0 ? depthLevels : data().depth_levels;
-  }
-
-  function selectableDepthIndices() {
-    const levels = data().depth_levels;
-    const selected = new Set();
-    const aggregateIndex = levels.findIndex((depth) => depth.is_aggregate);
-    if (aggregateIndex >= 0) {
-      selected.add(aggregateIndex);
+  function formatDepthMeters(depthLevel) {
+    const requestedDepthM = Number(depthLevel.requested_depth_m);
+    const actualDepthM = Number(depthLevel.actual_depth_m);
+    const depthM = Number.isFinite(requestedDepthM) ? requestedDepthM : actualDepthM;
+    if (!Number.isFinite(depthM)) {
+      return String(depthLevel.label || "");
     }
+    if (Math.abs(depthM) < 0.05) {
+      return "0 m";
+    }
+    if (Math.abs(depthM) >= 1000.0) {
+      const depthKm = depthM / 1000.0;
+      const roundedKm = Math.round(depthKm);
+      if (Math.abs(depthKm - roundedKm) < 0.05) {
+        return String(roundedKm) + "k m";
+      }
+      return String(Number(depthKm.toFixed(1))) + "k m";
+    }
+    if (Math.abs(depthM - Math.round(depthM)) < 0.05) {
+      return String(Math.round(depthM)) + " m";
+    }
+    return String(Number(depthM.toFixed(depthM < 10.0 ? 1 : 0))) + " m";
+  }
+
+  function commonSelectorDepthLabel(depthM) {
+    const targetDepthM = Number(depthM);
+    if (!Number.isFinite(targetDepthM)) {
+      return "";
+    }
+    if (Math.abs(targetDepthM) < 0.05) {
+      return "Surface";
+    }
+    return formatDepthMeters({ requested_depth_m: targetDepthM, actual_depth_m: targetDepthM });
+  }
+
+  function commonDepthTargetsByIndex() {
+    const levels = data().depth_levels;
+    const targets = {};
     const nativeDepths = levels
       .map((depth, index) => ({ depth, index }))
-      .filter((item) => !item.depth.is_aggregate);
+      .filter((item) => depthHasMetricSupport(item.depth));
     for (const targetDepth of COMMON_SELECTOR_DEPTHS_M) {
       let best = null;
       for (const item of nativeDepths) {
@@ -258,14 +285,76 @@
           best = { index: item.index, distance };
         }
       }
-      if (best !== null) {
-        selected.add(best.index);
+      if (best !== null && targets[best.index] === undefined) {
+        targets[best.index] = targetDepth;
       }
     }
-    if (state.depthIndex >= 0 && state.depthIndex < levels.length) {
-      selected.add(state.depthIndex);
+    return targets;
+  }
+
+  function depthDisplayLabel(depth, depthIndex = null) {
+    if (!depth || depth.is_aggregate) {
+      return depth && depth.label ? String(depth.label) : "";
     }
-    return Array.from(selected).sort((left, right) => left - right);
+    if (Number.isInteger(depthIndex)) {
+      const targetDepth = commonDepthTargetsByIndex()[depthIndex];
+      if (targetDepth !== undefined) {
+        return commonSelectorDepthLabel(targetDepth);
+      }
+    }
+    return formatDepthMeters(depth);
+  }
+
+  function intValue(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) ? Math.round(number) : 0;
+  }
+
+  function hasMetricSupport(stats) {
+    if (!stats || intValue(stats.count) <= 0) {
+      return false;
+    }
+    return Number.isFinite(Number(stats[state.metric]));
+  }
+
+  function depthHasMetricSupport(depth) {
+    return Boolean(depth && !depth.is_aggregate && hasMetricSupport(depth.global));
+  }
+
+  function activeDepth() {
+    return data().depth_levels[state.depthIndex];
+  }
+
+  function chartDepthLevels() {
+    return data().depth_levels.filter((depth) => depthHasMetricSupport(depth));
+  }
+
+  function selectableDepthOptions() {
+    const levels = data().depth_levels;
+    const selected = new Map();
+    const aggregateIndex = levels.findIndex((depth) => depth.is_aggregate);
+    if (aggregateIndex >= 0) {
+      selected.set(aggregateIndex, depthDisplayLabel(levels[aggregateIndex], aggregateIndex));
+    }
+    const targetDepthsByIndex = commonDepthTargetsByIndex();
+    Object.keys(targetDepthsByIndex).forEach((index) => {
+      selected.set(Number(index), commonSelectorDepthLabel(targetDepthsByIndex[index]));
+    });
+    if (
+      state.depthIndex >= 0 &&
+      state.depthIndex < levels.length &&
+      (levels[state.depthIndex].is_aggregate || depthHasMetricSupport(levels[state.depthIndex])) &&
+      !selected.has(state.depthIndex)
+    ) {
+      selected.set(state.depthIndex, depthDisplayLabel(levels[state.depthIndex], state.depthIndex));
+    }
+    return Array.from(selected, ([index, label]) => ({ index, label })).sort(
+      (left, right) => left.index - right.index
+    );
+  }
+
+  function selectableDepthIndices() {
+    return selectableDepthOptions().map((option) => option.index);
   }
 
   function metricLabel(metric) {
@@ -280,7 +369,7 @@
     const active = data();
     const run = active.run || {};
     const variable = active.variable || {};
-    const date = run.target_date || run.selected_date || "unknown date";
+    const date = formatDateLabel(run.target_date || run.selected_date || "unknown date");
     const week = run.iso_year && run.iso_week ? `ISO ${run.iso_year}-W${String(run.iso_week).padStart(2, "0")}` : "single run";
     $("analysis-run-label").textContent = `${variable.label || state.activeVariable || "Variable"} absolute error | ${date} | ${week}`;
   }
@@ -365,8 +454,13 @@
     const depthSelect = $("analysis-depth-select");
     const depthLevels = data().depth_levels;
     state.depthIndex = Math.max(0, Math.min(state.depthIndex, depthLevels.length - 1));
-    depthSelect.innerHTML = selectableDepthIndices()
-      .map((index) => `<option value="${index}">${escapeHtml(depthLevels[index].label)}</option>`)
+    const options = selectableDepthOptions();
+    const indices = options.map((option) => option.index);
+    if (!indices.includes(state.depthIndex)) {
+      state.depthIndex = indices[0] ?? 0;
+    }
+    depthSelect.innerHTML = options
+      .map((option) => `<option value="${option.index}">${escapeHtml(option.label)}</option>`)
       .join("");
     depthSelect.value = String(state.depthIndex);
   }
@@ -473,7 +567,7 @@
       resetFocus.disabled = state.focus.type === "global";
     }
     const depth = activeDepth();
-    const basins = depth.basins.filter((basin) => basin[state.metric] !== null);
+    const basins = depth.basins.filter((basin) => hasMetricSupport(basin));
     $("analysis-basin-ranking").innerHTML = basins
       .map((basin) => rankingButton(basin, "basin", displayBasinName(basin.name)))
       .join("");
@@ -639,7 +733,7 @@
 
   function renderMap() {
     const map = state.map || createMap();
-    const cells = activeDepth().grid_cells.filter((cell) => cell[state.metric] !== null);
+    const cells = activeDepth().grid_cells.filter((cell) => hasMetricSupport(cell));
     const colorDomain = mapColorDomain(cells);
     const geometryIndex = activeGridGeometryIndex();
     renderMapLegend(colorDomain);
@@ -687,6 +781,9 @@
   }
 
   function metricValue(stats) {
+    if (!hasMetricSupport(stats)) {
+      return null;
+    }
     const value = Number(stats && stats[state.metric]);
     return Number.isFinite(value) ? value : null;
   }
@@ -794,8 +891,8 @@
   function globalHoverData(depthLevels) {
     const rasterTexts = rasterDepthHoverTexts(depthLevels);
     return depthLevels.map((depth, index) => [
-      depth.label,
-      formatMetric(depth.global[state.metric]),
+      depthDisplayLabel(depth, data().depth_levels.indexOf(depth)),
+      formatMetric(metricValue(depth.global)),
       formatPixelCount(depth.global.count),
       rasterTexts[index],
     ]);
@@ -806,8 +903,8 @@
     return depthLevels.map((depth, index) => {
       const stats = basinStatsForDepth(depth, basinName) || {};
       return [
-        depth.label,
-        formatMetric(stats[state.metric]),
+        depthDisplayLabel(depth, data().depth_levels.indexOf(depth)),
+        formatMetric(metricValue(stats)),
         formatPixelCount(stats.count),
         rasterTexts[index],
       ];
@@ -819,7 +916,7 @@
     return depthLevels.map((depth, index) => {
       const stats = focusedStats(depth) || {};
       return [
-        depth.label,
+        depthDisplayLabel(depth, data().depth_levels.indexOf(depth)),
         formatMetric(selectedValues[index]),
         formatPixelCount(stats.count),
         rasterTexts[index],
@@ -963,13 +1060,13 @@
     const stats = focusedStats(depth) || {};
     const details = [
       ["Focus", focusLabel()],
-      ["Depth", depth.label],
-      [metricLabel(state.metric), formatMetric(stats[state.metric])],
+      ["Depth", depthDisplayLabel(depth, state.depthIndex)],
+      [metricLabel(state.metric), formatMetric(metricValue(stats))],
       ["Mean", formatMetric(stats.mean)],
       ["P95", formatMetric(stats.p95)],
       ["Count", formatPixelCount(stats.count, true)],
     ];
-    $("analysis-detail-caption").textContent = `${focusLabel()} summary at ${depth.label}`;
+    $("analysis-detail-caption").textContent = `${focusLabel()} summary at ${depthDisplayLabel(depth, state.depthIndex)}`;
     $("analysis-detail-summary").innerHTML = details.map((item) => detailCard(item[0], item[1])).join("");
   }
 
@@ -1107,51 +1204,11 @@
     });
   }
 
-  function renderBasinChart() {
-    const chart = $("analysis-basin-chart");
-    const basins = activeDepth().basins.filter((basin) => basin[state.metric] !== null);
-    const labels = basins.map((basin) => displayBasinName(basin.name));
-    const basinIds = basins.map((basin) => basin.name);
-    const colors = basins.map((basin) => (state.focus.type === "basin" && state.focus.id === basin.name ? "#ffd166" : "#7cc8ff"));
-    const trace = {
-      customdata: basins.map((basin) => [basin.name, formatPixelCount(basin.count, true)]),
-      hovertemplate: "%{x}<br>" + metricLabel(state.metric) + ": %{y:.2f} " + unitLabel() + "<br>%{customdata[1]}<extra></extra>",
-      marker: { color: colors, line: { color: "rgba(223,244,239,0.36)", width: 1 } },
-      type: "bar",
-      x: labels,
-      y: basins.map((basin) => basin[state.metric]),
-    };
-    const layout = plotlyLayout(chartAxisTitle());
-    layout.showlegend = false;
-    layout.xaxis.automargin = true;
-    layout.xaxis.tickangle = -24;
-    $("analysis-basin-caption").textContent = `${metricLabel(state.metric)} absolute error by basin at ${activeDepth().label}`;
-    Promise.resolve(window.Plotly.react(chart, [trace], layout, PLOTLY_CONFIG)).then(() => {
-      if (typeof chart.removeAllListeners === "function") {
-        chart.removeAllListeners("plotly_click");
-      }
-      if (typeof chart.on === "function") {
-        chart.on("plotly_click", function (event) {
-          const point = event.points && event.points[0];
-          if (!point) {
-            return;
-          }
-          const basinId = basinIds[point.pointIndex];
-          const active = state.focus.type === "basin" && state.focus.id === basinId;
-          state.focus = active
-            ? { type: "global", id: "global", label: "Global" }
-            : { type: "basin", id: basinId, label: displayBasinName(basinId) };
-          render();
-        });
-      }
-    });
-  }
-
   function resizeVisuals() {
     if (state.map) {
       state.map.invalidateSize(false);
     }
-    ["analysis-depth-profile", "analysis-uncertainty-chart", "analysis-basin-chart"].forEach((id) => {
+    ["analysis-depth-profile", "analysis-uncertainty-chart"].forEach((id) => {
       const chart = $(id);
       if (chart && window.Plotly) {
         window.Plotly.Plots.resize(chart);
@@ -1165,10 +1222,9 @@
     renderDepthProfile();
     renderUncertaintyReliability();
     renderDetailSummary();
-    renderBasinChart();
     $("analysis-selection-pill").textContent = focusLabel();
     const mapGeometryLabel = activeGridGeometryIndex() ? "coast-clipped " : "";
-    $("analysis-map-caption").textContent = `${activeDepth().label} ${metricLabel(state.metric).toLowerCase()} absolute error by ${mapGeometryLabel}${data().grouping.grid_size_degrees} degree cell`;
+    $("analysis-map-caption").textContent = `${depthDisplayLabel(activeDepth(), state.depthIndex)} ${metricLabel(state.metric).toLowerCase()} absolute error by ${mapGeometryLabel}${data().grouping.grid_size_degrees} degree cell`;
   }
 
   function analysisSourcesFromConfig(config) {

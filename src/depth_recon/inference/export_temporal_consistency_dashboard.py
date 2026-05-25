@@ -238,9 +238,20 @@ def _nan_metric_array(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return metric
 
 
+def _format_date_label(value: Any) -> str:
+    """Return a readable date label from a compact YYYYMMDD value."""
+    raw = str(value).strip()
+    if raw.isdigit() and len(raw) == 8:
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    return raw
+
+
 def _period_label(left_run: TemporalRun, right_run: TemporalRun) -> str:
     """Return a compact date label for one temporal interval."""
-    return f"{left_run.selected_date} to {right_run.selected_date}"
+    return (
+        f"{_format_date_label(left_run.selected_date)} to "
+        f"{_format_date_label(right_run.selected_date)}"
+    )
 
 
 def _flicker_label(
@@ -250,8 +261,9 @@ def _flicker_label(
 ) -> str:
     """Return a compact date label for one 3-week flicker window."""
     return (
-        f"{previous_run.selected_date} to {center_run.selected_date} "
-        f"to {next_run.selected_date}"
+        f"{_format_date_label(previous_run.selected_date)} to "
+        f"{_format_date_label(center_run.selected_date)} to "
+        f"{_format_date_label(next_run.selected_date)}"
     )
 
 

@@ -412,4 +412,8 @@ Validation/inference sampler can be switched via training config:
   - `ddim_eta`
   - `ddim_temperature`
 
+DDIM sampling is working in the current inference path. Use 50 steps as the
+lowest practical setting that still gives acceptable results; increase the step
+count when output quality matters more than runtime.
+
 The same sampler can also be injected per batch through `batch["sampler"]` in direct prediction calls.

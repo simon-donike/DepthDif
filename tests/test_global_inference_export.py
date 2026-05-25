@@ -1293,6 +1293,32 @@ class TestGlobalInferenceExport(unittest.TestCase):
                     accumulators[level.suffix].sum_array[:] = signed_error
                     accumulators[level.suffix].count_array[:] = 1.0
 
+                error_path = tmp_path / "surface_error.tif"
+                uncertainty_path = tmp_path / "surface_uncertainty.tif"
+                for path, values in (
+                    (
+                        error_path,
+                        np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+                    ),
+                    (
+                        uncertainty_path,
+                        np.asarray([[0.5, 1.5], [2.5, 3.5]], dtype=np.float32),
+                    ),
+                ):
+                    with rasterio.open(
+                        path,
+                        "w",
+                        driver="GTiff",
+                        height=2,
+                        width=2,
+                        count=1,
+                        dtype="float32",
+                        crs="EPSG:4326",
+                        transform=layout.transform,
+                        nodata=-9999.0,
+                    ) as ds:
+                        ds.write(values, 1)
+
                 json_path = tmp_path / DEFAULT_ANALYSIS_JSON_NAME
                 _write_full_depth_error_analysis_json(
                     output_path=json_path,
@@ -1302,6 +1328,8 @@ class TestGlobalInferenceExport(unittest.TestCase):
                         "target_date": 20260105,
                         "iso_year": 2026,
                         "iso_week": 2,
+                        "absolute_error_tif_path": error_path.name,
+                        "uncertainty_tif_path": uncertainty_path.name,
                     },
                     variable_spec=EXPORT_VARIABLE_SPECS["temperature"],
                     analysis_depth_levels=depth_levels,
@@ -1327,6 +1355,9 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(payload["depth_levels"][1]["global"]["count"], 3)
         self.assertEqual(payload["depth_levels"][1]["global"]["median"], 2.0)
         self.assertEqual(payload["depth_levels"][3]["channel_index"], 2)
+        self.assertTrue(payload["uncertainty_reliability"]["available"])
+        self.assertEqual(payload["uncertainty_reliability"]["depth_label"], "Surface")
+        self.assertEqual(payload["uncertainty_reliability"]["global"]["count"], 4)
 
     def test_depth_geotiff_metadata_records_requested_and_actual_depth(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

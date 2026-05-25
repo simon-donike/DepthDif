@@ -192,6 +192,11 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         all_flicker_periods = all_depths["fields"]["prediction_flicker"]["periods"]
 
         self.assertEqual(len(surface_change_periods), 2)
+        self.assertEqual(surface_change_periods[0]["label"], "2018-05-30 to 2018-06-06")
+        self.assertEqual(
+            all_flicker_periods[0]["label"],
+            "2018-05-30 to 2018-06-06 to 2018-06-13",
+        )
         self.assertEqual(surface_change_periods[0]["global"]["median"], 0.0)
         self.assertEqual(surface_change_periods[1]["global"]["median"], 1.0)
         self.assertEqual(depth_change_periods[1]["global"]["median"], 3.0)
@@ -575,6 +580,8 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertIn("function renderTimeSeries", script)
         self.assertIn("function renderDepthProfile", script)
         self.assertIn("function renderTemporalSummary", script)
+        self.assertIn("function formatDateLabel", script)
+        self.assertIn("periodDisplayLabel", script)
         self.assertIn("temporal-summary", script)
         self.assertNotIn("analysis-dashboard.js", script)
         self.assertIn(

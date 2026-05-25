@@ -191,6 +191,15 @@
     return formatted === "n/a" ? formatted : `${formatted} ${unitLabel()}`.trim();
   }
 
+  function formatDateLabel(value) {
+    const raw = String(value || "").trim();
+    return raw.replace(/\b(\d{4})(\d{2})(\d{2})\b/g, "$1-$2-$3");
+  }
+
+  function periodDisplayLabel(period) {
+    return period && period.label ? formatDateLabel(period.label) : "n/a";
+  }
+
   function formatCount(value) {
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round(number).toLocaleString() : "0";
@@ -261,7 +270,7 @@
     const active = data();
     const run = active.run || {};
     const variable = active.variable || {};
-    $("temporal-run-label").textContent = `${variable.label || state.activeVariable || "Variable"} temporal consistency | ${run.start_date || "unknown"} to ${run.end_date || "unknown"} | ${run.run_count || 0} runs`;
+    $("temporal-run-label").textContent = `${variable.label || state.activeVariable || "Variable"} temporal consistency | ${formatDateLabel(run.start_date || "unknown")} to ${formatDateLabel(run.end_date || "unknown")} | ${run.run_count || 0} runs`;
   }
 
   function populateDepthSelect() {
@@ -288,7 +297,7 @@
     const periods = periodsForField();
     state.periodIndex = Math.max(0, Math.min(state.periodIndex, periods.length - 1));
     periodSelect.innerHTML = periods
-      .map((period, index) => `<option value="${index}">${escapeHtml(period.label)}</option>`)
+      .map((period, index) => `<option value="${index}">${escapeHtml(periodDisplayLabel(period))}</option>`)
       .join("");
     periodSelect.value = String(state.periodIndex);
   }
@@ -694,7 +703,7 @@
     const chart = $("temporal-time-series");
     const periods = periodsForField();
     const trace = {
-      customdata: periods.map((period) => [period.label, formatPixelCount((focusedStats(period) || {}).count)]),
+      customdata: periods.map((period) => [periodDisplayLabel(period), formatPixelCount((focusedStats(period) || {}).count)]),
       hovertemplate:
         "%{customdata[0]}<br>" +
         `${escapeHtml(metricLabel(state.metric))}: %{y:.2f} ${escapeHtml(unitLabel())}<br>` +
@@ -703,7 +712,7 @@
       marker: { color: "#7cc8ff", line: { color: "#f8f2d8", width: 1 }, size: 8 },
       mode: "lines+markers",
       name: focusLabel(),
-      x: periods.map((period) => period.label),
+      x: periods.map((period) => periodDisplayLabel(period)),
       y: periods.map((period) => focusedMetric(period)),
     };
     const layout = plotlyLayout(chartAxisTitle());
@@ -735,12 +744,12 @@
     const details = [
       ["Focus", focusLabel()],
       ["Field", fieldLabel()],
-      ["Interval", period ? period.label : "n/a"],
+      ["Interval", periodDisplayLabel(period)],
       ["Depth", activeDepth().label],
       [metricLabel(state.metric), formatMetricValue(stats[state.metric])],
       ["Count", formatPixelCount(stats.count, true)],
     ];
-    $("temporal-summary-caption").textContent = `${focusLabel()} summary for ${period ? period.label : "the active interval"}`;
+    $("temporal-summary-caption").textContent = `${focusLabel()} summary for ${period ? periodDisplayLabel(period) : "the active interval"}`;
     $("temporal-summary").innerHTML = details.map((item) => summaryCard(item[0], item[1])).join("");
   }
 
@@ -767,7 +776,7 @@
     const layout = plotlyLayout(chartAxisTitle());
     layout.showlegend = false;
     layout.xaxis.title = { text: "Depth (m)", standoff: 8 };
-    $("temporal-depth-caption").textContent = `${focusLabel()} ${fieldLabel().toLowerCase()} across depth for ${period ? period.label : "the active interval"}`;
+    $("temporal-depth-caption").textContent = `${focusLabel()} ${fieldLabel().toLowerCase()} across depth for ${period ? periodDisplayLabel(period) : "the active interval"}`;
     window.Plotly.react(chart, [trace], layout, PLOTLY_CONFIG);
   }
 
@@ -836,7 +845,7 @@
     renderBasinChart();
     $("temporal-selection-pill").textContent = focusLabel();
     const geometryLabel = activeGridGeometryIndex() ? "coast-clipped " : "";
-    $("temporal-map-caption").textContent = `${activeDepth().label} ${fieldLabel().toLowerCase()} by ${geometryLabel}${data().grouping.grid_size_degrees} degree cell${period ? ` | ${period.label}` : ""}`;
+    $("temporal-map-caption").textContent = `${activeDepth().label} ${fieldLabel().toLowerCase()} by ${geometryLabel}${data().grouping.grid_size_degrees} degree cell${period ? ` | ${periodDisplayLabel(period)}` : ""}`;
   }
 
   function temporalSourcesFromConfig(config) {
