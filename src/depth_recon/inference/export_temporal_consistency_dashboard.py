@@ -1,6 +1,6 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_consistency_dashboard --temperature-run-dir inference/outputs/temporal_variables_2018_W22_W28/runs/temperature/2018_W22 --temperature-run-dir inference/outputs/temporal_variables_2018_W22_W28/runs/temperature/2018_W23 --salinity-run-dir inference/outputs/temporal_variables_2018_W22_W28/runs/salinity/2018_W22 --salinity-run-dir inference/outputs/temporal_variables_2018_W22_W28/runs/salinity/2018_W23 --output-dir inference/outputs/temporal_variables_2018_W22_W28/temporal --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal
-"""Export temporal consistency dashboard data from weekly inference runs."""
+# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_consistency_dashboard --temperature-run-dir inference/outputs/temporal_variables_2018/runs/temperature/2018_W01 --salinity-run-dir inference/outputs/temporal_variables_2018/runs/salinity/2018_W01 --output-dir inference/outputs/temporal_variables_2018/temporal --validation-year 2018 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal
+"""Export compact temporal dashboard data from weekly validation-year runs."""
 
 from __future__ import annotations
 
@@ -10,88 +10,89 @@ import json
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
-import numpy as np
-import rasterio
 import yaml
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from depth_recon.inference.export_cesium_globe_assets import (
+    _coerce_existing_path,
     _resolve_depth_export_artifacts,
-    _resolve_land_mask_path,
     _resolve_layer_url,
     _resolve_run_artifacts,
     _run_variable_metadata,
     _sync_with_rclone,
 )
 from depth_recon.inference.export_error_analysis_dashboard import (
+    BASIN_BUTTON_NAMES,
     BASIN_NAMES,
-    DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
-    DEFAULT_GRID_SIZE_DEGREES,
-    METRIC_KEYS,
-    _aggregate_summary_rows,
-    _basin_label_array,
-    _top_cells,
-    _valid_array_points,
-    aggregate_by_basin,
-    aggregate_by_grid,
-    summarize_values,
-    write_analysis_grid_geojson,
+    world_ocean_region_geojson_features,
 )
 
 DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME = "temporal"
 DEFAULT_TEMPORAL_CONFIG_NAME = "temporal-config.json"
 DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME = "temporal-analysis.json"
-TEMPORAL_FIELD_KEYS = (
-    "change_error",
-    "prediction_change",
-    "glorys_change",
-    "prediction_flicker",
-)
-TEMPORAL_FIELD_LABELS = {
-    "change_error": "Change Error",
-    "prediction_change": "Prediction Change",
-    "glorys_change": "GLORYS Change",
-    "prediction_flicker": "Prediction Flicker",
-}
-TEMPORAL_FIELD_DESCRIPTIONS = {
-    "change_error": "Absolute error between model and GLORYS week-to-week change.",
-    "prediction_change": "Absolute week-to-week model prediction change.",
-    "glorys_change": "Absolute week-to-week GLORYS change.",
-    "prediction_flicker": "Absolute second temporal difference of model predictions over a 3-week window.",
-}
+DEFAULT_TEMPORAL_BASIN_DATA_DIR_NAME = "basins"
+DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME = "basin-map.geojson"
+DEFAULT_TEMPORAL_VALIDATION_YEAR = 2018
+DEFAULT_TEMPORAL_YEAR_WEEK_COUNT = 52
+BASIN_DISPLAY_NAMES = {basin: basin for basin in BASIN_NAMES}
+
+
+def _default_basin_name() -> str:
+    """Return the preferred initial basin for temporal dashboard controls."""
+    if "North Pacific Ocean" in BASIN_BUTTON_NAMES:
+        return "North Pacific Ocean"
+    return BASIN_BUTTON_NAMES[0]
 
 
 @dataclass(frozen=True)
 class TemporalRun:
-    """Resolved metadata and depth artifacts for one weekly inference run."""
+    """Resolved weekly run metadata needed for temporal aggregation."""
 
     run_dir: Path
     run_summary: dict[str, Any]
+    compact_summary: dict[str, Any]
     variable_metadata: dict[str, Any]
-    depth_exports: list[dict[str, Any]]
     selected_date: int
     iso_year: int | None
     iso_week: int | None
-    land_mask_path: Path | None
+    depth_exports: list[dict[str, Any]]
+    ten_meter_artifact: dict[str, Any]
 
 
-def _period_url(
-    name: str,
+def _temporal_url(
+    relative_path: str,
     *,
-    variable: str | None,
     public_base_url: str | None,
 ) -> str:
     """Return a temporal-dashboard asset URL from the output-root perspective."""
-    if variable is None:
-        return _resolve_layer_url(name, public_base_url=public_base_url)
-    clean_name = str(name).lstrip("/")
-    if public_base_url is None:
-        return f"{variable}/{clean_name}"
-    return f"{public_base_url.rstrip('/')}/{variable}/{clean_name}"
+    return _resolve_layer_url(relative_path, public_base_url=public_base_url)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    """Read a UTF-8 JSON object from disk."""
+    with Path(path).open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected a JSON object in {path}.")
+    return payload
+
+
+def _write_json(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    indent: int | None = None,
+) -> Path:
+    """Write a JSON payload with a final newline."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=indent, separators=None if indent else (",", ":"))
+        f.write("\n")
+    return path
 
 
 def _resolve_selected_date(run_summary: dict[str, Any], run_dir: Path) -> int:
@@ -102,8 +103,47 @@ def _resolve_selected_date(run_summary: dict[str, Any], run_dir: Path) -> int:
     return int(date_value)
 
 
+def _resolve_compact_summary_path(run_summary: dict[str, Any], run_dir: Path) -> Path:
+    """Resolve the compact basin-depth summary emitted by temporal exports."""
+    path = _coerce_existing_path(
+        run_summary.get("temporal_basin_depth_error_json_path"),
+        run_dir=run_dir,
+    )
+    if path is None:
+        raise FileNotFoundError(
+            "Temporal dashboard v2 requires temporal_basin_depth_error_json_path "
+            f"in {run_dir / 'run_summary.yaml'}."
+        )
+    return path
+
+
+def _ten_meter_artifact(
+    depth_exports: Sequence[dict[str, Any]], run_dir: Path
+) -> dict[str, Any]:
+    """Return the retained 10m prediction and absolute-error artifacts for one run."""
+    for depth_export in depth_exports:
+        if str(depth_export.get("suffix")) != "10m":
+            continue
+        prediction_path = depth_export.get("prediction_path")
+        absolute_error_path = depth_export.get("absolute_error_path")
+        if prediction_path is None or absolute_error_path is None:
+            raise FileNotFoundError(
+                f"10m prediction and absolute-error rasters are required in {run_dir}."
+            )
+        return {
+            "label": str(depth_export.get("label", "10m")),
+            "suffix": "10m",
+            "requested_depth_m": float(depth_export.get("requested_depth_m", 10.0)),
+            "actual_depth_m": float(depth_export.get("actual_depth_m", 10.0)),
+            "channel_index": int(depth_export.get("channel_index", 0)),
+            "prediction_path": Path(prediction_path),
+            "absolute_error_path": Path(absolute_error_path),
+        }
+    raise FileNotFoundError(f"No retained 10m depth export was found in {run_dir}.")
+
+
 def _resolve_temporal_run(run_dir: Path) -> TemporalRun:
-    """Resolve one weekly run directory into temporal aggregation metadata."""
+    """Resolve one weekly run directory into compact temporal metadata."""
     run_dir = Path(run_dir).resolve()
     (
         prediction_path,
@@ -118,8 +158,6 @@ def _resolve_temporal_run(run_dir: Path) -> TemporalRun:
     ) = _resolve_run_artifacts(run_dir)
     if prediction_path is None:
         raise FileNotFoundError(f"No prediction GeoTIFF was found in {run_dir}.")
-    if ground_truth_path is None and not run_summary.get("depth_exports"):
-        raise FileNotFoundError(f"No GLORYS GeoTIFF was found in {run_dir}.")
 
     depth_exports = _resolve_depth_export_artifacts(
         run_dir=run_dir,
@@ -127,22 +165,21 @@ def _resolve_temporal_run(run_dir: Path) -> TemporalRun:
         prediction_path=prediction_path,
         ground_truth_path=ground_truth_path,
     )
-    missing_truth = [
-        str(depth_export.get("label", depth_export.get("suffix", "unknown")))
-        for depth_export in depth_exports
-        if depth_export.get("ground_truth_path") is None
-    ]
-    if missing_truth:
-        raise FileNotFoundError(
-            "Temporal consistency requires prediction and GLORYS rasters for every "
-            f"depth export. Missing GLORYS for {', '.join(missing_truth)} in {run_dir}."
+    compact_summary = _read_json(_resolve_compact_summary_path(run_summary, run_dir))
+    variable_metadata = _run_variable_metadata(run_summary)
+    compact_variable = compact_summary.get("variable", {})
+    if str(compact_variable.get("name", variable_metadata["name"])) != str(
+        variable_metadata["name"]
+    ):
+        raise ValueError(
+            f"Compact summary variable does not match run summary in {run_dir}."
         )
 
     return TemporalRun(
         run_dir=run_dir,
         run_summary=run_summary,
-        variable_metadata=_run_variable_metadata(run_summary),
-        depth_exports=depth_exports,
+        compact_summary=compact_summary,
+        variable_metadata=variable_metadata,
         selected_date=_resolve_selected_date(run_summary, run_dir),
         iso_year=(
             None
@@ -154,437 +191,107 @@ def _resolve_temporal_run(run_dir: Path) -> TemporalRun:
             if run_summary.get("iso_week") is None
             else int(run_summary["iso_week"])
         ),
-        land_mask_path=_resolve_land_mask_path(run_summary, run_dir=run_dir),
+        depth_exports=depth_exports,
+        ten_meter_artifact=_ten_meter_artifact(depth_exports, run_dir),
     )
 
 
-def _depth_signature(depth_export: dict[str, Any]) -> tuple[str, int, float, float]:
-    """Return the comparable identity for one exported depth raster."""
+def _depth_signature(depth: dict[str, Any]) -> tuple[str, int, float, float]:
+    """Return the comparable identity for one compact depth row."""
     return (
-        str(depth_export["suffix"]),
-        int(depth_export["channel_index"]),
-        float(depth_export["requested_depth_m"]),
-        float(depth_export["actual_depth_m"]),
+        str(depth["suffix"]),
+        int(depth["channel_index"]),
+        float(depth["requested_depth_m"]),
+        float(depth["actual_depth_m"]),
     )
 
 
-def _validate_run_series(runs: Sequence[TemporalRun]) -> None:
-    """Validate that a temporal series can be compared without resampling."""
-    if len(runs) < 2:
-        raise ValueError("At least two weekly runs are required for temporal analysis.")
-
+def _sorted_runs(run_dirs: Sequence[Path]) -> list[TemporalRun]:
+    """Resolve and sort weekly runs by selected date."""
+    runs = sorted(
+        [_resolve_temporal_run(Path(run_dir)) for run_dir in run_dirs],
+        key=lambda run: run.selected_date,
+    )
+    if not runs:
+        raise ValueError("At least one weekly run is required for temporal analysis.")
     variable = runs[0].variable_metadata["name"]
-    depth_signature = [_depth_signature(depth) for depth in runs[0].depth_exports]
+    signature = [
+        _depth_signature(depth) for depth in runs[0].compact_summary["depth_levels"]
+    ]
     for run in runs[1:]:
         if run.variable_metadata["name"] != variable:
             raise ValueError(
                 "All runs in one temporal series must export the same variable: "
                 f"{variable!r} != {run.variable_metadata['name']!r}."
             )
-        other_signature = [_depth_signature(depth) for depth in run.depth_exports]
-        if other_signature != depth_signature:
-            raise ValueError(
-                "Temporal runs must contain matching exported depth rasters. "
-                f"Expected {depth_signature}, got {other_signature} in {run.run_dir}."
-            )
-
-
-def _read_float_raster(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
-    """Read one raster band as float64 with nodata values converted to NaN."""
-    with rasterio.open(path) as dataset:
-        data = dataset.read(1, masked=False).astype(np.float64, copy=False)
-        if dataset.nodata is not None and np.isfinite(float(dataset.nodata)):
-            data = data.copy()
-            data[np.isclose(data, float(dataset.nodata), atol=0.0, rtol=0.0)] = np.nan
-        profile = {
-            "path": str(path),
-            "shape": tuple(int(value) for value in data.shape),
-            "crs": None if dataset.crs is None else dataset.crs.to_string(),
-            "transform": dataset.transform,
-        }
-    return data, profile
-
-
-def _assert_matching_raster_profiles(
-    profiles: Sequence[dict[str, Any]],
-    *,
-    context: str,
-) -> None:
-    """Raise when temporal rasters do not share an exact grid contract."""
-    if not profiles:
-        return
-    first = profiles[0]
-    for profile in profiles[1:]:
-        if profile["shape"] != first["shape"]:
-            raise ValueError(
-                f"Raster shape mismatch for {context}: "
-                f"{first['shape']} != {profile['shape']} ({profile['path']})."
-            )
-        if profile["crs"] != first["crs"]:
-            raise ValueError(
-                f"Raster CRS mismatch for {context}: "
-                f"{first['crs']} != {profile['crs']} ({profile['path']})."
-            )
-        if profile["transform"] != first["transform"]:
-            raise ValueError(
-                f"Raster transform mismatch for {context}: {profile['path']}."
-            )
-
-
-def _nan_metric_array(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    """Return a float32 metric raster with invalid positions set to NaN."""
-    metric = np.full(values.shape, np.nan, dtype=np.float32)
-    metric[valid] = values[valid].astype(np.float32, copy=False)
-    return metric
-
-
-def _format_date_label(value: Any) -> str:
-    """Return a readable date label from a compact YYYYMMDD value."""
-    raw = str(value).strip()
-    if raw.isdigit() and len(raw) == 8:
-        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
-    return raw
-
-
-def _period_label(left_run: TemporalRun, right_run: TemporalRun) -> str:
-    """Return a compact date label for one temporal interval."""
-    return (
-        f"{_format_date_label(left_run.selected_date)} to "
-        f"{_format_date_label(right_run.selected_date)}"
-    )
-
-
-def _flicker_label(
-    previous_run: TemporalRun,
-    center_run: TemporalRun,
-    next_run: TemporalRun,
-) -> str:
-    """Return a compact date label for one 3-week flicker window."""
-    return (
-        f"{_format_date_label(previous_run.selected_date)} to "
-        f"{_format_date_label(center_run.selected_date)} to "
-        f"{_format_date_label(next_run.selected_date)}"
-    )
-
-
-def _interval_period_metadata(
-    index: int, left_run: TemporalRun, right_run: TemporalRun
-) -> dict[str, Any]:
-    """Build period metadata for one week-to-week temporal interval."""
-    return {
-        "index": int(index),
-        "period_key": f"interval_{int(index):03d}",
-        "kind": "interval",
-        "label": _period_label(left_run, right_run),
-        "start_date": int(left_run.selected_date),
-        "end_date": int(right_run.selected_date),
-        "start_iso_year": left_run.iso_year,
-        "start_iso_week": left_run.iso_week,
-        "end_iso_year": right_run.iso_year,
-        "end_iso_week": right_run.iso_week,
-    }
-
-
-def _flicker_period_metadata(
-    index: int,
-    previous_run: TemporalRun,
-    center_run: TemporalRun,
-    next_run: TemporalRun,
-) -> dict[str, Any]:
-    """Build period metadata for one 3-week flicker window."""
-    return {
-        "index": int(index),
-        "period_key": f"flicker_{int(index):03d}",
-        "kind": "window",
-        "label": _flicker_label(previous_run, center_run, next_run),
-        "previous_date": int(previous_run.selected_date),
-        "center_date": int(center_run.selected_date),
-        "next_date": int(next_run.selected_date),
-        "previous_iso_year": previous_run.iso_year,
-        "previous_iso_week": previous_run.iso_week,
-        "center_iso_year": center_run.iso_year,
-        "center_iso_week": center_run.iso_week,
-        "next_iso_year": next_run.iso_year,
-        "next_iso_week": next_run.iso_week,
-    }
-
-
-def _build_period_stats(
-    values: np.ndarray,
-    *,
-    transform: Any,
-    period_metadata: dict[str, Any],
-    grid_size_degrees: float,
-    top_cell_count: int,
-) -> dict[str, Any]:
-    """Aggregate one temporal metric raster into global, basin, and grid rows."""
-    metric_values, lons, lats = _valid_array_points(values, transform=transform)
-    basin_labels = _basin_label_array(lons, lats)
-    grid_cells = aggregate_by_grid(
-        metric_values,
-        lons,
-        lats,
-        grid_size_degrees=grid_size_degrees,
-        basin_labels=basin_labels,
-    )
-    return {
-        **period_metadata,
-        "global": summarize_values(metric_values),
-        "basins": aggregate_by_basin(
-            metric_values,
-            lons,
-            lats,
-            basin_labels=basin_labels,
-        ),
-        "grid_cells": grid_cells,
-        "top_cells": {
-            metric: _top_cells(
-                grid_cells,
-                metric=metric,
-                limit=int(top_cell_count),
-            )
-            for metric in METRIC_KEYS
-        },
-    }
-
-
-def _build_depth_temporal_fields(
-    runs: Sequence[TemporalRun],
-    *,
-    depth_index: int,
-    grid_size_degrees: float,
-    top_cell_count: int,
-) -> dict[str, dict[str, Any]]:
-    """Build temporal field summaries for one exported depth across all runs."""
-    fields = {
-        key: {
-            "key": key,
-            "label": TEMPORAL_FIELD_LABELS[key],
-            "description": TEMPORAL_FIELD_DESCRIPTIONS[key],
-            "periods": [],
-        }
-        for key in TEMPORAL_FIELD_KEYS
-    }
-
-    predictions: list[np.ndarray] = []
-    ground_truths: list[np.ndarray] = []
-    profiles: list[dict[str, Any]] = []
-    for run in runs:
-        depth_export = run.depth_exports[depth_index]
-        prediction, prediction_profile = _read_float_raster(
-            Path(depth_export["prediction_path"])
-        )
-        ground_truth, ground_truth_profile = _read_float_raster(
-            Path(depth_export["ground_truth_path"])
-        )
-        predictions.append(prediction)
-        ground_truths.append(ground_truth)
-        profiles.extend([prediction_profile, ground_truth_profile])
-
-    _assert_matching_raster_profiles(
-        profiles,
-        context=f"depth {runs[0].depth_exports[depth_index]['label']}",
-    )
-    transform = profiles[0]["transform"]
-
-    for interval_index in range(len(runs) - 1):
-        left_run = runs[interval_index]
-        right_run = runs[interval_index + 1]
-        pred_delta = predictions[interval_index + 1] - predictions[interval_index]
-        truth_delta = ground_truths[interval_index + 1] - ground_truths[interval_index]
-        valid = (
-            np.isfinite(predictions[interval_index])
-            & np.isfinite(predictions[interval_index + 1])
-            & np.isfinite(ground_truths[interval_index])
-            & np.isfinite(ground_truths[interval_index + 1])
-        )
-        period_metadata = _interval_period_metadata(
-            interval_index,
-            left_run,
-            right_run,
-        )
-        metrics = {
-            "change_error": np.abs(pred_delta - truth_delta),
-            "prediction_change": np.abs(pred_delta),
-            "glorys_change": np.abs(truth_delta),
-        }
-        for field_key, metric_values in metrics.items():
-            fields[field_key]["periods"].append(
-                _build_period_stats(
-                    _nan_metric_array(metric_values, valid),
-                    transform=transform,
-                    period_metadata=period_metadata,
-                    grid_size_degrees=grid_size_degrees,
-                    top_cell_count=top_cell_count,
-                )
-            )
-
-    for flicker_index in range(len(runs) - 2):
-        previous_run = runs[flicker_index]
-        center_run = runs[flicker_index + 1]
-        next_run = runs[flicker_index + 2]
-        flicker = np.abs(
-            predictions[flicker_index + 2]
-            - 2.0 * predictions[flicker_index + 1]
-            + predictions[flicker_index]
-        )
-        valid = (
-            np.isfinite(predictions[flicker_index])
-            & np.isfinite(predictions[flicker_index + 1])
-            & np.isfinite(predictions[flicker_index + 2])
-        )
-        fields["prediction_flicker"]["periods"].append(
-            _build_period_stats(
-                _nan_metric_array(flicker, valid),
-                transform=transform,
-                period_metadata=_flicker_period_metadata(
-                    flicker_index,
-                    previous_run,
-                    center_run,
-                    next_run,
-                ),
-                grid_size_degrees=grid_size_degrees,
-                top_cell_count=top_cell_count,
-            )
-        )
-
-    return fields
-
-
-def _period_by_key(periods: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Index temporal periods by their stable period key."""
-    return {str(period["period_key"]): period for period in periods}
-
-
-def _aggregate_basin_period_rows(periods: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate per-depth basin rows for an all-depth temporal period."""
-    basins: list[dict[str, Any]] = []
-    for basin in BASIN_NAMES:
-        rows = [
-            row
-            for period in periods
-            for row in period.get("basins", [])
-            if row.get("name") == basin
+        other_signature = [
+            _depth_signature(depth) for depth in run.compact_summary["depth_levels"]
         ]
-        basin_row = _aggregate_summary_rows(rows)
-        basin_row["name"] = basin
-        basins.append(basin_row)
-    return basins
-
-
-def _aggregate_grid_period_rows(periods: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate per-depth grid rows for an all-depth temporal period."""
-    rows_by_cell: dict[str, list[dict[str, Any]]] = {}
-    for period in periods:
-        for cell in period.get("grid_cells", []):
-            rows_by_cell.setdefault(str(cell["id"]), []).append(cell)
-
-    cells: list[dict[str, Any]] = []
-    for rows in rows_by_cell.values():
-        template = rows[0]
-        cell = _aggregate_summary_rows(rows)
-        cell.update(
-            {
-                "id": template["id"],
-                "label": template["label"],
-                "basin": template.get("basin", "Other"),
-                "west": template["west"],
-                "south": template["south"],
-                "east": template["east"],
-                "north": template["north"],
-                "center_lon": template["center_lon"],
-                "center_lat": template["center_lat"],
-            }
-        )
-        cells.append(cell)
-
-    cells.sort(key=lambda cell: (float(cell["south"]), float(cell["west"])))
-    return cells
-
-
-def _aggregate_all_depth_period(
-    period_template: dict[str, Any],
-    depth_periods: list[dict[str, Any]],
-    *,
-    top_cell_count: int,
-) -> dict[str, Any]:
-    """Build one all-depth period from matching per-depth period rows."""
-    grid_cells = _aggregate_grid_period_rows(depth_periods)
-    return {
-        **{
-            key: period_template[key]
-            for key in period_template
-            if key
-            not in {
-                "global",
-                "basins",
-                "grid_cells",
-                "top_cells",
-            }
-        },
-        "global": _aggregate_summary_rows(
-            [period["global"] for period in depth_periods]
-        ),
-        "basins": _aggregate_basin_period_rows(depth_periods),
-        "grid_cells": grid_cells,
-        "top_cells": {
-            metric: _top_cells(
-                grid_cells,
-                metric=metric,
-                limit=int(top_cell_count),
+        if other_signature != signature:
+            raise ValueError(
+                "Temporal runs must contain matching compact depth metadata. "
+                f"Expected {signature}, got {other_signature} in {run.run_dir}."
             )
-            for metric in METRIC_KEYS
-        },
-    }
+    return runs
 
 
-def _build_all_depth_temporal_level(
-    depth_levels: list[dict[str, Any]],
-    *,
-    top_cell_count: int,
-) -> dict[str, Any]:
-    """Build an all-depth aggregate temporal level."""
-    fields: dict[str, dict[str, Any]] = {}
-    for field_key in TEMPORAL_FIELD_KEYS:
-        periods_by_depth = [
-            _period_by_key(depth["fields"][field_key]["periods"])
+def _empty_depth_accumulators(
+    depth_levels: Sequence[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Create zeroed per-basin accumulators matching compact depth metadata."""
+    return {
+        basin: [
+            {
+                "index": int(depth["index"]),
+                "suffix": str(depth["suffix"]),
+                "label": str(depth["label"]),
+                "requested_depth_m": float(depth["requested_depth_m"]),
+                "actual_depth_m": float(depth["actual_depth_m"]),
+                "channel_index": int(depth["channel_index"]),
+                "count": 0,
+                "sum_absolute_error": 0.0,
+            }
             for depth in depth_levels
         ]
-        all_periods: list[dict[str, Any]] = []
-        for period_key, period_template in periods_by_depth[0].items():
-            matching_periods = [
-                periods[period_key]
-                for periods in periods_by_depth
-                if period_key in periods
-            ]
-            if len(matching_periods) != len(periods_by_depth):
-                continue
-            all_periods.append(
-                _aggregate_all_depth_period(
-                    period_template,
-                    matching_periods,
-                    top_cell_count=top_cell_count,
-                )
-            )
-        fields[field_key] = {
-            "key": field_key,
-            "label": TEMPORAL_FIELD_LABELS[field_key],
-            "description": TEMPORAL_FIELD_DESCRIPTIONS[field_key],
-            "periods": all_periods,
-        }
-
-    return {
-        "index": -1,
-        "suffix": "all_depths",
-        "label": "All Depths",
-        "requested_depth_m": None,
-        "actual_depth_m": None,
-        "channel_index": None,
-        "is_aggregate": True,
-        "depth_count": int(len(depth_levels)),
-        "aggregation_method": "Count-weighted average of per-depth temporal metrics; counts are summed across depths.",
-        "fields": fields,
+        for basin in BASIN_NAMES
     }
+
+
+def _add_depth_rows(
+    accumulators: dict[str, list[dict[str, Any]]],
+    depth_levels: Sequence[dict[str, Any]],
+) -> None:
+    """Add one weekly compact summary into basin-depth accumulators."""
+    for depth_index, depth in enumerate(depth_levels):
+        for row in depth.get("basins", []):
+            basin = str(row.get("name", "Other"))
+            if basin not in accumulators:
+                continue
+            # The weekly summary stores sums so the yearly mean is exact across
+            # weeks with different valid-pixel counts.
+            accumulators[basin][depth_index]["count"] += int(row.get("count", 0) or 0)
+            accumulators[basin][depth_index]["sum_absolute_error"] += float(
+                row.get("sum_absolute_error", 0.0) or 0.0
+            )
+
+
+def _finalize_depth_errors(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert accumulated sums and counts into dashboard depth-error rows."""
+    finalized: list[dict[str, Any]] = []
+    for row in rows:
+        count = int(row["count"])
+        total = float(row["sum_absolute_error"])
+        finalized.append(
+            {
+                **row,
+                "count": count,
+                "sum_absolute_error": total,
+                "mean_absolute_error": (
+                    None if count <= 0 else float(total / float(count))
+                ),
+            }
+        )
+    return finalized
 
 
 def _run_rows(runs: Sequence[TemporalRun]) -> list[dict[str, Any]]:
@@ -595,8 +302,7 @@ def _run_rows(runs: Sequence[TemporalRun]) -> list[dict[str, Any]]:
             "run_dir": str(run.run_dir),
             "selected_date": int(run.selected_date),
             "target_date": run.run_summary.get(
-                "target_date",
-                run.run_summary.get("selected_date"),
+                "target_date", run.run_summary.get("selected_date")
             ),
             "iso_year": run.iso_year,
             "iso_week": run.iso_week,
@@ -608,51 +314,27 @@ def _run_rows(runs: Sequence[TemporalRun]) -> list[dict[str, Any]]:
 def build_temporal_analysis_payload(
     *,
     run_dirs: Sequence[Path],
-    grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
-    top_cell_count: int = 24,
+    validation_year: int = DEFAULT_TEMPORAL_VALIDATION_YEAR,
+    grid_size_degrees: float | None = None,
+    top_cell_count: int | None = None,
 ) -> dict[str, Any]:
-    """Build the JSON-serializable temporal consistency payload."""
-    runs = sorted(
-        [_resolve_temporal_run(Path(run_dir)) for run_dir in run_dirs],
-        key=lambda run: run.selected_date,
-    )
-    _validate_run_series(runs)
+    """Build one variable's compact validation-year temporal summary."""
+    _ = grid_size_degrees, top_cell_count
+    runs = _sorted_runs(run_dirs)
+    first_depth_levels = runs[0].compact_summary["depth_levels"]
+    accumulators = _empty_depth_accumulators(first_depth_levels)
+    for run in runs:
+        _add_depth_rows(accumulators, run.compact_summary["depth_levels"])
 
+    basin_depth_errors = {
+        basin: _finalize_depth_errors(rows) for basin, rows in accumulators.items()
+    }
     variable_metadata = runs[0].variable_metadata
-    depth_levels: list[dict[str, Any]] = []
-    for depth_index, depth_export in enumerate(runs[0].depth_exports):
-        depth_levels.append(
-            {
-                "index": int(depth_index),
-                "suffix": str(depth_export["suffix"]),
-                "label": str(depth_export["label"]),
-                "requested_depth_m": float(depth_export["requested_depth_m"]),
-                "actual_depth_m": float(depth_export["actual_depth_m"]),
-                "channel_index": int(depth_export["channel_index"]),
-                "is_aggregate": False,
-                "fields": _build_depth_temporal_fields(
-                    runs,
-                    depth_index=depth_index,
-                    grid_size_degrees=grid_size_degrees,
-                    top_cell_count=top_cell_count,
-                ),
-            }
-        )
-
-    displayed_depth_levels = [
-        _build_all_depth_temporal_level(
-            depth_levels,
-            top_cell_count=top_cell_count,
-        ),
-        *depth_levels,
-    ]
     return {
-        "schema_version": 1,
-        "title": "DepthDif Temporal Consistency",
-        "description": (
-            "Aggregated temporal consistency diagnostics comparing model and "
-            "GLORYS changes across consecutive weekly global exports."
-        ),
+        "schema_version": 2,
+        "title": "DepthDif Temporal Validation Error",
+        "description": "Validation-year mean absolute prediction-vs-GLORYS error by basin and native depth.",
+        "validation_year": int(validation_year),
         "run": {
             "run_count": int(len(runs)),
             "start_date": int(runs[0].selected_date),
@@ -669,33 +351,24 @@ def build_temporal_analysis_payload(
             "value_units": str(variable_metadata["value_units"]),
             "value_unit_label": str(variable_metadata["value_unit_label"]),
         },
-        "metrics": list(METRIC_KEYS),
-        "temporal_fields": [
-            {
-                "key": key,
-                "label": TEMPORAL_FIELD_LABELS[key],
-                "description": TEMPORAL_FIELD_DESCRIPTIONS[key],
-            }
-            for key in TEMPORAL_FIELD_KEYS
-        ],
         "grouping": {
             "basins": list(BASIN_NAMES),
-            "grid_size_degrees": float(grid_size_degrees),
-            "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
+            "basin_method": "Land-filtered world_oceans.geojson region polygons.",
         },
-        "depth_levels": displayed_depth_levels,
+        "depth_levels": [
+            {
+                "index": int(depth["index"]),
+                "suffix": str(depth["suffix"]),
+                "label": str(depth["label"]),
+                "requested_depth_m": float(depth["requested_depth_m"]),
+                "actual_depth_m": float(depth["actual_depth_m"]),
+                "channel_index": int(depth["channel_index"]),
+            }
+            for depth in first_depth_levels
+        ],
+        "basin_depth_errors": basin_depth_errors,
+        "weekly_10m_artifacts": [run.ten_meter_artifact for run in runs],
     }
-
-
-def _write_json(
-    path: Path, payload: dict[str, Any], *, indent: int | None = None
-) -> Path:
-    """Write a JSON payload with a final newline."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=indent, separators=None if indent else (",", ":"))
-        f.write("\n")
-    return path
 
 
 def _ordered_variable_items(
@@ -745,29 +418,161 @@ def _copy_dashboard_pages(output_dir: Path) -> None:
         shutil.copy2(source_path, destination_path)
 
 
+def _basin_map_payload() -> dict[str, Any]:
+    """Return authoritative GeoJSON basin polygons for the dashboard selector."""
+    return {
+        "type": "FeatureCollection",
+        "name": "DepthDif world_oceans.geojson temporal basins",
+        "features": world_ocean_region_geojson_features(),
+    }
+
+
+def _safe_basin_file_name(basin: str) -> str:
+    """Return a stable JSON filename for one basin."""
+    stem = "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in str(basin).strip()
+    ).strip("_")
+    while "__" in stem:
+        stem = stem.replace("__", "_")
+    return f"{stem or 'basin'}.json"
+
+
+def _copy_weekly_10m_artifacts(
+    *,
+    output_dir: Path,
+    variable: str,
+    variable_payload: dict[str, Any],
+    public_base_url: str | None,
+) -> list[dict[str, Any]]:
+    """Copy retained weekly 10m rasters into the temporal bundle."""
+    copied: list[dict[str, Any]] = []
+    for artifact in variable_payload["weekly_10m_artifacts"]:
+        iso_year = variable_payload["run"]["runs"][len(copied)].get("iso_year")
+        iso_week = variable_payload["run"]["runs"][len(copied)].get("iso_week")
+        week_name = (
+            f"{int(iso_year)}_W{int(iso_week):02d}"
+            if iso_year and iso_week
+            else f"week_{len(copied):03d}"
+        )
+        destination_dir = output_dir / "weekly" / variable / week_name
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        prediction_source = Path(artifact["prediction_path"])
+        error_source = Path(artifact["absolute_error_path"])
+        prediction_dest = destination_dir / prediction_source.name
+        error_dest = destination_dir / error_source.name
+        if prediction_source.resolve() != prediction_dest.resolve():
+            shutil.copy2(prediction_source, prediction_dest)
+        if error_source.resolve() != error_dest.resolve():
+            shutil.copy2(error_source, error_dest)
+        prediction_relative = prediction_dest.relative_to(output_dir).as_posix()
+        error_relative = error_dest.relative_to(output_dir).as_posix()
+        copied.append(
+            {
+                "iso_year": iso_year,
+                "iso_week": iso_week,
+                "selected_date": variable_payload["run"]["runs"][len(copied)][
+                    "selected_date"
+                ],
+                "depth_label": artifact["label"],
+                "requested_depth_m": artifact["requested_depth_m"],
+                "actual_depth_m": artifact["actual_depth_m"],
+                "prediction_url": _temporal_url(
+                    prediction_relative, public_base_url=public_base_url
+                ),
+                "absolute_error_url": _temporal_url(
+                    error_relative, public_base_url=public_base_url
+                ),
+            }
+        )
+    return copied
+
+
+def _payload_week_signature(
+    payload: dict[str, Any],
+) -> list[tuple[int | None, int | None, int]]:
+    """Return comparable weekly coverage metadata for one variable payload."""
+    return [
+        (run.get("iso_year"), run.get("iso_week"), int(run["selected_date"]))
+        for run in payload["run"]["runs"]
+    ]
+
+
+def _payload_depth_signature(
+    payload: dict[str, Any],
+) -> list[tuple[str, int, float, float]]:
+    """Return comparable depth metadata for one variable payload."""
+    return [_depth_signature(depth) for depth in payload["depth_levels"]]
+
+
+def _validate_variable_payloads(variable_payloads: dict[str, dict[str, Any]]) -> None:
+    """Require variables to cover the same weeks and native depths."""
+    if len(variable_payloads) <= 1:
+        return
+    first_variable, first_payload = next(iter(variable_payloads.items()))
+    week_signature = _payload_week_signature(first_payload)
+    depth_signature = _payload_depth_signature(first_payload)
+    for variable, payload in list(variable_payloads.items())[1:]:
+        if _payload_week_signature(payload) != week_signature:
+            raise ValueError(
+                "Temporal variables must cover matching weekly runs: "
+                f"{first_variable!r} != {variable!r}."
+            )
+        if _payload_depth_signature(payload) != depth_signature:
+            raise ValueError(
+                "Temporal variables must contain matching compact depth metadata: "
+                f"{first_variable!r} != {variable!r}."
+            )
+
+
+def _basin_payload(
+    *,
+    basin: str,
+    validation_year: int,
+    variable_payloads: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the JSON loaded when one basin is active in the dashboard."""
+    variables: dict[str, Any] = {}
+    for variable, payload in variable_payloads.items():
+        variables[variable] = {
+            "variable": payload["variable"],
+            "run": payload["run"],
+            "depth_errors": payload["basin_depth_errors"][basin],
+        }
+    return {
+        "schema_version": 2,
+        "basin": basin,
+        "basin_label": BASIN_DISPLAY_NAMES.get(basin, basin),
+        "validation_year": int(validation_year),
+        "variables": variables,
+    }
+
+
 def export_temporal_dashboard_assets(
     *,
     variable_run_dirs: dict[str, Sequence[Path]],
     output_dir: Path,
     public_base_url: str | None = None,
-    grid_size_degrees: float = DEFAULT_GRID_SIZE_DEGREES,
-    top_cell_count: int = 24,
+    grid_size_degrees: float | None = None,
+    top_cell_count: int | None = None,
     rclone_remote: str | None = None,
     copy_dashboard: bool = True,
+    validation_year: int = DEFAULT_TEMPORAL_VALIDATION_YEAR,
 ) -> dict[str, Any]:
-    """Write temporal dashboard JSON assets for one or more variables."""
+    """Write compact temporal dashboard JSON and retained 10m assets."""
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    variable_payloads: dict[str, dict[str, Any]] = {}
     variables: dict[str, Any] = {}
     results: dict[str, Any] = {}
+
     for variable, raw_run_dirs in _ordered_variable_items(variable_run_dirs):
         run_dirs = [Path(run_dir) for run_dir in raw_run_dirs]
         if not run_dirs:
             continue
-        variable_dir = output_dir / str(variable)
-        variable_dir.mkdir(parents=True, exist_ok=True)
         payload = build_temporal_analysis_payload(
             run_dirs=run_dirs,
+            validation_year=validation_year,
             grid_size_degrees=grid_size_degrees,
             top_cell_count=top_cell_count,
         )
@@ -777,19 +582,13 @@ def export_temporal_dashboard_assets(
                 f"Variable key {variable!r} does not match run payload variable "
                 f"{payload_variable!r}."
             )
-
-        analysis_path = _write_json(
-            variable_dir / DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME,
-            payload,
+        variable_payloads[variable] = payload
+        weekly_artifacts = _copy_weekly_10m_artifacts(
+            output_dir=output_dir,
+            variable=variable,
+            variable_payload=payload,
+            public_base_url=public_base_url,
         )
-        first_run = _resolve_temporal_run(sorted(run_dirs)[0])
-        grid_path: Path | None = None
-        if first_run.land_mask_path is not None:
-            grid_path = write_analysis_grid_geojson(
-                output_path=variable_dir / DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
-                land_mask_path=first_run.land_mask_path,
-                grid_size_degrees=grid_size_degrees,
-            )
         variables[variable] = {
             "variable": payload_variable,
             "variable_label": payload["variable"]["label"],
@@ -798,37 +597,61 @@ def export_temporal_dashboard_assets(
             "run_count": payload["run"]["run_count"],
             "start_date": payload["run"]["start_date"],
             "end_date": payload["run"]["end_date"],
-            "temporal_analysis_data_url": _period_url(
-                DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME,
-                variable=variable,
-                public_base_url=public_base_url,
-            ),
-            "analysis_grid_geojson_url": (
-                None
-                if grid_path is None
-                else _period_url(
-                    DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
-                    variable=variable,
-                    public_base_url=public_base_url,
-                )
-            ),
+            "depth_level_count": len(payload["depth_levels"]),
+            "weekly_10m_artifacts": weekly_artifacts,
         }
         results[variable] = {
-            "analysis_json_path": str(analysis_path),
-            "analysis_grid_geojson_path": None if grid_path is None else str(grid_path),
             "run_count": int(payload["run"]["run_count"]),
             "depth_level_count": int(len(payload["depth_levels"])),
+            "weekly_10m_artifact_count": int(len(weekly_artifacts)),
         }
 
     if not variables:
         raise ValueError("No temporal variable run directories were provided.")
+    _validate_variable_payloads(variable_payloads)
 
+    basin_dir = output_dir / DEFAULT_TEMPORAL_BASIN_DATA_DIR_NAME
+    basin_data_urls: dict[str, str] = {}
+    basin_json_paths: dict[str, str] = {}
+    for basin in BASIN_BUTTON_NAMES:
+        basin_relative = (
+            f"{DEFAULT_TEMPORAL_BASIN_DATA_DIR_NAME}/{_safe_basin_file_name(basin)}"
+        )
+        basin_path = _write_json(
+            output_dir / basin_relative,
+            _basin_payload(
+                basin=basin,
+                validation_year=validation_year,
+                variable_payloads=variable_payloads,
+            ),
+        )
+        basin_data_urls[basin] = _temporal_url(
+            basin_relative, public_base_url=public_base_url
+        )
+        basin_json_paths[basin] = str(basin_path)
+    basin_dir.mkdir(parents=True, exist_ok=True)
+
+    basin_map_path = _write_json(
+        output_dir / DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME, _basin_map_payload()
+    )
     default_variable = _default_variable_key(variables)
+    default_basin = _default_basin_name()
     config = {
-        "schema_version": 1,
-        "title": "DepthDif Temporal Consistency",
+        "schema_version": 2,
+        "title": "DepthDif Temporal Validation Error",
+        "validation_year": int(validation_year),
         "default_variable": default_variable,
+        "default_basin": default_basin,
         "available_variables": list(variables.keys()),
+        "basins": [
+            {"name": basin, "label": BASIN_DISPLAY_NAMES.get(basin, basin)}
+            for basin in BASIN_BUTTON_NAMES
+        ],
+        "basin_map_geojson_url": _temporal_url(
+            DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME,
+            public_base_url=public_base_url,
+        ),
+        "basin_data_urls": basin_data_urls,
         "variables": variables,
     }
     config_path = _write_json(
@@ -838,13 +661,16 @@ def export_temporal_dashboard_assets(
     )
     run_summary = {
         "temporal_dashboard": {
+            "schema_version": 2,
             "output_dir": str(output_dir),
             "config_path": str(config_path),
+            "basin_map_geojson_path": str(basin_map_path),
+            "basin_json_paths": basin_json_paths,
             "public_base_url": public_base_url,
             "default_variable": default_variable,
+            "default_basin": default_basin,
+            "validation_year": int(validation_year),
             "variables": variables,
-            "grid_size_degrees": float(grid_size_degrees),
-            "top_cell_count": int(top_cell_count),
         },
         "variable_results": results,
     }
@@ -866,8 +692,12 @@ def export_temporal_dashboard_assets(
         "output_dir": str(output_dir),
         "config_path": str(config_path),
         "summary_path": str(summary_path),
+        "basin_map_geojson_path": str(basin_map_path),
+        "basin_json_paths": basin_json_paths,
         "variables": list(variables.keys()),
         "default_variable": default_variable,
+        "default_basin": default_basin,
+        "validation_year": int(validation_year),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
@@ -895,7 +725,7 @@ def _collect_variable_run_dirs(args: argparse.Namespace) -> dict[str, list[Path]
 def _build_parser() -> argparse.ArgumentParser:
     """Build the temporal dashboard aggregation CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Aggregate weekly inference runs into temporal dashboard JSON assets."
+        description="Aggregate weekly inference runs into compact temporal dashboard assets."
     )
     parser.add_argument(
         "--run-dir",
@@ -926,11 +756,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--public-base-url", type=str, default=None)
     parser.add_argument("--rclone-remote", type=str, default=None)
     parser.add_argument(
+        "--validation-year",
+        type=int,
+        default=DEFAULT_TEMPORAL_VALIDATION_YEAR,
+        help="Validation year represented by the temporal dashboard.",
+    )
+    parser.add_argument(
         "--grid-size-degrees",
         type=float,
-        default=DEFAULT_GRID_SIZE_DEGREES,
+        default=None,
+        help="Accepted for CLI compatibility; schema v2 no longer stores grid cells.",
     )
-    parser.add_argument("--top-cell-count", type=int, default=24)
+    parser.add_argument(
+        "--top-cell-count",
+        type=int,
+        default=None,
+        help="Accepted for CLI compatibility; schema v2 no longer stores top cells.",
+    )
     parser.add_argument(
         "--copy-dashboard",
         action=argparse.BooleanOptionalAction,
@@ -951,11 +793,13 @@ def main() -> None:
         top_cell_count=args.top_cell_count,
         rclone_remote=args.rclone_remote,
         copy_dashboard=bool(args.copy_dashboard),
+        validation_year=int(args.validation_year),
     )
     print(f"Wrote temporal dashboard assets to: {result['output_dir']}")
     print(f"- config: {result['config_path']}")
-    for variable, variable_result in result["variable_results"].items():
-        print(f"- {variable}: {variable_result['analysis_json_path']}")
+    print(f"- basin map: {result['basin_map_geojson_path']}")
+    for basin, basin_path in result["basin_json_paths"].items():
+        print(f"- {basin}: {basin_path}")
     if result.get("upload_requested"):
         print(f"- upload: {result.get('upload_message')}")
 

@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import lru_cache
 import json
 from pathlib import Path
 import sys
 from typing import Any, Iterable, Sequence
 
+from affine import Affine
 import numpy as np
 import rasterio
 import rasterio.features
@@ -34,8 +36,70 @@ DEFAULT_ANALYSIS_JSON_NAME = "error-analysis.json"
 DEFAULT_ANALYSIS_GRID_GEOJSON_NAME = "analysis-grid.geojson"
 DEFAULT_GRID_SIZE_DEGREES = 5.0
 DEFAULT_GEOJSON_COORD_PRECISION = 4
+DEFAULT_WORLD_OCEANS_GEOJSON_PATH = (
+    Path(__file__).resolve().parents[1] / "data" / "local_data" / "world_oceans.geojson"
+)
+DEFAULT_BASIN_LOOKUP_RESOLUTION_DEGREES = 0.1
 METRIC_KEYS = ("median", "mean", "p90", "p95")
-BASIN_NAMES = ("Pacific", "Atlantic", "Indian", "Southern", "Arctic", "Other")
+FALLBACK_BASIN_NAME = "Other"
+
+
+@lru_cache(maxsize=1)
+def _world_ocean_region_features() -> tuple[dict[str, Any], ...]:
+    """Load authoritative dashboard basin polygons from the local GeoJSON file."""
+    with DEFAULT_WORLD_OCEANS_GEOJSON_PATH.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    features = payload.get("features", [])
+    if not isinstance(features, list):
+        raise ValueError(
+            f"Invalid GeoJSON features in {DEFAULT_WORLD_OCEANS_GEOJSON_PATH}."
+        )
+
+    regions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get("properties", {})
+        if not isinstance(properties, dict):
+            properties = {}
+        name = str(properties.get("region") or properties.get("NAME") or "").strip()
+        geometry = feature.get("geometry")
+        if not name or geometry is None or name in seen:
+            continue
+        regions.append({"name": name, "geometry": geometry, "properties": properties})
+        seen.add(name)
+    if not regions:
+        raise ValueError(
+            f"No ocean regions found in {DEFAULT_WORLD_OCEANS_GEOJSON_PATH}."
+        )
+    return tuple(regions)
+
+
+def world_ocean_region_names() -> tuple[str, ...]:
+    """Return dashboard basin categories in GeoJSON feature order."""
+    return tuple(str(region["name"]) for region in _world_ocean_region_features())
+
+
+def world_ocean_region_geojson_features() -> list[dict[str, Any]]:
+    """Return GeoJSON features normalized for dashboard basin maps."""
+    features: list[dict[str, Any]] = []
+    for region in _world_ocean_region_features():
+        name = str(region["name"])
+        properties = dict(region.get("properties", {}))
+        properties.update({"id": name, "name": name, "label": name})
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": region["geometry"],
+                "properties": properties,
+            }
+        )
+    return features
+
+
+BASIN_BUTTON_NAMES = world_ocean_region_names()
+BASIN_NAMES = (*BASIN_BUTTON_NAMES, FALLBACK_BASIN_NAME)
 
 
 def normalize_longitude(lon: float) -> float:
@@ -52,51 +116,93 @@ def _normalize_longitudes(lons: np.ndarray) -> np.ndarray:
     return np.where(dateline_mask, 180.0, normalized)
 
 
+def _transform_cache_key(
+    transform: Any,
+) -> tuple[float, float, float, float, float, float]:
+    """Return the affine transform fields needed to rasterize basin regions."""
+    affine = Affine(*tuple(transform)[:6])
+    return tuple(float(value) for value in affine[:6])
+
+
+@lru_cache(maxsize=8)
+def _rasterized_basin_codes(
+    height: int,
+    width: int,
+    transform_key: tuple[float, float, float, float, float, float],
+) -> np.ndarray:
+    """Rasterize GeoJSON basin polygons onto one analysis grid."""
+    transform = Affine(*transform_key)
+    shapes = (
+        (region["geometry"], int(index))
+        for index, region in enumerate(_world_ocean_region_features(), start=1)
+    )
+    return rasterio.features.rasterize(
+        shapes,
+        out_shape=(int(height), int(width)),
+        transform=transform,
+        fill=0,
+        dtype="uint8",
+    )
+
+
+@lru_cache(maxsize=1)
+def _global_basin_lookup_codes() -> np.ndarray:
+    """Rasterize the GeoJSON regions on the GLORYS-aligned lookup grid."""
+    resolution = float(DEFAULT_BASIN_LOOKUP_RESOLUTION_DEGREES)
+    height = int(round(180.0 / resolution))
+    width = int(round(360.0 / resolution))
+    transform = Affine(resolution, 0.0, -180.0, 0.0, -resolution, 90.0)
+    return _rasterized_basin_codes(height, width, _transform_cache_key(transform))
+
+
+def _labels_from_codes(codes: np.ndarray) -> np.ndarray:
+    """Convert rasterized basin integer codes into dashboard labels."""
+    code_values = np.asarray(codes, dtype=np.uint8)
+    labels = np.full(code_values.shape, FALLBACK_BASIN_NAME, dtype="<U64")
+    for index, name in enumerate(BASIN_BUTTON_NAMES, start=1):
+        labels[code_values == index] = name
+    return labels
+
+
+def _basin_labels_for_indices(
+    *,
+    shape: tuple[int, int],
+    transform: Any,
+    rows: np.ndarray,
+    cols: np.ndarray,
+) -> np.ndarray:
+    """Return GeoJSON basin labels for selected raster row/column indices."""
+    if rows.size == 0:
+        return np.asarray([], dtype="<U64")
+    basin_codes = _rasterized_basin_codes(
+        int(shape[0]),
+        int(shape[1]),
+        _transform_cache_key(transform),
+    )
+    return _labels_from_codes(basin_codes[rows, cols])
+
+
 def _basin_label_array(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
-    """Assign basin labels with explicit marginal-sea and land fallback regions."""
+    """Assign basin labels from the authoritative world-oceans GeoJSON."""
     lon = _normalize_longitudes(lons)
     lat = np.asarray(lats, dtype=np.float64)
-    labels = np.full(lon.shape, "Other", dtype="<U8")
+    labels = np.full(lon.shape, FALLBACK_BASIN_NAME, dtype="<U64")
     finite_coords = np.isfinite(lon) & np.isfinite(lat)
+    if not np.any(finite_coords):
+        return labels
 
-    arctic = finite_coords & (lat >= 66.0)
-    southern = finite_coords & (lat <= -60.0)
-    labels[arctic] = "Arctic"
-    labels[southern] = "Southern"
-
-    open_ocean = finite_coords & ~arctic & ~southern & (lat > -60.0) & (lat < 66.0)
-    atlantic = open_ocean & (
-        ((lon >= -70.0) & (lon < 20.0))
-        | ((lon >= -10.0) & (lon < 42.0) & (lat >= 30.0) & (lat < 48.0))
-        | ((lon >= -25.0) & (lon < 32.0) & (lat >= 48.0))
-    )
-    labels[atlantic] = "Atlantic"
-
-    indian = (
-        open_ocean
-        & (labels == "Other")
-        & (
-            ((lon >= 20.0) & (lon < 120.0) & (lat < 32.0))
-            | ((lon >= 120.0) & (lon < 147.0) & (lat < 0.0))
-        )
-    )
-    labels[indian] = "Indian"
-
-    pacific = (
-        open_ocean
-        & (labels == "Other")
-        & (
-            (lon < -70.0)
-            | (lon >= 120.0)
-            | ((lon >= 100.0) & (lon < 120.0) & (lat > -15.0) & (lat < 32.0))
-        )
-    )
-    labels[pacific] = "Pacific"
+    resolution = float(DEFAULT_BASIN_LOOKUP_RESOLUTION_DEGREES)
+    codes = _global_basin_lookup_codes()
+    rows = np.floor((90.0 - lat[finite_coords]) / resolution).astype(np.int64)
+    cols = np.floor((lon[finite_coords] + 180.0) / resolution).astype(np.int64)
+    rows = np.clip(rows, 0, codes.shape[0] - 1)
+    cols = np.clip(cols, 0, codes.shape[1] - 1)
+    labels[finite_coords] = _labels_from_codes(codes[rows, cols])
     return labels
 
 
 def assign_ocean_basin(lon: float, lat: float) -> str:
-    """Assign an approximate ocean basin for diagnostic regional summaries."""
+    """Assign the GeoJSON ocean-region label for one lon/lat point."""
     labels = _basin_label_array(
         np.asarray([lon], dtype=np.float64),
         np.asarray([lat], dtype=np.float64),
@@ -139,12 +245,12 @@ def _filter_ocean_points(
     return values[ocean], lons[ocean], lats[ocean]
 
 
-def _valid_raster_arrays(
+def _valid_raster_arrays_with_basin_labels(
     path: Path,
     *,
     land_mask_path: Path | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return finite ocean raster values and their lon/lat pixel-center coordinates."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean raster values, coordinates, and GeoJSON basin labels."""
     with rasterio.open(path) as ds:
         data = ds.read(1, masked=False).astype(np.float64, copy=False)
         valid = np.isfinite(data)
@@ -156,6 +262,7 @@ def _valid_raster_arrays(
                 np.asarray([], dtype=np.float64),
                 np.asarray([], dtype=np.float64),
                 np.asarray([], dtype=np.float64),
+                np.asarray([], dtype="<U64"),
             )
         xs, ys = rasterio.transform.xy(
             ds.transform,
@@ -163,11 +270,62 @@ def _valid_raster_arrays(
             col_idx,
             offset="center",
         )
+        values = data[row_idx, col_idx].astype(np.float64, copy=False)
+        lons = np.asarray(xs, dtype=np.float64)
+        lats = np.asarray(ys, dtype=np.float64)
+        raster_shape = data.shape
+        raster_transform = ds.transform
 
-    values = data[row_idx, col_idx].astype(np.float64, copy=False)
-    lons = np.asarray(xs, dtype=np.float64)
-    lats = np.asarray(ys, dtype=np.float64)
-    return _filter_ocean_points(values, lons, lats, land_mask_path=land_mask_path)
+    if land_mask_path is not None:
+        with rasterio.open(land_mask_path) as mask_ds:
+            land_mask = mask_ds.read(1, masked=False)
+            rows, cols = rasterio.transform.rowcol(
+                mask_ds.transform,
+                _normalize_longitudes(lons),
+                lats,
+            )
+        rows = np.asarray(rows, dtype=np.int64)
+        cols = np.asarray(cols, dtype=np.int64)
+        inside = (
+            (rows >= 0)
+            & (rows < land_mask.shape[0])
+            & (cols >= 0)
+            & (cols < land_mask.shape[1])
+        )
+        ocean = np.zeros_like(inside, dtype=bool)
+        if np.any(inside):
+            # The packaged world mask stores land as 1 and ocean as 0.
+            land = (
+                np.asarray(land_mask[rows[inside], cols[inside]], dtype=np.float32)
+                > 0.5
+            )
+            ocean[inside] = ~land
+        values = values[ocean]
+        lons = lons[ocean]
+        lats = lats[ocean]
+        row_idx = row_idx[ocean]
+        col_idx = col_idx[ocean]
+
+    basin_labels = _basin_labels_for_indices(
+        shape=raster_shape,
+        transform=raster_transform,
+        rows=row_idx,
+        cols=col_idx,
+    )
+    return values, lons, lats, basin_labels
+
+
+def _valid_raster_arrays(
+    path: Path,
+    *,
+    land_mask_path: Path | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean raster values and their lon/lat pixel-center coordinates."""
+    values, lons, lats, _basin_labels = _valid_raster_arrays_with_basin_labels(
+        path,
+        land_mask_path=land_mask_path,
+    )
+    return values, lons, lats
 
 
 def summarize_values(values: np.ndarray) -> dict[str, float | int | None]:
@@ -208,11 +366,11 @@ def aggregate_by_basin(
     *,
     basin_labels: np.ndarray | None = None,
 ) -> list[dict[str, Any]]:
-    """Aggregate absolute-error values into approximate ocean basins."""
+    """Aggregate absolute-error values into GeoJSON ocean regions."""
     labels = (
         _basin_label_array(lons, lats)
         if basin_labels is None
-        else np.asarray(basin_labels, dtype="<U8")
+        else np.asarray(basin_labels, dtype="<U64")
     )
     if labels.shape != values.shape:
         raise ValueError("basin_labels must match values shape.")
@@ -455,7 +613,7 @@ def aggregate_by_grid(
     labels = (
         _basin_label_array(lons, lats)
         if basin_labels is None
-        else np.asarray(basin_labels, dtype="<U8")
+        else np.asarray(basin_labels, dtype="<U64")
     )
     if labels.shape != values.shape:
         raise ValueError("basin_labels must match values shape.")
@@ -728,7 +886,7 @@ def _aggregate_paired_by_basin(
     uncertainty_values: np.ndarray,
     basin_labels: np.ndarray,
 ) -> list[dict[str, Any]]:
-    """Aggregate paired uncertainty calibration values by ocean basin."""
+    """Aggregate paired uncertainty calibration values by GeoJSON ocean region."""
     rows: list[dict[str, Any]] = []
     for basin in BASIN_NAMES:
         mask = basin_labels == basin
@@ -1042,13 +1200,13 @@ def _build_all_depths_analysis(
     }
 
 
-def _valid_array_points(
+def _valid_array_points_with_basin_labels(
     data: np.ndarray,
     *,
     transform: Any,
     land_mask: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return finite ocean array values and their lon/lat pixel-center coordinates."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean array values, coordinates, and GeoJSON basin labels."""
     array = np.asarray(data, dtype=np.float64)
     if array.ndim != 2:
         raise ValueError(
@@ -1071,14 +1229,131 @@ def _valid_array_points(
             np.asarray([], dtype=np.float64),
             np.asarray([], dtype=np.float64),
             np.asarray([], dtype=np.float64),
+            np.asarray([], dtype="<U64"),
         )
 
     xs, ys = rasterio.transform.xy(transform, row_idx, col_idx, offset="center")
+    basin_labels = _basin_labels_for_indices(
+        shape=array.shape,
+        transform=transform,
+        rows=row_idx,
+        cols=col_idx,
+    )
     return (
         array[row_idx, col_idx].astype(np.float64, copy=False),
         np.asarray(xs, dtype=np.float64),
         np.asarray(ys, dtype=np.float64),
+        basin_labels,
     )
+
+
+def _valid_array_points(
+    data: np.ndarray,
+    *,
+    transform: Any,
+    land_mask: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return finite ocean array values and their lon/lat pixel-center coordinates."""
+    values, lons, lats, _basin_labels = _valid_array_points_with_basin_labels(
+        data,
+        transform=transform,
+        land_mask=land_mask,
+    )
+    return values, lons, lats
+
+
+def summarize_error_sum(values: np.ndarray) -> dict[str, float | int | None]:
+    """Compute count, sum, and mean for finite absolute-error values."""
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return {"count": 0, "sum_absolute_error": 0.0, "mean_absolute_error": None}
+    total = float(np.sum(finite))
+    return {
+        "count": int(finite.size),
+        "sum_absolute_error": total,
+        "mean_absolute_error": float(total / float(finite.size)),
+    }
+
+
+def aggregate_error_sum_by_basin(
+    values: np.ndarray,
+    lons: np.ndarray,
+    lats: np.ndarray,
+    *,
+    basin_labels: np.ndarray | None = None,
+) -> list[dict[str, Any]]:
+    """Aggregate absolute-error sums into GeoJSON ocean regions."""
+    labels = (
+        _basin_label_array(lons, lats)
+        if basin_labels is None
+        else np.asarray(basin_labels, dtype="<U64")
+    )
+    if labels.shape != values.shape:
+        raise ValueError("basin_labels must match values shape.")
+
+    summaries: list[dict[str, Any]] = []
+    for basin in BASIN_NAMES:
+        row = summarize_error_sum(values[labels == basin])
+        row["name"] = basin
+        summaries.append(row)
+    return summaries
+
+
+def build_basin_depth_error_summary_payload_from_depth_arrays(
+    *,
+    run_summary: dict[str, Any],
+    variable_metadata: dict[str, Any],
+    depth_levels_metadata: Sequence[dict[str, Any]],
+    absolute_error_arrays: Iterable[np.ndarray],
+    transform: Any,
+    land_mask: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Build compact per-basin, per-depth absolute-error sums for temporal use."""
+    depth_levels: list[dict[str, Any]] = []
+    for depth_index, (depth_metadata, absolute_error) in enumerate(
+        zip(depth_levels_metadata, absolute_error_arrays, strict=True)
+    ):
+        values, lons, lats, basin_labels = _valid_array_points_with_basin_labels(
+            absolute_error,
+            transform=transform,
+            land_mask=land_mask,
+        )
+        depth_levels.append(
+            {
+                "index": int(depth_index),
+                "suffix": str(depth_metadata["suffix"]),
+                "label": str(depth_metadata["label"]),
+                "requested_depth_m": float(depth_metadata["requested_depth_m"]),
+                "actual_depth_m": float(depth_metadata["actual_depth_m"]),
+                "channel_index": int(depth_metadata["channel_index"]),
+                "basins": aggregate_error_sum_by_basin(
+                    values, lons, lats, basin_labels=basin_labels
+                ),
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "kind": "basin_depth_error_summary",
+        "run": {
+            "selected_date": run_summary.get("selected_date"),
+            "target_date": run_summary.get("target_date"),
+            "iso_year": run_summary.get("iso_year"),
+            "iso_week": run_summary.get("iso_week"),
+        },
+        "variable": {
+            "name": str(variable_metadata["name"]),
+            "label": str(variable_metadata["label"]),
+            "value_units": str(variable_metadata["value_units"]),
+            "value_unit_label": str(variable_metadata["value_unit_label"]),
+        },
+        "grouping": {
+            "basins": list(BASIN_NAMES),
+            "basin_method": "Land-filtered world_oceans.geojson region polygons.",
+        },
+        "depth_levels": depth_levels,
+    }
 
 
 def _build_depth_level_analysis_from_values(
@@ -1090,9 +1365,14 @@ def _build_depth_level_analysis_from_values(
     *,
     grid_size_degrees: float,
     top_cell_count: int,
+    basin_labels: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Build exact error-analysis summaries for one depth from point values."""
-    basin_labels = _basin_label_array(lons, lats)
+    basin_labels = (
+        _basin_label_array(lons, lats)
+        if basin_labels is None
+        else np.asarray(basin_labels, dtype="<U64")
+    )
     grid_cells = aggregate_by_grid(
         values,
         lons,
@@ -1133,7 +1413,7 @@ def _build_depth_level_analysis(
     land_mask_path: Path | None,
 ) -> dict[str, Any]:
     """Build exact error-analysis summaries for one depth export."""
-    values, lons, lats = _valid_raster_arrays(
+    values, lons, lats, basin_labels = _valid_raster_arrays_with_basin_labels(
         Path(depth_export["absolute_error_path"]),
         land_mask_path=land_mask_path,
     )
@@ -1145,6 +1425,7 @@ def _build_depth_level_analysis(
         lats,
         grid_size_degrees=grid_size_degrees,
         top_cell_count=top_cell_count,
+        basin_labels=basin_labels,
     )
 
 
@@ -1295,7 +1576,7 @@ def build_error_analysis_payload(
         "grouping": {
             "basins": list(BASIN_NAMES),
             "grid_size_degrees": float(grid_size_degrees),
-            "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
+            "basin_method": "Land-filtered world_oceans.geojson region polygons with dominant region labels on grid cells.",
         },
         "depth_levels": displayed_depth_levels,
         "uncertainty_reliability": uncertainty_reliability,
@@ -1325,7 +1606,7 @@ def build_error_analysis_payload_from_depth_arrays(
             zip(depth_levels_metadata, absolute_error_arrays, strict=True)
         ):
             progress.set_postfix_str(str(depth_metadata["suffix"]))
-            values, lons, lats = _valid_array_points(
+            values, lons, lats, basin_labels = _valid_array_points_with_basin_labels(
                 error_array,
                 transform=transform,
                 land_mask=land_mask,
@@ -1339,6 +1620,7 @@ def build_error_analysis_payload_from_depth_arrays(
                     lats,
                     grid_size_degrees=grid_size_degrees,
                     top_cell_count=top_cell_count,
+                    basin_labels=basin_labels,
                 )
             )
             progress.update(1)
@@ -1375,7 +1657,7 @@ def build_error_analysis_payload_from_depth_arrays(
         "grouping": {
             "basins": list(BASIN_NAMES),
             "grid_size_degrees": float(grid_size_degrees),
-            "basin_method": "Land-filtered deterministic lon/lat basin buckets with dominant basin labels on grid cells.",
+            "basin_method": "Land-filtered world_oceans.geojson region polygons with dominant region labels on grid cells.",
         },
         "depth_levels": displayed_depth_levels,
         "uncertainty_reliability": _uncertainty_reliability_from_run_summary(

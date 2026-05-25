@@ -6,23 +6,19 @@ html.standalone-temporal-root,
 }
 
 .standalone-temporal-page {
-  --temporal-bg: #061726;
-  --temporal-panel: rgba(5, 20, 32, 0.78);
-  --temporal-panel-2: rgba(10, 42, 67, 0.82);
-  --temporal-border: rgba(124, 200, 255, 0.18);
-  --temporal-text: #d7e9f7;
-  --temporal-muted: rgba(215, 233, 247, 0.72);
-  --temporal-cyan: #7cc8ff;
-  --temporal-blue: #42aef0;
-  --temporal-yellow: #ffd166;
-  --temporal-red: #ef5b5b;
+  --temporal-bg: #f4f1ea;
+  --temporal-panel: rgba(255, 255, 255, 0.88);
+  --temporal-border: rgba(34, 54, 68, 0.16);
+  --temporal-text: #17212b;
+  --temporal-muted: #5f6f7c;
+  --temporal-teal: #0f9f8f;
+  --temporal-amber: #d89216;
+  --temporal-ink: #273849;
   min-height: 100vh;
   overflow: hidden;
   color: var(--temporal-text);
   font-family: Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(79, 195, 247, 0.18), transparent 32%),
-    linear-gradient(180deg, #04131f 0%, #061726 100%);
+  background: linear-gradient(180deg, #f8f5ed 0%, var(--temporal-bg) 100%);
 }
 
 .standalone-temporal-page button,
@@ -32,20 +28,19 @@ html.standalone-temporal-root,
 
 .temporal-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) clamp(240px, 28vh, 320px);
-  gap: 10px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
   height: 100vh;
   min-height: 0;
-  padding: 10px;
+  padding: 14px;
   overflow: hidden;
   box-sizing: border-box;
 }
 
 .temporal-header,
 .temporal-controls,
-.temporal-grid,
-.temporal-charts {
-  width: min(1720px, 100%);
+.temporal-workspace {
+  width: min(1680px, 100%);
   margin: 0 auto;
 }
 
@@ -59,7 +54,7 @@ html.standalone-temporal-root,
 .temporal-eyebrow,
 .temporal-controls span,
 .temporal-panel__header p {
-  color: var(--temporal-cyan);
+  color: var(--temporal-teal);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -68,8 +63,9 @@ html.standalone-temporal-root,
 
 .temporal-header h1 {
   margin: 0.18rem 0 0;
-  font-size: clamp(1.6rem, 2.1vw, 2.7rem);
-  line-height: 0.95;
+  color: var(--temporal-ink);
+  font-size: clamp(1.6rem, 2vw, 2.5rem);
+  line-height: 1;
   letter-spacing: 0;
 }
 
@@ -87,13 +83,10 @@ html.standalone-temporal-root,
 }
 
 .temporal-links a,
-.temporal-segmented button,
-.temporal-controls select,
-.temporal-ranking-button,
-.temporal-ranking-reset {
+.temporal-controls select {
   border: 1px solid var(--temporal-border);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.78);
   color: var(--temporal-text);
 }
 
@@ -111,10 +104,7 @@ html.standalone-temporal-root,
   padding: 8px;
   border: 1px solid var(--temporal-border);
   border-radius: 8px;
-  backdrop-filter: blur(18px);
-  background:
-    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
-    rgba(5, 20, 32, 0.76);
+  background: rgba(255, 255, 255, 0.68);
 }
 
 .temporal-controls label {
@@ -123,75 +113,30 @@ html.standalone-temporal-root,
 }
 
 .temporal-controls select {
-  min-width: 11rem;
-  height: 2.2rem;
+  min-width: 12rem;
+  height: 2.25rem;
   padding: 0 0.7rem;
-  background: #071d2d;
-  color: var(--temporal-text);
-  color-scheme: dark;
 }
 
-.temporal-controls option {
-  background: #071d2d;
-  color: var(--temporal-text);
-}
-
-.temporal-segmented {
-  display: flex;
-  gap: 5px;
-}
-
-.temporal-segmented button {
-  height: 2.2rem;
-  min-width: 4.1rem;
-  padding: 0 0.75rem;
-  cursor: pointer;
-}
-
-.temporal-segmented button[aria-pressed="true"] {
-  border-color: transparent;
-  background: var(--temporal-cyan);
-  color: #041625;
+.temporal-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.92fr) minmax(0, 1.08fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .temporal-panel {
-  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  padding: 10px;
+  padding: 12px;
   overflow: hidden;
   border: 1px solid var(--temporal-border);
   border-radius: 8px;
-  backdrop-filter: blur(18px);
-  background:
-    radial-gradient(circle at top right, rgba(79, 195, 247, 0.1), transparent 34%),
-    var(--temporal-panel);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
-}
-
-.temporal-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.22fr) minmax(0, 1fr);
-  gap: 10px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.temporal-charts {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
-  gap: 10px;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.temporal-panel--map,
-.temporal-panel--time-series,
-.temporal-panel--summary,
-.temporal-panel--depth-profile,
-.temporal-charts .temporal-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--temporal-panel);
+  box-shadow: 0 18px 45px rgba(39, 56, 73, 0.12);
 }
 
 .temporal-panel__header {
@@ -199,11 +144,12 @@ html.standalone-temporal-root,
   align-items: start;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .temporal-panel__header h2 {
   margin: 0;
+  color: var(--temporal-ink);
   font-size: 1rem;
   letter-spacing: 0;
 }
@@ -220,53 +166,12 @@ html.standalone-temporal-root,
   max-width: 18rem;
   overflow: hidden;
   padding: 0.38rem 0.55rem;
-  border: 1px solid rgba(124, 200, 255, 0.32);
+  border: 1px solid rgba(15, 159, 143, 0.3);
   border-radius: 8px;
-  color: var(--temporal-cyan);
+  color: var(--temporal-teal);
+  background: rgba(15, 159, 143, 0.08);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.temporal-map-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.36fr);
-  gap: 10px;
-  min-height: 0;
-}
-
-.temporal-map-stack {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-.temporal-basin-selector {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.temporal-basin-selector__header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.temporal-basin-selector__header h2 {
-  margin: 0;
-  font-size: 0.92rem;
-  letter-spacing: 0;
-}
-
-.temporal-basin-selector__header p {
-  margin: 0.2rem 0 0;
-  color: var(--temporal-cyan);
-  font-size: 0.7rem;
 }
 
 #temporal-map {
@@ -275,128 +180,8 @@ html.standalone-temporal-root,
   height: 100%;
   min-height: 0;
   border-radius: 6px;
-  background: #04131f;
-  cursor: crosshair;
-}
-
-.temporal-map-legend {
-  display: grid;
-  grid-template-columns: auto minmax(120px, 220px) auto;
-  gap: 8px;
-  align-items: center;
-  margin-top: 6px;
-  color: var(--temporal-muted);
-  font-size: 0.76rem;
-}
-
-.temporal-map-legend__ramp {
-  height: 0.55rem;
-  border: 1px solid rgba(223, 244, 239, 0.24);
-  border-radius: 999px;
-  background: linear-gradient(90deg, #2c7bb6 0%, #00a6ca 25%, #7fd34e 50%, #fdae61 75%, #d7191c 100%);
-}
-
-.temporal-ranking-reset {
-  align-self: start;
-  padding: 0.42rem 0.62rem;
-  color: var(--temporal-cyan);
-  font-weight: 800;
+  background: #dfe5e5;
   cursor: pointer;
-}
-
-.temporal-ranking-reset:hover:not(:disabled) {
-  border-color: rgba(124, 200, 255, 0.76);
-  background: var(--temporal-panel-2);
-}
-
-.temporal-ranking-reset:disabled {
-  opacity: 0.46;
-  cursor: default;
-}
-
-.temporal-panel--rankings {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  max-height: none;
-  height: 100%;
-  overflow: auto;
-}
-
-.temporal-ranking-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 7px;
-}
-
-.temporal-ranking-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  width: 100%;
-  padding: 9px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.temporal-ranking-button:hover,
-.temporal-ranking-button.is-active {
-  border-color: rgba(124, 200, 255, 0.76);
-  background: var(--temporal-panel-2);
-}
-
-.temporal-ranking-name {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.temporal-ranking-meta {
-  margin-top: 3px;
-  color: var(--temporal-muted);
-  font-size: 0.78rem;
-}
-
-.temporal-ranking-value {
-  color: var(--temporal-cyan);
-  font-weight: 800;
-}
-
-.temporal-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  align-content: start;
-  min-height: 0;
-  overflow: auto;
-}
-
-.temporal-summary-card {
-  min-width: 0;
-  padding: 9px;
-  border: 1px solid rgba(124, 200, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.temporal-summary-label {
-  display: block;
-  color: var(--temporal-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.temporal-summary-value {
-  display: block;
-  overflow: hidden;
-  margin-top: 4px;
-  color: var(--temporal-text);
-  font-size: 1rem;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .temporal-chart {
@@ -407,30 +192,30 @@ html.standalone-temporal-root,
 }
 
 #temporal-map.leaflet-container {
-  background: #04131f;
+  background: #dfe5e5;
   color: var(--temporal-text);
   font-family: Roboto, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 #temporal-map .leaflet-control-attribution,
 #temporal-map .leaflet-control-zoom a {
-  border-color: rgba(124, 200, 255, 0.22);
-  background: rgba(5, 20, 32, 0.9);
+  border-color: var(--temporal-border);
+  background: rgba(255, 255, 255, 0.9);
   color: var(--temporal-text);
 }
 
 #temporal-map .leaflet-control-attribution a,
 #temporal-map .leaflet-control-zoom a:hover {
-  color: var(--temporal-cyan);
+  color: var(--temporal-teal);
 }
 
 .leaflet-tooltip.temporal-leaflet-tooltip {
-  max-width: 300px;
+  max-width: 260px;
   border: 1px solid var(--temporal-border);
   border-radius: 8px;
-  background: rgba(5, 20, 32, 0.98);
+  background: rgba(255, 255, 255, 0.98);
   color: var(--temporal-text);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px rgba(39, 56, 73, 0.16);
   font-size: 0.78rem;
 }
 
@@ -438,15 +223,9 @@ html.standalone-temporal-root,
   color: var(--temporal-muted);
 }
 
-@media (max-width: 1100px) {
-  .temporal-grid,
-  .temporal-charts,
-  .temporal-map-layout {
+@media (max-width: 980px) {
+  .temporal-workspace {
     grid-template-columns: 1fr;
-  }
-
-  .temporal-panel--rankings {
-    max-height: none;
   }
 }
 
@@ -460,25 +239,18 @@ html.standalone-temporal-root,
     flex-direction: column;
   }
 
-  .temporal-controls,
-  .temporal-segmented {
+  .temporal-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
   .temporal-controls label,
-  .temporal-controls select,
-  .temporal-segmented button {
+  .temporal-controls select {
     width: 100%;
-  }
-
-  .temporal-map-legend,
-  .temporal-summary {
-    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 1100px), (max-height: 760px) {
+@media (max-width: 980px), (max-height: 720px) {
   .standalone-temporal-page {
     overflow: auto;
   }
@@ -488,11 +260,14 @@ html.standalone-temporal-root,
     min-height: 100vh;
     overflow: visible;
   }
+
+  .temporal-panel {
+    min-height: 360px;
+  }
 }
 
-.temporal-load-failed .temporal-controls,
-.temporal-load-failed .temporal-grid,
-.temporal-load-failed .temporal-charts {
+.temporal-load-failed .temporal-workspace,
+.temporal-load-failed .temporal-controls {
   opacity: 1;
 }
 
@@ -500,17 +275,15 @@ html.standalone-temporal-root,
   width: min(920px, 100%);
   margin: 2rem auto 0;
   padding: 1.2rem 1.35rem;
-  border: 1px solid rgba(124, 200, 255, 0.28);
+  border: 1px solid var(--temporal-border);
   border-radius: 8px;
-  background:
-    radial-gradient(circle at top right, rgba(79, 195, 247, 0.12), transparent 35%),
-    rgba(5, 20, 32, 0.82);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 18px 45px rgba(39, 56, 73, 0.14);
 }
 
 .temporal-error-state h2 {
   margin: 0 0 0.5rem;
-  color: #f4fbff;
+  color: var(--temporal-ink);
   font-size: 1.25rem;
 }
 
@@ -520,12 +293,11 @@ html.standalone-temporal-root,
 }
 
 .temporal-error-state code {
-  color: #a8dcff;
+  color: var(--temporal-teal);
   overflow-wrap: anywhere;
 }
 
-.temporal-controls select:disabled,
-.temporal-segmented button:disabled {
+.temporal-controls select:disabled {
   cursor: not-allowed;
   opacity: 0.52;
 }

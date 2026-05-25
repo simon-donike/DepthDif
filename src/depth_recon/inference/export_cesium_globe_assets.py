@@ -741,6 +741,7 @@ def _build_gdal2tiles_command(
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
     resampling: str = "near",
     tile_driver: str = DEFAULT_TILE_DRIVER,
     webp_quality: int = DEFAULT_WEBP_QUALITY,
@@ -750,6 +751,8 @@ def _build_gdal2tiles_command(
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
     max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
+    if max_zoom_level is not None:
+        max_zoom = min(max_zoom, max(0, int(max_zoom_level)))
     command = [
         gdal2tiles_exe,
         "-p",
@@ -783,6 +786,7 @@ def _run_gdal2tiles(
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
     resampling: str = "near",
     tile_driver: str = DEFAULT_TILE_DRIVER,
     webp_quality: int = DEFAULT_WEBP_QUALITY,
@@ -792,6 +796,7 @@ def _run_gdal2tiles(
         input_path,
         output_dir,
         extra_zoom_levels=extra_zoom_levels,
+        max_zoom_level=max_zoom_level,
         resampling=resampling,
         tile_driver=tile_driver,
         webp_quality=webp_quality,

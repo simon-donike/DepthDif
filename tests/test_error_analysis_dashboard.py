@@ -27,15 +27,17 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
     def test_default_dashboard_grid_uses_five_degree_cells(self) -> None:
         self.assertEqual(DEFAULT_GRID_SIZE_DEGREES, 5.0)
 
-    def test_assign_ocean_basin_uses_expected_diagnostic_buckets(self) -> None:
-        self.assertEqual(assign_ocean_basin(-150.0, 20.0), "Pacific")
-        self.assertEqual(assign_ocean_basin(-40.0, 20.0), "Atlantic")
-        self.assertEqual(assign_ocean_basin(80.0, -20.0), "Indian")
-        self.assertEqual(assign_ocean_basin(10.0, -70.0), "Southern")
-        self.assertEqual(assign_ocean_basin(30.0, 75.0), "Arctic")
-        self.assertEqual(assign_ocean_basin(30.0, 42.0), "Atlantic")
+    def test_assign_ocean_basin_uses_world_oceans_geojson_regions(self) -> None:
+        self.assertEqual(assign_ocean_basin(-150.0, 20.0), "North Pacific Ocean")
+        self.assertEqual(assign_ocean_basin(-150.0, -20.0), "South Pacific Ocean")
+        self.assertEqual(assign_ocean_basin(-40.0, 20.0), "North Atlantic Ocean")
+        self.assertEqual(assign_ocean_basin(-40.0, -20.0), "South Atlantic Ocean")
+        self.assertEqual(assign_ocean_basin(80.0, -20.0), "Indian Ocean")
+        self.assertEqual(assign_ocean_basin(10.0, -70.0), "Southern Ocean")
+        self.assertEqual(assign_ocean_basin(30.0, 75.0), "Arctic Ocean")
+        self.assertEqual(assign_ocean_basin(-90.0, 25.0), "Gulf of Mexico")
+        self.assertEqual(assign_ocean_basin(15.0, 35.0), "Mediterranean Sea")
         self.assertEqual(assign_ocean_basin(80.0, 45.0), "Other")
-        self.assertEqual(assign_ocean_basin(135.0, 35.0), "Pacific")
 
     def test_summarize_values_ignores_nan_and_reports_percentiles(self) -> None:
         stats = summarize_values(np.asarray([1.0, 2.0, 3.0, np.nan], dtype=np.float64))
@@ -60,7 +62,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertEqual(first["west"], -180.0)
         self.assertEqual(first["south"], -90.0)
         self.assertEqual(first["median"], 2.0)
-        self.assertEqual(first["basin"], "Southern")
+        self.assertEqual(first["basin"], "Southern Ocean")
 
     def test_analysis_grid_geojson_clips_cells_to_ocean_mask(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -189,8 +191,12 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
                 cell["label"]: cell["basin"] for cell in depth["grid_cells"]
             }
             self.assertEqual(basin_by_label["0 to 90 lat, 90 to 180 lon"], "Other")
-            self.assertEqual(basin_by_label["-90 to 0 lat, -90 to 0 lon"], "Pacific")
-            self.assertEqual(basin_by_label["-90 to 0 lat, 90 to 180 lon"], "Indian")
+            self.assertEqual(
+                basin_by_label["-90 to 0 lat, -90 to 0 lon"], "South Pacific Ocean"
+            )
+            self.assertEqual(
+                basin_by_label["-90 to 0 lat, 90 to 180 lon"], "Indian Ocean"
+            )
 
     def test_build_payload_and_export_dashboard_from_run_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -433,13 +439,13 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("coast-clipped", script)
         self.assertIn("quantile(values, 0.95)", script)
         self.assertIn("cell.basin", script)
-        self.assertIn("lonValue >= 100", script)
+        self.assertIn("function displayBasinNames", script)
         self.assertIn("analysis-reset-focus", script)
         self.assertIn("depthProfileLogX", script)
         self.assertIn("showBasinFan: true", script)
         self.assertIn("function logDepthXValues", script)
         self.assertIn("COMMON_SELECTOR_DEPTHS_M", script)
-        self.assertIn("BASIN_ORDER", script)
+        self.assertIn("displayBasinNames().map", script)
         self.assertIn("BASIN_FAN_COLORS", script)
         self.assertIn("function chartDepthLevels", script)
         self.assertIn("function selectableDepthOptions", script)

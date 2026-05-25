@@ -94,5 +94,6 @@ nav:
       - Production Results: experiments-production.md
   - Analysis Dashboard: https://depthdif.donike.net/analysis/
   - Temporal Dashboard: https://depthdif.donike.net/temporal/
+  - Temporal Globe: https://depthdif.donike.net/temporal-globe/
   - 3D Globe: https://depthdif.donike.net/globe/
   - API Reference: api.md

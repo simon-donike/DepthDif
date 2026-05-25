@@ -70,6 +70,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
 from depth_recon.inference.export_error_analysis_dashboard import (
     DEFAULT_ANALYSIS_GRID_GEOJSON_NAME,
     DEFAULT_ANALYSIS_JSON_NAME,
+    build_basin_depth_error_summary_payload_from_depth_arrays,
     build_error_analysis_payload_from_depth_arrays,
     write_analysis_grid_geojson,
 )
@@ -109,6 +110,7 @@ PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
 DEFAULT_INFERENCE_NUM_WORKERS = 8
 DEFAULT_INFERENCE_PREFETCH_FACTOR = 2
 DEFAULT_UNCERTAINTY_NUM_SAMPLES = 5
+DEFAULT_TEMPORAL_BASIN_DEPTH_ERRORS_JSON_NAME = "temporal-basin-depth-errors.json"
 DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("surface", "Surface", 0.0),
     ("10m", "10m", 10.0),
@@ -1249,6 +1251,30 @@ def resolve_depth_export_levels(depth_axis_m: np.ndarray) -> list[DepthExportLev
     return levels
 
 
+def _filter_depth_export_levels(
+    levels: Sequence[DepthExportLevel],
+    allowed_suffixes: Sequence[str] | None,
+) -> list[DepthExportLevel]:
+    """Return depth raster export levels restricted to optional suffixes."""
+    if not allowed_suffixes:
+        return list(levels)
+
+    suffixes = [
+        str(suffix).strip() for suffix in allowed_suffixes if str(suffix).strip()
+    ]
+    suffix_set = set(suffixes)
+    filtered = [level for level in levels if level.suffix in suffix_set]
+    found_suffixes = {level.suffix for level in filtered}
+    missing = [suffix for suffix in suffixes if suffix not in found_suffixes]
+    if missing:
+        available = ", ".join(level.suffix for level in levels)
+        raise ValueError(
+            "Requested depth export suffixes are unavailable: "
+            f"{', '.join(missing)}. Available suffixes: {available}."
+        )
+    return filtered
+
+
 def _format_native_depth_label(depth_m: float, *, channel_index: int) -> str:
     """Return a compact dashboard label for a native depth channel."""
     depth_value = float(depth_m)
@@ -1330,6 +1356,56 @@ def _write_full_depth_error_analysis_json(
             )
 
     payload = build_error_analysis_payload_from_depth_arrays(
+        run_summary=run_summary,
+        variable_metadata={
+            "name": variable_spec.name,
+            "label": variable_spec.label,
+            "value_units": variable_spec.value_units,
+            "value_unit_label": variable_spec.value_unit_label,
+        },
+        depth_levels_metadata=depth_metadata,
+        absolute_error_arrays=_absolute_error_arrays(),
+        transform=layout.transform,
+        land_mask=land_mask,
+    )
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+        f.write("\n")
+    return output_path
+
+
+def _write_compact_basin_depth_error_json(
+    *,
+    output_path: Path,
+    run_summary: dict[str, Any],
+    variable_spec: ExportVariableSpec,
+    analysis_depth_levels: Sequence[DepthExportLevel],
+    signed_error_accumulators: dict[str, RasterAccumulator],
+    layout: MosaicLayout,
+    land_mask: np.ndarray | None,
+) -> Path:
+    """Write compact basin-by-depth absolute-error sums for temporal exports."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    depth_metadata = [
+        {
+            "suffix": level.suffix,
+            "label": level.label,
+            "requested_depth_m": float(level.requested_depth_m),
+            "actual_depth_m": float(level.actual_depth_m),
+            "channel_index": int(level.channel_index),
+        }
+        for level in analysis_depth_levels
+    ]
+
+    def _absolute_error_arrays() -> Iterable[np.ndarray]:
+        for level in analysis_depth_levels:
+            # Keep the temporal summary exact by taking the absolute value only
+            # after overlap-weighted signed errors have been stitched.
+            yield _absolute_error_array_from_signed_accumulator(
+                signed_error_accumulators[level.suffix]
+            )
+
+    payload = build_basin_depth_error_summary_payload_from_depth_arrays(
         run_summary=run_summary,
         variable_metadata={
             "name": variable_spec.name,
@@ -2272,6 +2348,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also export GLORYS ground-truth rasters for the selected depth levels.",
     )
     parser.add_argument(
+        "--persist-ground-truth-rasters",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Persist GLORYS depth GeoTIFFs. Disable this for lightweight temporal "
+            "runs that still need GLORYS internally for absolute-error outputs."
+        ),
+    )
+    parser.add_argument(
+        "--depth-export-suffix",
+        action="append",
+        default=[],
+        help=(
+            "Restrict persisted prediction/absolute-error depth rasters to a suffix "
+            "such as 10m. Repeat for multiple suffixes; omit to export the default depths."
+        ),
+    )
+    parser.add_argument(
+        "--compact-basin-depth-error",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Write compact basin-by-depth absolute-error JSON instead of the full "
+            "grid-cell analysis payload."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=7,
@@ -2687,9 +2790,18 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         selected_rows[0],
         expected_size=int(sample_target.shape[0]),
     )
-    depth_export_levels = resolve_depth_export_levels(depth_axis_m)
+    depth_export_levels = _filter_depth_export_levels(
+        resolve_depth_export_levels(depth_axis_m),
+        getattr(args, "depth_export_suffix", None),
+    )
     analysis_depth_levels = resolve_full_depth_analysis_levels(depth_axis_m)
-    export_full_depth_error_analysis = bool(export_prediction and export_ground_truth)
+    collect_full_depth_error_analysis = bool(export_prediction and export_ground_truth)
+    export_compact_basin_depth_error = bool(
+        collect_full_depth_error_analysis and args.compact_basin_depth_error
+    )
+    export_full_depth_error_analysis = bool(
+        collect_full_depth_error_analysis and not export_compact_basin_depth_error
+    )
     depth_channel_indices = tuple(
         int(level.channel_index) for level in depth_export_levels
     )
@@ -2743,7 +2855,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             )
             for level in analysis_depth_levels
         }
-        if export_full_depth_error_analysis
+        if collect_full_depth_error_analysis
         else {}
     )
     uncertainty_accumulator = (
@@ -2796,6 +2908,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"inference_prefetch_factor={inference_prefetch_factor}, "
         f"export_ground_truth={export_ground_truth}, "
         f"full_depth_error_analysis={export_full_depth_error_analysis}, "
+        f"compact_basin_depth_error={export_compact_basin_depth_error}, "
         f"uncertainty_only={uncertainty_only}, "
         f"full_sample_count="
         f"{'all' if export_all_full_samples else full_sample_count}, "
@@ -2868,7 +2981,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         variable_spec=variable_spec,
         export_ground_truth=export_ground_truth,
         export_full_prediction_stack=(
-            export_full_profiles or export_full_depth_error_analysis
+            export_full_profiles or collect_full_depth_error_analysis
         ),
         export_prediction=export_prediction,
         export_uncertainty=export_uncertainty,
@@ -2910,7 +3023,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
         prediction_full_stack_batch = (
             outputs["prediction_full_stack"].detach().float().cpu().numpy()
-            if export_full_profiles or export_full_depth_error_analysis
+            if export_full_profiles or collect_full_depth_error_analysis
             else None
         )
         ground_truth_batch = (
@@ -2947,12 +3060,12 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             .float()
             .cpu()
             .numpy()
-            if export_full_profiles or export_full_depth_error_analysis
+            if export_full_profiles or collect_full_depth_error_analysis
             else None
         )
         target_valid_full_mask_batch = (
             batch[variable_spec.y_valid_mask_key].detach().cpu().numpy().astype(bool)
-            if export_full_depth_error_analysis
+            if collect_full_depth_error_analysis
             else None
         )
         selected_row_batch = inference_items["rows"]
@@ -2997,7 +3110,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                             layout=layout,
                         )
             if (
-                export_full_depth_error_analysis
+                collect_full_depth_error_analysis
                 and prediction_full_stack_batch is not None
                 and y_denorm_batch is not None
                 and target_valid_full_mask_batch is not None
@@ -3191,6 +3304,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         graphs_dir_path = None
 
     depth_export_records: list[dict[str, Any]] = []
+    persist_ground_truth_rasters = bool(args.persist_ground_truth_rasters)
     for level in (depth_export_levels if export_prediction else ()):
         prediction_tif_path_for_level = (
             run_dir / f"{run_stem}_prediction_{level.suffix}.tif"
@@ -3260,10 +3374,15 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         print(f"Wrote prediction GeoTIFF: {prediction_tif_path_for_level}")
 
         ground_truth_tif_path_for_level: Path | None = None
+        ground_truth_summary_path_for_level: Path | None = None
         if level.suffix in gt_accumulators:
             ground_truth_tif_path_for_level = (
                 run_dir / f"{run_stem}_glorys_{level.suffix}.tif"
+                if persist_ground_truth_rasters
+                else scratch_dir / f"{run_stem}_glorys_{level.suffix}.tif"
             )
+            if persist_ground_truth_rasters:
+                ground_truth_summary_path_for_level = ground_truth_tif_path_for_level
             write_global_top_band_geotiff(
                 output_path=ground_truth_tif_path_for_level,
                 accumulator=gt_accumulators[level.suffix],
@@ -3285,7 +3404,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 land_mask=land_mask,
                 prediction_zero_masked_to_nodata=False,
             )
-            print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
+            if persist_ground_truth_rasters:
+                print(f"Wrote GLORYS GeoTIFF: {ground_truth_tif_path_for_level}")
 
         absolute_error_tif_path_for_level: Path | None = None
         if ground_truth_tif_path_for_level is not None:
@@ -3308,6 +3428,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     "kind": "absolute_error",
                     "source_prediction_tif_path": prediction_tif_path_for_level.name,
                     "source_ground_truth_tif_path": ground_truth_tif_path_for_level.name,
+                    "source_ground_truth_persisted": str(
+                        bool(persist_ground_truth_rasters)
+                    ).lower(),
                     "source_value_transform": (
                         variable_spec.absolute_error_source_value_transform
                     ),
@@ -3321,6 +3444,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                     ),
                 },
             )
+            if not persist_ground_truth_rasters:
+                ground_truth_tif_path_for_level.unlink(missing_ok=True)
             print(
                 "Wrote absolute-error GeoTIFF: " f"{absolute_error_tif_path_for_level}"
             )
@@ -3344,8 +3469,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                 ),
                 "ground_truth_tif_path": (
                     None
-                    if ground_truth_tif_path_for_level is None
-                    else _summary_artifact_path(ground_truth_tif_path_for_level)
+                    if ground_truth_summary_path_for_level is None
+                    else _summary_artifact_path(ground_truth_summary_path_for_level)
                 ),
                 "absolute_error_tif_path": (
                     None
@@ -3515,6 +3640,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         ),
         "error_analysis_json_path": None,
         "error_analysis_grid_geojson_path": None,
+        "temporal_basin_depth_error_json_path": None,
         "depth_exports": depth_export_records,
         "argo_points_geojson_path": (
             None
@@ -3566,6 +3692,21 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
         print(f"Wrote full-depth error analysis JSON: {error_analysis_json_path}")
         print(f"Wrote analysis ocean grid GeoJSON: {error_analysis_grid_geojson_path}")
+    if export_compact_basin_depth_error:
+        compact_error_path = run_dir / DEFAULT_TEMPORAL_BASIN_DEPTH_ERRORS_JSON_NAME
+        run_summary["temporal_basin_depth_error_json_path"] = _summary_artifact_path(
+            compact_error_path
+        )
+        _write_compact_basin_depth_error_json(
+            output_path=compact_error_path,
+            run_summary=run_summary,
+            variable_spec=variable_spec,
+            analysis_depth_levels=analysis_depth_levels,
+            signed_error_accumulators=signed_error_accumulators,
+            layout=layout,
+            land_mask=land_mask,
+        )
+        print(f"Wrote compact basin-depth error JSON: {compact_error_path}")
     with (run_dir / "run_summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(run_summary, f, sort_keys=False)
 

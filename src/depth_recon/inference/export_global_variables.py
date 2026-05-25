@@ -34,9 +34,16 @@ from depth_recon.inference.export_global import (
     run_global_inference,
 )
 from depth_recon.inference.export_temporal_consistency_dashboard import (
-    DEFAULT_GRID_SIZE_DEGREES,
     DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME,
+    DEFAULT_TEMPORAL_VALIDATION_YEAR,
+    DEFAULT_TEMPORAL_YEAR_WEEK_COUNT,
     export_temporal_dashboard_assets,
+)
+from depth_recon.inference.export_temporal_cesium_globe_assets import (
+    DEFAULT_TEMPORAL_GLOBE_DIR_NAME,
+    DEFAULT_TEMPORAL_GLOBE_MAX_ZOOM_LEVEL,
+    DEFAULT_TEMPORAL_GLOBE_WEBP_QUALITY,
+    export_temporal_cesium_globe_assets,
 )
 
 
@@ -133,7 +140,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=INFERENCE_SAMPLERS,
         default=None,
         help=(
-            "Sampler override used for temporal consistency runs. Defaults to "
+            "Sampler override used for temporal validation-year runs. Defaults to "
             "the uncertainty sampler, then the reconstruction sampler."
         ),
     )
@@ -144,7 +151,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=(
-            "DDIM step count used for temporal consistency runs. Defaults to "
+            "DDIM step count used for temporal validation-year runs. Defaults to "
             "the uncertainty DDIM steps, then the reconstruction DDIM steps."
         ),
     )
@@ -210,27 +217,36 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "Also run consecutive weekly exports and package temporal consistency "
+            "Also run validation-year weekly exports and package temporal "
             "dashboard assets under <output-name>/temporal/."
+        ),
+    )
+    parser.add_argument(
+        "--export-temporal-globe",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Also tile retained weekly 10m temporal rasters into a lightweight "
+            "Cesium animation under <output-name>/temporal-globe/."
         ),
     )
     parser.add_argument(
         "--temporal-week-count",
         type=int,
-        default=3,
-        help="Number of consecutive ISO weeks included when temporal consistency is enabled.",
+        default=DEFAULT_TEMPORAL_YEAR_WEEK_COUNT,
+        help="Number of consecutive ISO weeks included when temporal export is enabled.",
     )
     parser.add_argument(
         "--temporal-start-year",
         type=int,
         default=None,
-        help="Optional temporal window start ISO year. Defaults to --year.",
+        help="Optional temporal export start ISO year. Defaults to the configured validation year.",
     )
     parser.add_argument(
         "--temporal-start-iso-week",
         type=int,
         default=None,
-        help="Optional temporal window start ISO week. Defaults to --iso-week.",
+        help="Optional temporal export start ISO week. Defaults to 1.",
     )
     parser.add_argument(
         "--temporal-public-base-url",
@@ -251,9 +267,45 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--temporal-globe-public-base-url",
+        type=str,
+        default=None,
+        help=(
+            "Optional hosted base URL for temporal globe assets. Defaults to a "
+            "sibling 'temporal-globe' URL next to --public-base-url when provided."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-globe-rclone-remote",
+        type=str,
+        default=None,
+        help=(
+            "Optional rclone destination for temporal globe assets. Defaults to a "
+            "sibling 'temporal-globe' remote next to --rclone-remote when provided."
+        ),
+    )
+    parser.add_argument(
+        "--temporal-globe-extra-zoom-levels",
+        type=int,
+        default=DEFAULT_EXTRA_ZOOM_LEVELS,
+        help="Additional zoom levels above native resolution for temporal globe frames.",
+    )
+    parser.add_argument(
+        "--temporal-globe-max-zoom-level",
+        type=int,
+        default=DEFAULT_TEMPORAL_GLOBE_MAX_ZOOM_LEVEL,
+        help="Maximum tile zoom retained for lightweight temporal globe frames.",
+    )
+    parser.add_argument(
+        "--temporal-globe-webp-quality",
+        type=int,
+        default=DEFAULT_TEMPORAL_GLOBE_WEBP_QUALITY,
+        help="WebP quality used for temporal globe frame tiles.",
+    )
+    parser.add_argument(
         "--temporal-grid-size-degrees",
         type=float,
-        default=DEFAULT_GRID_SIZE_DEGREES,
+        default=None,
     )
     parser.add_argument("--temporal-top-cell-count", type=int, default=24)
     parser.add_argument(
@@ -308,7 +360,7 @@ def _sibling_asset_location(value: str | None, sibling_name: str) -> str | None:
     prefix, separator, leaf = raw.rpartition("/")
     if leaf == sibling_name:
         return raw
-    if separator and leaf in {"globe", "temporal"}:
+    if separator and leaf in {"globe", "temporal", "temporal-globe"}:
         return f"{prefix}/{sibling_name}"
     return f"{raw}/{sibling_name}"
 
@@ -358,6 +410,9 @@ def _apply_sampling_defaults_from_config(
     inference_section = config_bundle.inference_cfg.get("inference", {})
     if not isinstance(inference_section, dict):
         return args
+    split_cfg = config_bundle.data_cfg.get("split", {})
+    if isinstance(split_cfg, dict):
+        args.configured_val_year = split_cfg.get("val_year")
     sampling_cfg = inference_section.get("sampling", {})
     uncertainty_sampling_cfg = inference_section.get("uncertainty_sampling", {})
     if not isinstance(sampling_cfg, dict):
@@ -400,6 +455,20 @@ def _temporal_rclone_remote(args: argparse.Namespace) -> str | None:
     if args.temporal_rclone_remote is not None:
         return str(args.temporal_rclone_remote)
     return _sibling_asset_location(args.rclone_remote, "temporal")
+
+
+def _temporal_globe_public_base_url(args: argparse.Namespace) -> str | None:
+    """Resolve the hosted URL base for temporal globe assets."""
+    if args.temporal_globe_public_base_url is not None:
+        return str(args.temporal_globe_public_base_url)
+    return _sibling_asset_location(args.public_base_url, "temporal-globe")
+
+
+def _temporal_globe_rclone_remote(args: argparse.Namespace) -> str | None:
+    """Resolve the rclone destination for temporal globe assets."""
+    if args.temporal_globe_rclone_remote is not None:
+        return str(args.temporal_globe_rclone_remote)
+    return _sibling_asset_location(args.rclone_remote, "temporal-globe")
 
 
 def _single_export_args(
@@ -506,6 +575,10 @@ def _temporal_single_export_args(
         str(int(args.seed)),
         "--export-ground-truth",
         "--no-export-uncertainty",
+        "--depth-export-suffix",
+        "10m",
+        "--compact-basin-depth-error",
+        "--no-persist-ground-truth-rasters",
     ]
     if not bool(args.multi_gpu):
         argv.append("--no-multi-gpu")
@@ -556,16 +629,20 @@ def _run_or_reuse_temporal_week(
     return Path(result.run_dir)
 
 
-def _export_temporal_consistency_for_standard_run(
+def _export_temporal_outputs_for_standard_run(
     args: argparse.Namespace,
     *,
     paired_run_dir: Path,
     temperature_result: Any,
     salinity_result: Any,
 ) -> dict[str, Any]:
-    """Run extra temporal weeks and package temporal dashboard assets."""
-    start_year = int(args.temporal_start_year or args.year)
-    start_iso_week = int(args.temporal_start_iso_week or args.iso_week)
+    """Run extra temporal weeks and package requested temporal assets."""
+    start_year = int(
+        args.temporal_start_year
+        or getattr(args, "configured_val_year", None)
+        or DEFAULT_TEMPORAL_VALIDATION_YEAR
+    )
+    start_iso_week = int(args.temporal_start_iso_week or 1)
     weeks = _iso_week_sequence(
         start_year=start_year,
         start_iso_week=start_iso_week,
@@ -580,7 +657,7 @@ def _export_temporal_consistency_for_standard_run(
         "temperature": str(args.temperature_checkpoint),
         "salinity": str(args.salinity_checkpoint),
     }
-    reuse_main_week = _temporal_sampling_matches_reconstruction(args)
+    reuse_main_week = False
     variable_run_dirs: dict[str, list[Path]] = {"temperature": [], "salinity": []}
     for variable in ("temperature", "salinity"):
         temporal_root = paired_run_dir / "temporal_runs" / variable
@@ -602,15 +679,33 @@ def _export_temporal_consistency_for_standard_run(
                 )
             )
 
-    temporal_result = export_temporal_dashboard_assets(
-        variable_run_dirs=variable_run_dirs,
-        output_dir=paired_run_dir / DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME,
-        public_base_url=_temporal_public_base_url(args),
-        grid_size_degrees=float(args.temporal_grid_size_degrees),
-        top_cell_count=int(args.temporal_top_cell_count),
-        rclone_remote=_temporal_rclone_remote(args),
-        copy_dashboard=True,
-    )
+    temporal_result = None
+    if bool(args.export_temporal_consistency):
+        temporal_result = export_temporal_dashboard_assets(
+            variable_run_dirs=variable_run_dirs,
+            output_dir=paired_run_dir / DEFAULT_TEMPORAL_DASHBOARD_DIR_NAME,
+            public_base_url=_temporal_public_base_url(args),
+            grid_size_degrees=args.temporal_grid_size_degrees,
+            top_cell_count=int(args.temporal_top_cell_count),
+            rclone_remote=_temporal_rclone_remote(args),
+            copy_dashboard=True,
+            validation_year=start_year,
+        )
+    temporal_globe_result = None
+    if bool(args.export_temporal_globe):
+        temporal_globe_result = export_temporal_cesium_globe_assets(
+            variable_run_dirs=variable_run_dirs,
+            output_dir=paired_run_dir / DEFAULT_TEMPORAL_GLOBE_DIR_NAME,
+            public_base_url=_temporal_globe_public_base_url(args),
+            rclone_remote=_temporal_globe_rclone_remote(args),
+            copy_viewer=True,
+            validation_year=start_year,
+            extra_zoom_levels=int(args.temporal_globe_extra_zoom_levels),
+            max_zoom_level=args.temporal_globe_max_zoom_level,
+            webp_quality=int(args.temporal_globe_webp_quality),
+            raster_edge_erosion_pixels=args.raster_edge_erosion_pixels,
+            raster_edge_feather_pixels=args.raster_edge_feather_pixels,
+        )
     return {
         "enabled": True,
         "start_iso_year": start_year,
@@ -625,6 +720,7 @@ def _export_temporal_consistency_for_standard_run(
             for variable, run_dirs in variable_run_dirs.items()
         },
         "dashboard": temporal_result,
+        "globe": temporal_globe_result,
     }
 
 
@@ -671,8 +767,8 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
         raster_edge_feather_pixels=args.raster_edge_feather_pixels,
     )
     temporal_consistency_result = None
-    if bool(args.export_temporal_consistency):
-        temporal_consistency_result = _export_temporal_consistency_for_standard_run(
+    if bool(args.export_temporal_consistency) or bool(args.export_temporal_globe):
+        temporal_consistency_result = _export_temporal_outputs_for_standard_run(
             args,
             paired_run_dir=paired_run_dir,
             temperature_result=temperature_result,

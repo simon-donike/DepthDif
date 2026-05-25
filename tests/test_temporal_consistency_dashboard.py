@@ -12,11 +12,16 @@ import rasterio
 from rasterio.transform import from_origin
 import yaml
 
+from depth_recon.inference.export_error_analysis_dashboard import BASIN_NAMES
 from depth_recon.inference.export_temporal_consistency_dashboard import (
-    DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME,
+    DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME,
     DEFAULT_TEMPORAL_CONFIG_NAME,
     build_temporal_analysis_payload,
     export_temporal_dashboard_assets,
+)
+from depth_recon.inference.export_temporal_cesium_globe_assets import (
+    DEFAULT_TEMPORAL_GLOBE_CONFIG_NAME,
+    export_temporal_cesium_globe_assets,
 )
 from depth_recon.inference.export_global_variables import (
     _apply_sampling_defaults_from_config,
@@ -46,6 +51,57 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         ) as dataset:
             dataset.write(np.asarray(data, dtype=np.float32).reshape(1, *data.shape))
 
+    def _basin_rows(
+        self, basin: str, *, count: int, total: float
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for name in BASIN_NAMES:
+            basin_count = int(count) if name == basin else 0
+            basin_total = float(total) if name == basin else 0.0
+            rows.append(
+                {
+                    "name": name,
+                    "count": basin_count,
+                    "sum_absolute_error": basin_total,
+                    "mean_absolute_error": (
+                        None if basin_count <= 0 else basin_total / float(basin_count)
+                    ),
+                }
+            )
+        return rows
+
+    def _compact_depth_levels(
+        self, basin: str, step_index: int
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "index": 0,
+                "suffix": "depth_000",
+                "label": "Surface",
+                "requested_depth_m": 0.0,
+                "actual_depth_m": 0.5,
+                "channel_index": 0,
+                "basins": self._basin_rows(
+                    basin,
+                    count=2,
+                    total=4.0 + float(step_index) * 2.0,
+                ),
+            },
+            {
+                "index": 1,
+                "suffix": "depth_001",
+                "label": "10m",
+                "requested_depth_m": 10.0,
+                "actual_depth_m": 9.6,
+                "channel_index": 1,
+                "basins": self._basin_rows(
+                    basin,
+                    count=4,
+                    total=8.0 + float(step_index) * 4.0,
+                ),
+            },
+        ]
+
     def _write_run(
         self,
         root: Path,
@@ -54,46 +110,50 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         date_value: int,
         iso_year: int,
         iso_week: int,
-        surface_scale: float,
-        depth_scale: float,
-        step_index: int,
+        basin: str = "North Pacific Ocean",
+        step_index: int = 0,
     ) -> Path:
         run_dir = root / variable / f"{iso_year}_W{iso_week:02d}"
         run_dir.mkdir(parents=True)
-        base = np.zeros((2, 2), dtype=np.float32)
-        truth = base + float(step_index)
-        surface_prediction = truth.copy()
-        depth_prediction = truth.copy()
-        if step_index == 2:
-            surface_prediction = surface_prediction + float(surface_scale)
-            depth_prediction = depth_prediction + float(depth_scale)
-
-        surface_prediction_path = run_dir / "prediction_surface.tif"
-        surface_truth_path = run_dir / "glorys_surface.tif"
-        depth_prediction_path = run_dir / "prediction_10m.tif"
-        depth_truth_path = run_dir / "glorys_10m.tif"
-        for path, data in (
-            (surface_prediction_path, surface_prediction),
-            (surface_truth_path, truth),
-            (depth_prediction_path, depth_prediction),
-            (depth_truth_path, truth),
-        ):
-            self._write_raster(path, data)
-
-        land_mask_path = run_dir / "land_mask.tif"
-        with rasterio.open(
-            land_mask_path,
-            "w",
-            driver="GTiff",
-            height=2,
-            width=2,
-            count=1,
-            dtype="uint8",
-            crs="EPSG:4326",
-            transform=from_origin(-180.0, 90.0, 180.0, 90.0),
-        ) as dataset:
-            dataset.write(np.zeros((1, 2, 2), dtype=np.uint8))
-
+        prediction_path = run_dir / "prediction_10m.tif"
+        absolute_error_path = run_dir / "absolute_error_10m.tif"
+        self._write_raster(
+            prediction_path, np.full((2, 2), step_index, dtype=np.float32)
+        )
+        self._write_raster(
+            absolute_error_path,
+            np.full((2, 2), step_index + 1, dtype=np.float32),
+        )
+        compact_path = run_dir / "temporal-basin-depth-errors.json"
+        compact_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "basin_depth_error_summary",
+                    "run": {
+                        "selected_date": date_value,
+                        "target_date": date_value,
+                        "iso_year": iso_year,
+                        "iso_week": iso_week,
+                    },
+                    "variable": {
+                        "name": variable,
+                        "label": (
+                            "Temperature" if variable == "temperature" else "Salinity"
+                        ),
+                        "value_units": (
+                            "celsius" if variable == "temperature" else "psu"
+                        ),
+                        "value_unit_label": (
+                            "deg C" if variable == "temperature" else "PSU"
+                        ),
+                    },
+                    "depth_levels": self._compact_depth_levels(basin, step_index),
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         (run_dir / "run_summary.yaml").write_text(
             yaml.safe_dump(
                 {
@@ -102,28 +162,24 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     "iso_year": iso_year,
                     "iso_week": iso_week,
                     "variable": variable,
-                    "land_mask_path": land_mask_path.name,
-                    "prediction_tif_path": surface_prediction_path.name,
-                    "ground_truth_tif_path": surface_truth_path.name,
+                    "variable_label": (
+                        "Temperature" if variable == "temperature" else "Salinity"
+                    ),
+                    "value_units": "celsius" if variable == "temperature" else "psu",
+                    "value_unit_label": "deg C" if variable == "temperature" else "PSU",
+                    "prediction_tif_path": prediction_path.name,
+                    "temporal_basin_depth_error_json_path": compact_path.name,
                     "depth_exports": [
-                        {
-                            "suffix": "surface",
-                            "label": "Surface",
-                            "requested_depth_m": 0.0,
-                            "actual_depth_m": 0.0,
-                            "channel_index": 0,
-                            "prediction_tif_path": surface_prediction_path.name,
-                            "ground_truth_tif_path": surface_truth_path.name,
-                        },
                         {
                             "suffix": "10m",
                             "label": "10m",
                             "requested_depth_m": 10.0,
                             "actual_depth_m": 9.6,
                             "channel_index": 1,
-                            "prediction_tif_path": depth_prediction_path.name,
-                            "ground_truth_tif_path": depth_truth_path.name,
-                        },
+                            "prediction_tif_path": prediction_path.name,
+                            "ground_truth_tif_path": None,
+                            "absolute_error_tif_path": absolute_error_path.name,
+                        }
                     ],
                 }
             ),
@@ -131,87 +187,64 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         )
         return run_dir
 
-    def _write_three_week_series(self, root: Path, variable: str) -> list[Path]:
+    def _write_two_week_series(self, root: Path, variable: str) -> list[Path]:
         return [
             self._write_run(
                 root,
                 variable=variable,
-                date_value=20180530,
+                date_value=20180103,
                 iso_year=2018,
-                iso_week=22,
-                surface_scale=1.0,
-                depth_scale=3.0,
+                iso_week=1,
                 step_index=0,
             ),
             self._write_run(
                 root,
                 variable=variable,
-                date_value=20180606,
+                date_value=20180110,
                 iso_year=2018,
-                iso_week=23,
-                surface_scale=1.0,
-                depth_scale=3.0,
+                iso_week=2,
                 step_index=1,
-            ),
-            self._write_run(
-                root,
-                variable=variable,
-                date_value=20180613,
-                iso_year=2018,
-                iso_week=24,
-                surface_scale=1.0,
-                depth_scale=3.0,
-                step_index=2,
             ),
         ]
 
-    def test_build_temporal_payload_reports_change_and_flicker_metrics(self) -> None:
+    def test_build_temporal_payload_aggregates_yearly_basin_depth_means(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            run_dirs = self._write_three_week_series(root, "temperature")
+            run_dirs = self._write_two_week_series(root, "temperature")
 
             payload = build_temporal_analysis_payload(
-                run_dirs=run_dirs,
-                grid_size_degrees=90.0,
-                top_cell_count=2,
+                run_dirs=run_dirs, validation_year=2018
             )
 
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["validation_year"], 2018)
         self.assertEqual(payload["variable"]["name"], "temperature")
-        self.assertEqual(payload["run"]["run_count"], 3)
-        self.assertEqual(len(payload["depth_levels"]), 3)
-        all_depths = payload["depth_levels"][0]
-        surface = payload["depth_levels"][1]
-        depth_10m = payload["depth_levels"][2]
-        self.assertTrue(all_depths["is_aggregate"])
-        self.assertEqual(all_depths["depth_count"], 2)
-
-        surface_change_periods = surface["fields"]["change_error"]["periods"]
-        depth_change_periods = depth_10m["fields"]["change_error"]["periods"]
-        all_change_periods = all_depths["fields"]["change_error"]["periods"]
-        all_flicker_periods = all_depths["fields"]["prediction_flicker"]["periods"]
-
-        self.assertEqual(len(surface_change_periods), 2)
-        self.assertEqual(surface_change_periods[0]["label"], "2018-05-30 to 2018-06-06")
+        self.assertEqual(payload["run"]["run_count"], 2)
+        north_pacific = payload["basin_depth_errors"]["North Pacific Ocean"]
         self.assertEqual(
-            all_flicker_periods[0]["label"],
-            "2018-05-30 to 2018-06-06 to 2018-06-13",
+            [depth["label"] for depth in payload["depth_levels"]], ["Surface", "10m"]
         )
-        self.assertEqual(surface_change_periods[0]["global"]["median"], 0.0)
-        self.assertEqual(surface_change_periods[1]["global"]["median"], 1.0)
-        self.assertEqual(depth_change_periods[1]["global"]["median"], 3.0)
-        self.assertEqual(all_change_periods[1]["global"]["median"], 2.0)
-        self.assertEqual(all_change_periods[1]["global"]["count"], 8)
-        self.assertEqual(all_flicker_periods[0]["global"]["median"], 2.0)
-        self.assertEqual(len(all_change_periods[1]["grid_cells"]), 4)
-        self.assertEqual(len(all_change_periods[1]["top_cells"]["p95"]), 2)
-        self.assertIn("basins", all_change_periods[1])
+        self.assertEqual(north_pacific[0]["count"], 4)
+        self.assertEqual(north_pacific[0]["sum_absolute_error"], 10.0)
+        self.assertEqual(north_pacific[0]["mean_absolute_error"], 2.5)
+        self.assertEqual(north_pacific[1]["count"], 8)
+        self.assertEqual(north_pacific[1]["mean_absolute_error"], 2.5)
+        self.assertEqual(
+            payload["basin_depth_errors"]["North Atlantic Ocean"][0]["count"], 0
+        )
+        self.assertIsNone(
+            payload["basin_depth_errors"]["North Atlantic Ocean"][0][
+                "mean_absolute_error"
+            ]
+        )
 
-    def test_export_temporal_assets_writes_multivariable_config(self) -> None:
+    def test_export_temporal_assets_writes_schema_v2_config_and_basin_json(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            temperature_runs = self._write_three_week_series(root, "temperature")
-            salinity_runs = self._write_three_week_series(root, "salinity")
+            temperature_runs = self._write_two_week_series(root, "temperature")
+            salinity_runs = self._write_two_week_series(root, "salinity")
             output_dir = root / "temporal"
 
             result = export_temporal_dashboard_assets(
@@ -221,48 +254,160 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                 },
                 output_dir=output_dir,
                 public_base_url="https://example.com/temporal",
-                grid_size_degrees=90.0,
-                top_cell_count=2,
                 copy_dashboard=False,
+                validation_year=2018,
             )
 
             config = json.loads(
                 (output_dir / DEFAULT_TEMPORAL_CONFIG_NAME).read_text(encoding="utf-8")
             )
-            temperature_payload = json.loads(
-                (
-                    output_dir / "temperature" / DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME
-                ).read_text(encoding="utf-8")
+            pacific_payload = json.loads(
+                (output_dir / "basins" / "north_pacific_ocean.json").read_text(
+                    encoding="utf-8"
+                )
             )
-            temperature_grid_exists = (
-                output_dir / "temperature" / "analysis-grid.geojson"
+            basin_map_exists = (
+                output_dir / DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME
             ).is_file()
+            temperature_prediction_exists = (
+                output_dir
+                / "weekly"
+                / "temperature"
+                / "2018_W01"
+                / "prediction_10m.tif"
+            ).is_file()
+            temperature_error_exists = (
+                output_dir
+                / "weekly"
+                / "temperature"
+                / "2018_W01"
+                / "absolute_error_10m.tif"
+            ).is_file()
+            old_temporal_json_exists = (
+                output_dir / "temperature" / "temporal-analysis.json"
+            ).exists()
 
         self.assertEqual(result["default_variable"], "temperature")
-        self.assertEqual(config["available_variables"], ["temperature", "salinity"])
-        self.assertEqual(config["default_variable"], "temperature")
+        self.assertEqual(config["schema_version"], 2)
+        self.assertEqual(config["validation_year"], 2018)
+        self.assertEqual(config["default_basin"], "North Pacific Ocean")
         self.assertEqual(
-            config["variables"]["temperature"]["temporal_analysis_data_url"],
-            "https://example.com/temporal/temperature/temporal-analysis.json",
+            config["basin_map_geojson_url"],
+            "https://example.com/temporal/basin-map.geojson",
         )
         self.assertEqual(
-            config["variables"]["salinity"]["analysis_grid_geojson_url"],
-            "https://example.com/temporal/salinity/analysis-grid.geojson",
+            config["basin_data_urls"]["North Pacific Ocean"],
+            "https://example.com/temporal/basins/north_pacific_ocean.json",
         )
-        self.assertTrue(temperature_grid_exists)
-        self.assertEqual(temperature_payload["run"]["start_date"], 20180530)
+        self.assertTrue(basin_map_exists)
+        self.assertTrue(temperature_prediction_exists)
+        self.assertTrue(temperature_error_exists)
+        self.assertFalse(old_temporal_json_exists)
+        self.assertEqual(pacific_payload["schema_version"], 2)
+        self.assertIn("temperature", pacific_payload["variables"])
+        self.assertIn("salinity", pacific_payload["variables"])
+        self.assertEqual(
+            pacific_payload["variables"]["temperature"]["depth_errors"][0][
+                "mean_absolute_error"
+            ],
+            2.5,
+        )
 
-    def test_temporal_runner_sequences_weeks_and_passes_export_args(self) -> None:
+    def test_export_temporal_globe_assets_tiles_weekly_10m_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            temperature_runs = self._write_two_week_series(root / "runs", "temperature")
+            salinity_runs = self._write_two_week_series(root / "runs", "salinity")
+            output_dir = root / "temporal-globe"
+
+            with (
+                mock.patch(
+                    "depth_recon.inference.export_temporal_cesium_globe_assets._colorize_raster"
+                ) as colorize_mock,
+                mock.patch(
+                    "depth_recon.inference.export_temporal_cesium_globe_assets._run_gdal2tiles"
+                ) as tiles_mock,
+                mock.patch(
+                    "depth_recon.inference.export_temporal_cesium_globe_assets._export_base_map_tiles",
+                    return_value=(None, None, None),
+                ),
+            ):
+                result = export_temporal_cesium_globe_assets(
+                    variable_run_dirs={
+                        "temperature": temperature_runs,
+                        "salinity": salinity_runs,
+                    },
+                    output_dir=output_dir,
+                    public_base_url="https://example.com/temporal-globe",
+                    validation_year=2018,
+                    copy_viewer=True,
+                )
+
+            config = json.loads(
+                (output_dir / DEFAULT_TEMPORAL_GLOBE_CONFIG_NAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                result["config_path"],
+                str(output_dir / DEFAULT_TEMPORAL_GLOBE_CONFIG_NAME),
+            )
+            self.assertEqual(config["schema_version"], 1)
+            self.assertEqual(config["validation_year"], 2018)
+            self.assertEqual(config["depth_suffix"], "10m")
+            self.assertEqual(config["default_layer"], "prediction")
+            self.assertEqual(config["frame_interval_ms"], 1000)
+            self.assertEqual(config["webp_quality"], 80)
+            self.assertEqual(config["max_zoom_level"], 4)
+            self.assertEqual(config["available_variables"], ["temperature", "salinity"])
+            first_frame = config["variables"]["temperature"]["frames"][0]
+            self.assertEqual(first_frame["label"], "2018-W01")
+            self.assertEqual(
+                first_frame["prediction_tiles_url"],
+                "https://example.com/temporal-globe/frames/temperature/2018_W01/prediction_tiles_10m",
+            )
+            self.assertEqual(
+                first_frame["absolute_error_tiles_url"],
+                "https://example.com/temporal-globe/frames/temperature/2018_W01/absolute_error_tiles_10m",
+            )
+            self.assertEqual(colorize_mock.call_count, 8)
+            self.assertEqual(tiles_mock.call_count, 8)
+            first_tiles_kwargs = tiles_mock.call_args_list[0].kwargs
+            self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], 0)
+            self.assertEqual(first_tiles_kwargs["max_zoom_level"], 4)
+            self.assertEqual(first_tiles_kwargs["webp_quality"], 80)
+            self.assertTrue((output_dir / "index.html").exists())
+            self.assertTrue((output_dir / "javascripts/temporal-globe.js").exists())
+
+    def test_export_temporal_assets_rejects_mismatched_variable_weeks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            temperature_runs = self._write_two_week_series(root, "temperature")
+            salinity_runs = [
+                self._write_run(
+                    root,
+                    variable="salinity",
+                    date_value=20180117,
+                    iso_year=2018,
+                    iso_week=3,
+                )
+            ]
+
+            with self.assertRaisesRegex(ValueError, "matching weekly runs"):
+                export_temporal_dashboard_assets(
+                    variable_run_dirs={
+                        "temperature": temperature_runs,
+                        "salinity": salinity_runs,
+                    },
+                    output_dir=root / "temporal",
+                    copy_dashboard=False,
+                )
+
+    def test_temporal_runner_defaults_to_complete_2018_validation_year(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_root = Path(tmp_dir)
             args = _build_temporal_runner_parser().parse_args(
                 [
-                    "--start-year",
-                    "2018",
-                    "--start-iso-week",
-                    "52",
-                    "--week-count",
-                    "3",
                     "--temperature-checkpoint",
                     "temperature.ckpt",
                     "--salinity-checkpoint",
@@ -273,22 +418,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     str(output_root),
                     "--output-name",
                     "temporal_test",
-                    "--temporal-sampler",
-                    "ddim",
-                    "--temporal-ddim-steps",
-                    "50",
-                    "--batch-size",
-                    "2",
-                    "--patch-stride",
-                    "64",
-                    "--rectangle",
-                    "-10",
-                    "30",
-                    "10",
-                    "45",
                     "--no-multi-gpu",
-                    "--public-base-url",
-                    "https://example.com/temporal",
                 ]
             )
 
@@ -310,26 +440,82 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             ):
                 summary = run_temporal_global_variable_inference(args)
 
-        self.assertEqual(run_mock.call_count, 6)
+        self.assertEqual(run_mock.call_count, 104)
         first_call_args = run_mock.call_args_list[0].args[0]
         last_call_args = run_mock.call_args_list[-1].args[0]
         self.assertEqual(first_call_args.scenario, "temperature")
         self.assertEqual(first_call_args.year, 2018)
-        self.assertEqual(first_call_args.iso_week, 52)
-        self.assertEqual(first_call_args.full_sample_count, 0)
-        self.assertEqual(first_call_args.sampler, "ddim")
-        self.assertEqual(first_call_args.ddim_num_timesteps, 50)
-        self.assertEqual(first_call_args.batch_size, 2)
-        self.assertEqual(first_call_args.patch_stride, 64)
-        self.assertEqual(first_call_args.rectangle, [-10.0, 30.0, 10.0, 45.0])
-        self.assertFalse(first_call_args.multi_gpu)
-        self.assertIsNone(first_call_args.public_base_url)
-        self.assertIsNone(first_call_args.rclone_remote)
+        self.assertEqual(first_call_args.iso_week, 1)
+        self.assertEqual(first_call_args.depth_export_suffix, ["10m"])
+        self.assertTrue(first_call_args.compact_basin_depth_error)
+        self.assertFalse(first_call_args.persist_ground_truth_rasters)
         self.assertEqual(last_call_args.scenario, "salinity")
-        self.assertEqual(last_call_args.year, 2019)
-        self.assertEqual(last_call_args.iso_week, 2)
+        self.assertEqual(last_call_args.year, 2018)
+        self.assertEqual(last_call_args.iso_week, 52)
         export_mock.assert_called_once()
-        self.assertEqual(summary["weeks"][-1], {"iso_year": 2019, "iso_week": 2})
+        self.assertEqual(summary["week_count"], 52)
+        self.assertEqual(summary["weeks"][-1], {"iso_year": 2018, "iso_week": 52})
+
+    def test_temporal_runner_can_package_temporal_globe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir)
+            args = _build_temporal_runner_parser().parse_args(
+                [
+                    "--temperature-checkpoint",
+                    "temperature.ckpt",
+                    "--salinity-checkpoint",
+                    "salinity.ckpt",
+                    "--device",
+                    "cpu",
+                    "--output-root",
+                    str(output_root),
+                    "--output-name",
+                    "temporal_globe_test",
+                    "--public-base-url",
+                    "https://example.com/temporal",
+                    "--rclone-remote",
+                    "r2:bucket/temporal",
+                    "--export-temporal-globe",
+                    "--no-multi-gpu",
+                ]
+            )
+
+            def fake_run_global_inference(parsed_args):
+                run_dir = Path(parsed_args.output_root) / parsed_args.output_name
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "run_summary.yaml").write_text("{}\n", encoding="utf-8")
+                return SimpleNamespace(run_dir=run_dir)
+
+            with (
+                mock.patch(
+                    "depth_recon.inference.export_temporal_global_variables.run_global_inference",
+                    side_effect=fake_run_global_inference,
+                ),
+                mock.patch(
+                    "depth_recon.inference.export_temporal_global_variables.export_temporal_dashboard_assets",
+                    return_value={"config_path": "temporal-config.json"},
+                ),
+                mock.patch(
+                    "depth_recon.inference.export_temporal_global_variables.export_temporal_cesium_globe_assets",
+                    return_value={"config_path": "temporal-globe-config.json"},
+                ) as globe_mock,
+            ):
+                summary = run_temporal_global_variable_inference(args)
+
+        globe_kwargs = globe_mock.call_args.kwargs
+        self.assertEqual(
+            globe_kwargs["output_dir"],
+            output_root / "temporal_globe_test" / "temporal-globe",
+        )
+        self.assertEqual(
+            globe_kwargs["public_base_url"], "https://example.com/temporal-globe"
+        )
+        self.assertEqual(globe_kwargs["rclone_remote"], "r2:bucket/temporal-globe")
+        self.assertEqual(globe_kwargs["max_zoom_level"], 4)
+        self.assertEqual(globe_kwargs["webp_quality"], 80)
+        self.assertEqual(
+            summary["temporal_globe"], {"config_path": "temporal-globe-config.json"}
+        )
 
     def test_standard_variable_inference_can_export_temporal_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -339,7 +525,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     "--year",
                     "2018",
                     "--iso-week",
-                    "52",
+                    "25",
                     "--temperature-checkpoint",
                     "temperature.ckpt",
                     "--salinity-checkpoint",
@@ -350,25 +536,8 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     str(output_root),
                     "--output-name",
                     "standard_temporal",
-                    "--public-base-url",
-                    "https://example.com/inference_production/globe",
-                    "--rclone-remote",
-                    "r2:depth-data/inference_production/globe",
                     "--export-temporal-consistency",
-                    "--temporal-week-count",
-                    "3",
-                    "--sampler",
-                    "ddim",
-                    "--ddim-steps",
-                    "200",
-                    "--uncertainty-sampler",
-                    "ddim",
-                    "--uncertainty-ddim-steps",
-                    "50",
-                    "--temporal-ddim-steps",
-                    "25",
-                    "--batch-size",
-                    "2",
+                    "--export-temporal-globe",
                     "--no-multi-gpu",
                 ]
             )
@@ -378,15 +547,10 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                 run_dir.mkdir(parents=True, exist_ok=True)
                 summary_path = run_dir / "run_summary.yaml"
                 summary_path.write_text("{}\n", encoding="utf-8")
-                selected_date = (
-                    20181226
-                    if parsed_args.iso_week == 52
-                    else 20190000 + parsed_args.iso_week
-                )
                 return SimpleNamespace(
                     run_dir=run_dir,
                     summary_path=summary_path,
-                    selected_date=selected_date,
+                    selected_date=20180620,
                     iso_year=parsed_args.year,
                     iso_week=parsed_args.iso_week,
                     uncertainty_tif_path=None,
@@ -400,71 +564,60 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                 mock.patch(
                     "depth_recon.inference.export_global_variables.export_cesium_globe_variable_assets",
                     return_value={"globe_dir": "globe"},
-                ) as globe_mock,
+                ),
                 mock.patch(
                     "depth_recon.inference.export_global_variables.export_temporal_dashboard_assets",
                     return_value={"output_dir": "temporal", "upload_ok": True},
                 ) as temporal_mock,
+                mock.patch(
+                    "depth_recon.inference.export_global_variables.export_temporal_cesium_globe_assets",
+                    return_value={"output_dir": "temporal-globe", "upload_ok": True},
+                ) as temporal_globe_mock,
             ):
                 summary = run_global_variable_inference(args)
 
-        self.assertEqual(run_mock.call_count, 8)
-        self.assertEqual(globe_mock.call_count, 1)
+        self.assertEqual(run_mock.call_count, 106)
         first_call_args = run_mock.call_args_list[0].args[0]
         extra_call_args = run_mock.call_args_list[2].args[0]
         last_call_args = run_mock.call_args_list[-1].args[0]
         self.assertEqual(first_call_args.scenario, "temperature")
         self.assertEqual(first_call_args.output_name, "temperature")
-        self.assertEqual(first_call_args.full_sample_count, 1000)
-        self.assertEqual(first_call_args.sampler, "ddim")
-        self.assertEqual(first_call_args.ddim_num_timesteps, 200)
-        self.assertEqual(first_call_args.uncertainty_sampler, "ddim")
-        self.assertEqual(first_call_args.uncertainty_ddim_num_timesteps, 50)
         self.assertEqual(extra_call_args.scenario, "temperature")
         self.assertEqual(extra_call_args.year, 2018)
-        self.assertEqual(extra_call_args.iso_week, 52)
-        self.assertEqual(extra_call_args.output_name, "2018_W52")
-        self.assertEqual(extra_call_args.full_sample_count, 0)
-        self.assertEqual(extra_call_args.sampler, "ddim")
-        self.assertEqual(extra_call_args.ddim_num_timesteps, 25)
-        self.assertIsNone(extra_call_args.public_base_url)
-        self.assertIsNone(extra_call_args.rclone_remote)
-        self.assertFalse(extra_call_args.multi_gpu)
+        self.assertEqual(extra_call_args.iso_week, 1)
+        self.assertEqual(extra_call_args.output_name, "2018_W01")
+        self.assertEqual(extra_call_args.depth_export_suffix, ["10m"])
+        self.assertTrue(extra_call_args.compact_basin_depth_error)
+        self.assertFalse(extra_call_args.persist_ground_truth_rasters)
         self.assertEqual(last_call_args.scenario, "salinity")
-        self.assertEqual(last_call_args.year, 2019)
-        self.assertEqual(last_call_args.iso_week, 2)
+        self.assertEqual(last_call_args.year, 2018)
+        self.assertEqual(last_call_args.iso_week, 52)
 
         temporal_kwargs = temporal_mock.call_args.kwargs
         self.assertEqual(
             temporal_kwargs["output_dir"],
             output_root / "standard_temporal" / "temporal",
         )
+        self.assertEqual(temporal_kwargs["validation_year"], 2018)
+        self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["temperature"]), 52)
+        self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["salinity"]), 52)
+        globe_kwargs = temporal_globe_mock.call_args.kwargs
         self.assertEqual(
-            temporal_kwargs["public_base_url"],
-            "https://example.com/inference_production/temporal",
+            globe_kwargs["output_dir"],
+            output_root / "standard_temporal" / "temporal-globe",
         )
-        self.assertEqual(
-            temporal_kwargs["rclone_remote"],
-            "r2:depth-data/inference_production/temporal",
-        )
-        self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["temperature"]), 3)
-        self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["salinity"]), 3)
-        self.assertEqual(
-            temporal_kwargs["variable_run_dirs"]["temperature"][0],
-            output_root
-            / "standard_temporal"
-            / "temporal_runs"
-            / "temperature"
-            / "2018_W52",
-        )
+        self.assertEqual(len(globe_kwargs["variable_run_dirs"]["temperature"]), 52)
+        self.assertEqual(globe_kwargs["max_zoom_level"], 4)
+        self.assertEqual(globe_kwargs["webp_quality"], 80)
         self.assertTrue(summary["temporal_consistency"]["enabled"])
+        self.assertEqual(summary["temporal_consistency"]["week_count"], 52)
         self.assertEqual(
             summary["temporal_consistency"]["weeks"][-1],
-            {"iso_year": 2019, "iso_week": 2},
+            {"iso_year": 2018, "iso_week": 52},
         )
         self.assertEqual(
-            summary["temporal_consistency"]["dashboard"],
-            {"output_dir": "temporal", "upload_ok": True},
+            summary["temporal_consistency"]["globe"],
+            {"output_dir": "temporal-globe", "upload_ok": True},
         )
 
     def test_standard_variable_temporal_sampling_defaults_use_yaml_uncertainty(
@@ -490,6 +643,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             )
 
             config_bundle = SimpleNamespace(
+                data_cfg={"split": {"val_year": 2018}},
                 inference_cfg={
                     "inference": {
                         "sampling": {
@@ -501,7 +655,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                             "ddim_num_timesteps": 50,
                         },
                     }
-                }
+                },
             )
             with mock.patch(
                 "depth_recon.inference.export_global_variables.load_pixel_inference_config",
@@ -522,8 +676,41 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(resolved_args.ddim_num_timesteps, 100)
         self.assertEqual(resolved_args.uncertainty_sampler, "ddim")
         self.assertEqual(resolved_args.uncertainty_ddim_num_timesteps, 50)
+        self.assertEqual(resolved_args.configured_val_year, 2018)
         self.assertEqual(temporal_args.sampler, "ddim")
         self.assertEqual(temporal_args.ddim_num_timesteps, 50)
+        self.assertEqual(temporal_args.depth_export_suffix, ["10m"])
+        self.assertTrue(temporal_args.compact_basin_depth_error)
+        self.assertFalse(temporal_args.persist_ground_truth_rasters)
+
+    def test_temporal_globe_page_is_standalone_and_lightweight(self) -> None:
+        html = Path("docs/temporal-globe/index.html").read_text(encoding="utf-8")
+        loader = Path("docs/javascripts/load-temporal-globe.js").read_text(
+            encoding="utf-8"
+        )
+        script = Path("docs/javascripts/temporal-globe.js").read_text(encoding="utf-8")
+        css = Path("docs/stylesheets/globe.css").read_text(encoding="utf-8")
+        mkdocs_config = Path("mkdocs.yml").read_text(encoding="utf-8")
+
+        self.assertIn("Temporal Globe", html)
+        self.assertIn('id="temporal-globe-week-slider"', html)
+        self.assertIn('id="temporal-globe-play-toggle"', html)
+        self.assertIn('name="temporal-globe-variable"', html)
+        self.assertIn('name="temporal-globe-layer"', html)
+        self.assertIn("load-temporal-globe.js", html)
+        self.assertIn("temporal-globe.js", loader)
+        self.assertIn("DEFAULT_TEMPORAL_GLOBE_CONFIG_URL", script)
+        self.assertIn('params.get("config")', script)
+        self.assertIn("function preloadNextFrame", script)
+        self.assertIn("function pruneLayerCache", script)
+        self.assertIn("frame_interval_ms", script)
+        self.assertNotIn("ground_truth", script)
+        self.assertNotIn("uncertainty", script)
+        self.assertIn(".globe-toolbar--temporal", css)
+        self.assertIn(
+            "Temporal Globe: https://depthdif.donike.net/temporal-globe/",
+            mkdocs_config,
+        )
 
     def test_temporal_dashboard_page_is_standalone_and_nav_linked(self) -> None:
         html = Path("docs/temporal/index.html").read_text(encoding="utf-8")
@@ -539,51 +726,27 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertIn("Temporal Dashboard", html)
         self.assertIn('id="temporal-map"', html)
         self.assertIn('id="temporal-dashboard-select"', html)
-        self.assertLess(
-            html.index('id="temporal-dashboard-select"'),
-            html.index('id="temporal-modality-select"'),
-        )
-        self.assertIn("temporal-map-layout", html)
-        self.assertIn("temporal-basin-selector", html)
-        self.assertLess(
-            html.index('id="temporal-map"'),
-            html.index('id="temporal-basin-ranking"'),
-        )
-        self.assertLess(
-            html.index('id="temporal-basin-ranking"'),
-            html.index('class="temporal-charts"'),
-        )
-        self.assertIn('id="temporal-time-series"', html)
-        self.assertIn('id="temporal-depth-profile"', html)
-        self.assertIn('id="temporal-basin-chart"', html)
-        self.assertIn('id="temporal-summary"', html)
-        self.assertIn('id="temporal-field-select"', html)
-        self.assertIn('id="temporal-period-select"', html)
+        self.assertIn('id="temporal-basin-select"', html)
+        self.assertIn('id="temporal-variable-select"', html)
+        self.assertIn('id="temporal-depth-error"', html)
+        self.assertNotIn('id="temporal-field-select"', html)
+        self.assertNotIn('id="temporal-period-select"', html)
+        self.assertNotIn('id="temporal-metric-toggle"', html)
+        self.assertNotIn("Time Series", html)
         self.assertIn("temporal-dashboard.js", html)
-        self.assertNotIn("analysis-dashboard.js", html)
         self.assertIn("standalone-temporal-page", css)
-        self.assertIn("#061726", css)
-        self.assertIn("#7cc8ff", css)
-        self.assertIn("temporal-error-state", css)
-        self.assertIn("temporal-map-layout", css)
-        self.assertIn("temporal-basin-selector", css)
-        self.assertIn("temporal-summary", css)
-        self.assertIn("minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr)", css)
+        self.assertIn("--temporal-teal", css)
+        self.assertIn("temporal-workspace", css)
         self.assertIn("DEFAULT_TEMPORAL_CONFIG_URL", script)
         self.assertIn('params.get("config")', script)
-        self.assertIn("temporal-analysis.json", script)
-        self.assertNotIn("uncertainty_reliability", script)
-        self.assertIn("function loadAllTemporalData", script)
-        self.assertIn("function setupDashboardSelect", script)
+        self.assertIn("schema_version", script)
+        self.assertIn("basin_data_urls", script)
+        self.assertIn("function loadActiveBasinData", script)
+        self.assertIn("function renderDepthErrorGraph", script)
         self.assertIn('window.location.href = "../analysis/"', script)
-        self.assertIn("temporal_analysis_data_url", script)
-        self.assertIn("function renderTimeSeries", script)
-        self.assertIn("function renderDepthProfile", script)
-        self.assertIn("function renderTemporalSummary", script)
-        self.assertIn("function formatDateLabel", script)
-        self.assertIn("periodDisplayLabel", script)
-        self.assertIn("temporal-summary", script)
-        self.assertNotIn("analysis-dashboard.js", script)
+        self.assertNotIn("prediction_flicker", script)
+        self.assertNotIn("change_error", script)
+        self.assertNotIn("temporal-analysis.json", script)
         self.assertIn(
             "Temporal Dashboard: https://depthdif.donike.net/temporal/",
             mkdocs_config,

@@ -58,6 +58,7 @@ namespaces = true
     "scripts/*.sh",
 ]
 "depth_recon.data" = [
+    "**/*.geojson",
     "**/*.json",
     "**/*.sh",
     "**/*.tif",
