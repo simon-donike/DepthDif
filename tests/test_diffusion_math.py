@@ -10,6 +10,7 @@ from torch import nn
 
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
+    DenoisingDiffusionProcess,
 )
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers import DDIM_Sampler
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules import (
@@ -50,6 +51,7 @@ class _CapturingPredictor(nn.Module):
         super().__init__()
         self.prediction = prediction
         self.last_model_input: torch.Tensor | None = None
+        self.seen_timesteps: list[torch.Tensor] = []
 
     def forward(
         self,
@@ -57,8 +59,9 @@ class _CapturingPredictor(nn.Module):
         t: torch.Tensor,
         coord_emb: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        _ = (t, coord_emb)
+        _ = coord_emb
         self.last_model_input = model_input.detach().clone()
+        self.seen_timesteps.append(t.detach().cpu().clone())
         return self.prediction.to(device=model_input.device, dtype=model_input.dtype)
 
 
@@ -188,6 +191,64 @@ class TestDiffusionMath(unittest.TestCase):
         assert capturing_model.last_model_input is not None
         noisy_branch = capturing_model.last_model_input[:, :1]
         self.assertTrue(torch.equal(noisy_branch, torch.zeros_like(noisy_branch)))
+
+    def test_unconditional_ddim_passes_training_timesteps_to_denoiser(self) -> None:
+        process = DenoisingDiffusionProcess(
+            generated_channels=1,
+            parameterization="x0",
+            num_timesteps=4,
+            schedule="linear",
+            unet_dim=8,
+            unet_dim_mults=(1,),
+        )
+        capturing_model = _CapturingPredictor(
+            torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+        )
+        process.model = capturing_model
+        sampler = DDIM_Sampler(
+            num_timesteps=2,
+            train_timesteps=4,
+            betas=process.forward_process.betas.detach().clone(),
+            parameterization="x0",
+            clip_sample=False,
+            eta=0.0,
+            temperature=0.0,
+        )
+
+        _ = process(shape=(2, 2), batch_size=1, sampler=sampler)
+
+        seen = torch.cat(capturing_model.seen_timesteps)
+        self.assertTrue(torch.equal(seen, torch.tensor([3, 0])))
+
+    def test_conditional_ddim_passes_training_timesteps_to_denoiser(self) -> None:
+        process = DenoisingDiffusionConditionalProcess(
+            generated_channels=1,
+            condition_channels=1,
+            parameterization="x0",
+            num_timesteps=4,
+            schedule="linear",
+            unet_dim=8,
+            unet_dim_mults=(1,),
+        )
+        capturing_model = _CapturingPredictor(
+            torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+        )
+        process.model = capturing_model
+        condition = torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+        sampler = DDIM_Sampler(
+            num_timesteps=2,
+            train_timesteps=4,
+            betas=process.forward_process.betas.detach().clone(),
+            parameterization="x0",
+            clip_sample=False,
+            eta=0.0,
+            temperature=0.0,
+        )
+
+        _ = process(condition, sampler=sampler)
+
+        seen = torch.cat(capturing_model.seen_timesteps)
+        self.assertTrue(torch.equal(seen, torch.tensor([3, 0])))
 
     def test_ddim_temperature_rejects_negative_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "temperature must be >= 0.0"):

@@ -54,6 +54,16 @@ def _set_sampler_parameterization(sampler: nn.Module, parameterization: str) -> 
         sampler.parameterization = parameterization
 
 
+def _sampler_train_timestep(sampler: nn.Module, t: torch.Tensor) -> torch.Tensor:
+    """Map sampler step indices to training-time denoiser timesteps."""
+    t_long = t.long()
+    if hasattr(sampler, "ddim_train_steps"):
+        ddim_train_steps = getattr(sampler, "ddim_train_steps")
+        if torch.is_tensor(ddim_train_steps):
+            return ddim_train_steps.to(device=t_long.device)[t_long]
+    return t_long
+
+
 def _module_device_or_fallback(
     module: nn.Module, fallback: torch.device
 ) -> torch.device:
@@ -188,7 +198,8 @@ class DenoisingDiffusionProcess(nn.Module):
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
-            prediction = self.model(x_t, t)
+            model_t = _sampler_train_timestep(sampler, t)
+            prediction = self.model(x_t, model_t)
             x_t = sampler(x_t, t, prediction)
 
         return x_t
@@ -463,8 +474,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             tqdm(it, desc="diffusion sampling", total=num_timesteps) if verbose else it
         ):
             t = torch.full((b,), i, device=device, dtype=torch.long)
+            model_t = self._sampler_train_timestep(sampler, t)
             model_input = torch.cat([x_t, condition], 1).to(device)
-            prediction = self.model(model_input, t, coord_emb=coord_emb)
+            prediction = self.model(model_input, model_t, coord_emb=coord_emb)
             x0_pred = self._prediction_to_x0(
                 x_t=x_t,
                 t=t,
@@ -500,12 +512,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
-        t_long = t.long()
-        if hasattr(sampler, "ddim_train_steps"):
-            ddim_train_steps = getattr(sampler, "ddim_train_steps")
-            if torch.is_tensor(ddim_train_steps):
-                return ddim_train_steps[t_long]
-        return t_long
+        return _sampler_train_timestep(sampler, t)
 
     def _prediction_to_x0(
         self,
