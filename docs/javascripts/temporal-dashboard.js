@@ -5,7 +5,7 @@
     [-85, -180],
     [85, 180],
   ];
-  const MAP_TILE_URL = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png";
+  const MAP_TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png";
   const MAP_TILE_ATTRIBUTION =
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
   const PLOTLY_CONFIG = {
@@ -19,6 +19,7 @@
     basinDataCache: {},
     activeBasin: null,
     activeVariable: null,
+    activeDepth: "all",
     map: null,
     basinLayer: null,
   };
@@ -94,9 +95,21 @@
     return payload.variables[state.activeVariable].depth_errors || [];
   }
 
+  function depthKey(row, index) {
+    return String(row && row.suffix ? row.suffix : index);
+  }
+
+  function selectedDepthErrors() {
+    const rows = activeDepthErrors();
+    if (state.activeDepth === "all") {
+      return rows;
+    }
+    return rows.filter((row, index) => depthKey(row, index) === state.activeDepth);
+  }
+
   function setControlsDisabled(disabled) {
     document
-      .querySelectorAll("#temporal-dashboard-select, #temporal-basin-select, #temporal-variable-select")
+      .querySelectorAll("#temporal-dashboard-select, #temporal-basin-select, #temporal-variable-select, #temporal-depth-select")
       .forEach((element) => {
         element.disabled = Boolean(disabled);
       });
@@ -158,6 +171,7 @@
     basinSelect.addEventListener("change", async function () {
       state.activeBasin = basinSelect.value;
       await loadActiveBasinData();
+      populateDepthSelect();
       render();
     });
 
@@ -171,8 +185,30 @@
     variableSelect.value = state.activeVariable;
     variableSelect.addEventListener("change", function () {
       state.activeVariable = variableSelect.value;
+      populateDepthSelect();
       render();
     });
+
+    populateDepthSelect();
+    $("temporal-depth-select").addEventListener("change", function () {
+      state.activeDepth = this.value;
+      render();
+    });
+  }
+
+  function populateDepthSelect() {
+    const depthSelect = $("temporal-depth-select");
+    const rows = activeDepthErrors();
+    const options = ['<option value="all">All depths</option>'];
+    rows.forEach((row, index) => {
+      const label = row.label || `Depth ${index + 1}`;
+      options.push(`<option value="${escapeHtml(depthKey(row, index))}">${escapeHtml(label)}</option>`);
+    });
+    depthSelect.innerHTML = options.join("");
+    if (state.activeDepth !== "all" && !rows.some((row, index) => depthKey(row, index) === state.activeDepth)) {
+      state.activeDepth = "all";
+    }
+    depthSelect.value = state.activeDepth;
   }
 
   function setRunLabel() {
@@ -206,8 +242,8 @@
     const name = feature.properties && feature.properties.name;
     const active = name === state.activeBasin;
     return {
-      color: active ? cssVar("--temporal-amber", "#d89216") : "rgba(58, 75, 88, 0.62)",
-      fillColor: active ? cssVar("--temporal-teal", "#0f9f8f") : "rgba(58, 75, 88, 0.18)",
+      color: active ? cssVar("--temporal-amber", "#ffd166") : "rgba(124, 200, 255, 0.48)",
+      fillColor: active ? cssVar("--temporal-teal", "#7cc8ff") : "rgba(124, 200, 255, 0.12)",
       fillOpacity: active ? 0.48 : 0.18,
       opacity: active ? 0.96 : 0.62,
       weight: active ? 2 : 1,
@@ -233,6 +269,7 @@
           state.activeBasin = name;
           $("temporal-basin-select").value = name;
           await loadActiveBasinData();
+          populateDepthSelect();
           render();
         });
       },
@@ -245,46 +282,48 @@
       autosize: true,
       paper_bgcolor: "rgba(0,0,0,0)",
       plot_bgcolor: "rgba(0,0,0,0)",
-      font: { color: cssVar("--temporal-text", "#17212b"), family: "Roboto, sans-serif", size: 12 },
+      font: { color: cssVar("--temporal-text", "#d7e9f7"), family: "Roboto, sans-serif", size: 12 },
       margin: { l: 68, r: 20, t: 18, b: 52 },
       hoverlabel: {
-        bgcolor: "#ffffff",
-        bordercolor: cssVar("--temporal-border", "rgba(34,54,68,0.18)"),
-        font: { color: cssVar("--temporal-text", "#17212b") },
+        bgcolor: "#061726",
+        bordercolor: cssVar("--temporal-border", "rgba(124,200,255,0.18)"),
+        font: { color: cssVar("--temporal-text", "#d7e9f7") },
       },
       xaxis: {
         automargin: true,
-        color: cssVar("--temporal-muted", "#5f6f7c"),
-        gridcolor: "rgba(34,54,68,0.12)",
-        title: { text: "Depth (m)", standoff: 10 },
+        color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(124,200,255,0.14)",
+        title: { text: `Mean absolute error${unitLabel() ? ` (${unitLabel()})` : ""}`, standoff: 10 },
       },
       yaxis: {
+        autorange: "reversed",
         automargin: true,
-        color: cssVar("--temporal-muted", "#5f6f7c"),
-        gridcolor: "rgba(34,54,68,0.12)",
-        title: { text: `Mean absolute error${unitLabel() ? ` (${unitLabel()})` : ""}`, standoff: 10 },
+        color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(124,200,255,0.14)",
+        title: { text: "Depth", standoff: 10 },
       },
     };
   }
 
   function renderDepthErrorGraph() {
     const chart = $("temporal-depth-error");
-    const rows = activeDepthErrors();
+    const rows = selectedDepthErrors();
     const trace = {
       customdata: rows.map((row) => [row.label, row.count ? row.count.toLocaleString() : "0"]),
       hovertemplate:
-        "%{customdata[0]}<br>Mean absolute error: %{y:.3f} " +
+        "%{customdata[0]}<br>Mean absolute error: %{x:.3f} " +
         unitLabel() +
         "<br>Count: %{customdata[1]}<extra></extra>",
-      line: { color: cssVar("--temporal-teal", "#0f9f8f"), width: 3 },
-      marker: { color: cssVar("--temporal-amber", "#d89216"), line: { color: "#ffffff", width: 1 }, size: 7 },
-      mode: "lines+markers",
+      marker: { color: cssVar("--temporal-amber", "#ffd166"), line: { color: "#061726", width: 1 }, size: 8 },
+      orientation: "h",
+      type: "bar",
       name: basinLabel(state.activeBasin),
-      x: rows.map((row, index) => (Number.isFinite(Number(row.actual_depth_m)) ? Number(row.actual_depth_m) : index)),
-      y: rows.map((row) => row.mean_absolute_error),
+      x: rows.map((row) => row.mean_absolute_error),
+      y: rows.map((row, index) => row.label || `Depth ${index + 1}`),
     };
     window.Plotly.react(chart, [trace], plotlyLayout(), PLOTLY_CONFIG);
-    $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} mean absolute error by depth`;
+    const depthLabel = state.activeDepth === "all" ? "all depths" : rows[0] && rows[0].label ? rows[0].label : "selected depth";
+    $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} mean absolute error across the validation year for ${depthLabel}`;
   }
 
   function render() {

@@ -31,11 +31,7 @@
           <p id="temporal-run-label">Loading validation-year basin errors...</p>
         </div>
         <nav class="temporal-links" aria-label="Dashboard links">
-          <a href="../">Docs</a>
-          <a href="../visualizations/">Analysis</a>
-          <a href="../analysis/">Spatial Dashboard</a>
-          <a href="../globe/">Globe</a>
-          <a href="../temporal-globe/">Temporal Globe</a>
+          <a href="../visualizations/">Back to Analysis</a>
         </nav>
       </header>
 
@@ -55,6 +51,10 @@
           <span>Variable</span>
           <select id="temporal-variable-select"></select>
         </label>
+        <label>
+          <span>Depth</span>
+          <select id="temporal-depth-select"></select>
+        </label>
       </section>
 
       <section class="temporal-workspace">
@@ -72,11 +72,11 @@
         <article class="temporal-panel temporal-panel--chart">
           <div class="temporal-panel__header">
             <div>
-              <h2>Depth Error</h2>
-              <p id="temporal-depth-caption">Mean absolute error across the 2018 validation year</p>
+              <h2>Average Error</h2>
+              <p id="temporal-depth-caption">Mean absolute error across the validation year</p>
             </div>
           </div>
-          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by depth"></div>
+          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error across the validation year"></div>
         </article>
       </section>
     </main>

@@ -300,7 +300,7 @@ Generated temporal dashboard output:
 ## Workflow 1f: Export Temporal Globe Animation
 Use `--export-temporal-globe` on either temporal wrapper to turn the retained weekly 10m rasters into a separate hostable Cesium animation bundle. This does not add GLORYS, ARGO points, uncertainty, or full-depth rasters. It only tiles 10m prediction and 10m absolute-error frames for each variable, keeps the same globe styling and optional Natural Earth basemap, and writes a compact `temporal-globe-config.json` manifest consumed by `docs/temporal-globe/index.html`.
 
-The temporal globe packager defaults to WebP q80, `--temporal-globe-extra-zoom-levels 0`, and `--temporal-globe-max-zoom-level 4` so the animation does not over-tile weekly frames. The browser keeps only the active frame plus a small next-frame cache while cycling at `frame_interval_ms` (`1000` by default). When the normal production URL ends in `/globe`, the temporal globe upload URL defaults to the sibling `/temporal-globe`; override it with `--temporal-globe-public-base-url` and `--temporal-globe-rclone-remote`.
+The temporal globe packager defaults to WebP q80, `--temporal-globe-extra-zoom-levels 0`, and `--temporal-globe-max-zoom-level 4` so the animation does not over-tile weekly frames. The browser keeps the current frame plus previous, next, and next-plus-one frames as transparent warm Cesium layers while cycling at `frame_interval_ms` (`1000` by default). When the normal production URL ends in `/globe`, the temporal globe upload URL defaults to the sibling `/temporal-globe`; override it with `--temporal-globe-public-base-url` and `--temporal-globe-rclone-remote`.
 
 To package existing weekly temporal run folders without re-running inference, call the packager directly:
 ```bash

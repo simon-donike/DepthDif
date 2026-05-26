@@ -537,57 +537,51 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
 
         self.assertIn('class="standalone-temporal-root"', html)
         self.assertIn("Temporal Dashboard", html)
+        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
+        self.assertNotIn('href="../analysis/">Spatial Dashboard</a>', html)
+        self.assertNotIn('href="../globe/">Globe</a>', html)
         self.assertIn('id="temporal-map"', html)
         self.assertIn('id="temporal-dashboard-select"', html)
-        self.assertLess(
-            html.index('id="temporal-dashboard-select"'),
-            html.index('id="temporal-modality-select"'),
-        )
-        self.assertIn("temporal-map-layout", html)
-        self.assertIn("temporal-basin-selector", html)
-        self.assertLess(
-            html.index('id="temporal-map"'),
-            html.index('id="temporal-basin-ranking"'),
-        )
-        self.assertLess(
-            html.index('id="temporal-basin-ranking"'),
-            html.index('class="temporal-charts"'),
-        )
-        self.assertIn('id="temporal-time-series"', html)
-        self.assertIn('id="temporal-depth-profile"', html)
-        self.assertIn('id="temporal-basin-chart"', html)
-        self.assertIn('id="temporal-summary"', html)
-        self.assertIn('id="temporal-field-select"', html)
-        self.assertIn('id="temporal-period-select"', html)
+        self.assertIn('id="temporal-basin-select"', html)
+        self.assertIn('id="temporal-variable-select"', html)
+        self.assertIn('id="temporal-depth-select"', html)
+        self.assertIn('id="temporal-depth-error"', html)
+        self.assertIn("Mean absolute error across the validation year", html)
         self.assertIn("temporal-dashboard.js", html)
-        self.assertNotIn("analysis-dashboard.js", html)
         self.assertIn("standalone-temporal-page", css)
         self.assertIn("#061726", css)
         self.assertIn("#7cc8ff", css)
-        self.assertIn("temporal-error-state", css)
-        self.assertIn("temporal-map-layout", css)
-        self.assertIn("temporal-basin-selector", css)
-        self.assertIn("temporal-summary", css)
-        self.assertIn("minmax(250px, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr)", css)
+        self.assertIn("rgba(5, 20, 32, 0.78)", css)
+        self.assertIn("background: #071d2d;", css)
         self.assertIn("DEFAULT_TEMPORAL_CONFIG_URL", script)
+        self.assertIn("dark_nolabels", script)
         self.assertIn('params.get("config")', script)
-        self.assertIn("temporal-analysis.json", script)
-        self.assertNotIn("uncertainty_reliability", script)
-        self.assertIn("function loadAllTemporalData", script)
-        self.assertIn("function setupDashboardSelect", script)
+        self.assertIn("schema_version", script)
+        self.assertIn("basin_data_urls", script)
+        self.assertIn("function loadActiveBasinData", script)
+        self.assertIn("function populateDepthSelect", script)
+        self.assertIn("function selectedDepthErrors", script)
+        self.assertIn("function renderDepthErrorGraph", script)
+        self.assertIn('orientation: "h"', script)
+        self.assertIn("Mean absolute error: %{x:.3f}", script)
         self.assertIn('window.location.href = "../analysis/"', script)
-        self.assertIn("temporal_analysis_data_url", script)
-        self.assertIn("function renderTimeSeries", script)
-        self.assertIn("function renderDepthProfile", script)
-        self.assertIn("function renderTemporalSummary", script)
-        self.assertIn("function formatDateLabel", script)
-        self.assertIn("periodDisplayLabel", script)
-        self.assertIn("temporal-summary", script)
-        self.assertNotIn("analysis-dashboard.js", script)
-        self.assertIn(
+        self.assertNotIn("temporal-analysis.json", script)
+        self.assertIn("Analysis: /visualizations/", mkdocs_config)
+        self.assertNotIn(
             "Temporal Dashboard: https://depthdif.donike.net/temporal/",
             mkdocs_config,
         )
+
+    def test_temporal_globe_page_links_back_to_analysis_only(self) -> None:
+        html = Path("docs/temporal-globe/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("Temporal Globe", html)
+        self.assertIn(
+            'href="../visualizations/">Back to Analysis</a>',
+            html,
+        )
+        self.assertNotIn('href="../globe/">Globe</a>', html)
+        self.assertNotIn('href="../temporal/">Temporal Dashboard</a>', html)
 
 
 if __name__ == "__main__":

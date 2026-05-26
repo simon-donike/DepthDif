@@ -7,6 +7,11 @@
     height: 9500000.0,
   };
   const SPIN_RATE_RADIANS_PER_SECOND = 5.0 * (Math.PI / 180.0);
+  const ACTIVE_LAYER_ALPHA = 1.0;
+  const PRELOAD_LAYER_ALPHA = 0.001;
+  const PRELOAD_FRAME_OFFSETS = [1, 2, -1];
+  const CACHE_FRAME_OFFSETS = [0, 1, 2, -1];
+  const FRAME_WARMUP_RENDER_COUNT = 2;
   const TEMPERATURE_COLOR_STOPS = [
     { value: 0.0, rgb: [18, 38, 140] },
     { value: 4.0, rgb: [30, 86, 196] },
@@ -436,10 +441,96 @@
     return state.selectedLayer === "absolute_error" ? credits.absolute_error : credits.prediction;
   }
 
-  function pruneLayerCache(state) {
+  function wrappedFrameIndex(frameIndex, frameCount) {
+    if (frameCount <= 0) {
+      return null;
+    }
+    const numericIndex = Number(frameIndex);
+    const safeIndex = Number.isFinite(numericIndex) ? Math.trunc(numericIndex) : 0;
+    return ((safeIndex % frameCount) + frameCount) % frameCount;
+  }
+
+  function cachedFrameIndexes(state) {
     const frames = activeFrames(state);
-    const nextIndex = frames.length === 0 ? 0 : (state.selectedFrameIndex + 1) % frames.length;
-    const allowed = new Set([state.currentLayerKey, layerCacheKey(state, nextIndex)]);
+    if (frames.length === 0) {
+      return [];
+    }
+    const selectedIndex = clamp(Number(state.selectedFrameIndex || 0), 0, frames.length - 1);
+    const indexes = new Set();
+    CACHE_FRAME_OFFSETS.forEach(function (offset) {
+      const index = wrappedFrameIndex(selectedIndex + offset, frames.length);
+      if (index !== null) {
+        indexes.add(index);
+      }
+    });
+    return Array.from(indexes);
+  }
+
+  function setWarmLayerState(layer) {
+    if (!layer) {
+      return;
+    }
+    layer.show = true;
+    // Keep preload layers barely visible so Cesium still traverses and requests their tiles.
+    layer.alpha = PRELOAD_LAYER_ALPHA;
+  }
+
+  function setActiveLayerState(state, layer) {
+    if (!layer) {
+      return;
+    }
+    layer.show = true;
+    layer.alpha = ACTIVE_LAYER_ALPHA;
+    if (state.viewer && !state.viewer.isDestroyed() && typeof state.viewer.imageryLayers.raiseToTop === "function") {
+      state.viewer.imageryLayers.raiseToTop(layer);
+    }
+  }
+
+  function waitForLayerWarmup(state, entry) {
+    if (!entry || entry.warmed) {
+      return Promise.resolve(entry && entry.layer ? entry.layer : null);
+    }
+    if (entry.warmupPromise) {
+      return entry.warmupPromise;
+    }
+    if (FRAME_WARMUP_RENDER_COUNT <= 0) {
+      entry.warmed = true;
+      return Promise.resolve(entry.layer);
+    }
+
+    entry.warmupPromise = new Promise(function (resolve) {
+      let remainingFrames = FRAME_WARMUP_RENDER_COUNT;
+
+      function step() {
+        if (!state.viewer || state.viewer.isDestroyed() || !entry.layer) {
+          entry.warmed = true;
+          resolve(entry.layer || null);
+          return;
+        }
+        requestRender(state);
+        remainingFrames -= 1;
+        if (remainingFrames <= 0) {
+          entry.warmed = true;
+          resolve(entry.layer);
+          return;
+        }
+        window.requestAnimationFrame(step);
+      }
+
+      window.requestAnimationFrame(step);
+    });
+    return entry.warmupPromise;
+  }
+
+  function pruneLayerCache(state) {
+    const allowed = new Set(
+      cachedFrameIndexes(state).map(function (frameIndex) {
+        return layerCacheKey(state, frameIndex);
+      })
+    );
+    if (state.currentLayerKey) {
+      allowed.add(state.currentLayerKey);
+    }
     Array.from(state.layerCache.keys()).forEach(function (key) {
       if (allowed.has(key)) {
         return;
@@ -456,7 +547,7 @@
     const key = layerCacheKey(state, frameIndex);
     const cached = state.layerCache.get(key);
     if (cached) {
-      return cached.promise || Promise.resolve(cached.layer);
+      return cached.promise || waitForLayerWarmup(state, cached);
     }
 
     const frameUrl = resolveAssetUrl(frameUrlForIndex(state, frameIndex), state.configUrl);
@@ -464,7 +555,7 @@
       return Promise.resolve(null);
     }
 
-    const entry = { layer: null, promise: null };
+    const entry = { layer: null, promise: null, warmed: false, warmupPromise: null };
     state.layerCache.set(key, entry);
     entry.promise = Cesium.TileMapServiceImageryProvider.fromUrl(frameUrl, {
       credit: creditForLayer(state),
@@ -476,11 +567,13 @@
         const layer = state.viewer.imageryLayers.addImageryProvider(provider);
         layer.minificationFilter = Cesium.TextureMinificationFilter.NEAREST;
         layer.magnificationFilter = Cesium.TextureMagnificationFilter.NEAREST;
-        layer.alpha = 1.0;
-        layer.show = false;
+        setWarmLayerState(layer);
         entry.layer = layer;
+        if (state.currentLayer && state.currentLayer !== layer) {
+          setActiveLayerState(state, state.currentLayer);
+        }
         requestRender(state);
-        return layer;
+        return waitForLayerWarmup(state, entry);
       })
       .catch(function (error) {
         state.layerCache.delete(key);
@@ -493,13 +586,26 @@
     return entry.promise;
   }
 
-  function preloadNextFrame(state) {
+  function preloadNeighborFrames(state) {
     const frames = activeFrames(state);
     if (frames.length <= 1) {
       return;
     }
-    const nextIndex = (state.selectedFrameIndex + 1) % frames.length;
-    ensureFrameLayer(state, nextIndex).then(function () {
+    const selectedIndex = clamp(Number(state.selectedFrameIndex || 0), 0, frames.length - 1);
+    const preloadIndexes = new Set();
+    PRELOAD_FRAME_OFFSETS.forEach(function (offset) {
+      const index = wrappedFrameIndex(selectedIndex + offset, frames.length);
+      if (index !== null && index !== selectedIndex) {
+        preloadIndexes.add(index);
+      }
+    });
+    const promises = Array.from(preloadIndexes).map(function (frameIndex) {
+      return ensureFrameLayer(state, frameIndex);
+    });
+    Promise.all(promises).then(function () {
+      if (state.currentLayer) {
+        setActiveLayerState(state, state.currentLayer);
+      }
       pruneLayerCache(state);
     });
   }
@@ -511,22 +617,18 @@
     syncControls(state);
     return ensureFrameLayer(state, frameIndex).then(function (layer) {
       if (loadToken !== state.frameLoadToken) {
-        if (layer) {
-          layer.show = false;
-        }
+        setWarmLayerState(layer);
         requestRender(state);
         return null;
       }
       if (state.currentLayer && state.currentLayer !== layer) {
-        state.currentLayer.show = false;
+        setWarmLayerState(state.currentLayer);
       }
       state.currentLayer = layer;
       state.currentLayerKey = layerCacheKey(state, frameIndex);
-      if (layer) {
-        layer.show = true;
-      }
+      setActiveLayerState(state, layer);
       pruneLayerCache(state);
-      preloadNextFrame(state);
+      preloadNeighborFrames(state);
       requestRender(state);
       return layer;
     });
@@ -535,7 +637,7 @@
   function setFrameIndex(state, frameIndex) {
     const frames = activeFrames(state);
     state.selectedFrameIndex = clamp(Number(frameIndex), 0, Math.max(0, frames.length - 1));
-    showSelectedFrame(state);
+    return showSelectedFrame(state);
   }
 
   function playbackDelayMs(state) {
@@ -546,7 +648,7 @@
 
   function stopPlayback(state) {
     if (state.playbackTimer !== null) {
-      window.clearInterval(state.playbackTimer);
+      window.clearTimeout(state.playbackTimer);
       state.playbackTimer = null;
     }
     state.playing = false;
@@ -556,6 +658,27 @@
     }
   }
 
+  function schedulePlaybackTick(state) {
+    if (!state.playing) {
+      return;
+    }
+    state.playbackTimer = window.setTimeout(function () {
+      state.playbackTimer = null;
+      const frames = activeFrames(state);
+      if (frames.length <= 1) {
+        schedulePlaybackTick(state);
+        return;
+      }
+      Promise.resolve(setFrameIndex(state, (state.selectedFrameIndex + 1) % frames.length))
+        .catch(function (error) {
+          console.error(error);
+        })
+        .finally(function () {
+          schedulePlaybackTick(state);
+        });
+    }, playbackDelayMs(state));
+  }
+
   function startPlayback(state) {
     stopPlayback(state);
     state.playing = true;
@@ -563,13 +686,7 @@
       state.elements.playToggle.setAttribute("aria-pressed", "true");
       state.elements.playToggle.textContent = "Pause";
     }
-    state.playbackTimer = window.setInterval(function () {
-      const frames = activeFrames(state);
-      if (frames.length <= 1) {
-        return;
-      }
-      setFrameIndex(state, (state.selectedFrameIndex + 1) % frames.length);
-    }, playbackDelayMs(state));
+    schedulePlaybackTick(state);
   }
 
   function setSpinEnabled(state, enabled) {

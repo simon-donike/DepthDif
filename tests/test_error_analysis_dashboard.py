@@ -351,7 +351,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('id="analysis-dashboard-select"'),
             html.index('id="analysis-modality-select"'),
         )
-        self.assertIn('href="../temporal/"', html)
+        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
+        self.assertNotIn('<a href="../temporal/">Temporal</a>', html)
+        self.assertNotIn('<a href="../globe/">Globe</a>', html)
         self.assertIn("analysis-map-layout", html)
         self.assertIn("analysis-basin-selector", html)
         self.assertLess(
@@ -433,13 +435,13 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("coast-clipped", script)
         self.assertIn("quantile(values, 0.95)", script)
         self.assertIn("cell.basin", script)
-        self.assertIn("lonValue >= 100", script)
+        self.assertIn("function isDisplayBasin", script)
         self.assertIn("analysis-reset-focus", script)
         self.assertIn("depthProfileLogX", script)
         self.assertIn("showBasinFan: true", script)
         self.assertIn("function logDepthXValues", script)
         self.assertIn("COMMON_SELECTOR_DEPTHS_M", script)
-        self.assertIn("BASIN_ORDER", script)
+        self.assertIn("function displayBasinNames", script)
         self.assertIn("BASIN_FAN_COLORS", script)
         self.assertIn("function chartDepthLevels", script)
         self.assertIn("function selectableDepthOptions", script)
@@ -471,10 +473,27 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertNotIn("function renderKpis", script)
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
-        self.assertIn(
+        self.assertIn("Analysis: /visualizations/", mkdocs_config)
+        self.assertNotIn(
             "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config
         )
-        self.assertIn("3D Globe: https://depthdif.donike.net/globe/", mkdocs_config)
+        self.assertNotIn("3D Globe: https://depthdif.donike.net/globe/", mkdocs_config)
+
+    def test_analysis_landing_page_links_visualizations(self) -> None:
+        html = Path("docs/visualizations/index.html").read_text(encoding="utf-8")
+        css = Path("docs/stylesheets/analysis-landing.css").read_text(encoding="utf-8")
+        extra_css = Path("docs/stylesheets/extra.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="analysis-landing-root"', html)
+        self.assertIn("<h1>Analysis</h1>", html)
+        self.assertIn('href="../globe/"', html)
+        self.assertIn('href="../temporal-globe/"', html)
+        self.assertIn('href="../analysis/"', html)
+        self.assertIn('href="../temporal/"', html)
+        self.assertIn("One-Week Globe", html)
+        self.assertIn("Temporal Error Dashboard", html)
+        self.assertIn("analysis-landing-grid", css)
+        self.assertIn('href$="/visualizations/"', extra_css)
 
 
 if __name__ == "__main__":
