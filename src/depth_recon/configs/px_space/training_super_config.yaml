@@ -53,7 +53,7 @@ data:  # dataset, split, and loader inputs
       enabled: false  # sample x from y instead of ARGO
       pixel_count: 250  # synthetic observed pixels
     finetune_sampling:  # optional hard-area finetuning row filter
-      enabled: false  # enable hard/easy regional finetuning mix
+      enabled: true  # enable hard/easy regional finetuning mix
       hard_fraction: 0.5  # target fraction of rows from hard regions
       apply_to_splits:  # splits affected by finetune row filtering
       - train  # keep validation globally comparable
