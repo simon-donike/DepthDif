@@ -41,11 +41,9 @@ DEFAULT_TEMPORAL_YEAR_WEEK_COUNT = 52
 BASIN_DISPLAY_NAMES = {basin: basin for basin in BASIN_NAMES}
 
 
-def _default_basin_name() -> str:
+def _default_basin_name() -> str | None:
     """Return the preferred initial basin for temporal dashboard controls."""
-    if "North Pacific Ocean" in BASIN_BUTTON_NAMES:
-        return "North Pacific Ocean"
-    return BASIN_BUTTON_NAMES[0]
+    return None
 
 
 @dataclass(frozen=True)
@@ -294,6 +292,48 @@ def _finalize_depth_errors(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any
     return finalized
 
 
+def _weekly_error_rows(runs: Sequence[TemporalRun]) -> dict[str, list[dict[str, Any]]]:
+    """Return per-week basin errors aggregated across all native depths."""
+    weekly_errors: dict[str, list[dict[str, Any]]] = {
+        basin: [] for basin in BASIN_NAMES
+    }
+    for run_index, run in enumerate(runs):
+        basin_totals = {
+            basin: {"count": 0, "sum_absolute_error": 0.0} for basin in BASIN_NAMES
+        }
+        for depth in run.compact_summary["depth_levels"]:
+            for row in depth.get("basins", []):
+                basin = str(row.get("name", "Other"))
+                if basin not in basin_totals:
+                    continue
+                # Sum/count rows let the dashboard show an exact weekly mean even
+                # when different depths have different valid-pixel coverage.
+                basin_totals[basin]["count"] += int(row.get("count", 0) or 0)
+                basin_totals[basin]["sum_absolute_error"] += float(
+                    row.get("sum_absolute_error", 0.0) or 0.0
+                )
+        for basin, totals in basin_totals.items():
+            count = int(totals["count"])
+            total = float(totals["sum_absolute_error"])
+            weekly_errors[basin].append(
+                {
+                    "index": int(run_index),
+                    "selected_date": int(run.selected_date),
+                    "target_date": run.run_summary.get(
+                        "target_date", run.run_summary.get("selected_date")
+                    ),
+                    "iso_year": run.iso_year,
+                    "iso_week": run.iso_week,
+                    "count": count,
+                    "sum_absolute_error": total,
+                    "mean_absolute_error": (
+                        None if count <= 0 else float(total / float(count))
+                    ),
+                }
+            )
+    return weekly_errors
+
+
 def _run_rows(runs: Sequence[TemporalRun]) -> list[dict[str, Any]]:
     """Return compact run metadata for the temporal payload."""
     return [
@@ -329,6 +369,7 @@ def build_temporal_analysis_payload(
     basin_depth_errors = {
         basin: _finalize_depth_errors(rows) for basin, rows in accumulators.items()
     }
+    basin_weekly_errors = _weekly_error_rows(runs)
     variable_metadata = runs[0].variable_metadata
     return {
         "schema_version": 2,
@@ -367,6 +408,7 @@ def build_temporal_analysis_payload(
             for depth in first_depth_levels
         ],
         "basin_depth_errors": basin_depth_errors,
+        "basin_weekly_errors": basin_weekly_errors,
         "weekly_10m_artifacts": [run.ten_meter_artifact for run in runs],
     }
 
@@ -397,7 +439,11 @@ def _copy_dashboard_pages(output_dir: Path) -> None:
     """Copy standalone temporal dashboard files beside the generated config."""
     repo_root = Path(__file__).resolve().parents[3]
     source_files = {
-        repo_root / "docs" / "temporal" / "index.html": output_dir / "index.html",
+        repo_root
+        / "docs"
+        / "temporal-dashboard"
+        / "index.html": output_dir
+        / "index.html",
         repo_root
         / "docs"
         / "javascripts"
@@ -538,6 +584,7 @@ def _basin_payload(
             "variable": payload["variable"],
             "run": payload["run"],
             "depth_errors": payload["basin_depth_errors"][basin],
+            "weekly_errors": payload["basin_weekly_errors"][basin],
         }
     return {
         "schema_version": 2,

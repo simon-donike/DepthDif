@@ -29,7 +29,7 @@
       }
     }
 
-    // Fall back to the built docs root so the standalone /globe/ page still
+    // Fall back to the built docs root so the standalone /spatial-globe/ page still
     // resolves the app bundle even when currentScript is unavailable.
     return new URL("/javascripts/", document.baseURI).toString();
   }

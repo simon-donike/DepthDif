@@ -25,7 +25,7 @@ The repository currently supports:
       spatial error dashboard, and temporal error dashboard.
     </p>
   </div>
-  <a class="globe-cta__button" href="visualizations/">Open Analysis</a>
+  <a class="globe-cta__button" href="analysis/">Open Analysis</a>
 </div>
 
 ## Model Description

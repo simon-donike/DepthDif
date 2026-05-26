@@ -6,7 +6,7 @@
     <title>DepthDif Temporal Dashboard</title>
     <meta
       name="description"
-      content="Standalone DepthDif dashboard for validation-year basin depth-error summaries."
+      content="Standalone DepthDif dashboard for validation-year basin error over time."
     />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />
@@ -31,7 +31,7 @@
           <p id="temporal-run-label">Loading validation-year basin errors...</p>
         </div>
         <nav class="temporal-links" aria-label="Dashboard links">
-          <a href="../visualizations/">Back to Analysis</a>
+          <a href="../analysis/">Back to Analysis</a>
         </nav>
       </header>
 
@@ -68,11 +68,11 @@
         <article class="temporal-panel temporal-panel--chart">
           <div class="temporal-panel__header">
             <div>
-              <h2>Depth Error</h2>
-              <p id="temporal-depth-caption">Mean absolute error across the 2018 validation year</p>
+              <h2>Temporal Error</h2>
+              <p id="temporal-depth-caption">Mean absolute error by validation date</p>
             </div>
           </div>
-          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by depth"></div>
+          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by validation date"></div>
         </article>
       </section>
     </main>

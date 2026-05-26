@@ -229,6 +229,13 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(north_pacific[0]["mean_absolute_error"], 2.5)
         self.assertEqual(north_pacific[1]["count"], 8)
         self.assertEqual(north_pacific[1]["mean_absolute_error"], 2.5)
+        weekly_errors = payload["basin_weekly_errors"]["North Pacific Ocean"]
+        self.assertEqual(
+            [row["selected_date"] for row in weekly_errors], [20180103, 20180110]
+        )
+        self.assertEqual(
+            [row["mean_absolute_error"] for row in weekly_errors], [2.0, 3.0]
+        )
         self.assertEqual(
             payload["basin_depth_errors"]["North Atlantic Ocean"][0]["count"], 0
         )
@@ -290,7 +297,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(result["default_variable"], "temperature")
         self.assertEqual(config["schema_version"], 2)
         self.assertEqual(config["validation_year"], 2018)
-        self.assertEqual(config["default_basin"], "North Pacific Ocean")
+        self.assertIsNone(config["default_basin"])
         self.assertEqual(
             config["basin_map_geojson_url"],
             "https://example.com/temporal/basin-map.geojson",
@@ -311,6 +318,12 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                 "mean_absolute_error"
             ],
             2.5,
+        )
+        self.assertEqual(
+            pacific_payload["variables"]["temperature"]["weekly_errors"][1][
+                "mean_absolute_error"
+            ],
+            3.0,
         )
 
     def test_export_temporal_globe_assets_tiles_weekly_10m_frames(self) -> None:
@@ -693,7 +706,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         mkdocs_config = Path("mkdocs.yml").read_text(encoding="utf-8")
 
         self.assertIn("Temporal Globe", html)
-        self.assertIn('href="../visualizations/">Back to Analysis</a>', html)
+        self.assertIn('href="../analysis/">Back to Analysis</a>', html)
         self.assertIn('id="temporal-globe-week-slider"', html)
         self.assertIn('id="temporal-globe-play-toggle"', html)
         self.assertIn('name="temporal-globe-variable"', html)
@@ -708,14 +721,14 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("ground_truth", script)
         self.assertNotIn("uncertainty", script)
         self.assertIn(".globe-toolbar--temporal", css)
-        self.assertIn("Analysis: /visualizations/", mkdocs_config)
+        self.assertIn("Analysis: /analysis/", mkdocs_config)
         self.assertNotIn(
             "Temporal Globe: https://depthdif.donike.net/temporal-globe/",
             mkdocs_config,
         )
 
     def test_temporal_dashboard_page_is_standalone_and_nav_linked(self) -> None:
-        html = Path("docs/temporal/index.html").read_text(encoding="utf-8")
+        html = Path("docs/temporal-dashboard/index.html").read_text(encoding="utf-8")
         css = Path("docs/stylesheets/temporal-dashboard.css").read_text(
             encoding="utf-8"
         )
@@ -726,9 +739,9 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
 
         self.assertIn('class="standalone-temporal-root"', html)
         self.assertIn("Temporal Dashboard", html)
-        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
-        self.assertNotIn('href="../analysis/">Spatial Dashboard</a>', html)
-        self.assertNotIn('href="../globe/">Globe</a>', html)
+        self.assertIn('<a href="../analysis/">Back to Analysis</a>', html)
+        self.assertNotIn('href="../spatial-dashboard/">Spatial Dashboard</a>', html)
+        self.assertNotIn('href="../spatial-globe/">Globe</a>', html)
         self.assertIn('id="temporal-map"', html)
         self.assertIn('id="temporal-dashboard-select"', html)
         self.assertIn('id="temporal-basin-select"', html)
@@ -748,13 +761,13 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertIn("basin_data_urls", script)
         self.assertIn("function loadActiveBasinData", script)
         self.assertIn("function renderDepthErrorGraph", script)
-        self.assertIn('window.location.href = "../analysis/"', script)
+        self.assertIn('window.location.href = "../spatial-dashboard/"', script)
         self.assertNotIn("prediction_flicker", script)
         self.assertNotIn("change_error", script)
         self.assertNotIn("temporal-analysis.json", script)
-        self.assertIn("Analysis: /visualizations/", mkdocs_config)
+        self.assertIn("Analysis: /analysis/", mkdocs_config)
         self.assertNotIn(
-            "Temporal Dashboard: https://depthdif.donike.net/temporal/",
+            "Temporal Dashboard: https://depthdif.donike.net/temporal-dashboard/",
             mkdocs_config,
         )
 

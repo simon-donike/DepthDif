@@ -1,130 +1,86 @@
 <!doctype html>
-<html lang="en" class="standalone-analysis-root">
+<html lang="en" class="analysis-landing-root">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DepthDif Analysis Dashboard</title>
+    <title>DepthDif Analysis</title>
     <meta
       name="description"
-      content="Standalone DepthDif dashboard for absolute-error geography, depth profiles, and regional diagnostics."
+      content="Standalone DepthDif analysis landing page for globe and dashboard visualizations."
     />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="preconnect" href="https://unpkg.com" crossorigin />
-    <link rel="preconnect" href="https://cdn.plot.ly" crossorigin />
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
     />
     <link rel="icon" href="../assets/branding/website_icon.png" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="../stylesheets/analysis-dashboard.css" />
-    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-    <script defer src="../javascripts/analysis-dashboard.js"></script>
+    <link rel="stylesheet" href="../stylesheets/analysis-landing.css" />
   </head>
-  <body class="standalone-analysis-page">
-    <main class="analysis-shell">
-      <header class="analysis-header">
+  <body class="analysis-landing-page">
+    <main class="analysis-landing-shell">
+      <header class="analysis-landing-header">
         <div>
-          <span class="analysis-eyebrow">DepthDif Diagnostics</span>
-          <h1>Analysis Dashboard</h1>
-          <p id="analysis-run-label">Loading absolute-error diagnostics...</p>
+          <span class="analysis-landing-eyebrow">DepthDif Visualizations</span>
+          <h1>Analysis</h1>
+          <p>Global and temporal diagnostics for reconstructed ocean states.</p>
         </div>
-        <nav class="analysis-links" aria-label="Dashboard links">
-          <a href="../visualizations/">Back to Analysis</a>
+        <nav class="analysis-landing-links" aria-label="Analysis links">
+          <a href="../">Docs</a>
         </nav>
       </header>
 
-      <section class="analysis-controls" aria-label="Dashboard controls">
-        <label>
-          <span>Dashboard</span>
-          <select id="analysis-dashboard-select" aria-label="Dashboard">
-            <option value="analysis" selected>Absolute Error</option>
-            <option value="temporal">Temporal</option>
-          </select>
-        </label>
-        <label>
-          <span>Modality</span>
-          <select id="analysis-modality-select"></select>
-        </label>
-        <label>
-          <span>Depth</span>
-          <select id="analysis-depth-select"></select>
-        </label>
-        <label>
-          <span>Metric</span>
-          <div id="analysis-metric-toggle" class="analysis-segmented" role="radiogroup"></div>
-        </label>
-      </section>
+      <section class="analysis-landing-grid" aria-label="Analysis visualizations">
+        <a class="analysis-landing-tile analysis-landing-tile--globe" href="../spatial-globe/">
+          <span class="analysis-landing-tile__media" aria-hidden="true">
+            <img src="../assets/tiles/spatial_globe_tile.png" alt="" loading="lazy" />
+          </span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">3D Globe</span>
+            <span class="analysis-landing-tile__title">Spatial Globe</span>
+            <span class="analysis-landing-tile__text">
+              Weekly reconstruction layers with GLORYS, uncertainty, and Argo context.
+            </span>
+          </span>
+        </a>
 
-      <article class="analysis-panel analysis-panel--detail analysis-detail-strip">
-        <div class="analysis-panel__header">
-          <div>
-            <h2>Selected Depth</h2>
-            <p id="analysis-detail-caption">Active absolute-error summary</p>
-          </div>
-        </div>
-        <div id="analysis-detail-summary" class="analysis-detail-summary" aria-label="Selected depth summary"></div>
-      </article>
+        <a class="analysis-landing-tile analysis-landing-tile--temporal-globe" href="../temporal-globe/">
+          <span class="analysis-landing-tile__media" aria-hidden="true">
+            <img src="../assets/tiles/temporal_globe_tile.gif" alt="" loading="lazy" />
+          </span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">3D Animation</span>
+            <span class="analysis-landing-tile__title">Temporal Globe</span>
+            <span class="analysis-landing-tile__text">
+              Validation-year 10m prediction and absolute-error animation.
+            </span>
+          </span>
+        </a>
 
-      <section class="analysis-grid">
-        <article class="analysis-panel analysis-panel--map">
-          <div class="analysis-panel__header">
-            <div>
-              <h2>Geographic Error Field</h2>
-              <p id="analysis-map-caption">Global grid-cell absolute error</p>
-            </div>
-            <span id="analysis-selection-pill" class="analysis-pill">Global</span>
-          </div>
-          <div class="analysis-map-layout">
-            <div class="analysis-map-stack">
-              <div id="analysis-map" class="analysis-map" role="application" aria-label="World map of absolute-error grid cells"></div>
-              <div class="analysis-map-legend" aria-label="Map color scale">
-                <span id="analysis-map-legend-min">Lower error</span>
-                <span class="analysis-map-legend__ramp"></span>
-                <span id="analysis-map-legend-max">Higher error</span>
-              </div>
-            </div>
-          </div>
-        </article>
+        <a class="analysis-landing-tile analysis-landing-tile--spatial-error" href="../spatial-dashboard/">
+          <span class="analysis-landing-tile__media" aria-hidden="true">
+            <img src="../assets/tiles/spatial_dashboard_tile.png" alt="" loading="lazy" />
+          </span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">Spatial Error</span>
+            <span class="analysis-landing-tile__title">Spatial Error Dashboard</span>
+            <span class="analysis-landing-tile__text">
+              Basin, grid-cell, depth-profile, and uncertainty reliability diagnostics.
+            </span>
+          </span>
+        </a>
 
-        <article class="analysis-panel analysis-panel--depth-profile">
-          <div class="analysis-panel__header">
-            <div>
-              <h2>Error Across Depth</h2>
-              <p id="analysis-profile-caption">Global accumulated error curve</p>
-            </div>
-            <div class="analysis-depth-actions" aria-label="Depth profile display controls">
-              <button id="analysis-basin-fan-toggle" class="analysis-scale-toggle" type="button" aria-pressed="true">Basin Fan</button>
-              <button id="analysis-depth-scale-toggle" class="analysis-scale-toggle" type="button" aria-pressed="false">Log X</button>
-            </div>
-          </div>
-          <div id="analysis-depth-profile" class="analysis-chart" role="img" aria-label="Error curve across depth levels"></div>
-        </article>
-      </section>
-
-      <section class="analysis-charts">
-        <aside class="analysis-panel analysis-basin-selector" aria-label="Basin selector">
-          <div class="analysis-basin-selector__header">
-            <div>
-              <h2>Basin Selector</h2>
-              <p>Choose a basin for the active depth and metric</p>
-            </div>
-            <button id="analysis-reset-focus" class="analysis-ranking-reset" type="button" disabled>Reset</button>
-          </div>
-          <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
-        </aside>
-
-        <article class="analysis-panel analysis-panel--uncertainty">
-          <div class="analysis-panel__header">
-            <div>
-              <h2>Uncertainty Reliability</h2>
-              <p id="analysis-uncertainty-caption">Stochastic uncertainty calibration</p>
-            </div>
-          </div>
-          <div id="analysis-uncertainty-chart" class="analysis-chart" role="img" aria-label="Uncertainty reliability curve"></div>
-          <div id="analysis-uncertainty-highlights" class="analysis-uncertainty-highlights" aria-label="Uncertainty reliability highlights"></div>
-        </article>
+        <a class="analysis-landing-tile analysis-landing-tile--temporal-error" href="../temporal-dashboard/">
+          <span class="analysis-landing-tile__media" aria-hidden="true">
+            <img src="../assets/tiles/temporal_dashboard_tile.png" alt="" loading="lazy" />
+          </span>
+          <span class="analysis-landing-tile__body">
+            <span class="analysis-landing-tile__eyebrow">Temporal Error</span>
+            <span class="analysis-landing-tile__title">Temporal Error Dashboard</span>
+            <span class="analysis-landing-tile__text">
+              Validation-year basin and depth error summaries across variables.
+            </span>
+          </span>
+        </a>
       </section>
     </main>
   </body>

@@ -69,6 +69,12 @@
     });
   }
 
+  function formatDateLabel(value) {
+    const raw = String(value || "").trim();
+    const match = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : raw;
+  }
+
   function activeVariableConfig() {
     return (state.config.variables && state.config.variables[state.activeVariable]) || {};
   }
@@ -78,20 +84,33 @@
   }
 
   function basinLabel(name) {
+    if (!name) {
+      return "No basin selected";
+    }
     const basin = (state.config.basins || []).find((item) => item.name === name);
     return (basin && basin.label) || name;
   }
 
   function activeBasinPayload() {
+    if (!state.activeBasin) {
+      return null;
+    }
     return state.basinDataCache[state.activeBasin] || null;
   }
 
-  function activeDepthErrors() {
+  function activeWeeklyErrors() {
     const payload = activeBasinPayload();
     if (!payload || !payload.variables || !payload.variables[state.activeVariable]) {
       return [];
     }
-    return payload.variables[state.activeVariable].depth_errors || [];
+    return payload.variables[state.activeVariable].weekly_errors || [];
+  }
+
+  function setBasinSelectValue() {
+    const basinSelect = $("temporal-basin-select");
+    if (basinSelect) {
+      basinSelect.value = state.activeBasin || "";
+    }
   }
 
   function setControlsDisabled(disabled) {
@@ -142,7 +161,7 @@
     dashboardSelect.value = "temporal";
     dashboardSelect.addEventListener("change", function () {
       if (dashboardSelect.value === "analysis") {
-        window.location.href = "../analysis/";
+        window.location.href = "../spatial-dashboard/";
         return;
       }
       dashboardSelect.value = "temporal";
@@ -151,12 +170,13 @@
 
   function setupControls() {
     const basinSelect = $("temporal-basin-select");
-    basinSelect.innerHTML = (state.config.basins || [])
-      .map((basin) => `<option value="${escapeHtml(basin.name)}">${escapeHtml(basin.label || basin.name)}</option>`)
-      .join("");
-    basinSelect.value = state.activeBasin;
+    const basinOptions = (state.config.basins || []).map(
+      (basin) => `<option value="${escapeHtml(basin.name)}">${escapeHtml(basin.label || basin.name)}</option>`
+    );
+    basinSelect.innerHTML = [`<option value="">No basin selected</option>`, ...basinOptions].join("");
+    setBasinSelectValue();
     basinSelect.addEventListener("change", async function () {
-      state.activeBasin = basinSelect.value;
+      state.activeBasin = basinSelect.value || null;
       await loadActiveBasinData();
       render();
     });
@@ -198,6 +218,14 @@
       subdomains: "abcd",
     }).addTo(map);
     map.fitBounds(MAP_BOUNDS, { animate: false, padding: [8, 8] });
+    map.on("click", function () {
+      if (!state.activeBasin) {
+        return;
+      }
+      state.activeBasin = null;
+      setBasinSelectValue();
+      render();
+    });
     state.map = map;
     return map;
   }
@@ -229,9 +257,12 @@
           direction: "auto",
           sticky: true,
         });
-        layer.on("click", async function () {
-          state.activeBasin = name;
-          $("temporal-basin-select").value = name;
+        layer.on("click", async function (event) {
+          if (event.originalEvent) {
+            window.L.DomEvent.stopPropagation(event.originalEvent);
+          }
+          state.activeBasin = state.activeBasin === name ? null : name;
+          setBasinSelectValue();
           await loadActiveBasinData();
           render();
         });
@@ -256,7 +287,9 @@
         automargin: true,
         color: cssVar("--temporal-muted", "#5f6f7c"),
         gridcolor: "rgba(34,54,68,0.12)",
-        title: { text: "Depth (m)", standoff: 10 },
+        tickformat: "%b %d",
+        title: { text: "Date", standoff: 10 },
+        type: "date",
       },
       yaxis: {
         automargin: true,
@@ -267,36 +300,69 @@
     };
   }
 
+  function renderEmptyTemporalGraph(message) {
+    const layout = plotlyLayout();
+    layout.annotations = [
+      {
+        font: { color: cssVar("--temporal-muted", "#5f6f7c"), size: 13 },
+        showarrow: false,
+        text: escapeHtml(message),
+        x: 0.5,
+        xref: "paper",
+        y: 0.5,
+        yref: "paper",
+      },
+    ];
+    window.Plotly.react($("temporal-depth-error"), [], layout, PLOTLY_CONFIG);
+  }
+
   function renderDepthErrorGraph() {
+    if (!state.activeBasin) {
+      $("temporal-depth-caption").textContent = "Select a basin to show weekly mean absolute error";
+      renderEmptyTemporalGraph("Select a basin on the map or in the menu");
+      return;
+    }
     const chart = $("temporal-depth-error");
-    const rows = activeDepthErrors();
+    const rows = activeWeeklyErrors().filter((row) => Number.isFinite(Number(row.mean_absolute_error)));
+    if (rows.length === 0) {
+      $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} has no weekly error data`;
+      renderEmptyTemporalGraph("No weekly error data for the selected basin");
+      return;
+    }
     const trace = {
-      customdata: rows.map((row) => [row.label, row.count ? row.count.toLocaleString() : "0"]),
+      customdata: rows.map((row) => [
+        formatDateLabel(row.selected_date),
+        row.iso_year && row.iso_week ? `${row.iso_year}-W${String(row.iso_week).padStart(2, "0")}` : "n/a",
+        row.count ? row.count.toLocaleString() : "0",
+      ]),
       hovertemplate:
         "%{customdata[0]}<br>Mean absolute error: %{y:.3f} " +
         unitLabel() +
-        "<br>Count: %{customdata[1]}<extra></extra>",
+        "<br>ISO week: %{customdata[1]}<br>Count: %{customdata[2]}<extra></extra>",
       line: { color: cssVar("--temporal-teal", "#0f9f8f"), width: 3 },
       marker: { color: cssVar("--temporal-amber", "#d89216"), line: { color: "#ffffff", width: 1 }, size: 7 },
       mode: "lines+markers",
       name: basinLabel(state.activeBasin),
-      x: rows.map((row, index) => (Number.isFinite(Number(row.actual_depth_m)) ? Number(row.actual_depth_m) : index)),
+      x: rows.map((row) => formatDateLabel(row.selected_date)),
       y: rows.map((row) => row.mean_absolute_error),
     };
     window.Plotly.react(chart, [trace], plotlyLayout(), PLOTLY_CONFIG);
-    $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} mean absolute error by depth`;
+    $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} mean absolute error by date`;
   }
 
   function render() {
     setRunLabel();
-    $("temporal-selection-pill").textContent = basinLabel(state.activeBasin);
-    $("temporal-map-caption").textContent = `${basinLabel(state.activeBasin)} | validation year ${state.config.validation_year}`;
+    const selectedLabel = basinLabel(state.activeBasin);
+    $("temporal-selection-pill").textContent = selectedLabel;
+    $("temporal-map-caption").textContent = state.activeBasin
+      ? `${selectedLabel} | validation year ${state.config.validation_year}`
+      : `No basin selected | validation year ${state.config.validation_year}`;
     renderMap();
     renderDepthErrorGraph();
   }
 
   async function loadActiveBasinData() {
-    if (state.basinDataCache[state.activeBasin]) {
+    if (!state.activeBasin || state.basinDataCache[state.activeBasin]) {
       return;
     }
     const sourceUrl = configUrl();
@@ -310,7 +376,10 @@
   async function loadDashboard(sourceUrl) {
     state.config = await fetchJson(sourceUrl);
     validateConfig(state.config);
-    state.activeBasin = state.config.default_basin || (state.config.basins && state.config.basins[0] && state.config.basins[0].name);
+    const params = new URLSearchParams(window.location.search);
+    const requestedBasin = params.get("basin");
+    const basinNames = (state.config.basins || []).map((basin) => basin.name);
+    state.activeBasin = basinNames.includes(requestedBasin) ? requestedBasin : null;
     state.activeVariable =
       (state.config.default_variable && state.config.variables[state.config.default_variable] && state.config.default_variable) ||
       (state.config.available_variables && state.config.available_variables[0]);

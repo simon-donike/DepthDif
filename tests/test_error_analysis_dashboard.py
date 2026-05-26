@@ -340,7 +340,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             self.assertEqual(exported["schema_version"], 1)
 
     def test_standalone_analysis_dashboard_page_is_nav_linked(self) -> None:
-        html = Path("docs/analysis/index.html").read_text(encoding="utf-8")
+        html = Path("docs/spatial-dashboard/index.html").read_text(encoding="utf-8")
         css = Path("docs/stylesheets/analysis-dashboard.css").read_text(
             encoding="utf-8"
         )
@@ -357,9 +357,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('id="analysis-dashboard-select"'),
             html.index('id="analysis-modality-select"'),
         )
-        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
-        self.assertNotIn('<a href="../temporal/">Temporal</a>', html)
-        self.assertNotIn('<a href="../globe/">Globe</a>', html)
+        self.assertIn('<a href="../analysis/">Back to Analysis</a>', html)
+        self.assertNotIn('<a href="../temporal-dashboard/">Temporal</a>', html)
+        self.assertNotIn('<a href="../spatial-globe/">Globe</a>', html)
         self.assertIn("analysis-map-layout", html)
         self.assertIn("analysis-basin-selector", html)
         self.assertLess(
@@ -419,7 +419,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("analysisSourcesFromConfig", script)
         self.assertIn("analysis-modality-select", script)
         self.assertIn("function setupDashboardSelect", script)
-        self.assertIn('window.location.href = "../temporal/"', script)
+        self.assertIn('window.location.href = "../temporal-dashboard/"', script)
         self.assertIn("function renderDetailSummary", script)
         self.assertIn("function renderUncertaintyReliability", script)
         self.assertIn("uncertainty_reliability", script)
@@ -479,27 +479,32 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertNotIn("function renderKpis", script)
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
-        self.assertIn("Analysis: /visualizations/", mkdocs_config)
+        self.assertIn("Analysis: /analysis/", mkdocs_config)
         self.assertNotIn(
-            "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config
+            "Spatial Dashboard: https://depthdif.donike.net/spatial-dashboard/",
+            mkdocs_config,
         )
-        self.assertNotIn("3D Globe: https://depthdif.donike.net/globe/", mkdocs_config)
+        self.assertNotIn(
+            "Spatial Globe: https://depthdif.donike.net/spatial-globe/", mkdocs_config
+        )
 
     def test_analysis_landing_page_links_visualizations(self) -> None:
-        html = Path("docs/visualizations/index.html").read_text(encoding="utf-8")
+        html = Path("docs/analysis/index.html").read_text(encoding="utf-8")
         css = Path("docs/stylesheets/analysis-landing.css").read_text(encoding="utf-8")
         extra_css = Path("docs/stylesheets/extra.css").read_text(encoding="utf-8")
 
         self.assertIn('class="analysis-landing-root"', html)
         self.assertIn("<h1>Analysis</h1>", html)
-        self.assertIn('href="../globe/"', html)
+        self.assertIn('href="../spatial-globe/"', html)
         self.assertIn('href="../temporal-globe/"', html)
-        self.assertIn('href="../analysis/"', html)
-        self.assertIn('href="../temporal/"', html)
-        self.assertIn("One-Week Globe", html)
+        self.assertIn('href="../spatial-dashboard/"', html)
+        self.assertIn('href="../temporal-dashboard/"', html)
+        self.assertIn("Spatial Globe", html)
         self.assertIn("Temporal Error Dashboard", html)
+        self.assertIn("overflow: hidden", css)
+        self.assertIn("height: min(100vh, 1080px)", css)
         self.assertIn("analysis-landing-grid", css)
-        self.assertIn('href$="/visualizations/"', extra_css)
+        self.assertIn('href$="/analysis/"', extra_css)
 
 
 if __name__ == "__main__":

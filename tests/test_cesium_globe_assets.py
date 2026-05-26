@@ -659,7 +659,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
 
     def test_standalone_globe_page_uses_full_window_root_shell(self) -> None:
-        html = Path("docs/globe/index.html").read_text(encoding="utf-8")
+        html = Path("docs/spatial-globe/index.html").read_text(encoding="utf-8")
         css = Path("docs/stylesheets/globe.css").read_text(encoding="utf-8")
         loader = Path("docs/javascripts/load-cesium-globe.js").read_text(
             encoding="utf-8"
@@ -668,7 +668,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             encoding="utf-8"
         )
         default_config = json.loads(
-            Path("docs/globe/globe-config.json").read_text(encoding="utf-8")
+            Path("docs/spatial-globe/globe-config.json").read_text(encoding="utf-8")
         )
 
         self.assertIn('class="standalone-globe-root"', html)
@@ -693,8 +693,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('name="globe-patch-splits-layer"', html)
         self.assertIn("Salinity", html)
         self.assertIn("Ocean Variable Reconstruction", html)
-        self.assertIn('href="../visualizations/">Back to Analysis</a>', html)
-        self.assertNotIn('href="../analysis/">Analysis Dashboard</a>', html)
+        self.assertIn('href="../analysis/">Back to Analysis</a>', html)
+        self.assertNotIn('href="../spatial-dashboard/">Analysis Dashboard</a>', html)
         self.assertNotIn('href="../temporal-globe/">Temporal Globe</a>', html)
         self.assertIn('id="globe-error-legend"', html)
         self.assertIn('id="globe-error-legend-title"', html)

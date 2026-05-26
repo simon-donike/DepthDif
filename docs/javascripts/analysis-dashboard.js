@@ -391,7 +391,7 @@
     dashboardSelect.value = "analysis";
     dashboardSelect.addEventListener("change", function () {
       if (dashboardSelect.value === "temporal") {
-        window.location.href = "../temporal/";
+        window.location.href = "../temporal-dashboard/";
         return;
       }
       dashboardSelect.value = "analysis";
