@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables --year 2018 --iso-week 25 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --sampler ddim --ddim-steps 200 --uncertainty-sampler ddim --uncertainty-ddim-steps 50 --temporal-sampler ddim --temporal-ddim-steps 50 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe --rclone-remote r2:depth-data/inference_production/globe --rclone-sync-scope globe --output-root inference/outputs --output-name global_variables_2018_W25 --sigma 0 --extra-zoom-levels 0 --full-sample-count 1000
+# /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables --year 2018 --iso-week 25 --temperature-checkpoint logs/temperature/best.ckpt --salinity-checkpoint logs/salinity/best.ckpt --device cuda --sampler ddim --ddim-steps 200 --uncertainty-sampler ddim --uncertainty-ddim-steps 50 --temporal-sampler ddim --temporal-ddim-steps 50 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe --rclone-remote r2:depth-data/inference_production/globe --rclone-sync-scope globe --output-root inference/outputs --output-name global_variables_2018_W25 --sigma 0 --extra-zoom-levels -1 --full-sample-count 1000
 """Run and package paired temperature/salinity global inference exports."""
 
 from __future__ import annotations
@@ -195,7 +195,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RCLONE_SYNC_SCOPE,
     )
     parser.add_argument(
-        "--extra-zoom-levels", type=int, default=DEFAULT_EXTRA_ZOOM_LEVELS
+        "--extra-zoom-levels",
+        type=int,
+        default=DEFAULT_EXTRA_ZOOM_LEVELS,
+        help=(
+            "Cesium tile zoom-level adjustment relative to the raster native estimate. "
+            "Negative values reduce max zoom."
+        ),
     )
     parser.add_argument("--strict-load", action="store_true")
     parser.add_argument(

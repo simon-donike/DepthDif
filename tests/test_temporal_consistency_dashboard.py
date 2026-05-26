@@ -373,7 +373,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             self.assertEqual(colorize_mock.call_count, 8)
             self.assertEqual(tiles_mock.call_count, 8)
             first_tiles_kwargs = tiles_mock.call_args_list[0].kwargs
-            self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], 0)
+            self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], -1)
             self.assertEqual(first_tiles_kwargs["max_zoom_level"], 4)
             self.assertEqual(first_tiles_kwargs["webp_quality"], 80)
             self.assertTrue((output_dir / "index.html").exists())
@@ -693,7 +693,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         mkdocs_config = Path("mkdocs.yml").read_text(encoding="utf-8")
 
         self.assertIn("Temporal Globe", html)
-        self.assertIn('href="../visualizations/"', html)
+        self.assertIn('href="../visualizations/">Back to Analysis</a>', html)
         self.assertIn('id="temporal-globe-week-slider"', html)
         self.assertIn('id="temporal-globe-play-toggle"', html)
         self.assertIn('name="temporal-globe-variable"', html)
@@ -702,16 +702,13 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertIn("temporal-globe.js", loader)
         self.assertIn("DEFAULT_TEMPORAL_GLOBE_CONFIG_URL", script)
         self.assertIn('params.get("config")', script)
-        self.assertIn("function preloadNextFrame", script)
+        self.assertIn("function preloadNeighborFrames", script)
         self.assertIn("function pruneLayerCache", script)
         self.assertIn("frame_interval_ms", script)
         self.assertNotIn("ground_truth", script)
         self.assertNotIn("uncertainty", script)
         self.assertIn(".globe-toolbar--temporal", css)
-        self.assertIn(
-            "Analysis: https://depthdif.donike.net/visualizations/",
-            mkdocs_config,
-        )
+        self.assertIn("Analysis: /visualizations/", mkdocs_config)
         self.assertNotIn(
             "Temporal Globe: https://depthdif.donike.net/temporal-globe/",
             mkdocs_config,
@@ -729,7 +726,9 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
 
         self.assertIn('class="standalone-temporal-root"', html)
         self.assertIn("Temporal Dashboard", html)
-        self.assertIn('href="../visualizations/"', html)
+        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
+        self.assertNotIn('href="../analysis/">Spatial Dashboard</a>', html)
+        self.assertNotIn('href="../globe/">Globe</a>', html)
         self.assertIn('id="temporal-map"', html)
         self.assertIn('id="temporal-dashboard-select"', html)
         self.assertIn('id="temporal-basin-select"', html)
@@ -753,10 +752,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("prediction_flicker", script)
         self.assertNotIn("change_error", script)
         self.assertNotIn("temporal-analysis.json", script)
-        self.assertIn(
-            "Analysis: https://depthdif.donike.net/visualizations/",
-            mkdocs_config,
-        )
+        self.assertIn("Analysis: /visualizations/", mkdocs_config)
         self.assertNotIn(
             "Temporal Dashboard: https://depthdif.donike.net/temporal/",
             mkdocs_config,

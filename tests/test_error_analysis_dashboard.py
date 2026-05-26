@@ -357,8 +357,9 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('id="analysis-dashboard-select"'),
             html.index('id="analysis-modality-select"'),
         )
-        self.assertIn('href="../visualizations/"', html)
-        self.assertIn('href="../temporal/"', html)
+        self.assertIn('<a href="../visualizations/">Back to Analysis</a>', html)
+        self.assertNotIn('<a href="../temporal/">Temporal</a>', html)
+        self.assertNotIn('<a href="../globe/">Globe</a>', html)
         self.assertIn("analysis-map-layout", html)
         self.assertIn("analysis-basin-selector", html)
         self.assertLess(
@@ -440,13 +441,13 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn("coast-clipped", script)
         self.assertIn("quantile(values, 0.95)", script)
         self.assertIn("cell.basin", script)
-        self.assertIn("function displayBasinNames", script)
+        self.assertIn("function isDisplayBasin", script)
         self.assertIn("analysis-reset-focus", script)
         self.assertIn("depthProfileLogX", script)
         self.assertIn("showBasinFan: true", script)
         self.assertIn("function logDepthXValues", script)
         self.assertIn("COMMON_SELECTOR_DEPTHS_M", script)
-        self.assertIn("displayBasinNames().map", script)
+        self.assertIn("function displayBasinNames", script)
         self.assertIn("BASIN_FAN_COLORS", script)
         self.assertIn("function chartDepthLevels", script)
         self.assertIn("function selectableDepthOptions", script)
@@ -478,9 +479,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertNotIn("function renderKpis", script)
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
-        self.assertIn(
-            "Analysis: https://depthdif.donike.net/visualizations/", mkdocs_config
-        )
+        self.assertIn("Analysis: /visualizations/", mkdocs_config)
         self.assertNotIn(
             "Analysis Dashboard: https://depthdif.donike.net/analysis/", mkdocs_config
         )

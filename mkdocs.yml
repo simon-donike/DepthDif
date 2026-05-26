@@ -92,5 +92,5 @@ nav:
       - Early Experiments: experiments.md
       - Second Dataset Results: experiments-glorys-argo-aligned.md
       - Production Results: experiments-production.md
-  - Analysis: https://depthdif.donike.net/visualizations/
+  - Analysis: /visualizations/
   - API Reference: api.md

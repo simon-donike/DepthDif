@@ -2532,7 +2532,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--extra-zoom-levels",
         type=int,
         default=DEFAULT_EXTRA_ZOOM_LEVELS,
-        help="Extra Cesium tile zoom levels beyond the raster native estimate.",
+        help=(
+            "Cesium tile zoom-level adjustment relative to the raster native estimate. "
+            "Negative values reduce max zoom."
+        ),
     )
     parser.add_argument(
         "--strict-load",

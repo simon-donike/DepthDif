@@ -18,7 +18,8 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_CAMERA_LAT,
     DEFAULT_CAMERA_LON,
     DEFAULT_ERROR_ANALYSIS_JSON_NAME,
-    DEFAULT_RASTER_BORDER_REMOVAL_PIXELS,
+    DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
     DEFAULT_RCLONE_SYNC_SCOPE,
     DEFAULT_SALINITY_COLOR_RAMP_PATH,
     DEFAULT_TEMPLATE_PATH,
@@ -451,7 +452,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             _apply_alpha_mask_to_colorized_raster(
                 input_path,
                 colorized_path,
-                border_removed_pixels=0,
+                raster_edge_erosion_pixels=0,
+                raster_edge_feather_pixels=0,
             )
 
             with rasterio.open(colorized_path) as ds:
@@ -461,7 +463,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(int(rgba[3, 1, 1]), 255)
         self.assertEqual(int(rgba[3, 0, 2]), 255)
 
-    def test_apply_alpha_mask_to_colorized_raster_removes_default_border_pixels(
+    def test_apply_alpha_mask_to_colorized_raster_erodes_and_feathers_edges(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -499,19 +501,26 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             ) as ds:
                 ds.write(np.full((4, 13, 13), 200, dtype=np.uint8))
 
-            _apply_alpha_mask_to_colorized_raster(input_path, colorized_path)
+            _apply_alpha_mask_to_colorized_raster(
+                input_path,
+                colorized_path,
+                raster_edge_erosion_pixels=2,
+                raster_edge_feather_pixels=4,
+            )
 
             with rasterio.open(colorized_path) as ds:
                 rgba = ds.read()
 
-        self.assertEqual(DEFAULT_RASTER_BORDER_REMOVAL_PIXELS, 2)
         self.assertEqual(int(rgba[3, 0, 6]), 0)
         self.assertEqual(int(rgba[3, 1, 6]), 0)
         self.assertEqual(int(rgba[3, 2, 6]), 0)
-        self.assertEqual(int(rgba[3, 3, 6]), 255)
+        self.assertEqual(int(rgba[3, 3, 6]), 64)
+        self.assertEqual(int(rgba[3, 4, 6]), 128)
         self.assertEqual(int(rgba[3, 6, 6]), 255)
+        self.assertEqual(int(rgba[0, 0, 6]), 0)
         self.assertEqual(int(rgba[0, 2, 6]), 0)
         self.assertEqual(int(rgba[0, 3, 6]), 200)
+        self.assertEqual(int(rgba[0, 6, 6]), 200)
 
     def test_validate_raster_transparency_contract_rejects_zeroed_land(
         self,
@@ -588,8 +597,12 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         )
         self.assertEqual(template["raster_transparency"]["land_mask_mode"], "none")
         self.assertEqual(
-            template["raster_transparency"]["valid_support_border_removed_pixels"],
-            DEFAULT_RASTER_BORDER_REMOVAL_PIXELS,
+            template["raster_transparency"]["edge_erosion_pixels"],
+            DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        )
+        self.assertEqual(
+            template["raster_transparency"]["edge_feather_pixels"],
+            DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
         )
 
     def test_standalone_globe_page_uses_full_window_root_shell(self) -> None:
@@ -627,7 +640,9 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn('name="globe-patch-splits-layer"', html)
         self.assertIn("Salinity", html)
         self.assertIn("Ocean Variable Reconstruction", html)
-        self.assertIn('href="../visualizations/"', html)
+        self.assertIn('href="../visualizations/">Back to Analysis</a>', html)
+        self.assertNotIn('href="../analysis/">Analysis Dashboard</a>', html)
+        self.assertNotIn('href="../temporal-globe/">Temporal Globe</a>', html)
         self.assertIn('id="globe-error-legend"', html)
         self.assertIn('id="globe-error-legend-title"', html)
         self.assertIn('loading="lazy"', html)
@@ -864,11 +879,19 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             resampling="bilinear",
         )
 
-    def test_build_parser_defaults_to_zero_extra_zoom_levels(self) -> None:
+    def test_build_parser_defaults_to_one_less_than_native_zoom(self) -> None:
         parser = _build_parser()
         args = parser.parse_args(["--run-dir", "inference/outputs/example"])
 
-        self.assertEqual(args.extra_zoom_levels, 0)
+        self.assertEqual(args.extra_zoom_levels, -1)
+        self.assertEqual(
+            args.raster_edge_erosion_pixels,
+            DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        )
+        self.assertEqual(
+            args.raster_edge_feather_pixels,
+            DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        )
         self.assertEqual(args.rclone_sync_scope, DEFAULT_RCLONE_SYNC_SCOPE)
         self.assertTrue(args.include_error_analysis)
 
@@ -1050,8 +1073,25 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 ds.write(np.ones((1, 1800, 3600), dtype=np.float32))
 
             zoom_level = _estimate_native_zoom_level(tif_path)
+            with mock.patch(
+                "depth_recon.inference.export_cesium_globe_assets.shutil.which",
+                return_value="/usr/bin/gdal2tiles.py",
+            ):
+                standard_command = _build_gdal2tiles_command(
+                    tif_path,
+                    Path(tmp_dir) / "standard_tiles",
+                    extra_zoom_levels=-1,
+                )
+                temporal_command = _build_gdal2tiles_command(
+                    tif_path,
+                    Path(tmp_dir) / "temporal_tiles",
+                    extra_zoom_levels=-1,
+                    max_zoom_level=2,
+                )
 
         self.assertEqual(zoom_level, 4)
+        self.assertIn("0-3", standard_command)
+        self.assertIn("0-2", temporal_command)
 
     def test_rewrite_geojson_rounds_coordinates_and_drops_unused_point_properties(
         self,

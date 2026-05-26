@@ -54,8 +54,9 @@ DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
 DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
 DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
-DEFAULT_EXTRA_ZOOM_LEVELS = 0
-DEFAULT_RASTER_BORDER_REMOVAL_PIXELS = 2
+DEFAULT_EXTRA_ZOOM_LEVELS = -1
+DEFAULT_RASTER_EDGE_EROSION_PIXELS = 2
+DEFAULT_RASTER_EDGE_FEATHER_PIXELS = 4
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_ERROR_ANALYSIS_JSON_NAME = "error-analysis.json"
 DEFAULT_ANALYSIS_GRID_GEOJSON_NAME = "analysis-grid.geojson"
@@ -490,6 +491,8 @@ def _colorize_raster(
     output_path: Path,
     *,
     color_ramp_path: Path,
+    raster_edge_erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    raster_edge_feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
 ) -> None:
     """Colorize one single-band raster and make nodata/land pixels transparent."""
     gdaldem_exe = shutil.which("gdaldem")
@@ -506,7 +509,12 @@ def _colorize_raster(
         str(output_path),
     ]
     subprocess.run(command, check=True)
-    _apply_alpha_mask_to_colorized_raster(input_path, output_path)
+    _apply_alpha_mask_to_colorized_raster(
+        input_path,
+        output_path,
+        raster_edge_erosion_pixels=raster_edge_erosion_pixels,
+        raster_edge_feather_pixels=raster_edge_feather_pixels,
+    )
 
 
 def _valid_raster_values(path: Path) -> np.ndarray:
@@ -614,22 +622,42 @@ def _transparent_pixel_mask(
     return transparent
 
 
-def _visible_pixel_mask(
+def _raster_edge_alpha_scale(
     transparent: np.ndarray,
     *,
-    border_removed_pixels: int = DEFAULT_RASTER_BORDER_REMOVAL_PIXELS,
+    erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
 ) -> np.ndarray:
-    """Return valid pixels kept after hard valid-support border removal."""
-    visible = ~np.asarray(transparent, dtype=bool)
-    border_removed_pixels = max(0, int(border_removed_pixels))
-    if border_removed_pixels <= 0 or not np.any(visible):
-        return visible
-    return ndi.binary_erosion(
-        visible,
-        structure=np.ones((3, 3), dtype=bool),
-        iterations=border_removed_pixels,
-        border_value=1,
+    """Return a 0..1 alpha scale for softened raster-support edges."""
+    transparent_bool = np.asarray(transparent, dtype=bool)
+    valid = ~transparent_bool
+    erosion_pixels = max(0, int(erosion_pixels))
+    feather_pixels = max(0, int(feather_pixels))
+    if erosion_pixels > 0:
+        # Treat array bounds as valid so global rasters do not fade at the map edge.
+        eroded_valid = ndi.binary_erosion(
+            valid,
+            structure=np.ones((3, 3), dtype=bool),
+            iterations=erosion_pixels,
+            border_value=1,
+        )
+    else:
+        eroded_valid = valid
+
+    alpha_scale = np.zeros(valid.shape, dtype=np.float32)
+    if not np.any(eroded_valid):
+        return alpha_scale
+    if feather_pixels <= 0 or np.all(eroded_valid):
+        alpha_scale[eroded_valid] = 1.0
+        return alpha_scale
+
+    distance_from_edge = ndi.distance_transform_edt(eroded_valid)
+    alpha_scale[eroded_valid] = np.clip(
+        distance_from_edge[eroded_valid] / float(feather_pixels),
+        0.0,
+        1.0,
     )
+    return alpha_scale
 
 
 def _apply_alpha_mask_to_colorized_raster(
@@ -637,15 +665,18 @@ def _apply_alpha_mask_to_colorized_raster(
     output_path: Path,
     *,
     transparent: np.ndarray | None = None,
-    border_removed_pixels: int = DEFAULT_RASTER_BORDER_REMOVAL_PIXELS,
+    raster_edge_erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    raster_edge_feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
 ) -> None:
-    """Apply transparent alpha to nodata and hard-eroded border pixels."""
+    """Apply softened alpha to colorized nodata and raster-edge pixels."""
     if transparent is None:
         transparent = _transparent_pixel_mask(input_path)
-    visible = _visible_pixel_mask(
+    alpha_scale = _raster_edge_alpha_scale(
         transparent,
-        border_removed_pixels=border_removed_pixels,
+        erosion_pixels=raster_edge_erosion_pixels,
+        feather_pixels=raster_edge_feather_pixels,
     )
+    fully_transparent = alpha_scale <= 0.0
     with rasterio.open(output_path, "r+") as ds:
         if ds.count < 4:
             raise RuntimeError(
@@ -656,14 +687,19 @@ def _apply_alpha_mask_to_colorized_raster(
         opaque_value = (
             DEFAULT_OPAQUE_ALPHA if np.issubdtype(alpha.dtype, np.integer) else 1.0
         )
-        alpha_out = np.full(alpha.shape, opaque_value, dtype=alpha.dtype)
-        alpha_out[~visible] = DEFAULT_TRANSPARENT_ALPHA
+        if np.issubdtype(alpha.dtype, np.integer):
+            alpha_out = np.rint(alpha_scale * float(opaque_value)).astype(alpha.dtype)
+        else:
+            alpha_out = (alpha_scale * float(opaque_value)).astype(
+                alpha.dtype,
+                copy=False,
+            )
         ds.write(alpha_out, 4)
 
-        # Clear RGB only where alpha is transparent to avoid colored tile halos.
+        # Clear RGB only where alpha is fully transparent to avoid colored tile halos.
         for band_index in range(1, min(3, ds.count) + 1):
             band = ds.read(band_index)
-            band[~visible] = 0
+            band[fully_transparent] = 0
             ds.write(band, band_index)
 
 
@@ -700,6 +736,22 @@ def _estimate_native_zoom_level(input_path: Path) -> int:
         )
 
 
+def _resolve_tile_max_zoom_level(
+    input_path: Path,
+    *,
+    extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
+) -> int:
+    """Return the output tile max zoom after adjustment and optional capping."""
+    native_zoom = _estimate_native_zoom_level(input_path)
+    adjusted_zoom = max(0, native_zoom + int(extra_zoom_levels))
+    if max_zoom_level is None:
+        return adjusted_zoom
+
+    # Temporal globe exports pass a hard cap so animation frames stay compact.
+    return min(adjusted_zoom, max(0, int(max_zoom_level)))
+
+
 def _build_gdal2tiles_command(
     input_path: Path,
     output_dir: Path,
@@ -714,9 +766,11 @@ def _build_gdal2tiles_command(
     if gdal2tiles_exe is None:
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
-    max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
-    if max_zoom_level is not None:
-        max_zoom = min(max_zoom, max(0, int(max_zoom_level)))
+    max_zoom = _resolve_tile_max_zoom_level(
+        input_path,
+        extra_zoom_levels=extra_zoom_levels,
+        max_zoom_level=max_zoom_level,
+    )
     command = [
         gdal2tiles_exe,
         "-p",
@@ -989,6 +1043,8 @@ def _raster_transparency_config(
     color_scale_min: float = DEFAULT_COLOR_SCALE_MIN_C,
     color_scale_max: float = DEFAULT_COLOR_SCALE_MAX_C,
     value_unit_label: str = "°C",
+    raster_edge_erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    raster_edge_feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
 ) -> dict[str, Any]:
     """Describe how raster pixels are converted to transparent globe tiles."""
     with rasterio.open(raster_path) as ds:
@@ -1002,6 +1058,8 @@ def _raster_transparency_config(
     if land_masked_to_nodata:
         land_mask_applied_value = nodata_value
         land_mask_mode = "nodata"
+    raster_edge_erosion_pixels = max(0, int(raster_edge_erosion_pixels))
+    raster_edge_feather_pixels = max(0, int(raster_edge_feather_pixels))
     return {
         "nodata_value": nodata_value,
         "nodata_alpha": DEFAULT_TRANSPARENT_ALPHA,
@@ -1010,7 +1068,10 @@ def _raster_transparency_config(
         "land_mask_mode": land_mask_mode,
         "land_mask_alpha": DEFAULT_TRANSPARENT_ALPHA,
         "valid_alpha": DEFAULT_OPAQUE_ALPHA,
-        "valid_support_border_removed_pixels": DEFAULT_RASTER_BORDER_REMOVAL_PIXELS,
+        "edge_alpha_mode": "valid_support_erosion_feather",
+        "edge_support_mode": "finite_non_nodata",
+        "edge_erosion_pixels": raster_edge_erosion_pixels,
+        "edge_feather_pixels": raster_edge_feather_pixels,
         "color_scale_min": float(color_scale_min),
         "color_scale_max": float(color_scale_max),
         "color_scale_min_c": float(color_scale_min),
@@ -1018,9 +1079,8 @@ def _raster_transparency_config(
         "note": (
             "Land-masked source pixels use the GeoTIFF nodata value before "
             f"color relief so valid 0 {value_unit_label} ocean values remain visible "
-            "when present; globe tiles remove "
-            f"{DEFAULT_RASTER_BORDER_REMOVAL_PIXELS} valid-support border pixels "
-            "without alpha feathering."
+            "when present; globe tiles also erode and feather valid-support "
+            "edges for smoother coastlines."
         ),
     }
 
@@ -1237,8 +1297,27 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_EXTRA_ZOOM_LEVELS,
         help=(
-            "Number of extra on-disk zoom levels written beyond the raster's estimated "
-            "native max zoom. Tiling always uses nearest-neighbor resampling."
+            "Zoom-level adjustment relative to the raster's estimated native max zoom. "
+            "Negative values reduce on-disk zoom levels. Tiling always uses "
+            "nearest-neighbor resampling."
+        ),
+    )
+    parser.add_argument(
+        "--raster-edge-erosion-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+        help=(
+            "Valid-support pixels removed from raster edges before Cesium tiling. "
+            "Use 0 to disable edge erosion."
+        ),
+    )
+    parser.add_argument(
+        "--raster-edge-feather-pixels",
+        type=int,
+        default=DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
+        help=(
+            "Width of the inward alpha ramp after raster edge erosion. "
+            "Use 0 to disable edge feathering."
         ),
     )
     parser.add_argument(
@@ -1265,6 +1344,8 @@ def export_cesium_globe_assets(
     rclone_remote: str | None = None,
     rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+    raster_edge_erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    raster_edge_feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
     include_base_map: bool = True,
     include_error_analysis: bool = True,
 ) -> dict[str, Any]:
@@ -1298,6 +1379,12 @@ def export_cesium_globe_assets(
         color_ramp_path = Path(variable_metadata["color_ramp_path"])
     if not color_ramp_path.exists():
         raise FileNotFoundError(f"Color ramp not found: {color_ramp_path}")
+    raster_edge_erosion_pixels = max(0, int(raster_edge_erosion_pixels))
+    raster_edge_feather_pixels = max(0, int(raster_edge_feather_pixels))
+    raster_edge_kwargs = {
+        "raster_edge_erosion_pixels": raster_edge_erosion_pixels,
+        "raster_edge_feather_pixels": raster_edge_feather_pixels,
+    }
     land_mask_path = _resolve_land_mask_path(run_summary, run_dir=run_dir)
 
     depth_exports = _resolve_depth_export_artifacts(
@@ -1323,6 +1410,7 @@ def export_cesium_globe_assets(
             prediction_export_path,
             prediction_colorized_path,
             color_ramp_path=color_ramp_path,
+            **raster_edge_kwargs,
         )
         prediction_tiles_dir_for_depth = globe_dir / f"prediction_tiles_{suffix}"
         _run_gdal2tiles(
@@ -1345,6 +1433,7 @@ def export_cesium_globe_assets(
                 ground_truth_export_path,
                 ground_truth_colorized_path,
                 color_ramp_path=color_ramp_path,
+                **raster_edge_kwargs,
             )
             ground_truth_tiles_dir_for_depth = (
                 globe_dir / f"ground_truth_tiles_{suffix}"
@@ -1382,6 +1471,7 @@ def export_cesium_globe_assets(
                 absolute_error_export_path,
                 absolute_error_colorized_path,
                 color_ramp_path=absolute_error_ramp_path,
+                **raster_edge_kwargs,
             )
             absolute_error_tiles_dir_for_depth = (
                 globe_dir / f"absolute_error_tiles_{suffix}"
@@ -1500,6 +1590,7 @@ def export_cesium_globe_assets(
             uncertainty_path,
             uncertainty_colorized_path,
             color_ramp_path=uncertainty_ramp_path,
+            **raster_edge_kwargs,
         )
         uncertainty_tiles_dir = globe_dir / "uncertainty_tiles"
         _run_gdal2tiles(
@@ -1628,6 +1719,8 @@ def export_cesium_globe_assets(
         color_scale_min=float(variable_metadata["color_scale_min"]),
         color_scale_max=float(variable_metadata["color_scale_max"]),
         value_unit_label=str(variable_metadata["value_unit_label"]),
+        raster_edge_erosion_pixels=raster_edge_erosion_pixels,
+        raster_edge_feather_pixels=raster_edge_feather_pixels,
     )
     template = _load_template(Path(template_path))
     config = build_globe_config(
@@ -1799,7 +1892,11 @@ def export_cesium_globe_assets(
     )
     print(f"- color ramp: {color_ramp_path}")
     print(f"- transparent land mask: {land_mask_path}")
-    print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
+    print(
+        f"- raster edge alpha: erosion={raster_edge_erosion_pixels}px, "
+        f"feather={raster_edge_feather_pixels}px"
+    )
+    print(f"- zoom level adjustment: {int(extra_zoom_levels):+d}")
     print(f"- tile format: {DEFAULT_TILE_DRIVER} q{DEFAULT_WEBP_QUALITY}")
     print("- tile resampling: nearest-neighbor")
     upload_ok: bool | None = None
@@ -1840,6 +1937,8 @@ def export_cesium_globe_assets(
         ),
         "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
         "base_map_tile_set_count": int(base_map_tiles_dir is not None),
+        "raster_edge_erosion_pixels": int(raster_edge_erosion_pixels),
+        "raster_edge_feather_pixels": int(raster_edge_feather_pixels),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
@@ -1972,6 +2071,8 @@ def export_cesium_globe_variable_assets(
     rclone_remote: str | None = None,
     rclone_sync_scope: str = DEFAULT_RCLONE_SYNC_SCOPE,
     extra_zoom_levels: int = DEFAULT_EXTRA_ZOOM_LEVELS,
+    raster_edge_erosion_pixels: int = DEFAULT_RASTER_EDGE_EROSION_PIXELS,
+    raster_edge_feather_pixels: int = DEFAULT_RASTER_EDGE_FEATHER_PIXELS,
 ) -> dict[str, Any]:
     """Build one combined Cesium globe bundle from per-variable export runs."""
     ordered_variables = _ordered_variable_items(variable_run_dirs)
@@ -1991,6 +2092,8 @@ def export_cesium_globe_variable_assets(
             rclone_remote=None,
             rclone_sync_scope=DEFAULT_RCLONE_SYNC_SCOPE,
             extra_zoom_levels=extra_zoom_levels,
+            raster_edge_erosion_pixels=raster_edge_erosion_pixels,
+            raster_edge_feather_pixels=raster_edge_feather_pixels,
             include_base_map=False,
             include_error_analysis=True,
         )
@@ -2093,6 +2196,8 @@ def export_cesium_globe_variable_assets(
         "default_variable": default_variable,
         "single_results": single_results,
         "base_map_tile_set_count": int(base_map_tiles_dir is not None),
+        "raster_edge_erosion_pixels": max(0, int(raster_edge_erosion_pixels)),
+        "raster_edge_feather_pixels": max(0, int(raster_edge_feather_pixels)),
         "upload_requested": rclone_remote is not None,
         "upload_ok": upload_ok,
         "upload_message": upload_message,
@@ -2113,6 +2218,8 @@ def main() -> None:
         rclone_remote=args.rclone_remote,
         rclone_sync_scope=args.rclone_sync_scope,
         extra_zoom_levels=args.extra_zoom_levels,
+        raster_edge_erosion_pixels=args.raster_edge_erosion_pixels,
+        raster_edge_feather_pixels=args.raster_edge_feather_pixels,
         include_error_analysis=bool(args.include_error_analysis),
     )
 
