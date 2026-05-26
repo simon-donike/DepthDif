@@ -57,6 +57,16 @@
         </label>
       </section>
 
+      <article class="analysis-panel analysis-panel--detail analysis-detail-strip">
+        <div class="analysis-panel__header">
+          <div>
+            <h2>Selected Depth</h2>
+            <p id="analysis-detail-caption">Active absolute-error summary</p>
+          </div>
+        </div>
+        <div id="analysis-detail-summary" class="analysis-detail-summary" aria-label="Selected depth summary"></div>
+      </article>
+
       <section class="analysis-grid">
         <article class="analysis-panel analysis-panel--map">
           <div class="analysis-panel__header">
@@ -75,16 +85,6 @@
                 <span id="analysis-map-legend-max">Higher error</span>
               </div>
             </div>
-            <aside class="analysis-basin-selector" aria-label="Basin selector">
-              <div class="analysis-basin-selector__header">
-                <div>
-                  <h2>Basin Selector</h2>
-                  <p>Choose a basin for the active depth and metric</p>
-                </div>
-                <button id="analysis-reset-focus" class="analysis-ranking-reset" type="button" disabled>Reset</button>
-              </div>
-              <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
-            </aside>
           </div>
         </article>
 
@@ -104,15 +104,16 @@
       </section>
 
       <section class="analysis-charts">
-        <article class="analysis-panel analysis-panel--detail">
-          <div class="analysis-panel__header">
+        <aside class="analysis-panel analysis-basin-selector" aria-label="Basin selector">
+          <div class="analysis-basin-selector__header">
             <div>
-              <h2>Selected Depth</h2>
-              <p id="analysis-detail-caption">Active absolute-error summary</p>
+              <h2>Basin Selector</h2>
+              <p>Choose a basin for the active depth and metric</p>
             </div>
+            <button id="analysis-reset-focus" class="analysis-ranking-reset" type="button" disabled>Reset</button>
           </div>
-          <div id="analysis-detail-summary" class="analysis-detail-summary" aria-label="Selected depth summary"></div>
-        </article>
+          <div id="analysis-basin-ranking" class="analysis-ranking-list"></div>
+        </aside>
 
         <article class="analysis-panel analysis-panel--uncertainty">
           <div class="analysis-panel__header">

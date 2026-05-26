@@ -12,6 +12,7 @@
   const PRELOAD_FRAME_OFFSETS = [1, 2, -1];
   const CACHE_FRAME_OFFSETS = [0, 1, 2, -1];
   const FRAME_WARMUP_RENDER_COUNT = 2;
+  const AUTOPLAY_DELAY_MS = 2000;
   const TEMPERATURE_COLOR_STOPS = [
     { value: 0.0, rgb: [18, 38, 140] },
     { value: 4.0, rgb: [30, 86, 196] },
@@ -681,6 +682,10 @@
 
   function startPlayback(state) {
     stopPlayback(state);
+    if (state.autoplayTimer !== null) {
+      window.clearTimeout(state.autoplayTimer);
+      state.autoplayTimer = null;
+    }
     state.playing = true;
     if (state.elements.playToggle) {
       state.elements.playToggle.setAttribute("aria-pressed", "true");
@@ -815,6 +820,10 @@
       return;
     }
     stopPlayback(state);
+    if (state.autoplayTimer !== null) {
+      window.clearTimeout(state.autoplayTimer);
+      state.autoplayTimer = null;
+    }
     if (state.resizeCleanup) {
       state.resizeCleanup();
     }
@@ -856,6 +865,7 @@
       currentLayerKey: null,
       frameLoadToken: 0,
       playbackTimer: null,
+      autoplayTimer: null,
       playing: false,
       spinEnabled: false,
       lastSpinTime: null,
@@ -870,6 +880,10 @@
     forceViewerResize(state);
     flyToConfig(state);
     await showSelectedFrame(state);
+    state.autoplayTimer = window.setTimeout(function () {
+      state.autoplayTimer = null;
+      startPlayback(state);
+    }, AUTOPLAY_DELAY_MS);
   }
 
   function destroyDepthDifTemporalGlobe() {

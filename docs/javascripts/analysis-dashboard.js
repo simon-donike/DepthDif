@@ -1193,6 +1193,8 @@
     ];
     const layout = plotlyLayout(`Actual error${unit ? ` (${unit})` : ""}`);
     layout.xaxis.title = { text: `Uncertainty std${unit ? ` (${unit})` : ""}`, standoff: 8 };
+    layout.xaxis.range = [0, maxValue];
+    layout.yaxis.range = [0, maxValue];
     layout.showlegend = true;
     layout.legend = { orientation: "h", x: 0, y: 1.14, xanchor: "left", yanchor: "bottom" };
     $("analysis-uncertainty-caption").textContent = `${reliability.depth_label || "Exported depth"} uncertainty vs realized error | ${formatPixelCount((reliability.global || {}).count, true)}`;

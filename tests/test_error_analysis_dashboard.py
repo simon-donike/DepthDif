@@ -367,8 +367,8 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
             html.index('id="analysis-basin-ranking"'),
         )
         self.assertLess(
-            html.index('id="analysis-basin-ranking"'),
             html.index('class="analysis-charts"'),
+            html.index('id="analysis-basin-ranking"'),
         )
         self.assertIn('id="analysis-depth-profile"', html)
         self.assertIn('id="analysis-depth-scale-toggle"', html)

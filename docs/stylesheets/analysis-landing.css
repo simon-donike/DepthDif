@@ -26,11 +26,11 @@ html.analysis-landing-root,
 .analysis-landing-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 24px;
+  gap: 18px;
   width: min(1360px, 100%);
   min-height: 100vh;
   margin: 0 auto;
-  padding: 24px;
+  padding: 18px 24px;
   box-sizing: border-box;
 }
 
@@ -93,8 +93,8 @@ html.analysis-landing-root,
 .analysis-landing-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(260px, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  align-content: center;
   min-height: 0;
 }
 
@@ -117,53 +117,49 @@ html.analysis-landing-root,
   position: relative;
   display: block;
   aspect-ratio: 16 / 9;
-  min-height: 180px;
+  min-height: 0;
+  max-height: 32vh;
   overflow: hidden;
   background:
-    radial-gradient(circle at 28% 30%, rgba(124, 200, 255, 0.36), transparent 18%),
-    radial-gradient(circle at 70% 62%, rgba(255, 209, 102, 0.24), transparent 17%),
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/spatial_globe_tile.png") center / cover no-repeat,
     linear-gradient(135deg, rgba(11, 46, 79, 0.98), rgba(4, 19, 31, 0.96));
 }
 
-.analysis-landing-tile__media::before,
 .analysis-landing-tile__media::after {
   content: "";
   position: absolute;
-  inset: 18%;
-  border: 1px solid rgba(215, 233, 247, 0.18);
-  border-radius: 999px;
-}
-
-.analysis-landing-tile__media::after {
-  inset: 34%;
-  border-color: rgba(124, 200, 255, 0.28);
-  background: rgba(124, 200, 255, 0.08);
+  inset: 0;
+  background: linear-gradient(180deg, transparent 62%, rgba(4, 19, 31, 0.35) 100%);
+  pointer-events: none;
 }
 
 .analysis-landing-tile--temporal-globe .analysis-landing-tile__media {
   background:
-    linear-gradient(90deg, transparent 0%, transparent 14%, rgba(124, 200, 255, 0.12) 14%, rgba(124, 200, 255, 0.12) 16%, transparent 16%, transparent 100%),
-    radial-gradient(circle at 72% 38%, rgba(124, 200, 255, 0.34), transparent 17%),
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/temporal_globe_tile.gif") center / cover no-repeat,
     linear-gradient(135deg, rgba(7, 30, 51, 0.98), rgba(8, 50, 76, 0.92));
 }
 
 .analysis-landing-tile--spatial-error .analysis-landing-tile__media {
   background:
-    linear-gradient(90deg, rgba(34, 197, 94, 0.7), rgba(250, 204, 21, 0.66), rgba(220, 38, 38, 0.72)),
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/spatial_dashboard_tile.png") center / cover no-repeat,
     linear-gradient(135deg, rgba(4, 19, 31, 0.72), rgba(6, 23, 38, 0.82));
 }
 
 .analysis-landing-tile--temporal-error .analysis-landing-tile__media {
   background:
-    linear-gradient(180deg, rgba(124, 200, 255, 0.12) 0%, rgba(124, 200, 255, 0.12) 16%, transparent 16%, transparent 100%),
-    linear-gradient(90deg, transparent 0%, transparent 12%, rgba(255, 209, 102, 0.24) 12%, rgba(255, 209, 102, 0.24) 14%, transparent 14%, transparent 100%),
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/temporal_dashboard_tile.png") center / cover no-repeat,
     linear-gradient(135deg, rgba(4, 19, 31, 0.96), rgba(13, 70, 82, 0.86));
 }
 
 .analysis-landing-tile__body {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  align-content: start;
+  gap: 6px;
+  padding: 12px 14px 14px;
 }
 
 .analysis-landing-tile__title {
@@ -188,6 +184,10 @@ html.analysis-landing-root,
 @media (max-width: 720px) {
   .analysis-landing-shell {
     padding: 14px;
+  }
+
+  .analysis-landing-tile__media {
+    max-height: none;
   }
 
   .analysis-landing-header {

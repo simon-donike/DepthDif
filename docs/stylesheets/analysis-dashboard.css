@@ -32,7 +32,7 @@ html.standalone-analysis-root,
 
 .analysis-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) clamp(240px, 28vh, 320px);
+  grid-template-rows: auto auto auto minmax(0, 1fr) clamp(240px, 28vh, 320px);
   gap: 10px;
   height: 100vh;
   min-height: 0;
@@ -43,6 +43,7 @@ html.standalone-analysis-root,
 
 .analysis-header,
 .analysis-controls,
+.analysis-detail-strip,
 .analysis-grid,
 .analysis-charts {
   width: min(1720px, 100%);
@@ -202,6 +203,17 @@ html.standalone-analysis-root,
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.analysis-detail-strip {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.18fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.analysis-detail-strip .analysis-panel__header {
+  margin-bottom: 0;
+}
+
 .analysis-panel__header {
   display: flex;
   align-items: start;
@@ -244,7 +256,7 @@ html.standalone-analysis-root,
 
 .analysis-map-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.36fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-height: 0;
 }
@@ -448,7 +460,7 @@ html.standalone-analysis-root,
 
 .analysis-detail-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   align-content: start;
   min-height: 0;
@@ -553,6 +565,10 @@ html.standalone-analysis-root,
   .analysis-controls select,
   .analysis-segmented button {
     width: 100%;
+  }
+
+  .analysis-detail-strip {
+    grid-template-columns: 1fr;
   }
 
   .analysis-map-legend,
