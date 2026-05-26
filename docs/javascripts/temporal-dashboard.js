@@ -5,7 +5,7 @@
     [-85, -180],
     [85, 180],
   ];
-  const MAP_TILE_URL = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png";
+  const MAP_TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png";
   const MAP_TILE_ATTRIBUTION =
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
   const PLOTLY_CONFIG = {
@@ -106,16 +106,9 @@
     return payload.variables[state.activeVariable].weekly_errors || [];
   }
 
-  function setBasinSelectValue() {
-    const basinSelect = $("temporal-basin-select");
-    if (basinSelect) {
-      basinSelect.value = state.activeBasin || "";
-    }
-  }
-
   function setControlsDisabled(disabled) {
     document
-      .querySelectorAll("#temporal-dashboard-select, #temporal-basin-select, #temporal-variable-select")
+      .querySelectorAll("#temporal-dashboard-select, #temporal-variable-select")
       .forEach((element) => {
         element.disabled = Boolean(disabled);
       });
@@ -169,18 +162,6 @@
   }
 
   function setupControls() {
-    const basinSelect = $("temporal-basin-select");
-    const basinOptions = (state.config.basins || []).map(
-      (basin) => `<option value="${escapeHtml(basin.name)}">${escapeHtml(basin.label || basin.name)}</option>`
-    );
-    basinSelect.innerHTML = [`<option value="">No basin selected</option>`, ...basinOptions].join("");
-    setBasinSelectValue();
-    basinSelect.addEventListener("change", async function () {
-      state.activeBasin = basinSelect.value || null;
-      await loadActiveBasinData();
-      render();
-    });
-
     const variableSelect = $("temporal-variable-select");
     variableSelect.innerHTML = (state.config.available_variables || [])
       .map((variable) => {
@@ -223,7 +204,6 @@
         return;
       }
       state.activeBasin = null;
-      setBasinSelectValue();
       render();
     });
     state.map = map;
@@ -234,8 +214,8 @@
     const name = feature.properties && feature.properties.name;
     const active = name === state.activeBasin;
     return {
-      color: active ? cssVar("--temporal-amber", "#d89216") : "rgba(58, 75, 88, 0.62)",
-      fillColor: active ? cssVar("--temporal-teal", "#0f9f8f") : "rgba(58, 75, 88, 0.18)",
+      color: active ? cssVar("--temporal-amber", "#ffd166") : "rgba(124, 200, 255, 0.38)",
+      fillColor: active ? cssVar("--temporal-teal", "#7cc8ff") : "rgba(124, 200, 255, 0.12)",
       fillOpacity: active ? 0.48 : 0.18,
       opacity: active ? 0.96 : 0.62,
       weight: active ? 2 : 1,
@@ -262,7 +242,6 @@
             window.L.DomEvent.stopPropagation(event.originalEvent);
           }
           state.activeBasin = state.activeBasin === name ? null : name;
-          setBasinSelectValue();
           await loadActiveBasinData();
           render();
         });
@@ -279,22 +258,22 @@
       font: { color: cssVar("--temporal-text", "#17212b"), family: "Roboto, sans-serif", size: 12 },
       margin: { l: 68, r: 20, t: 18, b: 52 },
       hoverlabel: {
-        bgcolor: "#ffffff",
-        bordercolor: cssVar("--temporal-border", "rgba(34,54,68,0.18)"),
-        font: { color: cssVar("--temporal-text", "#17212b") },
+        bgcolor: "#071d2d",
+        bordercolor: cssVar("--temporal-border", "rgba(124,200,255,0.32)"),
+        font: { color: cssVar("--temporal-text", "#d7e9f7") },
       },
       xaxis: {
         automargin: true,
-        color: cssVar("--temporal-muted", "#5f6f7c"),
-        gridcolor: "rgba(34,54,68,0.12)",
+        color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(223,244,239,0.1)",
         tickformat: "%b %d",
         title: { text: "Date", standoff: 10 },
         type: "date",
       },
       yaxis: {
         automargin: true,
-        color: cssVar("--temporal-muted", "#5f6f7c"),
-        gridcolor: "rgba(34,54,68,0.12)",
+        color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+        gridcolor: "rgba(223,244,239,0.1)",
         title: { text: `Mean absolute error${unitLabel() ? ` (${unitLabel()})` : ""}`, standoff: 10 },
       },
     };
@@ -319,7 +298,7 @@
   function renderDepthErrorGraph() {
     if (!state.activeBasin) {
       $("temporal-depth-caption").textContent = "Select a basin to show weekly mean absolute error";
-      renderEmptyTemporalGraph("Select a basin on the map or in the menu");
+      renderEmptyTemporalGraph("Select a basin on the map");
       return;
     }
     const chart = $("temporal-depth-error");
@@ -379,7 +358,15 @@
     const params = new URLSearchParams(window.location.search);
     const requestedBasin = params.get("basin");
     const basinNames = (state.config.basins || []).map((basin) => basin.name);
-    state.activeBasin = basinNames.includes(requestedBasin) ? requestedBasin : null;
+    const configuredDefaultBasin = state.config.default_basin;
+    state.activeBasin = null;
+    if (basinNames.includes(requestedBasin)) {
+      state.activeBasin = requestedBasin;
+    } else if (basinNames.includes(configuredDefaultBasin)) {
+      state.activeBasin = configuredDefaultBasin;
+    } else if (basinNames.length > 0) {
+      state.activeBasin = basinNames[0];
+    }
     state.activeVariable =
       (state.config.default_variable && state.config.variables[state.config.default_variable] && state.config.default_variable) ||
       (state.config.available_variables && state.config.available_variables[0]);

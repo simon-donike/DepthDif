@@ -1069,8 +1069,6 @@
     const depth = activeDepth();
     const stats = focusedStats(depth) || {};
     const details = [
-      ["Focus", focusLabel()],
-      ["Depth", depthDisplayLabel(depth, state.depthIndex)],
       [metricLabel(state.metric), formatMetric(metricValue(stats))],
       ["Mean", formatMetric(stats.mean)],
       ["P95", formatMetric(stats.p95)],
@@ -1116,17 +1114,15 @@
     });
   }
 
-  function finiteReliabilityValues(reliability) {
-    const values = [];
-    for (const cell of reliability.grid_cells || []) {
-      for (const key of ["uncertainty_median", "error_median"]) {
-        const value = Number(cell[key]);
-        if (Number.isFinite(value)) {
-          values.push(value);
-        }
-      }
+  function paddedNumericRange(values) {
+    const finiteValues = values.map(Number).filter((value) => Number.isFinite(value));
+    if (finiteValues.length === 0) {
+      return null;
     }
-    return values;
+    const minValue = Math.min(...finiteValues);
+    const maxValue = Math.max(...finiteValues);
+    const span = Math.max(maxValue - minValue, Math.max(Math.abs(maxValue), 1.0) * 0.08);
+    return [Math.max(0, minValue - span * 0.08), maxValue + span * 0.08];
   }
 
   function renderUncertaintyReliability() {
@@ -1147,7 +1143,16 @@
     const bins = (reliability.bins || []).filter(
       (bin) => Number.isFinite(Number(bin.uncertainty_mean)) && Number.isFinite(Number(bin.error_mean))
     );
-    const maxValue = Math.max(1.0e-6, ...finiteReliabilityValues(reliability));
+    const xRange = paddedNumericRange([
+      ...cells.map((cell) => cell.uncertainty_median),
+      ...bins.map((bin) => bin.uncertainty_mean),
+    ]);
+    const yRange = paddedNumericRange([
+      ...cells.map((cell) => cell.error_median),
+      ...bins.map((bin) => bin.error_mean),
+    ]);
+    const idealMin = Math.min(xRange ? xRange[0] : 0, yRange ? yRange[0] : 0);
+    const idealMax = Math.max(xRange ? xRange[1] : 1.0e-6, yRange ? yRange[1] : 1.0e-6);
     const unit = unitLabel();
     const traces = [
       {
@@ -1187,18 +1192,22 @@
         mode: "lines",
         name: "Ideal",
         type: "scatter",
-        x: [0, maxValue],
-        y: [0, maxValue],
+        x: [idealMin, idealMax],
+        y: [idealMin, idealMax],
       },
     ];
     const layout = plotlyLayout(`Actual error${unit ? ` (${unit})` : ""}`);
     layout.xaxis.title = { text: `Uncertainty std${unit ? ` (${unit})` : ""}`, standoff: 8 };
-    layout.xaxis.range = [0, maxValue];
-    layout.yaxis.range = [0, maxValue];
+    if (xRange) {
+      layout.xaxis.range = xRange;
+    }
+    if (yRange) {
+      layout.yaxis.range = yRange;
+    }
     layout.showlegend = true;
     layout.legend = { orientation: "h", x: 0, y: 1.14, xanchor: "left", yanchor: "bottom" };
     $("analysis-uncertainty-caption").textContent = `${reliability.depth_label || "Exported depth"} uncertainty vs realized error | ${formatPixelCount((reliability.global || {}).count, true)}`;
-    renderUncertaintyHighlights(reliability);
+    $("analysis-uncertainty-highlights").innerHTML = "";
     Promise.resolve(window.Plotly.react(chart, traces, layout, PLOTLY_CONFIG)).then(() => {
       if (typeof chart.removeAllListeners === "function") {
         chart.removeAllListeners("plotly_click");

@@ -200,7 +200,7 @@ html.standalone-analysis-root,
 }
 
 .analysis-panel--uncertainty {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .analysis-detail-strip {
@@ -420,7 +420,7 @@ html.standalone-analysis-root,
 }
 
 .analysis-uncertainty-highlights {
-  display: grid;
+  display: none;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   margin-top: 8px;
