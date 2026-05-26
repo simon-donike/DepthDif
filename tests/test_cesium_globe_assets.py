@@ -879,11 +879,11 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             resampling="bilinear",
         )
 
-    def test_build_parser_defaults_to_zero_extra_zoom_levels(self) -> None:
+    def test_build_parser_defaults_to_one_less_than_native_zoom(self) -> None:
         parser = _build_parser()
         args = parser.parse_args(["--run-dir", "inference/outputs/example"])
 
-        self.assertEqual(args.extra_zoom_levels, 0)
+        self.assertEqual(args.extra_zoom_levels, -1)
         self.assertEqual(
             args.raster_edge_erosion_pixels,
             DEFAULT_RASTER_EDGE_EROSION_PIXELS,
@@ -1073,8 +1073,25 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 ds.write(np.ones((1, 1800, 3600), dtype=np.float32))
 
             zoom_level = _estimate_native_zoom_level(tif_path)
+            with mock.patch(
+                "depth_recon.inference.export_cesium_globe_assets.shutil.which",
+                return_value="/usr/bin/gdal2tiles.py",
+            ):
+                standard_command = _build_gdal2tiles_command(
+                    tif_path,
+                    Path(tmp_dir) / "standard_tiles",
+                    extra_zoom_levels=-1,
+                )
+                temporal_command = _build_gdal2tiles_command(
+                    tif_path,
+                    Path(tmp_dir) / "temporal_tiles",
+                    extra_zoom_levels=-1,
+                    max_zoom_level=2,
+                )
 
         self.assertEqual(zoom_level, 4)
+        self.assertIn("0-3", standard_command)
+        self.assertIn("0-2", temporal_command)
 
     def test_rewrite_geojson_rounds_coordinates_and_drops_unused_point_properties(
         self,

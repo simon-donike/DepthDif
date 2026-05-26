@@ -54,7 +54,7 @@ DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
 DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
 DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
-DEFAULT_EXTRA_ZOOM_LEVELS = 0
+DEFAULT_EXTRA_ZOOM_LEVELS = -1
 DEFAULT_RASTER_EDGE_EROSION_PIXELS = 2
 DEFAULT_RASTER_EDGE_FEATHER_PIXELS = 4
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
@@ -736,11 +736,28 @@ def _estimate_native_zoom_level(input_path: Path) -> int:
         )
 
 
+def _resolve_tile_max_zoom_level(
+    input_path: Path,
+    *,
+    extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
+) -> int:
+    """Return the output tile max zoom after adjustment and optional capping."""
+    native_zoom = _estimate_native_zoom_level(input_path)
+    adjusted_zoom = max(0, native_zoom + int(extra_zoom_levels))
+    if max_zoom_level is None:
+        return adjusted_zoom
+
+    # Temporal globe exports pass a hard cap so animation frames stay compact.
+    return min(adjusted_zoom, max(0, int(max_zoom_level)))
+
+
 def _build_gdal2tiles_command(
     input_path: Path,
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
     resampling: str = "near",
     tile_driver: str = DEFAULT_TILE_DRIVER,
     webp_quality: int = DEFAULT_WEBP_QUALITY,
@@ -749,7 +766,11 @@ def _build_gdal2tiles_command(
     if gdal2tiles_exe is None:
         raise RuntimeError("gdal2tiles.py was not found on PATH.")
 
-    max_zoom = _estimate_native_zoom_level(input_path) + max(0, int(extra_zoom_levels))
+    max_zoom = _resolve_tile_max_zoom_level(
+        input_path,
+        extra_zoom_levels=extra_zoom_levels,
+        max_zoom_level=max_zoom_level,
+    )
     command = [
         gdal2tiles_exe,
         "-p",
@@ -783,6 +804,7 @@ def _run_gdal2tiles(
     output_dir: Path,
     *,
     extra_zoom_levels: int,
+    max_zoom_level: int | None = None,
     resampling: str = "near",
     tile_driver: str = DEFAULT_TILE_DRIVER,
     webp_quality: int = DEFAULT_WEBP_QUALITY,
@@ -792,6 +814,7 @@ def _run_gdal2tiles(
         input_path,
         output_dir,
         extra_zoom_levels=extra_zoom_levels,
+        max_zoom_level=max_zoom_level,
         resampling=resampling,
         tile_driver=tile_driver,
         webp_quality=webp_quality,
@@ -1274,8 +1297,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_EXTRA_ZOOM_LEVELS,
         help=(
-            "Number of extra on-disk zoom levels written beyond the raster's estimated "
-            "native max zoom. Tiling always uses nearest-neighbor resampling."
+            "Zoom-level adjustment relative to the raster's estimated native max zoom. "
+            "Negative values reduce on-disk zoom levels. Tiling always uses "
+            "nearest-neighbor resampling."
         ),
     )
     parser.add_argument(
@@ -1872,7 +1896,7 @@ def export_cesium_globe_assets(
         f"- raster edge alpha: erosion={raster_edge_erosion_pixels}px, "
         f"feather={raster_edge_feather_pixels}px"
     )
-    print(f"- extra zoom levels: {max(0, int(extra_zoom_levels))}")
+    print(f"- zoom level adjustment: {int(extra_zoom_levels):+d}")
     print(f"- tile format: {DEFAULT_TILE_DRIVER} q{DEFAULT_WEBP_QUALITY}")
     print("- tile resampling: nearest-neighbor")
     upload_ok: bool | None = None

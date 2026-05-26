@@ -6,7 +6,7 @@
     <title>DepthDif Temporal Dashboard</title>
     <meta
       name="description"
-      content="Standalone DepthDif dashboard for validation-year basin depth-error summaries."
+      content="Standalone DepthDif dashboard for weekly temporal consistency summaries."
     />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://unpkg.com" crossorigin />
@@ -28,7 +28,7 @@
         <div>
           <span class="temporal-eyebrow">DepthDif Diagnostics</span>
           <h1>Temporal Dashboard</h1>
-          <p id="temporal-run-label">Loading validation-year basin errors...</p>
+          <p id="temporal-run-label">Loading weekly temporal errors...</p>
         </div>
         <nav class="temporal-links" aria-label="Dashboard links">
           <a href="../visualizations/">Back to Analysis</a>
@@ -44,7 +44,7 @@
           </select>
         </label>
         <label>
-          <span>Basin</span>
+          <span>Area</span>
           <select id="temporal-basin-select"></select>
         </label>
         <label>
@@ -61,22 +61,22 @@
         <article class="temporal-panel temporal-panel--map">
           <div class="temporal-panel__header">
             <div>
-              <h2>Basin Map</h2>
-              <p id="temporal-map-caption">Approximate validation basin selection</p>
+              <h2>Area Map</h2>
+              <p id="temporal-map-caption">No area selected</p>
             </div>
-            <span id="temporal-selection-pill" class="temporal-pill">Global</span>
+            <span id="temporal-selection-pill" class="temporal-pill">No area selected</span>
           </div>
-          <div id="temporal-map" class="temporal-map" role="application" aria-label="World map of validation basins"></div>
+          <div id="temporal-map" class="temporal-map" role="application" aria-label="World map of validation areas"></div>
         </article>
 
         <article class="temporal-panel temporal-panel--chart">
           <div class="temporal-panel__header">
             <div>
               <h2>Average Error</h2>
-              <p id="temporal-depth-caption">Mean absolute error across the validation year</p>
+              <p id="temporal-depth-caption">Average temporal error by week</p>
             </div>
           </div>
-          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error across the validation year"></div>
+          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Average temporal error by week"></div>
         </article>
       </section>
     </main>
