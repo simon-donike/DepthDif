@@ -17,6 +17,7 @@
     config: null,
     basinMap: null,
     basinDataCache: {},
+    globalDataLoaded: false,
     activeBasin: null,
     activeVariable: null,
     map: null,
@@ -85,7 +86,7 @@
 
   function basinLabel(name) {
     if (!name) {
-      return "No basin selected";
+      return "Global";
     }
     const basin = (state.config.basins || []).find((item) => item.name === name);
     return (basin && basin.label) || name;
@@ -99,11 +100,47 @@
   }
 
   function activeWeeklyErrors() {
+    if (!state.activeBasin) {
+      return globalWeeklyErrors();
+    }
     const payload = activeBasinPayload();
     if (!payload || !payload.variables || !payload.variables[state.activeVariable]) {
       return [];
     }
     return payload.variables[state.activeVariable].weekly_errors || [];
+  }
+
+  function globalWeeklyErrors() {
+    const rowsByIndex = new Map();
+    Object.values(state.basinDataCache).forEach((payload) => {
+      const variablePayload = payload && payload.variables && payload.variables[state.activeVariable];
+      (variablePayload ? variablePayload.weekly_errors || [] : []).forEach((row) => {
+        const index = Number(row.index);
+        if (!Number.isFinite(index)) {
+          return;
+        }
+        const current = rowsByIndex.get(index) || {
+          index,
+          selected_date: row.selected_date,
+          target_date: row.target_date,
+          iso_year: row.iso_year,
+          iso_week: row.iso_week,
+          count: 0,
+          sum_absolute_error: 0,
+        };
+        const count = Number(row.count || 0);
+        const total = Number(row.sum_absolute_error || 0);
+        current.count += Number.isFinite(count) ? count : 0;
+        current.sum_absolute_error += Number.isFinite(total) ? total : 0;
+        rowsByIndex.set(index, current);
+      });
+    });
+    return Array.from(rowsByIndex.values())
+      .sort((left, right) => left.index - right.index)
+      .map((row) => ({
+        ...row,
+        mean_absolute_error: row.count > 0 ? row.sum_absolute_error / row.count : null,
+      }));
   }
 
   function setControlsDisabled(disabled) {
@@ -199,13 +236,6 @@
       subdomains: "abcd",
     }).addTo(map);
     map.fitBounds(MAP_BOUNDS, { animate: false, padding: [8, 8] });
-    map.on("click", function () {
-      if (!state.activeBasin) {
-        return;
-      }
-      state.activeBasin = null;
-      render();
-    });
     state.map = map;
     return map;
   }
@@ -239,10 +269,14 @@
         });
         layer.on("click", async function (event) {
           if (event.originalEvent) {
-            window.L.DomEvent.stopPropagation(event.originalEvent);
+            window.L.DomEvent.stop(event.originalEvent);
           }
           state.activeBasin = state.activeBasin === name ? null : name;
-          await loadActiveBasinData();
+          if (state.activeBasin) {
+            await loadActiveBasinData();
+          } else {
+            await loadGlobalBasinData();
+          }
           render();
         });
       },
@@ -296,16 +330,11 @@
   }
 
   function renderDepthErrorGraph() {
-    if (!state.activeBasin) {
-      $("temporal-depth-caption").textContent = "Select a basin to show weekly mean absolute error";
-      renderEmptyTemporalGraph("Select a basin on the map");
-      return;
-    }
     const chart = $("temporal-depth-error");
     const rows = activeWeeklyErrors().filter((row) => Number.isFinite(Number(row.mean_absolute_error)));
     if (rows.length === 0) {
       $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} has no weekly error data`;
-      renderEmptyTemporalGraph("No weekly error data for the selected basin");
+      renderEmptyTemporalGraph("No weekly error data for the selected area");
       return;
     }
     const trace = {
@@ -318,8 +347,8 @@
         "%{customdata[0]}<br>Mean absolute error: %{y:.3f} " +
         unitLabel() +
         "<br>ISO week: %{customdata[1]}<br>Count: %{customdata[2]}<extra></extra>",
-      line: { color: cssVar("--temporal-teal", "#0f9f8f"), width: 3 },
-      marker: { color: cssVar("--temporal-amber", "#d89216"), line: { color: "#ffffff", width: 1 }, size: 7 },
+      line: { color: cssVar("--temporal-teal", "#7cc8ff"), width: 3 },
+      marker: { color: cssVar("--temporal-amber", "#ffd166"), line: { color: "#071d2d", width: 1 }, size: 7 },
       mode: "lines+markers",
       name: basinLabel(state.activeBasin),
       x: rows.map((row) => formatDateLabel(row.selected_date)),
@@ -333,23 +362,33 @@
     setRunLabel();
     const selectedLabel = basinLabel(state.activeBasin);
     $("temporal-selection-pill").textContent = selectedLabel;
-    $("temporal-map-caption").textContent = state.activeBasin
-      ? `${selectedLabel} | validation year ${state.config.validation_year}`
-      : `No basin selected | validation year ${state.config.validation_year}`;
+    $("temporal-map-caption").textContent = `${selectedLabel} | validation year ${state.config.validation_year}`;
     renderMap();
     renderDepthErrorGraph();
   }
 
-  async function loadActiveBasinData() {
-    if (!state.activeBasin || state.basinDataCache[state.activeBasin]) {
+  async function loadBasinData(basinName) {
+    if (!basinName || state.basinDataCache[basinName]) {
       return;
     }
     const sourceUrl = configUrl();
-    const basinUrl = state.config.basin_data_urls[state.activeBasin];
+    const basinUrl = state.config.basin_data_urls[basinName];
     if (!basinUrl) {
-      throw new Error(`No basin data URL configured for ${state.activeBasin}`);
+      throw new Error(`No basin data URL configured for ${basinName}`);
     }
-    state.basinDataCache[state.activeBasin] = await fetchJson(new URL(basinUrl, sourceUrl).toString());
+    state.basinDataCache[basinName] = await fetchJson(new URL(basinUrl, sourceUrl).toString());
+  }
+
+  async function loadActiveBasinData() {
+    await loadBasinData(state.activeBasin);
+  }
+
+  async function loadGlobalBasinData() {
+    if (state.globalDataLoaded) {
+      return;
+    }
+    await Promise.all((state.config.basins || []).map((basin) => loadBasinData(basin.name)));
+    state.globalDataLoaded = true;
   }
 
   async function loadDashboard(sourceUrl) {
@@ -358,20 +397,16 @@
     const params = new URLSearchParams(window.location.search);
     const requestedBasin = params.get("basin");
     const basinNames = (state.config.basins || []).map((basin) => basin.name);
-    const configuredDefaultBasin = state.config.default_basin;
-    state.activeBasin = null;
-    if (basinNames.includes(requestedBasin)) {
-      state.activeBasin = requestedBasin;
-    } else if (basinNames.includes(configuredDefaultBasin)) {
-      state.activeBasin = configuredDefaultBasin;
-    } else if (basinNames.length > 0) {
-      state.activeBasin = basinNames[0];
-    }
+    state.activeBasin = basinNames.includes(requestedBasin) ? requestedBasin : null;
     state.activeVariable =
       (state.config.default_variable && state.config.variables[state.config.default_variable] && state.config.default_variable) ||
       (state.config.available_variables && state.config.available_variables[0]);
     state.basinMap = await fetchJson(new URL(state.config.basin_map_geojson_url, sourceUrl).toString());
-    await loadActiveBasinData();
+    if (state.activeBasin) {
+      await loadActiveBasinData();
+    } else {
+      await loadGlobalBasinData();
+    }
   }
 
   function resizeVisuals() {
