@@ -487,6 +487,223 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             )
             self.assertNotIn("output_land_mask", sample)
 
+    def test_finetune_sampling_disabled_leaves_rows_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            base = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=False,
+            )
+            disabled = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=False,
+                finetune_sampling={
+                    "enabled": False,
+                    "hard_fraction": 0.75,
+                    "hard_regions": [
+                        {
+                            "name": "top_row",
+                            "lon_min": 10.0,
+                            "lon_max": 12.0,
+                            "lat_min": 1.0,
+                            "lat_max": 2.0,
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(len(base), 4)
+            self.assertEqual(
+                [(row["patch_id"], row["date"]) for row in disabled.rows],
+                [(row["patch_id"], row["date"]) for row in base.rows],
+            )
+            self.assertFalse(disabled.finetune_sampling_summary["applied"])
+            self.assertEqual(disabled.finetune_sampling_summary["total_rows"], 4)
+
+    def test_finetune_sampling_keeps_target_hard_easy_mix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=False,
+                random_seed=11,
+                finetune_sampling={
+                    "enabled": True,
+                    "hard_fraction": 0.75,
+                    "relax_land_filter": False,
+                    "hard_regions": [
+                        {
+                            "name": "top_row",
+                            "lon_min": 10.0,
+                            "lon_max": 12.0,
+                            "lat_min": 1.0,
+                            "lat_max": 2.0,
+                        },
+                        {
+                            "name": "bottom_left",
+                            "lon_min": 10.0,
+                            "lon_max": 11.0,
+                            "lat_min": 0.0,
+                            "lat_max": 1.0,
+                        },
+                    ],
+                },
+            )
+
+            summary = dataset.finetune_sampling_summary
+            self.assertTrue(summary["applied"])
+            self.assertEqual(summary["hard_rows"], 3)
+            self.assertEqual(summary["easy_rows"], 1)
+            self.assertEqual(summary["total_rows"], 4)
+            self.assertAlmostEqual(summary["actual_hard_fraction"], 0.75)
+            self.assertEqual(len(dataset), 4)
+
+    def test_finetune_sampling_leaves_validation_split_unchanged_by_default(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="val",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=0.0,
+                val_year=2024,
+                require_argo_for_val=False,
+                finetune_sampling={
+                    "enabled": True,
+                    "hard_fraction": 0.75,
+                    "apply_to_splits": ["train"],
+                    "relax_land_filter": True,
+                    "hard_regions": [
+                        {
+                            "name": "land_heavy_corner",
+                            "lon_min": 11.0,
+                            "lon_max": 12.0,
+                            "lat_min": 0.0,
+                            "lat_max": 1.0,
+                            "max_land_fraction": 1.0,
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(len(dataset), 3)
+            self.assertTrue(dataset.finetune_sampling_summary["enabled"])
+            self.assertFalse(dataset.finetune_sampling_summary["applied"])
+            self.assertEqual(dataset.finetune_sampling_summary["split"], "val")
+
+    def test_finetune_regions_relax_land_fraction_filter_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            base = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=0.0,
+                val_year=2018,
+                require_argo_for_train=False,
+            )
+            finetune = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=1,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=1,
+                max_land_fraction=0.0,
+                val_year=2018,
+                require_argo_for_train=False,
+                finetune_sampling={
+                    "enabled": True,
+                    "hard_fraction": 1.0,
+                    "relax_land_filter": True,
+                    "hard_regions": [
+                        {
+                            "name": "land_heavy_corner",
+                            "lon_min": 11.0,
+                            "lon_max": 12.0,
+                            "lat_min": 0.0,
+                            "lat_max": 1.0,
+                            "max_land_fraction": 1.0,
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(len(base), 3)
+            self.assertEqual(len(finetune), 1)
+            self.assertAlmostEqual(float(finetune.rows[0]["land_fraction"]), 1.0)
+            self.assertTrue(bool(finetune.rows[0]["force_included"]))
+            self.assertEqual(
+                finetune.rows[0]["force_include_region"],
+                "land_heavy_corner",
+            )
+
+    def test_finetune_sampling_raises_when_no_hard_rows_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            with self.assertRaisesRegex(RuntimeError, "matched no rows"):
+                ArgoGeoTIFFGriddedPatchDataset(
+                    geotiff_root_dir=output_dir,
+                    metadata_cache_dir=cache_dir,
+                    split="train",
+                    tile_size=1,
+                    resolution_deg=1.0,
+                    land_mask_path=land_mask_path,
+                    patch_stride=1,
+                    max_land_fraction=1.0,
+                    val_year=2018,
+                    require_argo_for_train=False,
+                    finetune_sampling={
+                        "enabled": True,
+                        "hard_fraction": 0.75,
+                        "relax_land_filter": False,
+                        "hard_regions": [
+                            {
+                                "name": "missing",
+                                "lon_min": 120.0,
+                                "lon_max": 121.0,
+                                "lat_min": 40.0,
+                                "lat_max": 41.0,
+                            }
+                        ],
+                    },
+                )
+
     def test_active_geotiff_config_uses_land_mask_grid_defaults(self) -> None:
         with packaged_config_path("px_space", "training_super_config.yaml").open(
             "r",
@@ -514,6 +731,35 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
         self.assertEqual(
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
+        )
+        finetune = payload["data"]["dataset"]["finetune_sampling"]
+        self.assertFalse(finetune["enabled"])
+        self.assertAlmostEqual(float(finetune["hard_fraction"]), 0.75)
+        self.assertEqual(finetune["apply_to_splits"], ["train"])
+        self.assertTrue(finetune["relax_land_filter"])
+        self.assertAlmostEqual(float(finetune["default_max_land_fraction"]), 0.85)
+        self.assertEqual(
+            [region["name"] for region in finetune["hard_regions"]],
+            [
+                "mediterranean",
+                "black_sea",
+                "russian_arctic_west",
+                "russian_arctic_east",
+                "hudson_bay",
+                "baja_california",
+                "greenland",
+                "svalbard_barents",
+                "european_atlantic",
+                "persian_gulf",
+                "red_sea",
+                "yellow_sea",
+                "sea_of_japan",
+                "sea_of_okhotsk",
+                "northern_alaska",
+                "bay_of_benin_west",
+                "bay_of_benin_east",
+                "new_york_nova_scotia",
+            ],
         )
         self.assertNotIn("include_salinity", payload["data"]["dataset"]["output"])
         self.assertEqual(payload["data"]["split"]["val_year"], 2018)

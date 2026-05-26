@@ -26,6 +26,16 @@ Override example:
   --set training.wandb.run_name=null
 ```
 
+Hard-area finetuning example:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --scenario temperature \
+  --set data.dataset.finetune_sampling.enabled=true
+```
+
+This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only.
+
 Ambient-occlusion objective example (self-supervised on `x`):
 
 ```bash

@@ -46,12 +46,111 @@ data:  # dataset, split, and loader inputs
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: true  # keep train rows with ARGO
+      require_argo_for_train: false  # keep train rows with ARGO
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
     synthetic:  # synthetic sparse-input mode
       enabled: false  # sample x from y instead of ARGO
       pixel_count: 250  # synthetic observed pixels
+    finetune_sampling:  # optional hard-area finetuning row filter
+      enabled: false  # enable hard/easy regional finetuning mix
+      hard_fraction: 0.5  # target fraction of rows from hard regions
+      apply_to_splits:  # splits affected by finetune row filtering
+      - train  # keep validation globally comparable
+      - val # also apply to val for finetuning evaluation (remove row)
+      relax_land_filter: true  # add hard boxes as relaxed grid regions
+      default_max_land_fraction: 0.85  # default hard-region land cap
+      hard_regions:  # broad patch-center boxes for coastal hard areas
+      - name: mediterranean  # region label
+        lon_min: -6.0  # west bound
+        lon_max: 37.0  # east bound
+        lat_min: 30.0  # south bound
+        lat_max: 46.0  # north bound
+      - name: black_sea  # region label
+        lon_min: 27.0  # west bound
+        lon_max: 42.0  # east bound
+        lat_min: 40.0  # south bound
+        lat_max: 47.0  # north bound
+      - name: russian_arctic_west  # region label
+        lon_min: 20.0  # west bound
+        lon_max: 180.0  # east bound
+        lat_min: 66.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: russian_arctic_east  # region label
+        lon_min: -180.0  # west bound
+        lon_max: -160.0  # east bound
+        lat_min: 66.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: hudson_bay  # region label
+        lon_min: -96.0  # west bound
+        lon_max: -74.0  # east bound
+        lat_min: 50.0  # south bound
+        lat_max: 65.0  # north bound
+      - name: baja_california  # region label
+        lon_min: -122.0  # west bound
+        lon_max: -104.0  # east bound
+        lat_min: 18.0  # south bound
+        lat_max: 33.0  # north bound
+      - name: greenland  # region label
+        lon_min: -75.0  # west bound
+        lon_max: -10.0  # east bound
+        lat_min: 58.0  # south bound
+        lat_max: 84.0  # north bound
+      - name: svalbard_barents  # region label
+        lon_min: 0.0  # west bound
+        lon_max: 45.0  # east bound
+        lat_min: 70.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: european_atlantic  # region label
+        lon_min: -16.0  # west bound
+        lon_max: 16.0  # east bound
+        lat_min: 35.0  # south bound
+        lat_max: 70.0  # north bound
+      - name: persian_gulf  # region label
+        lon_min: 47.0  # west bound
+        lon_max: 57.0  # east bound
+        lat_min: 23.0  # south bound
+        lat_max: 31.0  # north bound
+      - name: red_sea  # region label
+        lon_min: 32.0  # west bound
+        lon_max: 44.0  # east bound
+        lat_min: 12.0  # south bound
+        lat_max: 30.0  # north bound
+      - name: yellow_sea  # region label
+        lon_min: 117.0  # west bound
+        lon_max: 127.0  # east bound
+        lat_min: 31.0  # south bound
+        lat_max: 41.0  # north bound
+      - name: sea_of_japan  # region label
+        lon_min: 127.0  # west bound
+        lon_max: 142.0  # east bound
+        lat_min: 34.0  # south bound
+        lat_max: 52.0  # north bound
+      - name: sea_of_okhotsk  # region label
+        lon_min: 140.0  # west bound
+        lon_max: 164.0  # east bound
+        lat_min: 43.0  # south bound
+        lat_max: 62.0  # north bound
+      - name: northern_alaska  # region label
+        lon_min: -170.0  # west bound
+        lon_max: -135.0  # east bound
+        lat_min: 68.0  # south bound
+        lat_max: 75.0  # north bound
+      - name: bay_of_benin_west  # region label
+        lon_min: -1.5  # west bound
+        lon_max: 1.5  # east bound
+        lat_min: 4.8  # south bound
+        lat_max: 6.8  # north bound
+      - name: bay_of_benin_east  # region label
+        lon_min: 1.5  # west bound
+        lon_max: 4.5  # east bound
+        lat_min: 4.2  # south bound
+        lat_max: 6.8  # north bound
+      - name: new_york_nova_scotia  # region label
+        lon_min: -75.0  # west bound
+        lon_max: -59.0  # east bound
+        lat_min: 40.0  # south bound
+        lat_max: 47.0  # north bound
     output:  # optional batch outputs
       return_info: false  # include metadata dictionaries
       return_coords: true  # include patch center coords
@@ -184,7 +283,7 @@ training:  # optimizer, trainer, and logging
       interval: step  # scheduler interval unit
       mode: min  # optimize lower metric
       factor: 0.5  # LR decay factor
-      patience: 25000  # plateau patience
+      patience: 50000  # plateau patience
       threshold: 0.0001  # improvement threshold
       threshold_mode: rel  # threshold mode
       cooldown: 0  # cooldown intervals

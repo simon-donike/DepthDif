@@ -626,6 +626,15 @@ def main(
             "Dataset summary: "
             f"train_samples={len(train_dataset)}, val_samples={len(val_dataset)}"
         )
+        finetune_summary = getattr(train_dataset, "finetune_sampling_summary", None)
+        if isinstance(finetune_summary, dict) and finetune_summary.get("applied"):
+            print(
+                "Finetune sampling summary: "
+                f"hard_rows={finetune_summary.get('hard_rows')}, "
+                f"easy_rows={finetune_summary.get('easy_rows')}, "
+                f"actual_hard_fraction="
+                f"{float(finetune_summary.get('actual_hard_fraction', 0.0)):.3f}"
+            )
 
     # Start (or resume) training.
     fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path

@@ -67,11 +67,17 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.sampling.ostia_var_name` | `analysed_sst` | Legacy OSTIA variable key used when `eo_source=ostia`. |
 | `data.dataset.sampling.eo_source` | scenario-derived | Dense surface EO raster group: `ostia` for temperature/joint, `sss` for salinity. |
 | `data.dataset.sampling.eo_var_name` | scenario-derived | Dense surface EO raster variable: `analysed_sst` for OSTIA, `sos` for SSS. |
-| `data.dataset.selection.require_argo_for_train` | `true` | Drops train rows without ARGO support. |
+| `data.dataset.selection.require_argo_for_train` | `false` | Drops train rows without ARGO support when enabled. |
 | `data.dataset.selection.require_argo_for_val` | `true` | Drops validation rows without ARGO support. |
 | `data.dataset.selection.require_argo_for_all` | `false` | Keeps no-ARGO rows for full-grid inference. |
 | `data.dataset.synthetic.enabled` | `false` | If true, builds sparse `x` by sampling dense `y` instead of ARGO. |
 | `data.dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels sampled when synthetic mode is enabled. |
+| `data.dataset.finetune_sampling.enabled` | `false` | Enables train-split hard-area row filtering for coastal finetuning. |
+| `data.dataset.finetune_sampling.hard_fraction` | `0.75` | Target retained-row fraction from configured hard regions. |
+| `data.dataset.finetune_sampling.apply_to_splits` | `[train]` | Splits affected by hard/easy row filtering; validation is unchanged by default. |
+| `data.dataset.finetune_sampling.relax_land_filter` | `true` | Adds hard-region boxes as relaxed land-fraction regions before row filtering. |
+| `data.dataset.finetune_sampling.default_max_land_fraction` | `0.85` | Land-fraction cap used for hard-region grid inclusion when a box has no override. |
+| `data.dataset.finetune_sampling.hard_regions` | named regional boxes | Patch-center boxes used to classify hard finetuning rows. |
 | `data.dataset.output.return_info` | `false` | Adds metadata under `batch['info']`. |
 | `data.dataset.output.return_coords` | `true` | Adds patch-center coordinates under `batch['coords']`. Required for coordinate conditioning. |
 | `data.dataset.output.fields` | scenario-derived | Physical fields loaded by the GeoTIFF dataset: `temperature`, `salinity`, or both. |

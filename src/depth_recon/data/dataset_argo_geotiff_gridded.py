@@ -24,6 +24,7 @@ from depth_recon.data.dataset_grid_utils import (
     _center_lon_deg,
     _deep_update_config,
     _force_include_cache_hash,
+    _normalize_lon,
     _parse_date_int,
     _parse_force_include_regions,
     _path_cache_hash,
@@ -578,6 +579,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         patch_stride: int | None = None,
         max_land_fraction: float = 0.30,
         force_include_regions: Sequence[dict[str, Any]] | None = None,
+        finetune_sampling: dict[str, Any] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
         ostia_var_name: str = "analysed_sst",
@@ -626,6 +628,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.patch_stride = None if patch_stride is None else int(patch_stride)
         self.max_land_fraction = float(max_land_fraction)
         self.force_include_regions = _parse_force_include_regions(force_include_regions)
+        self.finetune_sampling = self._normalize_finetune_sampling(finetune_sampling)
+        self.finetune_sampling_summary: dict[str, Any] = {
+            "enabled": bool(self.finetune_sampling["enabled"]),
+            "applied": False,
+            "split": self.split,
+        }
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
         self.ostia_var_name = str(ostia_var_name)
@@ -702,7 +710,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             land_mask_path=self.land_mask_path,
             patch_stride=self.patch_stride,
             max_land_fraction=self.max_land_fraction,
-            force_include_regions=self.force_include_regions,
+            force_include_regions=self._effective_force_include_regions(),
         )
         index = GeoTIFFPatchIndex(
             root_dir=self.root_dir,
@@ -713,6 +721,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         )
         rows = index.load_rows()
         rows = self._filter_rows(rows)
+        rows = self._apply_finetune_sampling(rows)
         if not rows:
             raise RuntimeError("Dataset is empty after split/ARGO filtering.")
         self._rows = rows
@@ -914,6 +923,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "force_include_regions",
                 default=None,
             ),
+            finetune_sampling=cls._cfg_get(
+                ds_cfg,
+                "finetune_sampling",
+                "finetune_sampling",
+                default=None,
+            ),
             temporal_window_days=int(
                 cls._cfg_get(
                     ds_cfg,
@@ -1072,6 +1087,173 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         if isinstance(value, str) and value.strip().lower() in MISSING_TEXT_VALUES:
             return None
         return int(value)
+
+    @staticmethod
+    def _normalize_finetune_sampling(raw_cfg: dict[str, Any] | None) -> dict[str, Any]:
+        """Normalize optional hard-area finetuning row-sampling settings."""
+        cfg = dict(raw_cfg or {})
+        hard_fraction = float(cfg.get("hard_fraction", 0.75))
+        if not (0.0 < hard_fraction <= 1.0):
+            raise ValueError("finetune_sampling.hard_fraction must be in (0, 1].")
+        default_max_land_fraction = float(cfg.get("default_max_land_fraction", 0.85))
+        if not (0.0 <= default_max_land_fraction <= 1.0):
+            raise ValueError(
+                "finetune_sampling.default_max_land_fraction must be in [0, 1]."
+            )
+
+        raw_splits = cfg.get("apply_to_splits", ("train",))
+        if isinstance(raw_splits, str):
+            apply_to_splits = (raw_splits.strip().lower(),)
+        else:
+            apply_to_splits = tuple(str(value).strip().lower() for value in raw_splits)
+        if not apply_to_splits or any(
+            value not in {"all", "train", "val"} for value in apply_to_splits
+        ):
+            raise ValueError(
+                "finetune_sampling.apply_to_splits must contain split names from "
+                "{'all', 'train', 'val'}."
+            )
+
+        hard_regions: list[dict[str, Any]] = []
+        for idx, raw_region in enumerate(cfg.get("hard_regions", ()) or ()):
+            if not isinstance(raw_region, dict):
+                raise ValueError(
+                    "Each finetune_sampling.hard_regions item must be a mapping."
+                )
+            region = dict(raw_region)
+            region["name"] = str(region.get("name", f"hard_region_{idx}"))
+            region["lon_min"] = float(region["lon_min"])
+            region["lon_max"] = float(region["lon_max"])
+            region["lat_min"] = float(region["lat_min"])
+            region["lat_max"] = float(region["lat_max"])
+            region["max_land_fraction"] = float(
+                region.get("max_land_fraction", default_max_land_fraction)
+            )
+            if not (0.0 <= region["max_land_fraction"] <= 1.0):
+                raise ValueError(
+                    "finetune_sampling.hard_regions[].max_land_fraction must be "
+                    "in [0, 1]."
+                )
+            hard_regions.append(region)
+
+        return {
+            "enabled": bool(cfg.get("enabled", False)),
+            "hard_fraction": hard_fraction,
+            "apply_to_splits": apply_to_splits,
+            "relax_land_filter": bool(cfg.get("relax_land_filter", True)),
+            "default_max_land_fraction": default_max_land_fraction,
+            "hard_regions": tuple(hard_regions),
+        }
+
+    def _finetune_applies_to_current_split(self) -> bool:
+        """Return whether hard-area finetuning should filter this split."""
+        if not bool(self.finetune_sampling["enabled"]):
+            return False
+        apply_to_splits = set(self.finetune_sampling["apply_to_splits"])
+        return "all" in apply_to_splits or self.split in apply_to_splits
+
+    def _effective_force_include_regions(self) -> tuple[Any, ...]:
+        """Return force-include regions, extended by finetune boxes when needed."""
+        if not (
+            self._finetune_applies_to_current_split()
+            and bool(self.finetune_sampling["relax_land_filter"])
+        ):
+            return self.force_include_regions
+
+        merged = {region.name: region for region in self.force_include_regions}
+        for raw_region in self.finetune_sampling["hard_regions"]:
+            parsed_region = _parse_force_include_regions([raw_region])[0]
+            existing = merged.get(parsed_region.name)
+            if existing is not None:
+                # Duplicate named boxes keep the most permissive finetune land cap.
+                parsed_region = parsed_region.__class__(
+                    name=parsed_region.name,
+                    lon_min=parsed_region.lon_min,
+                    lon_max=parsed_region.lon_max,
+                    lat_min=parsed_region.lat_min,
+                    lat_max=parsed_region.lat_max,
+                    max_land_fraction=max(
+                        float(existing.max_land_fraction),
+                        float(parsed_region.max_land_fraction),
+                    ),
+                )
+            merged[parsed_region.name] = parsed_region
+        return tuple(merged.values())
+
+    @staticmethod
+    def _row_in_hard_region(
+        row: dict[str, Any], regions: Sequence[dict[str, Any]]
+    ) -> bool:
+        """Return whether a patch center falls inside any hard finetune box."""
+        lat_center = float(row.get("lat_center", np.nan))
+        lon_center = _normalize_lon(float(row.get("lon_center", np.nan)))
+        if not (np.isfinite(lat_center) and np.isfinite(lon_center)):
+            return False
+        for region in regions:
+            lat_min = min(float(region["lat_min"]), float(region["lat_max"]))
+            lat_max = max(float(region["lat_min"]), float(region["lat_max"]))
+            lon_min = min(float(region["lon_min"]), float(region["lon_max"]))
+            lon_max = max(float(region["lon_min"]), float(region["lon_max"]))
+            if lat_min <= lat_center <= lat_max and lon_min <= lon_center <= lon_max:
+                return True
+        return False
+
+    def _apply_finetune_sampling(
+        self, rows: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Apply deterministic hard/easy row filtering for finetuning runs."""
+        if not self._finetune_applies_to_current_split():
+            self.finetune_sampling_summary = {
+                "enabled": bool(self.finetune_sampling["enabled"]),
+                "applied": False,
+                "split": self.split,
+                "total_rows": len(rows),
+            }
+            return rows
+
+        regions = self.finetune_sampling["hard_regions"]
+        hard_indices = [
+            idx
+            for idx, row in enumerate(rows)
+            if self._row_in_hard_region(row, regions)
+        ]
+        if not hard_indices:
+            raise RuntimeError(
+                "Finetune hard-area sampling matched no rows for split "
+                f"{self.split!r}. Check data.dataset.finetune_sampling.hard_regions."
+            )
+
+        hard_fraction = float(self.finetune_sampling["hard_fraction"])
+        hard_index_set = set(hard_indices)
+        easy_indices = [idx for idx in range(len(rows)) if idx not in hard_index_set]
+        requested_easy = int(
+            round(len(hard_indices) * (1.0 - hard_fraction) / hard_fraction)
+        )
+        selected_easy: list[int] = []
+        if requested_easy > 0 and easy_indices:
+            sample_count = min(int(requested_easy), len(easy_indices))
+            rng = np.random.default_rng(int(self.random_seed))
+            selected_easy = sorted(
+                int(value)
+                for value in rng.choice(easy_indices, size=sample_count, replace=False)
+            )
+
+        selected_indices = sorted(hard_indices + selected_easy)
+        filtered_rows = [rows[idx] for idx in selected_indices]
+        actual_hard_fraction = len(hard_indices) / float(len(filtered_rows))
+        self.finetune_sampling_summary = {
+            "enabled": True,
+            "applied": True,
+            "split": self.split,
+            "target_hard_fraction": hard_fraction,
+            "actual_hard_fraction": actual_hard_fraction,
+            "hard_rows": len(hard_indices),
+            "easy_rows": len(selected_easy),
+            "total_rows": len(filtered_rows),
+            "available_easy_rows": len(easy_indices),
+            "region_names": [str(region["name"]) for region in regions],
+        }
+        return filtered_rows
 
     def _filter_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Apply split and ARGO-support filters."""

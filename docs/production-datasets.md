@@ -75,6 +75,13 @@ The default cap is `0.30`, so normal retained patches are at least 70% ocean.
 Patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay are force-included with a relaxed land cap through
 `dataset.grid.force_include_regions`, because those water bodies are narrow or coastline-heavy and would
 otherwise lose useful ocean context around coastlines.
+
+Hard-area finetuning can temporarily extend these relaxed grid regions through
+`dataset.finetune_sampling.hard_regions` when `dataset.finetune_sampling.enabled=true`
+and `dataset.finetune_sampling.relax_land_filter=true`. That run-specific extension
+lets coast-heavy patches enter the train split for the 75/25 hard/easy finetune mix
+without changing the default training or validation patch registry.
+
 The figure labels show the current region-specific land caps and retained patch counts.
 The overview marks the configured bounding boxes and retained force-include patch centers for
 the stride-32 GeoTIFF preset. The regional panel shows the corresponding 128-pixel
@@ -139,10 +146,12 @@ masks.
   committed GLORYS-aligned world mask.
 - `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay up
   to a relaxed land fraction so the training registry retains those water bodies.
+- `dataset.finetune_sampling.*` can filter the train split to named hard-region
+  patch centers and add those boxes as run-specific relaxed land-fraction regions.
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile
   search window for each patch date.
-- `dataset.selection.require_argo_for_train` and
-  `dataset.selection.require_argo_for_val` default to `true`.
+- `dataset.selection.require_argo_for_train` defaults to `false`;
+  `dataset.selection.require_argo_for_val` defaults to `true`.
 - `dataset.selection.require_argo_for_all` defaults to `false` so global
   inference can cover rows without ARGO observations.
 - `split.val_year` defaults to `2018`, assigning that year to validation and
@@ -162,3 +171,20 @@ Each sample returns `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`,
 `x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`. `x_valid_mask` is ARGO observation support and `land_mask` is GLORYS spatial support for conditioning/loss, falling back to OSTIA finite support and then the on-disk mask if GLORYS support is unavailable. The common on-disk mask is loaded only by prediction/export paths when final cleanup is needed.
 
 See [Data Contract](data-contract.md) for the full tensor contract.
+
+
+## Finetuning
+
+Hard-area finetuning is disabled by default and can be enabled with
+`data.dataset.finetune_sampling.enabled=true`. When enabled for the train split,
+the GeoTIFF dataset keeps all rows whose patch centers fall inside the configured
+hard regions, then adds a deterministic random sample of easy rows to target the
+configured 75/25 hard/easy mix. Validation keeps the normal global split so the
+main validation metric stays comparable across runs.
+
+When `data.dataset.finetune_sampling.relax_land_filter=true`, the same hard-region
+boxes are also added as run-specific relaxed land-fraction regions before the
+patch registry is built. This lets narrow coastline-heavy areas enter finetuning
+without changing the default training grid.
+
+![Hard-region finetuning patch footprints](assets/data/patch_grid/hard_region_finetune_footprints_global.png)
