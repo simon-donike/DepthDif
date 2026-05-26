@@ -522,6 +522,59 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(int(rgba[0, 3, 6]), 200)
         self.assertEqual(int(rgba[0, 6, 6]), 200)
 
+    def test_apply_alpha_mask_preserves_valid_longitude_exterior(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "input.tif"
+            colorized_path = tmp_path / "colorized.tif"
+            transform = from_origin(-180.0, 7.0, 1.0, 1.0)
+            data = np.full((1, 7, 7), -9999.0, dtype=np.float32)
+            data[:, :, :2] = 10.0
+            data[:, :, -2:] = 10.0
+
+            with rasterio.open(
+                input_path,
+                "w",
+                driver="GTiff",
+                height=7,
+                width=7,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(data)
+
+            with rasterio.open(
+                colorized_path,
+                "w",
+                driver="GTiff",
+                height=7,
+                width=7,
+                count=4,
+                dtype="uint8",
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(np.full((4, 7, 7), 200, dtype=np.uint8))
+
+            _apply_alpha_mask_to_colorized_raster(
+                input_path,
+                colorized_path,
+                raster_edge_erosion_pixels=2,
+                raster_edge_feather_pixels=4,
+            )
+
+            with rasterio.open(colorized_path) as ds:
+                rgba = ds.read()
+
+        self.assertTrue(np.all(rgba[3, :, :2] == 255))
+        self.assertTrue(np.all(rgba[3, :, -2:] == 255))
+        self.assertTrue(np.all(rgba[3, :, 2:-2] == 0))
+
     def test_validate_raster_transparency_contract_rejects_zeroed_land(
         self,
     ) -> None:
@@ -780,6 +833,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("near", command)
         self.assertIn("-z", command)
         self.assertIn("0-1", command)
+        self.assertIn("--tilesize=256", command)
         self.assertIn("--tiledriver=WEBP", command)
         self.assertIn(f"--webp-quality={DEFAULT_WEBP_QUALITY}", command)
 
@@ -879,11 +933,11 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             resampling="bilinear",
         )
 
-    def test_build_parser_defaults_to_one_less_than_native_zoom(self) -> None:
+    def test_build_parser_defaults_to_native_zoom(self) -> None:
         parser = _build_parser()
         args = parser.parse_args(["--run-dir", "inference/outputs/example"])
 
-        self.assertEqual(args.extra_zoom_levels, -1)
+        self.assertEqual(args.extra_zoom_levels, 0)
         self.assertEqual(
             args.raster_edge_erosion_pixels,
             DEFAULT_RASTER_EDGE_EROSION_PIXELS,
@@ -1080,17 +1134,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                 standard_command = _build_gdal2tiles_command(
                     tif_path,
                     Path(tmp_dir) / "standard_tiles",
-                    extra_zoom_levels=-1,
+                    extra_zoom_levels=0,
                 )
                 temporal_command = _build_gdal2tiles_command(
                     tif_path,
                     Path(tmp_dir) / "temporal_tiles",
-                    extra_zoom_levels=-1,
+                    extra_zoom_levels=0,
                     max_zoom_level=2,
                 )
 
         self.assertEqual(zoom_level, 4)
-        self.assertIn("0-3", standard_command)
+        self.assertIn("0-4", standard_command)
         self.assertIn("0-2", temporal_command)
 
     def test_rewrite_geojson_rounds_coordinates_and_drops_unused_point_properties(

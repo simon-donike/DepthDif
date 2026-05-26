@@ -132,10 +132,10 @@ At the top of `src/depth_recon/inference/run_single.py`, set:
 Use `src/depth_recon/inference/export_global.py` when you want the standard production inference path: one spatially complete ISO-week globe from raw ARGO/GLORYS/OSTIA/sea-surface products or an equivalent patch dataset. The script:
 - requires `--year ... --iso-week ...` and selects the nearest available dataset date within that ISO week
 - reads inference-grid settings from `src/depth_recon/configs/px_space/inference_super_config.yaml` by default
-- forces the inference grid to `patch_grid_source=land_mask` and `require_argo_for_all=false`; the default inference config uses `patch_stride=32` for 75% overlap with 128-pixel patches
+- forces the inference grid to `patch_grid_source=land_mask` and `require_argo_for_all=false`; the default inference config uses `patch_stride=96` for 25% overlap with 128-pixel patches
 - keeps every tile with at least the configured `min_ocean_fraction` ocean cover; the default `0.05` includes all patches with 5% or more ocean
 - runs batched `predict_step(...)` over all global patches for that week-centered date
-- runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 75% spatial overlap and overlap-weighted stitching
+- runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 25% spatial overlap and overlap-weighted stitching
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
 - stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, feathering the periodic `-180/180` longitude edge when overlap exists, then conservatively fills tiny nodata seams
@@ -196,7 +196,7 @@ Run this wrapper once with two checkpoints: one checkpoint trained for `--scenar
   --rclone-sync-scope globe
 ```
 
-By default, globe raster tiling stops one zoom level below the estimated native raster zoom (`--extra-zoom-levels -1`), so 0.1 degree global TIFFs tile as `0-3` instead of `0-4`. With `--rclone-sync-scope globe`, only the combined hosted globe bundle is synced to `r2:depth-data/inference_production/globe`; the raw temperature and salinity GeoTIFF run folders remain local. When temporal export is enabled, the `temporal/` folder is uploaded separately to `r2:depth-data/inference_production/temporal` unless `--temporal-rclone-remote` overrides it. By default the wrapper passes a 1000 full-profile graph cap to each primary variable export, so the hosted bundle contains at most 1000 graph images per modality unless `--full-sample-count` is overridden; extra temporal-week exports always use `--full-sample-count 0`. Use `--rclone-sync-scope run` when the raw paired run directory should be uploaded too. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json` and `https://globe-assets.hyperalislabs.com/inference_production/temporal/temporal-config.json`.
+By default, globe raster tiling keeps the estimated native raster zoom (`--extra-zoom-levels 0`), so 0.1 degree global TIFFs tile as `0-4`, the closest 256 px Web Mercator level to the source grid. With `--rclone-sync-scope globe`, only the combined hosted globe bundle is synced to `r2:depth-data/inference_production/globe`; the raw temperature and salinity GeoTIFF run folders remain local. When temporal export is enabled, the `temporal/` folder is uploaded separately to `r2:depth-data/inference_production/temporal` unless `--temporal-rclone-remote` overrides it. By default the wrapper passes a 1000 full-profile graph cap to each primary variable export, so the hosted bundle contains at most 1000 graph images per modality unless `--full-sample-count` is overridden; extra temporal-week exports always use `--full-sample-count 0`. Use `--rclone-sync-scope run` when the raw paired run directory should be uploaded too. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json` and `https://globe-assets.hyperalislabs.com/inference_production/temporal/temporal-config.json`.
 
 Default output layout:
 
@@ -300,7 +300,7 @@ Generated temporal dashboard output:
 ## Workflow 1f: Export Temporal Globe Animation
 Use `--export-temporal-globe` on either temporal wrapper to turn the retained weekly 10m rasters into a separate hostable Cesium animation bundle. This does not add GLORYS, ARGO points, uncertainty, or full-depth rasters. It only tiles 10m prediction and 10m absolute-error frames for each variable, keeps the same globe styling and optional Natural Earth basemap, and writes a compact `temporal-globe-config.json` manifest consumed by `docs/temporal-globe/index.html`.
 
-The temporal globe packager defaults to WebP q80, `--temporal-globe-extra-zoom-levels -1`, and `--temporal-globe-max-zoom-level 4` so the animation does not over-tile weekly frames. The browser keeps the current frame plus previous, next, and next-plus-one frames as transparent warm Cesium layers while cycling at `frame_interval_ms` (`1000` by default). When the normal production URL ends in `/globe`, the temporal globe upload URL defaults to the sibling `/temporal-globe`; override it with `--temporal-globe-public-base-url` and `--temporal-globe-rclone-remote`.
+The temporal globe packager defaults to WebP q80, `--temporal-globe-extra-zoom-levels 0`, and `--temporal-globe-max-zoom-level 4`, so 0.1 degree weekly frames keep native `z4` tiles without generating overzoom levels. The browser keeps the current frame plus previous, next, and next-plus-one frames as transparent warm Cesium layers while cycling at `frame_interval_ms` (`1000` by default). When the normal production URL ends in `/globe`, the temporal globe upload URL defaults to the sibling `/temporal-globe`; override it with `--temporal-globe-public-base-url` and `--temporal-globe-rclone-remote`.
 
 To package existing weekly temporal run folders without re-running inference, call the packager directly:
 ```bash
@@ -323,7 +323,7 @@ Generated temporal globe output:
 ## Workflow 1g: Package One Run for the Cesium Globe
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
-- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them as Cesium TMS WebP q95 with `gdal2tiles.py`
+- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them as Cesium TMS WebP q95 with fixed 256 px `gdal2tiles.py` tiles
 - colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth-specific 2nd-98th percentile range, then tiles them beside prediction and GLORYS as WebP q95
 - colorizes and tiles the optional 1-channel uncertainty GeoTIFF when the run summary contains `uncertainty_tif_path`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties

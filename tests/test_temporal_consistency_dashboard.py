@@ -373,7 +373,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             self.assertEqual(colorize_mock.call_count, 8)
             self.assertEqual(tiles_mock.call_count, 8)
             first_tiles_kwargs = tiles_mock.call_args_list[0].kwargs
-            self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], -1)
+            self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], 0)
             self.assertEqual(first_tiles_kwargs["max_zoom_level"], 4)
             self.assertEqual(first_tiles_kwargs["webp_quality"], 80)
             self.assertTrue((output_dir / "index.html").exists())

@@ -54,7 +54,7 @@ DEFAULT_ABSOLUTE_ERROR_SCALE_MIN_PERCENTILE = 2.0
 DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE = 98.0
 DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C = 0.0
 DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
-DEFAULT_EXTRA_ZOOM_LEVELS = -1
+DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RASTER_EDGE_EROSION_PIXELS = 2
 DEFAULT_RASTER_EDGE_FEATHER_PIXELS = 4
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
@@ -645,18 +645,22 @@ def _raster_edge_alpha_scale(
         eroded_valid = valid
 
     alpha_scale = np.zeros(valid.shape, dtype=np.float32)
-    if not np.any(eroded_valid):
-        return alpha_scale
-    if feather_pixels <= 0 or np.all(eroded_valid):
+    if np.any(eroded_valid) and (feather_pixels <= 0 or np.all(eroded_valid)):
         alpha_scale[eroded_valid] = 1.0
-        return alpha_scale
-
-    distance_from_edge = ndi.distance_transform_edt(eroded_valid)
-    alpha_scale[eroded_valid] = np.clip(
-        distance_from_edge[eroded_valid] / float(feather_pixels),
-        0.0,
-        1.0,
-    )
+    elif np.any(eroded_valid):
+        distance_from_edge = ndi.distance_transform_edt(eroded_valid)
+        alpha_scale[eroded_valid] = np.clip(
+            distance_from_edge[eroded_valid] / float(feather_pixels),
+            0.0,
+            1.0,
+        )
+    if erosion_pixels > 0:
+        exterior = np.zeros(valid.shape, dtype=bool)
+        edge_width_x = min(erosion_pixels, int(valid.shape[1]))
+        exterior[:, :edge_width_x] = True
+        exterior[:, -edge_width_x:] = True
+        # The longitude boundary is an artificial cut, not a support edge to erode.
+        alpha_scale[exterior & valid] = 1.0
     return alpha_scale
 
 
@@ -781,6 +785,7 @@ def _build_gdal2tiles_command(
         f"0-{max_zoom}",
         "-w",
         "none",
+        f"--tilesize={DEFAULT_TILE_SIZE}",
     ]
     if tile_driver:
         command.append(f"--tiledriver={tile_driver}")
@@ -1080,7 +1085,7 @@ def _raster_transparency_config(
             "Land-masked source pixels use the GeoTIFF nodata value before "
             f"color relief so valid 0 {value_unit_label} ocean values remain visible "
             "when present; globe tiles also erode and feather valid-support "
-            "edges for smoother coastlines."
+            "edges for smoother coastlines while preserving valid west/east raster exteriors."
         ),
     }
 
