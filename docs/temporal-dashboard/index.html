@@ -61,15 +61,27 @@
           <div id="temporal-map" class="temporal-map" role="application" aria-label="World map of validation basins"></div>
         </article>
 
-        <article class="temporal-panel temporal-panel--chart">
-          <div class="temporal-panel__header">
-            <div>
-              <h2>Temporal Error</h2>
-              <p id="temporal-depth-caption">Mean absolute error by validation date</p>
+        <div class="temporal-chart-stack">
+          <article class="temporal-panel temporal-panel--chart">
+            <div class="temporal-panel__header">
+              <div>
+                <h2>Temporal Error</h2>
+                <p id="temporal-depth-caption">Mean absolute error by validation date</p>
+              </div>
             </div>
-          </div>
-          <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by validation date"></div>
-        </article>
+            <div id="temporal-depth-error" class="temporal-chart" role="img" aria-label="Mean absolute error by validation date"></div>
+          </article>
+
+          <article class="temporal-panel temporal-panel--depth-profile">
+            <div class="temporal-panel__header">
+              <div>
+                <h2>Error By Depth</h2>
+                <p id="temporal-profile-caption">Year-average mean absolute error by depth</p>
+              </div>
+            </div>
+            <div id="temporal-depth-profile" class="temporal-chart" role="img" aria-label="Year-average mean absolute error by depth"></div>
+          </article>
+        </div>
       </section>
     </main>
   </body>

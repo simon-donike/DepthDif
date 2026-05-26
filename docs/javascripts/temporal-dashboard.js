@@ -143,6 +143,49 @@
       }));
   }
 
+  function activeDepthErrors() {
+    if (!state.activeBasin) {
+      return globalDepthErrors();
+    }
+    const payload = activeBasinPayload();
+    if (!payload || !payload.variables || !payload.variables[state.activeVariable]) {
+      return [];
+    }
+    return payload.variables[state.activeVariable].depth_errors || [];
+  }
+
+  function globalDepthErrors() {
+    const rowsByIndex = new Map();
+    Object.values(state.basinDataCache).forEach((payload) => {
+      const variablePayload = payload && payload.variables && payload.variables[state.activeVariable];
+      (variablePayload ? variablePayload.depth_errors || [] : []).forEach((row) => {
+        const index = Number(row.index);
+        if (!Number.isFinite(index)) {
+          return;
+        }
+        const current = rowsByIndex.get(index) || {
+          index,
+          label: row.label,
+          requested_depth_m: row.requested_depth_m,
+          actual_depth_m: row.actual_depth_m,
+          count: 0,
+          sum_absolute_error: 0,
+        };
+        const count = Number(row.count || 0);
+        const total = Number(row.sum_absolute_error || 0);
+        current.count += Number.isFinite(count) ? count : 0;
+        current.sum_absolute_error += Number.isFinite(total) ? total : 0;
+        rowsByIndex.set(index, current);
+      });
+    });
+    return Array.from(rowsByIndex.values())
+      .sort((left, right) => left.index - right.index)
+      .map((row) => ({
+        ...row,
+        mean_absolute_error: row.count > 0 ? row.sum_absolute_error / row.count : null,
+      }));
+  }
+
   function setControlsDisabled(disabled) {
     document
       .querySelectorAll("#temporal-dashboard-select, #temporal-variable-select")
@@ -313,8 +356,29 @@
     };
   }
 
-  function renderEmptyTemporalGraph(message) {
+  function depthProfileLayout() {
     const layout = plotlyLayout();
+    layout.margin = { l: 72, r: 20, t: 18, b: 48 };
+    layout.xaxis = {
+      automargin: true,
+      color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+      gridcolor: "rgba(223,244,239,0.1)",
+      title: { text: `Mean absolute error${unitLabel() ? ` (${unitLabel()})` : ""}`, standoff: 10 },
+      type: "linear",
+      zerolinecolor: "rgba(223,244,239,0.18)",
+    };
+    layout.yaxis = {
+      automargin: true,
+      autorange: "reversed",
+      color: cssVar("--temporal-muted", "rgba(215,233,247,0.72)"),
+      gridcolor: "rgba(223,244,239,0.1)",
+      title: { text: "Depth (m)", standoff: 10 },
+      zerolinecolor: "rgba(223,244,239,0.18)",
+    };
+    return layout;
+  }
+
+  function renderEmptyChart(chartId, layout, message) {
     layout.annotations = [
       {
         font: { color: cssVar("--temporal-muted", "#5f6f7c"), size: 13 },
@@ -326,7 +390,11 @@
         yref: "paper",
       },
     ];
-    window.Plotly.react($("temporal-depth-error"), [], layout, PLOTLY_CONFIG);
+    window.Plotly.react($(chartId), [], layout, PLOTLY_CONFIG);
+  }
+
+  function renderEmptyTemporalGraph(message) {
+    renderEmptyChart("temporal-depth-error", plotlyLayout(), message);
   }
 
   function renderDepthErrorGraph() {
@@ -358,6 +426,39 @@
     $("temporal-depth-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} mean absolute error by date`;
   }
 
+  function renderDepthProfileGraph() {
+    const chart = $("temporal-depth-profile");
+    if (!chart) {
+      return;
+    }
+    const rows = activeDepthErrors().filter(
+      (row) => Number.isFinite(Number(row.mean_absolute_error)) && Number.isFinite(Number(row.actual_depth_m))
+    );
+    if (rows.length === 0) {
+      $("temporal-profile-caption").textContent = `${basinLabel(state.activeBasin)} has no depth-profile data`;
+      renderEmptyChart("temporal-depth-profile", depthProfileLayout(), "No depth-profile data for the selected area");
+      return;
+    }
+    const trace = {
+      customdata: rows.map((row) => [
+        row.label || `${formatNumber(row.actual_depth_m, 1)} m`,
+        row.count ? row.count.toLocaleString() : "0",
+      ]),
+      hovertemplate:
+        "%{customdata[0]}<br>Mean absolute error: %{x:.3f} " +
+        unitLabel() +
+        "<br>Count: %{customdata[1]}<extra></extra>",
+      line: { color: cssVar("--temporal-amber", "#ffd166"), width: 3 },
+      marker: { color: cssVar("--temporal-teal", "#7cc8ff"), line: { color: "#071d2d", width: 1 }, size: 6 },
+      mode: "lines+markers",
+      name: basinLabel(state.activeBasin),
+      x: rows.map((row) => row.mean_absolute_error),
+      y: rows.map((row) => row.actual_depth_m),
+    };
+    window.Plotly.react(chart, [trace], depthProfileLayout(), PLOTLY_CONFIG);
+    $("temporal-profile-caption").textContent = `${basinLabel(state.activeBasin)} ${activeVariableConfig().variable_label || state.activeVariable} year-average error by depth`;
+  }
+
   function render() {
     setRunLabel();
     const selectedLabel = basinLabel(state.activeBasin);
@@ -365,6 +466,7 @@
     $("temporal-map-caption").textContent = `${selectedLabel} | validation year ${state.config.validation_year}`;
     renderMap();
     renderDepthErrorGraph();
+    renderDepthProfileGraph();
   }
 
   async function loadBasinData(basinName) {
@@ -413,10 +515,12 @@
     if (state.map) {
       state.map.invalidateSize(false);
     }
-    const chart = $("temporal-depth-error");
-    if (chart && window.Plotly) {
-      window.Plotly.Plots.resize(chart);
-    }
+    ["temporal-depth-error", "temporal-depth-profile"].forEach((id) => {
+      const chart = $(id);
+      if (chart && window.Plotly) {
+        window.Plotly.Plots.resize(chart);
+      }
+    });
   }
 
   async function init() {
