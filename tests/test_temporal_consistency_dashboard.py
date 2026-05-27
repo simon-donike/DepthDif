@@ -371,7 +371,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             self.assertEqual(config["default_layer"], "prediction")
             self.assertEqual(config["frame_interval_ms"], 1000)
             self.assertEqual(config["webp_quality"], 80)
-            self.assertEqual(config["max_zoom_level"], 4)
+            self.assertEqual(config["max_zoom_level"], 3)
             self.assertEqual(config["available_variables"], ["temperature", "salinity"])
             first_frame = config["variables"]["temperature"]["frames"][0]
             self.assertEqual(first_frame["label"], "2018-W01")
@@ -387,7 +387,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             self.assertEqual(tiles_mock.call_count, 8)
             first_tiles_kwargs = tiles_mock.call_args_list[0].kwargs
             self.assertEqual(first_tiles_kwargs["extra_zoom_levels"], 0)
-            self.assertEqual(first_tiles_kwargs["max_zoom_level"], 4)
+            self.assertEqual(first_tiles_kwargs["max_zoom_level"], 3)
             self.assertEqual(first_tiles_kwargs["webp_quality"], 80)
             self.assertTrue((output_dir / "index.html").exists())
             self.assertTrue((output_dir / "javascripts/temporal-globe.js").exists())
@@ -524,7 +524,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             globe_kwargs["public_base_url"], "https://example.com/temporal-globe"
         )
         self.assertEqual(globe_kwargs["rclone_remote"], "r2:bucket/temporal-globe")
-        self.assertEqual(globe_kwargs["max_zoom_level"], 4)
+        self.assertEqual(globe_kwargs["max_zoom_level"], 3)
         self.assertEqual(globe_kwargs["webp_quality"], 80)
         self.assertEqual(
             summary["temporal_globe"], {"config_path": "temporal-globe-config.json"}
@@ -620,7 +620,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             output_root / "standard_temporal" / "temporal-globe",
         )
         self.assertEqual(len(globe_kwargs["variable_run_dirs"]["temperature"]), 52)
-        self.assertEqual(globe_kwargs["max_zoom_level"], 4)
+        self.assertEqual(globe_kwargs["max_zoom_level"], 3)
         self.assertEqual(globe_kwargs["webp_quality"], 80)
         self.assertTrue(summary["temporal_consistency"]["enabled"])
         self.assertEqual(summary["temporal_consistency"]["week_count"], 52)
