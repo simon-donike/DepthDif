@@ -1,4 +1,4 @@
-# Source variable names used by the NetCDF patch dataset and source helpers.
+# Source variable names used by raw NetCDF source helpers.
 # Comments document expected source meanings/units from representative NetCDF
 # metadata.
 

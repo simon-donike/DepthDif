@@ -42,7 +42,7 @@ SRC_ROOT = Path(__file__).resolve().parents[4]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from depth_recon.data.dataset_argo_netcdf_gridded import (
+from depth_recon.data.netcdf_sources import (
     GLORYS_MIN_ABSOLUTE_DEPTH_CUTOFF_M,
     GLORYS_RELATIVE_DEPTH_CUTOFF,
     _align_argo_profile_to_glorys_depths,

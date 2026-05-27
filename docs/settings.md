@@ -51,7 +51,7 @@ These keys live under top-level `data` in both pixel super-configs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `data.dataset.core.dataset_variant` | `argo_geotiff_gridded` | Dataset implementation. This is the active pixel workflow. `argo_netcdf_gridded` is legacy. |
+| `data.dataset.core.dataset_variant` | `argo_geotiff_gridded` | Dataset implementation. The GeoTIFF workflow is the only supported dataset variant. |
 | `data.dataset.core.dataloader_type` | `light` | Training runner expects the lightweight dataloader path. |
 | `data.dataset.core.geotiff_root_dir` | `/work/data/OceanVariableReconstruction` | Packaged dataset root containing `manifest.yaml`, root-level `rasters/`, `argo/argo_profiles_on_grid.zarr`, and `masks/`. |
 | `data.dataset.core.metadata_cache_dir` | `/work/data/OceanVariableReconstruction/depthdif_cache` | Patch/date metadata cache directory inside the packaged dataset root. |

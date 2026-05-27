@@ -77,7 +77,7 @@ Start from scratch or from a checkpoint trained with the same architecture; temp
 - `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion.
 - `train.py` super-config workflow is pixel-space only; latent diffusion still uses the latent config files documented below.
-- dataset variant is selected by `dataset.core.dataset_variant`; use `"argo_geotiff_gridded"` for the active GeoTIFF workflow. `"argo_netcdf_gridded"` is legacy.
+- dataset variant is selected by `dataset.core.dataset_variant`; use `"argo_geotiff_gridded"`, the only supported dataset variant.
 - `dataset.output.fields` and `dataset.output.include_salinity` are derived by `--scenario`; do not maintain them by hand in the super-config.
 - Pixel split data/model/training YAML files were removed; use the super-configs for pixel training and inference.
 

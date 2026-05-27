@@ -29,7 +29,6 @@ if __package__ in {None, ""}:
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from depth_recon.data.dataset_argo_netcdf_gridded import ArgoNetCDFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.configs.config_resolver_pixel import (
@@ -228,7 +227,7 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
         ds_cfg,
         "core.dataset_variant",
         "dataset_variant",
-        default="argo_netcdf_gridded",
+        default="argo_geotiff_gridded",
     )
     _ = data_config_path
     return str(variant).strip().lower()
@@ -272,11 +271,6 @@ def build_dataset(
         torch.utils.data.Dataset: Computed output value.
     """
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
-    if dataset_variant == "argo_netcdf_gridded":
-        return ArgoNetCDFGriddedPatchDataset.from_config(
-            data_config_path,
-            split=split,
-        )
     if dataset_variant == "argo_geotiff_gridded":
         return ArgoGeoTIFFGriddedPatchDataset.from_config(
             data_config_path,
@@ -285,7 +279,7 @@ def build_dataset(
     raise ValueError(
         "Unsupported dataset variant in data config. "
         f"Got '{dataset_variant}', expected one of "
-        "{'argo_netcdf_gridded', 'argo_geotiff_gridded'}."
+        "{'argo_geotiff_gridded'}."
     )
 
 

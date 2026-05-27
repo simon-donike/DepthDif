@@ -17,8 +17,8 @@ This page is automatically generated via `mkdocstrings` from the current codebas
 ### `depth_recon.data.datamodule`  
 ::: depth_recon.data.datamodule  
 
-### `depth_recon.data.dataset_argo_netcdf_gridded`  
-::: depth_recon.data.dataset_argo_netcdf_gridded  
+### `depth_recon.data.dataset_argo_geotiff_gridded`
+::: depth_recon.data.dataset_argo_geotiff_gridded
 
 ## Model Core  
 

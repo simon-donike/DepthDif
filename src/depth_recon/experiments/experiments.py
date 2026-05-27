@@ -1,7 +1,7 @@
 # Example:
 # /work/envs/depth/bin/python src/depth_recon/experiments/experiments.py \
 #   --model-config src/depth_recon/configs/px_space/model_config.yaml \
-#   --data-config src/depth_recon/configs/px_space/data_ostia_argo_netcdf.yaml \
+#   --data-config src/depth_recon/configs/px_space/training_super_config.yaml \
 #   --train-config src/depth_recon/configs/px_space/training_config.yaml \
 #   --checkpoint logs/2026-02-25_12-32-00/last.ckpt \
 #   --output-dir temp/experiments/conditioning_ablations \
@@ -55,7 +55,7 @@ from depth_recon.utils.normalizations import PLOT_CMAP, temperature_normalize
 from depth_recon.utils.stretching import minmax_stretch
 
 MODEL_CONFIG_PATH = str(config_path("px_space", "model_config.yaml"))
-DATA_CONFIG_PATH = str(config_path("px_space", "data_ostia_argo_netcdf.yaml"))
+DATA_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
 TRAIN_CONFIG_PATH = str(config_path("px_space", "training_config.yaml"))
 
 LOADER_SPLIT = "val"

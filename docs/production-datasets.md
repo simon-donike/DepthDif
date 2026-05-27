@@ -3,8 +3,7 @@
 This page documents the maintained production dataset path. The active pixel
 workflow reads the self-contained Hugging Face-style dataset folder at
 `/work/data/OceanVariableReconstruction` through
-`ArgoGeoTIFFGriddedPatchDataset`. The legacy NetCDF dataset remains in the code
-for older experiments but is not the production dataloader path.
+`ArgoGeoTIFFGriddedPatchDataset`, the maintained production dataloader path.
 
 Use [Data Sources](data-source.md) for native product properties,
 [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling,

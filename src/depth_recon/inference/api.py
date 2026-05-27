@@ -22,16 +22,18 @@ import pandas as pd
 import torch
 import yaml
 
-from depth_recon.data.dataset_argo_netcdf_gridded import (
+from depth_recon.data.dataset_grid_utils import (
     DEFAULT_LAND_MASK_PATH,
-    ArgoNetCDFStore,
-    PatchAxes,
-    TimedNetCDFStore,
     _build_land_mask_patch_table,
     _center_lon_deg,
     _GridParams,
     _normalize_lon,
     _parse_force_include_regions,
+)
+from depth_recon.data.netcdf_sources import (
+    ArgoNetCDFStore,
+    PatchAxes,
+    TimedNetCDFStore,
 )
 from depth_recon.inference.core import (
     INFERENCE_SAMPLERS,
@@ -143,7 +145,7 @@ ResolveProgressCallback = Callable[[str, str, Path], None]
 PUBLIC_DATA_CONFIG: dict[str, object] = {
     "dataset": {
         "core": {
-            "dataset_variant": "argo_netcdf_gridded",
+            "dataset_variant": "argo_geotiff_gridded",
             "dataloader_type": "light",
         },
         "grid": {

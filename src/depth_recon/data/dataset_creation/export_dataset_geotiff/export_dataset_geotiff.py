@@ -53,7 +53,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
     filter_argo_files_by_date_range,
     scan_timed_files,
 )
-from depth_recon.data.dataset_argo_netcdf_gridded import (
+from depth_recon.data.netcdf_sources import (
     _align_argo_profile_to_glorys_depths,
 )
 

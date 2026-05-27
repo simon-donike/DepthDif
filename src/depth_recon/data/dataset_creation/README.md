@@ -9,8 +9,7 @@ Folder layout:
   EN4/ARGO, GLORYS, OSTIA, SSS, and sea-level NetCDF files.
 - `data_download_packaged/`: packaged dataset download and extraction helpers.
 - `export_aligned_argo/`: aligned ARGO export workflow scripts, source variable
-  names, and NetCDF source-file utilities used by
-  `ArgoNetCDFGriddedPatchDataset`.
+  names, and NetCDF source-file utilities used by the GeoTIFF export pipeline.
 - `export_dataset_geotiff/`: aligned uint8 GeoTIFF export workflow for dense
   GLORYS, OSTIA, sea-level, and SSS rasters plus a compact grid-indexed ARGO
   profile zarr.
@@ -69,7 +68,7 @@ START_DATE=2010-01-01 END_DATE=2024-07-31 \
   /data1/datasets/depth_v2/sss_daily
 ```
 
-The current pixel training path first exports these sources into the GeoTIFF store used by `training_super_config.yaml`. Legacy NetCDF dataset code can still read the raw files directly for tests and older experiments.
+The current pixel training path first exports these sources into the GeoTIFF store used by `training_super_config.yaml`.
 
 ## Export GeoTIFF Raster Training Stores
 
