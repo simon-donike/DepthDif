@@ -2141,7 +2141,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         batch: dict[str, Any],
         batch_idx: int,
         dataloader_idx: int = 0,
-        num_samples: int = 8,
+        num_samples: int = 20,
         sampler: torch.nn.Module | None = None,
         collapse_channels: bool = True,
     ) -> dict[str, Any]:

@@ -74,7 +74,7 @@ The default public workflow is:
 8. Load OSTIA as the EO surface-conditioning channel, or use an all-zero EO
    channel when OSTIA is disabled.
 9. Run `PixelDiffusionConditional.predict_step(...)` in batches.
-10. Optionally run `uncertainty_step(..., num_samples=5)` when `export_uncertainty=True` or `--export-uncertainty` is set.
+10. Optionally run `uncertainty_step(..., num_samples=20)` when `export_uncertainty=True` or `--export-uncertainty` is set.
 11. Stitch overlapping patch predictions into depth-level GeoTIFFs and write
     GeoJSON/CSV/YAML metadata.
 
@@ -202,7 +202,7 @@ It contains:
 | Output | Meaning |
 | --- | --- |
 | `depthdif_argo_<YYYYMMDD>_prediction_<depth>.tif` | stitched prediction raster for each exported depth level |
-| `depthdif_argo_<YYYYMMDD>_uncertainty.tif` | optional 5-sample 1-channel prediction uncertainty raster |
+| `depthdif_argo_<YYYYMMDD>_uncertainty.tif` | optional 20-sample 1-channel prediction uncertainty raster |
 | `depthdif_argo_<YYYYMMDD>_argo_points.geojson` | observed ARGO point locations for the selected inference window |
 | `depthdif_argo_<YYYYMMDD>_patch_splits.geojson` | selected inference patch polygons |
 | `selected_patches.csv` | patch metadata used for the run |
@@ -224,7 +224,7 @@ valid `glorys_dir` is supplied.
 | `min_ocean_fraction` / `--min-ocean-fraction` | controls how much ocean a selected patch must contain |
 | `sigma` / `--sigma` | applies export-time Gaussian smoothing to prediction rasters; pass `0` to disable |
 | `export_uncertainty` / `--export-uncertainty` | writes one stitched 1-channel uncertainty GeoTIFF for the selected week |
-| `uncertainty_num_samples` / `--uncertainty-num-samples` | number of repeated generations used for uncertainty; default is 5 |
+| `uncertainty_num_samples` / `--uncertainty-num-samples` | number of repeated generations used for uncertainty; default is 20 |
 | `strict_load` / `--strict-load` | loads checkpoint weights with `strict=True` |
 | `force_download` / `--force-download` | refreshes cached artifacts/source files |
 
