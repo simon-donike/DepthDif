@@ -51,7 +51,8 @@
 .standalone-globe-header__content {
   display: grid;
   gap: 0.35rem;
-  width: fit-content;
+  justify-items: start;
+  width: max-content;
   max-width: min(36rem, calc(100vw - 12rem));
   padding: 0.95rem 1.1rem;
   border: 1px solid rgba(124, 200, 255, 0.16);
@@ -63,6 +64,8 @@
 }
 
 .standalone-globe-header__eyebrow {
+  display: inline-block;
+  max-width: 100%;
   color: #7cc8ff;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -72,13 +75,14 @@
 
 .standalone-globe-header__title {
   margin: 0;
+  max-width: 100%;
   font-size: clamp(1.75rem, 2vw + 1rem, 2.7rem);
   line-height: 1.1;
 }
 
 .standalone-globe-header__text {
   margin: 0;
-  max-width: 34rem;
+  max-width: min(34rem, 100%);
   color: rgba(215, 233, 247, 0.82);
   white-space: pre-line;
 }
