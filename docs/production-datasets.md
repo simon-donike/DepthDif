@@ -54,7 +54,7 @@ The same world grid is reused every time the dataset is instantiated. That makes
 the patch locations deterministic: changing the date range changes which
 timesteps are available, but it does not move the patch boundaries.
 
-![Global patch grid overview](assets/data/patch_grid/patch_grid_global_overview.png)
+![Global patch grid overview](assets/data/patch_grid/patch_grid_global_overview.webp)
 
 The global view shows all candidate patch windows. Transparent outlines make
 overlap visible: darker regions are covered by more candidate patches. Retained
@@ -86,13 +86,13 @@ The overview marks the configured bounding boxes and retained force-include patc
 the stride-32 GeoTIFF preset. The regional panel shows the corresponding 128-pixel
 patch footprints over the committed land mask.
 
-![Force-include region overview](assets/data/patch_grid/force_include_regions_overview.png)
+![Force-include region overview](assets/data/patch_grid/force_include_regions_overview.webp)
 
-![Force-included patch footprints by region](assets/data/patch_grid/force_include_regions_detail.png)
+![Force-included patch footprints by region](assets/data/patch_grid/force_include_regions_detail.webp)
 
-![Land fraction filter examples](assets/data/patch_grid/land_fraction_filter_examples.png)
+![Land fraction filter examples](assets/data/patch_grid/land_fraction_filter_examples.webp)
 
-![Mediterranean overlap example](assets/data/patch_grid/patch_overlap_regional_example.png)
+![Mediterranean overlap example](assets/data/patch_grid/patch_overlap_regional_example.webp)
 
 Overlapping patches mean an ARGO profile is not tied to only one spatial
 context. If a profile falls inside several retained patch bounds, it can
@@ -100,7 +100,7 @@ contribute support to each matching `(patch, date)` row. The stride-32 GeoTIFF
 preset increases these contexts compared with the earlier half-overlap grid,
 giving each profile more local visual neighborhoods during training.
 
-![ARGO profile in multiple patch contexts](assets/data/patch_grid/argo_profile_multiple_contexts.png)
+![ARGO profile in multiple patch contexts](assets/data/patch_grid/argo_profile_multiple_contexts.webp)
 
 ## Patch Registry Storage
 
@@ -124,7 +124,7 @@ valid; it does not store precomputed GLORYS, OSTIA, sea-level, or ARGO tensors.
 Representative surface-level training patches show the image-like model input
 and target layout used by the dataset.
 
-![Random surface-level dataset patches](assets/data/geotiff_dataset_random100_surface.png)
+![Random surface-level dataset patches](assets/data/geotiff_dataset_random100_surface.webp)
 
 ## Sample Read Path
 
@@ -186,4 +186,4 @@ boxes are also added as run-specific relaxed land-fraction regions before the
 patch registry is built. This lets narrow coastline-heavy areas enter finetuning
 without changing the default training grid.
 
-![Hard-region finetuning patch footprints](assets/data/patch_grid/hard_region_finetune_footprints_global.png)
+![Hard-region finetuning patch footprints](assets/data/patch_grid/hard_region_finetune_footprints_global.webp)

@@ -25,7 +25,7 @@
 
 
 <p align="center">
-  <img src="docs/assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
+  <img src="docs/assets/branding/banner_depthdif.webp" width="65%" style="border-radius: 12px;" />
 </p>
 
 # DepthDif
@@ -87,14 +87,14 @@ DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fi
 
 Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
-![depthdif_schema](docs/assets/figures/depthdif_schema.png)
+![depthdif_schema](docs/assets/figures/depthdif_schema.webp)
 
 ## Data Example
 
 Representative surface-level training patches:
 
 <p align="center">
-  <img src="docs/assets/data/geotiff_dataset_random100_surface.png" width="85%" alt="Random surface-level training dataset patches" />
+  <img src="docs/assets/data/geotiff_dataset_random100_surface.webp" width="85%" alt="Random surface-level training dataset patches" />
 </p>
 
 ## Training

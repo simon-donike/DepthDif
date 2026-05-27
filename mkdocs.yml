@@ -8,8 +8,8 @@ docs_dir: docs
 
 theme:
   name: material
-  logo: assets/branding/website_icon.png
-  favicon: assets/branding/website_icon.png
+  logo: assets/branding/website_icon.webp
+  favicon: assets/branding/website_icon.webp
   features:
     - navigation.tabs
     - navigation.sections

@@ -152,7 +152,7 @@ html.analysis-landing-root,
   overflow: hidden;
   background:
     linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
-    url("../assets/tiles/spatial_globe_tile.png") center / cover no-repeat,
+    url("../assets/tiles/spatial_globe_tile.webp") center / cover no-repeat,
     linear-gradient(135deg, rgba(11, 46, 79, 0.98), rgba(4, 19, 31, 0.96));
 }
 
@@ -188,14 +188,14 @@ html.analysis-landing-root,
 .analysis-landing-tile--spatial-error .analysis-landing-tile__media {
   background:
     linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
-    url("../assets/tiles/spatial_dashboard_tile.png") center / cover no-repeat,
+    url("../assets/tiles/spatial_dashboard_tile.webp") center / cover no-repeat,
     linear-gradient(135deg, rgba(4, 19, 31, 0.72), rgba(6, 23, 38, 0.82));
 }
 
 .analysis-landing-tile--temporal-error .analysis-landing-tile__media {
   background:
     linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
-    url("../assets/tiles/temporal_dashboard_tile.png") center / cover no-repeat,
+    url("../assets/tiles/temporal_dashboard_tile.webp") center / cover no-repeat,
     linear-gradient(135deg, rgba(4, 19, 31, 0.96), rgba(13, 70, 82, 0.86));
 }
 

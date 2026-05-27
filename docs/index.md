@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/banner_depthdif.png" width="65%" style="border-radius: 12px;" />
+  <img src="assets/branding/banner_depthdif.webp" width="65%" style="border-radius: 12px;" />
 </p>
 
 # Densifying Sparse Ocean Depth Observations
@@ -30,7 +30,7 @@ The repository currently supports:
 
 ## Model Description
 
-![depthdif_schema](assets/figures/depthdif_schema.png)
+![depthdif_schema](assets/figures/depthdif_schema.webp)
 
 DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context. See the full model details in [Model](model.md).
 
