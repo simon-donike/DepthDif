@@ -314,6 +314,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                     "prediction_tiles_url": "./prediction_tiles_surface",
                     "ground_truth_tiles_url": "./ground_truth_tiles_surface",
                     "absolute_error_tiles_url": "./absolute_error_tiles_surface",
+                    "uncertainty_tiles_url": "./uncertainty_tiles_surface",
                 }
             ],
         }
@@ -345,6 +346,10 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             prefixed["depth_levels"][0]["absolute_error_tiles_url"],
             "salinity/absolute_error_tiles_surface",
+        )
+        self.assertEqual(
+            prefixed["depth_levels"][0]["uncertainty_tiles_url"],
+            "salinity/uncertainty_tiles_surface",
         )
         self.assertEqual(
             hosted["prediction_tiles_url"],
@@ -1023,11 +1028,15 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             absolute_error_surface = (
                 run_dir / "global_top_band_20260105_absolute_error_surface.tif"
             )
+            uncertainty_surface = (
+                run_dir / "global_top_band_20260105_uncertainty_surface.tif"
+            )
             for path in (
                 prediction_surface,
                 prediction_100m,
                 ground_truth_surface,
                 absolute_error_surface,
+                uncertainty_surface,
             ):
                 path.write_text("placeholder", encoding="utf-8")
 
@@ -1044,6 +1053,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
                             "prediction_tif_path": prediction_surface.name,
                             "ground_truth_tif_path": ground_truth_surface.name,
                             "absolute_error_tif_path": absolute_error_surface.name,
+                            "uncertainty_tif_path": uncertainty_surface.name,
                         },
                         {
                             "suffix": "100m",
@@ -1068,6 +1078,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(
             depth_exports[0]["absolute_error_path"], absolute_error_surface
         )
+        self.assertEqual(depth_exports[0]["uncertainty_path"], uncertainty_surface)
         self.assertIsNone(depth_exports[1]["ground_truth_path"])
         self.assertEqual(depth_exports[1]["channel_index"], 1)
 

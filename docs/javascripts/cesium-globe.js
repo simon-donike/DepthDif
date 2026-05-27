@@ -670,7 +670,7 @@
       setToggleAvailable(state.elements.absoluteErrorToggle, hasAbsoluteErrorLayer(depthLevel));
     }
     if (state.elements.uncertaintyToggle) {
-      const uncertaintyAvailable = hasUncertaintyLayer(activeConfig);
+      const uncertaintyAvailable = hasUncertaintyLayer(activeConfig, depthLevel);
       setToggleAvailable(state.elements.uncertaintyToggle, uncertaintyAvailable);
       setToggleLabelHidden(state.elements.uncertaintyToggle, !uncertaintyAvailable);
     }
@@ -839,8 +839,11 @@
     return Boolean(depthLevel && depthLevel.absolute_error_tiles_url);
   }
 
-  function hasUncertaintyLayer(config) {
-    return Boolean(config && config.uncertainty_tiles_url);
+  function hasUncertaintyLayer(config, depthLevel) {
+    return Boolean(
+      (depthLevel && depthLevel.uncertainty_tiles_url) ||
+        (config && config.uncertainty_tiles_url)
+    );
   }
 
   function formatLegendValue(value, unitLabel) {
@@ -865,7 +868,7 @@
     const showUncertainty = Boolean(
       state.elements.uncertaintyToggle &&
         state.elements.uncertaintyToggle.checked &&
-        hasUncertaintyLayer(activeConfig)
+        hasUncertaintyLayer(activeConfig, depthLevel)
     );
     const showAbsoluteError = Boolean(
       state.elements.absoluteErrorToggle &&
@@ -873,7 +876,7 @@
         hasAbsoluteErrorLayer(depthLevel)
     );
     const unitLabel = showUncertainty
-      ? activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig)
+      ? depthLevel.uncertainty_value_unit_label || activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig)
       : depthLevel.absolute_error_value_unit_label || valueUnitLabel(activeConfig);
     const visible = showUncertainty || showAbsoluteError;
     errorLegend.hidden = !visible;
@@ -882,7 +885,7 @@
     }
     if (visible && state.elements.errorLegendMin) {
       const legendMin = showUncertainty
-        ? firstFiniteNumber([activeConfig.uncertainty_legend_min], 0.0)
+        ? firstFiniteNumber([depthLevel.uncertainty_legend_min, activeConfig.uncertainty_legend_min], 0.0)
         : firstFiniteNumber(
             [depthLevel.absolute_error_legend_min, depthLevel.absolute_error_legend_min_c],
             0.0
@@ -891,13 +894,13 @@
     }
     if (visible && state.elements.errorLegendMax) {
       const legendMax = showUncertainty
-        ? firstFiniteNumber([activeConfig.uncertainty_legend_max], NaN)
+        ? firstFiniteNumber([depthLevel.uncertainty_legend_max, activeConfig.uncertainty_legend_max], NaN)
         : firstFiniteNumber(
             [depthLevel.absolute_error_legend_max, depthLevel.absolute_error_legend_max_c],
             NaN
           );
       const colorScaleMax = showUncertainty
-        ? firstFiniteNumber([activeConfig.uncertainty_color_scale_max], NaN)
+        ? firstFiniteNumber([depthLevel.uncertainty_color_scale_max, activeConfig.uncertainty_color_scale_max], NaN)
         : firstFiniteNumber(
             [depthLevel.absolute_error_color_scale_max, depthLevel.absolute_error_color_scale_max_c],
             NaN
@@ -1383,11 +1386,11 @@
     const depthLevel = selectedDepthLevel(state);
     const activeConfig = activeVariableConfig(state);
     const rasterKey = activeRasterLayerKey(state);
-    if (rasterKey === "uncertainty" && hasUncertaintyLayer(activeConfig)) {
-      const unitLabel = activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig);
-      const legendMin = firstFiniteNumber([activeConfig.uncertainty_legend_min], 0.0);
-      const legendMax = firstFiniteNumber([activeConfig.uncertainty_legend_max], NaN);
-      const colorScaleMax = firstFiniteNumber([activeConfig.uncertainty_color_scale_max], NaN);
+    if (rasterKey === "uncertainty" && hasUncertaintyLayer(activeConfig, depthLevel)) {
+      const unitLabel = depthLevel.uncertainty_value_unit_label || activeConfig.uncertainty_value_unit_label || valueUnitLabel(activeConfig);
+      const legendMin = firstFiniteNumber([depthLevel.uncertainty_legend_min, activeConfig.uncertainty_legend_min], 0.0);
+      const legendMax = firstFiniteNumber([depthLevel.uncertainty_legend_max, activeConfig.uncertainty_legend_max], NaN);
+      const colorScaleMax = firstFiniteNumber([depthLevel.uncertainty_color_scale_max, activeConfig.uncertainty_color_scale_max], NaN);
       return {
         colorStops: ERROR_EXPORT_COLOR_STOPS,
         element: state.elements.errorLegend,
@@ -1832,7 +1835,11 @@
 
   async function addUncertaintyLayer(state) {
     const activeConfig = activeVariableConfig(state);
-    const uncertaintyUrl = resolveAssetUrl(activeConfig.uncertainty_tiles_url, state.configUrl);
+    const depthLevel = selectedDepthLevel(state);
+    const uncertaintyUrl = resolveAssetUrl(
+      depthLevel.uncertainty_tiles_url || activeConfig.uncertainty_tiles_url,
+      state.configUrl
+    );
     if (!uncertaintyUrl) {
       markToggleUnavailable(state.elements.uncertaintyToggle);
       setToggleLabelHidden(state.elements.uncertaintyToggle, true);

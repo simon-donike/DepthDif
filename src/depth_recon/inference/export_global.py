@@ -423,6 +423,7 @@ class ExportInferenceWrapper(nn.Module):
         export_uncertainty: bool = False,
         uncertainty_num_samples: int = DEFAULT_UNCERTAINTY_NUM_SAMPLES,
         uncertainty_sampler: nn.Module | None = None,
+        collapse_uncertainty_channels: bool = True,
         depth_channel_indices: Sequence[int] = (),
     ) -> None:
         super().__init__()
@@ -434,6 +435,7 @@ class ExportInferenceWrapper(nn.Module):
         self.export_uncertainty = bool(export_uncertainty)
         self.uncertainty_num_samples = int(uncertainty_num_samples)
         self.uncertainty_sampler = uncertainty_sampler
+        self.collapse_uncertainty_channels = bool(collapse_uncertainty_channels)
         self.depth_channel_indices = tuple(int(idx) for idx in depth_channel_indices)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -464,12 +466,23 @@ class ExportInferenceWrapper(nn.Module):
             )
             out["ground_truth_depth_stack"] = gt_depth_stack.contiguous()
         if self.export_uncertainty:
-            uncertainty = self.model.uncertainty_step(
-                batch,
-                batch_idx=0,
-                num_samples=int(self.uncertainty_num_samples),
-                sampler=self.uncertainty_sampler,
-            )
+            try:
+                uncertainty = self.model.uncertainty_step(
+                    batch,
+                    batch_idx=0,
+                    num_samples=int(self.uncertainty_num_samples),
+                    sampler=self.uncertainty_sampler,
+                    collapse_channels=bool(self.collapse_uncertainty_channels),
+                )
+            except TypeError:
+                if not self.collapse_uncertainty_channels:
+                    raise
+                uncertainty = self.model.uncertainty_step(
+                    batch,
+                    batch_idx=0,
+                    num_samples=int(self.uncertainty_num_samples),
+                    sampler=self.uncertainty_sampler,
+                )
             uncertainty_map = uncertainty.get(
                 f"uncertainty_{self.variable_spec.name}",
                 uncertainty.get("uncertainty"),
@@ -479,6 +492,8 @@ class ExportInferenceWrapper(nn.Module):
                     "Model uncertainty_step did not return an uncertainty map "
                     f"for {self.variable_spec.name}."
                 )
+            if not self.collapse_uncertainty_channels:
+                uncertainty_map = uncertainty_map[:, self.depth_channel_indices]
             out["uncertainty_map"] = uncertainty_map.contiguous()
         return out
 
@@ -2432,6 +2447,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Number of stochastic generations used by --export-uncertainty.",
     )
     parser.add_argument(
+        "--uncertainty-collapse-depth",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Collapse depth/channel uncertainty to one surface-independent raster. "
+            "By default uncertainty is exported for each selected depth level."
+        ),
+    )
+    parser.add_argument(
         "--uncertainty-only",
         action="store_true",
         help=(
@@ -2695,6 +2719,9 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
     uncertainty_num_samples = int(
         getattr(args, "uncertainty_num_samples", DEFAULT_UNCERTAINTY_NUM_SAMPLES)
     )
+    uncertainty_collapse_depth = bool(
+        getattr(args, "uncertainty_collapse_depth", False)
+    )
     if export_uncertainty and uncertainty_num_samples < 2:
         raise ValueError("--uncertainty-num-samples must be at least 2.")
     if batch_size < 1:
@@ -2841,14 +2868,27 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         if collect_full_depth_error_analysis
         else {}
     )
-    uncertainty_accumulator = (
-        create_raster_accumulator(
-            root_dir=scratch_dir,
-            stem="uncertainty",
-            layout=layout,
-        )
+    uncertainty_accumulators = (
+        {
+            (
+                "collapsed" if uncertainty_collapse_depth else level.suffix
+            ): create_raster_accumulator(
+                root_dir=scratch_dir,
+                stem=(
+                    "uncertainty"
+                    if uncertainty_collapse_depth
+                    else f"uncertainty_{level.suffix}"
+                ),
+                layout=layout,
+            )
+            for level in (
+                depth_export_levels[:1]
+                if uncertainty_collapse_depth
+                else depth_export_levels
+            )
+        }
         if export_uncertainty
-        else None
+        else {}
     )
     argo_points_geojson_path = (
         run_dir / f"{run_stem}_argo_points.geojson" if export_ground_truth else None
@@ -2899,6 +2939,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"extra_gaussian_blur_sigma={float(args.sigma)}, "
         f"export_uncertainty={export_uncertainty}, "
         f"uncertainty_num_samples={uncertainty_num_samples}, "
+        f"uncertainty_collapse_depth={uncertainty_collapse_depth}, "
         f"uncertainty_sampler={uncertainty_sampling_metadata['sampler']}, "
         f"uncertainty_ddim_num_timesteps="
         f"{int(uncertainty_sampling_metadata['ddim_num_timesteps'])}, "
@@ -2970,6 +3011,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         export_uncertainty=export_uncertainty,
         uncertainty_num_samples=uncertainty_num_samples,
         uncertainty_sampler=uncertainty_sampler,
+        collapse_uncertainty_channels=uncertainty_collapse_depth,
         depth_channel_indices=depth_channel_indices,
     )
     if use_multi_gpu:
@@ -3016,7 +3058,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
         uncertainty_batch = (
             outputs["uncertainty_map"].detach().float().cpu().numpy()
-            if uncertainty_accumulator is not None
+            if uncertainty_accumulators
             else None
         )
         eo_denorm_batch = (
@@ -3124,14 +3166,27 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
                         patch_values=pred_patch_values - gt_patch_values,
                         layout=layout,
                     )
-            if uncertainty_batch is not None and uncertainty_accumulator is not None:
-                _accumulate_patch_into_arrays(
-                    uncertainty_accumulator.sum_array,
-                    uncertainty_accumulator.count_array,
-                    row=row,
-                    patch_values=uncertainty_batch[local_idx, 0],
-                    layout=layout,
-                )
+            if uncertainty_batch is not None and uncertainty_accumulators:
+                if uncertainty_collapse_depth:
+                    uncertainty_items = [("collapsed", 0)]
+                else:
+                    uncertainty_items = [
+                        (level.suffix, depth_idx)
+                        for depth_idx, level in enumerate(depth_export_levels)
+                    ]
+                for uncertainty_suffix, uncertainty_depth_idx in uncertainty_items:
+                    uncertainty_accumulator = uncertainty_accumulators[
+                        uncertainty_suffix
+                    ]
+                    _accumulate_patch_into_arrays(
+                        uncertainty_accumulator.sum_array,
+                        uncertainty_accumulator.count_array,
+                        row=row,
+                        patch_values=uncertainty_batch[
+                            local_idx, uncertainty_depth_idx
+                        ],
+                        layout=layout,
+                    )
             if argo_points_writer is not None:
                 # Use the dataset's horizontal support mask so the globe shows one
                 # marker per observed location instead of one marker per depth level.
@@ -3239,8 +3294,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         _flush_accumulator(accumulator)
     for accumulator in signed_error_accumulators.values():
         _flush_accumulator(accumulator)
-    if uncertainty_accumulator is not None:
-        _flush_accumulator(uncertainty_accumulator)
+    for accumulator in uncertainty_accumulators.values():
+        _flush_accumulator(accumulator)
     if argo_points_writer is not None:
         argo_points_writer.close()
     patch_splits_writer.close()
@@ -3464,49 +3519,80 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         )
 
     uncertainty_tif_path: Path | None = None
-    if uncertainty_accumulator is not None:
-        uncertainty_tif_path = run_dir / f"{run_stem}_uncertainty.tif"
-        write_global_top_band_geotiff(
-            output_path=uncertainty_tif_path,
-            accumulator=uncertainty_accumulator,
-            layout=layout,
-            nodata=float(args.nodata),
-            band_description=(f"uncertainty_std_{variable_spec.band_description_unit}"),
-            tags={
-                "selected_date": str(int(selection.selected_date)),
-                "selected_patch_count": str(int(len(selection.indices))),
-                "variable": variable_spec.name,
-                "variable_label": variable_spec.label,
-                "land_mask_path": str(effective_land_mask_path),
-                "land_zeroed": "false",
-                "land_masked_to_nodata": "true",
-                "value_units": variable_spec.value_units,
-                "value_unit_label": variable_spec.value_unit_label,
-                "value_space": f"generation_uncertainty_std_{variable_spec.band_description_unit}",
-                "source": (
-                    f"DepthDif global weekly {variable_spec.name} uncertainty export"
-                ),
-                "checkpoint_path": str(ckpt_path),
-                "kind": "uncertainty",
-                "uncertainty_stat": "std",
-                "uncertainty_num_samples": str(int(uncertainty_num_samples)),
-                "sampler": str(uncertainty_sampling_metadata["sampler"]),
-                "diffusion_num_timesteps": str(
-                    int(uncertainty_sampling_metadata["diffusion_num_timesteps"])
-                ),
-                "ddim_num_timesteps": str(
-                    int(uncertainty_sampling_metadata["ddim_num_timesteps"])
-                ),
-                "source_value_transform": (
-                    "std(model_prediction_denormalized_repeated_samples)"
-                ),
-                "prediction_zero_masked_to_nodata": "false",
-            },
-            land_mask=land_mask,
-            prediction_zero_masked_to_nodata=False,
-            periodic_longitude_blend_width=longitude_wrap_blend_width,
+    if uncertainty_accumulators:
+        uncertainty_levels = (
+            [depth_export_levels[0]]
+            if uncertainty_collapse_depth
+            else depth_export_levels
         )
-        print(f"Wrote uncertainty GeoTIFF: {uncertainty_tif_path}")
+        uncertainty_record_paths: dict[str, Path] = {}
+        for level in uncertainty_levels:
+            uncertainty_key = (
+                "collapsed" if uncertainty_collapse_depth else level.suffix
+            )
+            uncertainty_tif_path_for_level = (
+                run_dir / f"{run_stem}_uncertainty.tif"
+                if uncertainty_collapse_depth
+                else run_dir / f"{run_stem}_uncertainty_{level.suffix}.tif"
+            )
+            if uncertainty_tif_path is None:
+                uncertainty_tif_path = uncertainty_tif_path_for_level
+            uncertainty_record_paths[level.suffix] = uncertainty_tif_path_for_level
+            write_global_top_band_geotiff(
+                output_path=uncertainty_tif_path_for_level,
+                accumulator=uncertainty_accumulators[uncertainty_key],
+                layout=layout,
+                nodata=float(args.nodata),
+                band_description=(
+                    f"uncertainty_std_{level.suffix}_{variable_spec.band_description_unit}"
+                ),
+                tags={
+                    "selected_date": str(int(selection.selected_date)),
+                    "selected_patch_count": str(int(len(selection.indices))),
+                    "variable": variable_spec.name,
+                    "variable_label": variable_spec.label,
+                    "depth_label": level.label,
+                    "requested_depth_m": f"{float(level.requested_depth_m):.3f}",
+                    "actual_depth_m": f"{float(level.actual_depth_m):.3f}",
+                    "channel_index": str(int(level.channel_index)),
+                    "land_mask_path": str(effective_land_mask_path),
+                    "land_zeroed": "false",
+                    "land_masked_to_nodata": "true",
+                    "value_units": variable_spec.value_units,
+                    "value_unit_label": variable_spec.value_unit_label,
+                    "value_space": f"generation_uncertainty_std_{variable_spec.band_description_unit}",
+                    "source": (
+                        f"DepthDif global weekly {variable_spec.name} uncertainty export"
+                    ),
+                    "checkpoint_path": str(ckpt_path),
+                    "kind": "uncertainty",
+                    "uncertainty_stat": "std",
+                    "uncertainty_num_samples": str(int(uncertainty_num_samples)),
+                    "uncertainty_collapse_depth": str(
+                        bool(uncertainty_collapse_depth)
+                    ).lower(),
+                    "sampler": str(uncertainty_sampling_metadata["sampler"]),
+                    "diffusion_num_timesteps": str(
+                        int(uncertainty_sampling_metadata["diffusion_num_timesteps"])
+                    ),
+                    "ddim_num_timesteps": str(
+                        int(uncertainty_sampling_metadata["ddim_num_timesteps"])
+                    ),
+                    "source_value_transform": (
+                        "std(model_prediction_denormalized_repeated_samples)"
+                    ),
+                    "prediction_zero_masked_to_nodata": "false",
+                },
+                land_mask=land_mask,
+                prediction_zero_masked_to_nodata=False,
+                periodic_longitude_blend_width=longitude_wrap_blend_width,
+            )
+            print(f"Wrote uncertainty GeoTIFF: {uncertainty_tif_path_for_level}")
+        for record in depth_export_records:
+            record_path = uncertainty_record_paths.get(str(record["suffix"]))
+            record["uncertainty_tif_path"] = (
+                None if record_path is None else _summary_artifact_path(record_path)
+            )
 
     prediction_tif_path = (
         None
@@ -3590,6 +3676,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         ),
         "prediction_runs_per_patch": 1 if export_prediction else 0,
         "export_uncertainty": bool(export_uncertainty),
+        "uncertainty_collapse_depth": bool(uncertainty_collapse_depth),
         "uncertainty_num_samples": (
             int(uncertainty_num_samples) if export_uncertainty else None
         ),
@@ -3699,8 +3786,8 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         _cleanup_accumulator(accumulator)
     for accumulator in signed_error_accumulators.values():
         _cleanup_accumulator(accumulator)
-    if uncertainty_accumulator is not None:
-        _cleanup_accumulator(uncertainty_accumulator)
+    for accumulator in uncertainty_accumulators.values():
+        _cleanup_accumulator(accumulator)
     scratch_dir.rmdir()
 
     if production_dir is not None:

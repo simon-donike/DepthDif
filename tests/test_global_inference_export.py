@@ -115,16 +115,29 @@ class _UncertaintyPredictModel(nn.Module):
         batch_idx: int,
         num_samples: int,
         sampler: nn.Module | None = None,
+        collapse_channels: bool = True,
     ) -> dict[str, torch.Tensor]:
-        """Return one field-specific 1-channel uncertainty map."""
+        """Return field-specific uncertainty maps."""
         _ = batch
         self.uncertainty_calls.append((int(batch_idx), int(num_samples)))
         self.last_uncertainty_sampler = sampler
-        return {
-            "uncertainty_salinity": torch.tensor(
+        self.last_collapse_channels = bool(collapse_channels)
+        if collapse_channels:
+            uncertainty = torch.tensor(
                 [[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32
             )
-        }
+        else:
+            uncertainty = torch.tensor(
+                [
+                    [
+                        [[0.25, 0.50], [0.75, 1.00]],
+                        [[1.25, 1.50], [1.75, 2.00]],
+                        [[2.25, 2.50], [2.75, 3.00]],
+                    ]
+                ],
+                dtype=torch.float32,
+            )
+        return {"uncertainty_salinity": uncertainty}
 
 
 class _DecodedGlorysDataset:
@@ -277,9 +290,41 @@ class TestGlobalInferenceExport(unittest.TestCase):
             model.uncertainty_calls, [(0, DEFAULT_UNCERTAINTY_NUM_SAMPLES)]
         )
         self.assertIsInstance(model.last_uncertainty_sampler, nn.Identity)
+        self.assertTrue(model.last_collapse_channels)
         torch.testing.assert_close(
             outputs["uncertainty_map"],
             torch.tensor([[[[0.25, 0.50], [0.75, 1.00]]]], dtype=torch.float32),
+        )
+
+    def test_export_inference_wrapper_keeps_depth_uncertainty_when_requested(
+        self,
+    ) -> None:
+        model = _UncertaintyPredictModel()
+        wrapper = ExportInferenceWrapper(
+            model,
+            variable_spec=EXPORT_VARIABLE_SPECS["salinity"],
+            export_ground_truth=False,
+            export_full_prediction_stack=False,
+            export_uncertainty=True,
+            uncertainty_num_samples=DEFAULT_UNCERTAINTY_NUM_SAMPLES,
+            collapse_uncertainty_channels=False,
+            depth_channel_indices=(0, 2),
+        )
+
+        outputs = wrapper({})
+
+        self.assertFalse(model.last_collapse_channels)
+        torch.testing.assert_close(
+            outputs["uncertainty_map"],
+            torch.tensor(
+                [
+                    [
+                        [[0.25, 0.50], [0.75, 1.00]],
+                        [[2.25, 2.50], [2.75, 3.00]],
+                    ]
+                ],
+                dtype=torch.float32,
+            ),
         )
 
     def test_load_ground_truth_patch_celsius_uses_decoded_dataset_values(self) -> None:
@@ -334,6 +379,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertIsNone(args.uncertainty_ddim_num_timesteps)
         self.assertFalse(args.export_uncertainty)
         self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
+        self.assertFalse(args.uncertainty_collapse_depth)
         self.assertEqual(args.full_sample_count, DEFAULT_FULL_SAMPLE_COUNT)
 
     def test_parser_accepts_ddim_sampler_options(self) -> None:

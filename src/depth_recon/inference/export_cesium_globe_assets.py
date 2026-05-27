@@ -150,6 +150,7 @@ def _surface_depth_export(
     prediction_path: Path,
     ground_truth_path: Path | None,
     absolute_error_path: Path | None = None,
+    uncertainty_path: Path | None = None,
 ) -> dict[str, Any]:
     return {
         "suffix": "surface",
@@ -160,6 +161,7 @@ def _surface_depth_export(
         "prediction_path": prediction_path,
         "ground_truth_path": ground_truth_path,
         "absolute_error_path": absolute_error_path,
+        "uncertainty_path": uncertainty_path,
     }
 
 
@@ -411,6 +413,10 @@ def _resolve_depth_export_artifacts(
                     run_summary.get("absolute_error_tif_path"),
                     run_dir=run_dir,
                 ),
+                uncertainty_path=_coerce_existing_path(
+                    run_summary.get("uncertainty_tif_path"),
+                    run_dir=run_dir,
+                ),
             )
         ]
 
@@ -435,6 +441,10 @@ def _resolve_depth_export_artifacts(
             raw_export.get("absolute_error_tif_path"),
             run_dir=run_dir,
         )
+        uncertainty_export_path = _coerce_existing_path(
+            raw_export.get("uncertainty_tif_path"),
+            run_dir=run_dir,
+        )
         depth_exports.append(
             {
                 "suffix": str(raw_export.get("suffix", prediction_export_path.stem)),
@@ -445,6 +455,7 @@ def _resolve_depth_export_artifacts(
                 "prediction_path": prediction_export_path,
                 "ground_truth_path": ground_truth_export_path,
                 "absolute_error_path": absolute_error_export_path,
+                "uncertainty_path": uncertainty_export_path,
             }
         )
 
@@ -455,6 +466,10 @@ def _resolve_depth_export_artifacts(
                 ground_truth_path=ground_truth_path,
                 absolute_error_path=_coerce_existing_path(
                     run_summary.get("absolute_error_tif_path"),
+                    run_dir=run_dir,
+                ),
+                uncertainty_path=_coerce_existing_path(
+                    run_summary.get("uncertainty_tif_path"),
                     run_dir=run_dir,
                 ),
             )
@@ -1404,6 +1419,7 @@ def export_cesium_globe_assets(
     absolute_error_tiles_dir: Path | None = None
     uncertainty_tiles_dir: Path | None = None
     uncertainty_scale: dict[str, float | int] | None = None
+    has_depth_uncertainty = False
     for depth_export in depth_exports:
         suffix = str(depth_export["suffix"])
         prediction_export_path = Path(depth_export["prediction_path"])
@@ -1488,6 +1504,48 @@ def export_cesium_globe_assets(
             )
             if absolute_error_tiles_dir is None:
                 absolute_error_tiles_dir = absolute_error_tiles_dir_for_depth
+
+        uncertainty_tiles_dir_for_depth: Path | None = None
+        uncertainty_scale_for_depth: dict[str, float | int] | None = None
+        uncertainty_export_path = depth_export.get("uncertainty_path")
+        if uncertainty_export_path is not None:
+            has_depth_uncertainty = True
+            uncertainty_export_path = Path(uncertainty_export_path)
+            _validate_raster_transparency_contract(uncertainty_export_path)
+            uncertainty_scale_for_depth = _absolute_error_color_scale(
+                uncertainty_export_path
+            )
+            uncertainty_ramp_path = (
+                temp_dir / f"{uncertainty_export_path.stem}_green_red_ramp.txt"
+            )
+            _write_absolute_error_color_ramp(
+                uncertainty_ramp_path,
+                color_scale_min_c=float(
+                    uncertainty_scale_for_depth["color_scale_min_c"]
+                ),
+                color_scale_max_c=float(
+                    uncertainty_scale_for_depth["color_scale_max_c"]
+                ),
+                valid_max_c=float(uncertainty_scale_for_depth["valid_max_c"]),
+            )
+            uncertainty_colorized_path = (
+                temp_dir / f"{uncertainty_export_path.stem}_colorized.tif"
+            )
+            _colorize_raster(
+                uncertainty_export_path,
+                uncertainty_colorized_path,
+                color_ramp_path=uncertainty_ramp_path,
+                **raster_edge_kwargs,
+            )
+            uncertainty_tiles_dir_for_depth = globe_dir / f"uncertainty_tiles_{suffix}"
+            _run_gdal2tiles(
+                uncertainty_colorized_path,
+                uncertainty_tiles_dir_for_depth,
+                extra_zoom_levels=extra_zoom_levels,
+            )
+            if uncertainty_tiles_dir is None:
+                uncertainty_tiles_dir = uncertainty_tiles_dir_for_depth
+                uncertainty_scale = uncertainty_scale_for_depth
 
         config_depth_levels.append(
             {
@@ -1577,10 +1635,39 @@ def export_cesium_globe_assets(
                 "absolute_error_scale_max_percentile": (
                     DEFAULT_ABSOLUTE_ERROR_SCALE_MAX_PERCENTILE
                 ),
+                "uncertainty_tiles_url": (
+                    None
+                    if uncertainty_tiles_dir_for_depth is None
+                    else _resolve_layer_url(
+                        uncertainty_tiles_dir_for_depth.name,
+                        public_base_url=public_base_url,
+                    )
+                ),
+                "uncertainty_color_palette": DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE,
+                "uncertainty_value_units": str(variable_metadata["value_units"]),
+                "uncertainty_value_unit_label": str(
+                    variable_metadata["value_unit_label"]
+                ),
+                "uncertainty_color_scale_min": (
+                    None
+                    if uncertainty_scale_for_depth is None
+                    else float(uncertainty_scale_for_depth["color_scale_min_c"])
+                ),
+                "uncertainty_color_scale_max": (
+                    None
+                    if uncertainty_scale_for_depth is None
+                    else float(uncertainty_scale_for_depth["color_scale_max_c"])
+                ),
+                "uncertainty_legend_min": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
+                "uncertainty_legend_max": (
+                    None
+                    if uncertainty_scale_for_depth is None
+                    else int(uncertainty_scale_for_depth["legend_max_c"])
+                ),
             }
         )
 
-    if uncertainty_path is not None:
+    if uncertainty_path is not None and not has_depth_uncertainty:
         _validate_raster_transparency_contract(uncertainty_path)
         uncertainty_scale = _absolute_error_color_scale(uncertainty_path)
         uncertainty_ramp_path = temp_dir / f"{uncertainty_path.stem}_green_red_ramp.txt"
@@ -1940,7 +2027,14 @@ def export_cesium_globe_assets(
                 if depth_level.get("absolute_error_tiles_url") is not None
             )
         ),
-        "uncertainty_tile_set_count": int(uncertainty_tiles_dir is not None),
+        "uncertainty_tile_set_count": int(
+            sum(
+                1
+                for depth_level in config_depth_levels
+                if depth_level.get("uncertainty_tiles_url") is not None
+            )
+            or int(uncertainty_tiles_dir is not None)
+        ),
         "base_map_tile_set_count": int(base_map_tiles_dir is not None),
         "raster_edge_erosion_pixels": int(raster_edge_erosion_pixels),
         "raster_edge_feather_pixels": int(raster_edge_feather_pixels),
@@ -2013,7 +2107,7 @@ def _prefix_variable_config_asset_urls(
         if not isinstance(depth_level, dict):
             continue
         rewritten_depth = dict(depth_level)
-        for key in ASSET_URL_KEYS[:3]:
+        for key in ASSET_URL_KEYS[:4]:
             rewritten_depth[key] = _prefix_variable_asset_url(
                 rewritten_depth.get(key),
                 variable=variable,

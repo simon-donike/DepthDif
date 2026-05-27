@@ -109,6 +109,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.condition_use_land_mask` | `true` | Appends GLORYS spatial support to conditioning. |
 | `model.clamp_known_pixels` | `false` | Re-injects known values during reverse sampling when enabled. |
 | `model.mask_loss_with_valid_pixels` | `true` | Restricts loss to task-valid support intersected with `land_mask`. |
+| `model.coastal_loss.*` | `enabled=true`, `radius_px=5`, `weight=3.0`, `ramp=linear` | Upweights supervised ocean pixels within a configurable pixel radius of land. |
 | `model.parameterization` | `x0` | Diffusion target, either `x0` or `epsilon`. |
 | `model.log_intermediates` | `false` | Captures reverse-process intermediates when enabled by the caller. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |

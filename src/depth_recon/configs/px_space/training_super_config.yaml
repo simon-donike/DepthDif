@@ -176,6 +176,11 @@ model:  # pixel diffusion model settings
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling
   mask_loss_with_valid_pixels: true  # mask loss to valid support
+  coastal_loss:  # emphasize supervised ocean pixels near land
+    enabled: true  # enable distance-to-land loss weighting
+    radius_px: 5  # ocean-pixel radius around land to upweight
+    weight: 3.0  # maximum loss multiplier for land-adjacent ocean pixels
+    ramp: linear  # distance falloff for coastal weights
   parameterization: x0  # diffusion target parameterization
   log_intermediates: false  # log reverse-chain images
   ema:  # exponential moving average

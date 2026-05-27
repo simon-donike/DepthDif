@@ -34,7 +34,7 @@ Hard-area finetuning example:
   --set data.dataset.finetune_sampling.enabled=true
 ```
 
-This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only.
+This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only. The model can also emphasize coastal supervised pixels with `model.coastal_loss.*`; see [Coastal Loss Weighting For Finetuning](model.md#coastal-loss-weighting-for-finetuning).
 
 Ambient-occlusion objective example (self-supervised on `x`):
 

@@ -651,6 +651,55 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
+    @classmethod
+    def _build_coastal_loss_weights(
+        cls,
+        land_mask: torch.Tensor | None,
+        reference: torch.Tensor,
+        *,
+        enabled: bool,
+        radius_px: int,
+        weight: float,
+        ramp: str,
+    ) -> torch.Tensor | None:
+        """Build per-pixel loss weights that emphasize ocean cells near land."""
+        if not enabled or land_mask is None:
+            return None
+        radius_px = int(radius_px)
+        weight = float(weight)
+        ramp = str(ramp).strip().lower()
+        if radius_px <= 0 or weight <= 1.0:
+            return None
+        if ramp != "linear":
+            raise ValueError("coastal_loss.ramp currently supports only 'linear'.")
+
+        spatial_reference = reference[:, :1]
+        ocean_mask = cls._build_land_mask(land_mask, spatial_reference)
+        if ocean_mask is None:
+            return None
+        land = (1.0 - ocean_mask).clamp(0.0, 1.0)
+        coastal = torch.ones_like(ocean_mask)
+        previous_dilation = land
+        for distance_px in range(1, radius_px + 1):
+            dilation = F.max_pool2d(
+                land,
+                kernel_size=2 * distance_px + 1,
+                stride=1,
+                padding=distance_px,
+            )
+            ring = (dilation - previous_dilation).clamp(0.0, 1.0) * ocean_mask
+            # Linear ramp gives land-adjacent ocean the full boost and decays outward.
+            scale = (radius_px - distance_px + 1) / float(radius_px)
+            coastal = torch.where(
+                ring > 0.0,
+                torch.full_like(coastal, 1.0 + (weight - 1.0) * scale),
+                coastal,
+            )
+            previous_dilation = dilation
+        return coastal.expand_as(reference).to(
+            device=reference.device, dtype=reference.dtype
+        )
+
     def p_loss(
         self,
         output: torch.Tensor,
@@ -660,6 +709,10 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         further_valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
+        coastal_loss_enabled: bool = False,
+        coastal_loss_radius_px: int = 0,
+        coastal_loss_weight: float = 1.0,
+        coastal_loss_ramp: str = "linear",
         apply_further_corruption_to_noisy_branch: bool = False,
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
@@ -673,6 +726,10 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             further_valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             land_mask (torch.Tensor | None): GLORYS spatial ocean/domain support mask.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
+            coastal_loss_enabled (bool): Increase supervised ocean-pixel loss near land.
+            coastal_loss_radius_px (int): Pixel radius around land to upweight.
+            coastal_loss_weight (float): Maximum land-adjacent loss weight.
+            coastal_loss_ramp (str): Distance falloff mode for coastal weights.
             apply_further_corruption_to_noisy_branch (bool): Boolean flag controlling behavior.
             coord (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
@@ -718,8 +775,19 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         # manually computes MSE loss over masked pixels
         diff = (target - prediction) ** 2
-        masked_diff = diff * generated_mask
-        denom = generated_mask.sum()
+        coastal_weights = self._build_coastal_loss_weights(
+            land_mask,
+            target,
+            enabled=coastal_loss_enabled,
+            radius_px=coastal_loss_radius_px,
+            weight=coastal_loss_weight,
+            ramp=coastal_loss_ramp,
+        )
+        weighted_mask = generated_mask
+        if coastal_weights is not None:
+            weighted_mask = weighted_mask * coastal_weights
+        masked_diff = diff * weighted_mask
+        denom = weighted_mask.sum()
         if denom.item() <= 0:
             return torch.zeros((), device=diff.device, dtype=diff.dtype)
         return masked_diff.sum() / denom

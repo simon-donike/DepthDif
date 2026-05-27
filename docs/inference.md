@@ -143,7 +143,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
 - exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized into the active variable unit
 - writes absolute-error rasters for the same depth levels when GLORYS rasters are exported, computed as `abs(prediction - GLORYS)` in degrees Celsius for temperature or PSU for salinity on the finalized raster grid
-- optionally runs `uncertainty_step(..., num_samples=5)` via `--export-uncertainty` and writes one stitched 1-channel uncertainty GeoTIFF for the active variable
+- optionally runs `uncertainty_step(..., num_samples=5)` via `--export-uncertainty` and writes stitched uncertainty GeoTIFFs for the same exported depth levels; use `--uncertainty-collapse-depth` for the older single-map export
 - writes all observed Argo point locations for that timestep as a GeoJSON alongside the rasters
 - exports full-profile metadata for up to 1000 observed Argo locations by default, saves their full `(Argo, prediction, GLORYS)` depth stacks plus graph references into a second GeoJSON, and renders one two-panel WebP q95 image per location under `graphs/` with an OSTIA SST marker at depth 0 plus a side-by-side absolute-error panel; pass `--full-sample-count 0` to disable, a positive count to change the cap, or a negative value to export all observed locations
 - writes a second GeoJSON of patch-square polygons carrying only the `train`/`val` split labels for that timestep
@@ -167,7 +167,7 @@ Outputs land under `inference/outputs/<run_name>/` and include:
 - `<run_name>_prediction_surface.tif`, `<run_name>_prediction_10m.tif`, `<run_name>_prediction_50m.tif`, `<run_name>_prediction_100m.tif`, `<run_name>_prediction_250m.tif`, `<run_name>_prediction_500m.tif`, `<run_name>_prediction_1000m.tif`, `<run_name>_prediction_2000m.tif`, `<run_name>_prediction_2500m.tif`, `<run_name>_prediction_5000m.tif`: stitched prediction rasters
 - `<run_name>_glorys_surface.tif`, `<run_name>_glorys_10m.tif`, `<run_name>_glorys_50m.tif`, `<run_name>_glorys_100m.tif`, `<run_name>_glorys_250m.tif`, `<run_name>_glorys_500m.tif`, `<run_name>_glorys_1000m.tif`, `<run_name>_glorys_2000m.tif`, `<run_name>_glorys_2500m.tif`, `<run_name>_glorys_5000m.tif`: stitched GLORYS truth rasters by default
 - `<run_name>_absolute_error_surface.tif`, `<run_name>_absolute_error_10m.tif`, `<run_name>_absolute_error_50m.tif`, `<run_name>_absolute_error_100m.tif`, `<run_name>_absolute_error_250m.tif`, `<run_name>_absolute_error_500m.tif`, `<run_name>_absolute_error_1000m.tif`, `<run_name>_absolute_error_2000m.tif`, `<run_name>_absolute_error_2500m.tif`, `<run_name>_absolute_error_5000m.tif`: absolute prediction-vs-GLORYS error rasters when GLORYS export is enabled
-- `<run_name>_uncertainty.tif`: optional 5-sample 1-channel generation-uncertainty raster for the active variable when `--export-uncertainty` is enabled
+- `<run_name>_uncertainty_<depth>.tif`: optional 5-sample generation-uncertainty rasters by exported depth when `--export-uncertainty` is enabled; `<run_name>_uncertainty.tif` is used only with `--uncertainty-collapse-depth`
 - `<run_name>_argo_points.geojson`: all observed Argo point locations for the selected timestep
 - `<run_name>_full_sample_locations.geojson`: sampled full-profile Argo locations with full depth-stack properties and `graph_png_path` pointers
 - `<run_name>_patch_splits.geojson`: patch polygons for the selected timestep with `split=train|val` properties only
@@ -180,7 +180,7 @@ When `--output-name` is omitted, `<run_name>` defaults to `global_top_band_<YYYY
 ### Dual-Variable Production Globe Export
 Use `depth_recon.inference.export_global_variables` for the hosted production globe when both temperature and salinity should be available from one stable viewer manifest. It runs two independent single-variable exports with separate checkpoints, then packages both into one `globe/` directory whose `globe-config.json` contains `variables.temperature`, `variables.salinity`, and legacy top-level fields for the default temperature layer.
 
-Run this wrapper once with two checkpoints: one checkpoint trained for `--scenario temperature` and one trained for `--scenario salinity`. The wrapper calls the single-variable exporter internally for each scenario, packages the combined Cesium bundle, generates the analysis-dashboard JSON from each variable's absolute-error rasters, and uploads it automatically when `--rclone-remote` is provided. Pass `--export-uncertainty` to export and tile one 5-sample uncertainty raster for temperature and one for salinity. Pass `--export-temporal-consistency` to also run the configured validation year, write compact `temporal/` dashboard assets, and upload them to the sibling `/temporal` hosted path by default.
+Run this wrapper once with two checkpoints: one checkpoint trained for `--scenario temperature` and one trained for `--scenario salinity`. The wrapper calls the single-variable exporter internally for each scenario, packages the combined Cesium bundle, generates the analysis-dashboard JSON from each variable's absolute-error rasters, and uploads it automatically when `--rclone-remote` is provided. Pass `--export-uncertainty` to export and tile 5-sample uncertainty rasters by depth for temperature and salinity. Pass `--export-temporal-consistency` to also run the configured validation year, write compact `temporal/` dashboard assets, and upload them to the sibling `/temporal` hosted path by default.
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
@@ -206,13 +206,13 @@ inference/outputs/global_variables_<YYYY>_W<WW>/
     temperature_prediction_surface.tif
     temperature_glorys_surface.tif
     temperature_absolute_error_surface.tif
-    temperature_uncertainty.tif
+    temperature_uncertainty_surface.tif
     ...
   salinity/
     salinity_prediction_surface.tif
     salinity_glorys_surface.tif
     salinity_absolute_error_surface.tif
-    salinity_uncertainty.tif
+    salinity_uncertainty_surface.tif
     ...
   globe/
     globe-config.json

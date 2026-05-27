@@ -169,6 +169,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Repeated generations per variable uncertainty map.",
     )
     parser.add_argument(
+        "--uncertainty-collapse-depth",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Collapse each variable uncertainty export to one raster. By default "
+            "uncertainty is exported for each selected depth level."
+        ),
+    )
+    parser.add_argument(
         "--sigma",
         type=float,
         default=DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
@@ -507,6 +516,11 @@ def _single_export_args(
         if bool(args.export_uncertainty)
         else "--no-export-uncertainty"
     )
+    argv.append(
+        "--uncertainty-collapse-depth"
+        if bool(args.uncertainty_collapse_depth)
+        else "--no-uncertainty-collapse-depth"
+    )
     if not bool(args.multi_gpu):
         argv.append("--no-multi-gpu")
     if bool(args.strict_load):
@@ -789,6 +803,7 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
             },
         },
         "export_uncertainty": bool(args.export_uncertainty),
+        "uncertainty_collapse_depth": bool(args.uncertainty_collapse_depth),
         "uncertainty_num_samples": (
             int(args.uncertainty_num_samples) if bool(args.export_uncertainty) else None
         ),

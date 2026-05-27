@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
+
+import yaml
 
 import matplotlib
 import numpy as np
@@ -362,6 +366,73 @@ class TestDiffusionMath(unittest.TestCase):
         ).sum() / expected_mask.sum()
         self.assertTrue(torch.isclose(loss, expected))
 
+    def test_coastal_loss_weights_supervised_ocean_pixels_near_land(self) -> None:
+        process = _make_conditional_process(parameterization="x0")
+        output = torch.tensor(
+            [
+                [
+                    [
+                        [1.0, 2.0, 3.0, 4.0],
+                        [5.0, 6.0, 7.0, 8.0],
+                        [9.0, 10.0, 11.0, 12.0],
+                    ],
+                    [
+                        [2.0, 3.0, 4.0, 5.0],
+                        [6.0, 7.0, 8.0, 9.0],
+                        [10.0, 11.0, 12.0, 13.0],
+                    ],
+                ]
+            ],
+            dtype=torch.float32,
+        )
+        condition = torch.zeros_like(output)
+        error = torch.ones_like(output)
+        error[:, :, 2, 3] = 4.0
+        prediction = output - error
+        loss_mask = torch.ones((1, 3, 4), dtype=torch.float32)
+        loss_mask[:, 0, 2] = 0.0
+        land_mask = torch.tensor(
+            [[[0.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]]],
+            dtype=torch.float32,
+        )
+
+        process.forward_process = _FakeForward(
+            noisy_offset=0.0, noise=torch.zeros_like(output)
+        )
+        process.model = _CapturingPredictor(prediction)
+
+        weights = process._build_coastal_loss_weights(
+            land_mask,
+            output,
+            enabled=True,
+            radius_px=1,
+            weight=3.0,
+            ramp="linear",
+        )
+        assert weights is not None
+        self.assertEqual(weights[0, 0, 0, 1].item(), 3.0)
+        self.assertEqual(weights[0, 0, 2, 3].item(), 1.0)
+
+        loss = process.p_loss(
+            output,
+            condition,
+            loss_mask=loss_mask,
+            land_mask=land_mask,
+            mask_loss=True,
+            coastal_loss_enabled=True,
+            coastal_loss_radius_px=1,
+            coastal_loss_weight=3.0,
+            coastal_loss_ramp="linear",
+        )
+
+        valid_mask = loss_mask.unsqueeze(1).expand_as(output)
+        ocean_mask = land_mask.unsqueeze(1).expand_as(output)
+        expected_mask = valid_mask * ocean_mask * weights
+        expected = (
+            ((output - prediction) ** 2) * expected_mask
+        ).sum() / expected_mask.sum()
+        self.assertTrue(torch.isclose(loss, expected))
+
     def test_p_loss_returns_zero_when_mask_selects_nothing(self) -> None:
         process = _make_conditional_process(parameterization="x0")
         output = torch.ones((1, 2, 2, 2), dtype=torch.float32)
@@ -378,9 +449,74 @@ class TestDiffusionMath(unittest.TestCase):
             loss_mask=torch.zeros((1, 2, 2), dtype=torch.float32),
             land_mask=torch.zeros((1, 2, 2), dtype=torch.float32),
             mask_loss=True,
+            coastal_loss_enabled=True,
+            coastal_loss_radius_px=2,
+            coastal_loss_weight=3.0,
+            coastal_loss_ramp="linear",
         )
 
         self.assertEqual(loss.item(), 0.0)
+
+    def test_from_config_loads_coastal_loss_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            data_path = tmp_path / "data.yaml"
+            model_path = tmp_path / "model.yaml"
+            training_path = tmp_path / "training.yaml"
+            data_path.write_text(
+                yaml.safe_dump({"dataset": {"grid": {"tile_size": 8}}}),
+                encoding="utf-8",
+            )
+            model_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "model": {
+                            "generated_channels": 2,
+                            "condition_channels": 3,
+                            "condition_mask_channels": 1,
+                            "condition_include_eo": False,
+                            "condition_use_valid_mask": True,
+                            "mask_loss_with_valid_pixels": True,
+                            "parameterization": "x0",
+                            "coastal_loss": {
+                                "enabled": True,
+                                "radius_px": 5,
+                                "weight": 2.5,
+                                "ramp": "linear",
+                            },
+                            "unet": {"dim": 8, "dim_mults": [1]},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            training_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "training": {
+                            "batch_size": 1,
+                            "noise": {"num_timesteps": 2, "schedule": "linear"},
+                            "validation_sampling": {
+                                "sampler": "ddim",
+                                "ddim_num_timesteps": 2,
+                            },
+                        },
+                        "wandb": {"verbose": False},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            model = PixelDiffusionConditional.from_config(
+                model_config_path=str(model_path),
+                data_config_path=str(data_path),
+                training_config_path=str(training_path),
+            )
+
+        self.assertTrue(model.coastal_loss_enabled)
+        self.assertEqual(model.coastal_loss_radius_px, 5)
+        self.assertEqual(model.coastal_loss_weight, 2.5)
+        self.assertEqual(model.coastal_loss_ramp, "linear")
 
     def test_p_loss_applies_ambient_further_mask_to_the_noisy_branch(self) -> None:
         process = _make_conditional_process(parameterization="x0")

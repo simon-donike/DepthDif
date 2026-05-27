@@ -55,6 +55,10 @@ class PixelDiffusionConditional(pl.LightningModule):
         condition_use_land_mask: bool = False,
         clamp_known_pixels: bool = True,
         mask_loss_with_valid_pixels: bool = False,
+        coastal_loss_enabled: bool = False,
+        coastal_loss_radius_px: int = 5,
+        coastal_loss_weight: float = 3.0,
+        coastal_loss_ramp: str = "linear",
         parameterization: str = "epsilon",
         num_timesteps: int = 1000,
         noise_schedule: str = "linear",
@@ -122,6 +126,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_use_land_mask (bool): Include GLORYS spatial support as conditioning.
             clamp_known_pixels (bool): Boolean flag controlling behavior.
             mask_loss_with_valid_pixels (bool): Mask tensor controlling valid or known pixels.
+            coastal_loss_enabled (bool): Increase supervised ocean-pixel loss near land.
+            coastal_loss_radius_px (int): Pixel radius around land to upweight.
+            coastal_loss_weight (float): Maximum land-adjacent loss weight.
+            coastal_loss_ramp (str): Distance falloff mode for coastal weights.
             parameterization (str): Input value.
             num_timesteps (int): Step or timestep value.
             noise_schedule (str): Input value.
@@ -255,6 +263,16 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.condition_use_land_mask = bool(condition_use_land_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
+        self.coastal_loss_enabled = bool(coastal_loss_enabled)
+        self.coastal_loss_radius_px = int(coastal_loss_radius_px)
+        if self.coastal_loss_radius_px < 0:
+            raise ValueError("coastal_loss.radius_px must be >= 0.")
+        self.coastal_loss_weight = float(coastal_loss_weight)
+        if self.coastal_loss_weight < 1.0:
+            raise ValueError("coastal_loss.weight must be >= 1.0.")
+        self.coastal_loss_ramp = str(coastal_loss_ramp).strip().lower()
+        if self.coastal_loss_ramp != "linear":
+            raise ValueError("coastal_loss.ramp currently supports only 'linear'.")
         self.output_fields = normalized_output_fields
         self.variable_scenario = variable_scenario
         self.predicts_salinity = "salinity" in self.output_fields
@@ -354,6 +372,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         val_sampling_cfg = t.get("validation_sampling", {})
         coord_cfg = m.get("coord_conditioning", {})
         ambient_cfg = m.get("ambient_occlusion", {})
+        coastal_cfg = m.get("coastal_loss", {})
         postprocess_cfg = m.get("post_process", m.get("post-process", {}))
         gaussian_blur_cfg = postprocess_cfg.get("gaussian_blur", {})
         unet_kwargs = cls._parse_unet_config(m)
@@ -375,6 +394,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
             ),
+            coastal_loss_enabled=bool(coastal_cfg.get("enabled", False)),
+            coastal_loss_radius_px=int(coastal_cfg.get("radius_px", 5)),
+            coastal_loss_weight=float(coastal_cfg.get("weight", 3.0)),
+            coastal_loss_ramp=str(coastal_cfg.get("ramp", "linear")),
             parameterization=str(m.get("parameterization", "epsilon")),
             num_timesteps=int(
                 noise_cfg.get("num_timesteps", m.get("num_timesteps", 1000))
@@ -1565,6 +1588,77 @@ class PixelDiffusionConditional(pl.LightningModule):
             y_valid_mask=y_valid_mask,
         )
 
+    def _coastal_loss_kwargs(self) -> dict[str, Any]:
+        """Return coastal loss options passed to the diffusion process."""
+        return {
+            "coastal_loss_enabled": self.coastal_loss_enabled,
+            "coastal_loss_radius_px": self.coastal_loss_radius_px,
+            "coastal_loss_weight": self.coastal_loss_weight,
+            "coastal_loss_ramp": self.coastal_loss_ramp,
+        }
+
+    def _log_coastal_loss_stats(
+        self,
+        *,
+        prefix: str,
+        reference: torch.Tensor,
+        loss_mask: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+        batch_size: int,
+    ) -> None:
+        """Log summary statistics for the active coastal loss weighting."""
+        if not self.coastal_loss_enabled or loss_mask is None or land_mask is None:
+            return
+        supervised_mask = DenoisingDiffusionConditionalProcess._build_valid_mask(
+            loss_mask, reference, mode="observed"
+        )
+        if supervised_mask is None:
+            return
+        ocean_mask = DenoisingDiffusionConditionalProcess._build_land_mask(
+            land_mask, reference
+        )
+        if ocean_mask is not None:
+            supervised_mask = supervised_mask * ocean_mask
+        coastal_weights = (
+            DenoisingDiffusionConditionalProcess._build_coastal_loss_weights(
+                land_mask,
+                reference,
+                enabled=self.coastal_loss_enabled,
+                radius_px=self.coastal_loss_radius_px,
+                weight=self.coastal_loss_weight,
+                ramp=self.coastal_loss_ramp,
+            )
+        )
+        if coastal_weights is None:
+            return
+        denom = supervised_mask.sum()
+        if denom.item() <= 0:
+            return
+
+        weighted_fraction = (
+            (coastal_weights > 1.0).to(reference.dtype) * supervised_mask
+        ).sum() / denom
+        weight_mean = (coastal_weights * supervised_mask).sum() / denom
+        on_step = prefix == "train"
+        self.log(
+            f"{prefix}/coastal_weight_mean",
+            weight_mean,
+            on_step=on_step,
+            on_epoch=not on_step,
+            logger=True,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+        self.log(
+            f"{prefix}/coastal_weighted_fraction",
+            weighted_fraction,
+            on_step=on_step,
+            on_epoch=not on_step,
+            logger=True,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+
     def _prepare_condition_for_model(
         self,
         x: torch.Tensor,
@@ -2049,6 +2143,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         dataloader_idx: int = 0,
         num_samples: int = 8,
         sampler: torch.nn.Module | None = None,
+        collapse_channels: bool = True,
     ) -> dict[str, Any]:
         """Estimate pixel-wise generation uncertainty from repeated predictions.
 
@@ -2058,6 +2153,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             dataloader_idx (int): Dataloader index passed through to prediction.
             num_samples (int): Number of repeated generations used for uncertainty.
             sampler (torch.nn.Module | None): Optional sampler used only for this uncertainty pass.
+            collapse_channels (bool): Collapse depth/channel uncertainty to one raster.
 
         Returns:
             dict[str, Any]: Dictionary containing uncertainty maps and metadata.
@@ -2097,7 +2193,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             stacked = torch.stack(samples_by_field[field], dim=0)
             # The repeated generations are the ensemble, so use population std.
             field_uncertainty = stacked.std(dim=0, unbiased=False)
-            field_uncertainty = self._collapse_uncertainty_channels(field_uncertainty)
+            if collapse_channels:
+                field_uncertainty = self._collapse_uncertainty_channels(
+                    field_uncertainty
+                )
             uncertainty_by_field[field] = field_uncertainty
             outputs[f"uncertainty_{field}"] = field_uncertainty
             outputs[f"uncertainty_{field}_normalized"] = (
@@ -3061,6 +3160,13 @@ class PixelDiffusionConditional(pl.LightningModule):
                 prefix="train_salinity_condition",
                 batch_size=int(target.size(0)),
             )
+        self._log_coastal_loss_stats(
+            prefix="train",
+            reference=target_t,
+            loss_mask=loss_mask,
+            land_mask=land_mask,
+            batch_size=int(target.size(0)),
+        )
         # Conditional p_loss uses x as context while learning selected denoising target.
         loss = self.model.p_loss(
             target_t,
@@ -3069,6 +3175,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             land_mask=land_mask,
+            **self._coastal_loss_kwargs(),
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
             coord=coords,
             date=date,
@@ -3228,6 +3335,13 @@ class PixelDiffusionConditional(pl.LightningModule):
                 prefix="val_salinity_condition",
                 batch_size=int(target.size(0)),
             )
+        self._log_coastal_loss_stats(
+            prefix="val",
+            reference=target_t,
+            loss_mask=loss_mask,
+            land_mask=land_mask,
+            batch_size=int(target.size(0)),
+        )
         # Same training objective for validation; full reverse-chain recon is logged once
         # at validation end.
         loss = self.model.p_loss(
@@ -3237,6 +3351,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             land_mask=land_mask,
+            **self._coastal_loss_kwargs(),
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
             coord=coords,
             date=date,

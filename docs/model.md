@@ -71,6 +71,13 @@ Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):
 Current EO config (`src/depth_recon/configs/px_space/training_super_config.yaml`) uses:
 - `parameterization: "x0"`
 - `mask_loss_with_valid_pixels: true`
+- `coastal_loss.enabled: true` with `radius_px: 5`, `weight: 3.0`, and `ramp: linear`
+
+### Coastal Loss Weighting For Finetuning
+
+Hard-area finetuning can additionally emphasize supervised ocean pixels near land through `model.coastal_loss.*`. The loss still ignores invalid target cells and land cells first; the coastal multiplier is applied only to the remaining supervised ocean support. Far-ocean pixels keep weight `1.0`, while ocean pixels close to land ramp up to the configured maximum weight.
+
+![Coastal loss weight example](assets/figures/coastal_loss_weight_example.png)
 
 ## Scenario-Selected Temperature And Salinity Modes
 
