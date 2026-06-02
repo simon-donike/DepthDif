@@ -22,6 +22,10 @@ from depth_recon.inference.export_cesium_globe_assets import (
     DEFAULT_RCLONE_SYNC_SCOPE,
     export_cesium_globe_variable_assets,
 )
+from depth_recon.inference.export_wavenumber_spectra import (
+    DEFAULT_OUTPUT_DIR_NAME as DEFAULT_WAVENUMBER_OUTPUT_DIR_NAME,
+    export_wavenumber_spectra,
+)
 from depth_recon.inference.export_global import (
     DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA,
     DEFAULT_FULL_SAMPLE_COUNT,
@@ -223,6 +227,51 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--export-wavenumber-spectra",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Compute and package wavenumber spectral diagnostics under "
+            "<output-name>/wavenumber_spectra/."
+        ),
+    )
+    parser.add_argument(
+        "--wavenumber-output-dir",
+        type=Path,
+        default=None,
+        help="Optional output directory for wavenumber spectral diagnostics.",
+    )
+    parser.add_argument(
+        "--wavenumber-public-base-url",
+        type=str,
+        default=None,
+        help=(
+            "Optional hosted base URL for wavenumber spectral assets. Defaults "
+            "to <public-base-url>/wavenumber_spectra when provided."
+        ),
+    )
+    parser.add_argument(
+        "--wavenumber-rclone-remote",
+        type=str,
+        default=None,
+        help=(
+            "Optional rclone destination for wavenumber spectral assets. "
+            "Defaults to <rclone-remote>/wavenumber_spectra when provided."
+        ),
+    )
+    parser.add_argument(
+        "--wavenumber-include-temporal-runs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include discovered temporal_runs in spectral aggregation when present.",
+    )
+    parser.add_argument(
+        "--wavenumber-plots",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write static PNG spectra plots alongside dashboard JSON assets.",
+    )
+    parser.add_argument(
         "--export-temporal-globe",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -366,6 +415,16 @@ def _sibling_asset_location(value: str | None, sibling_name: str) -> str | None:
     return f"{raw}/{sibling_name}"
 
 
+def _nested_asset_location(value: str | None, nested_name: str) -> str | None:
+    """Return a nested URL/remote path under an existing asset prefix."""
+    if value is None:
+        return None
+    raw = str(value).rstrip("/")
+    if raw.rpartition("/")[2] == nested_name:
+        return raw
+    return f"{raw}/{nested_name}"
+
+
 def _auxiliary_sampler(args: argparse.Namespace) -> str | None:
     """Return sampler used by auxiliary uncertainty/temporal runs by default."""
     return (
@@ -470,6 +529,24 @@ def _temporal_globe_rclone_remote(args: argparse.Namespace) -> str | None:
     if args.temporal_globe_rclone_remote is not None:
         return str(args.temporal_globe_rclone_remote)
     return _sibling_asset_location(args.rclone_remote, "temporal-globe")
+
+
+def _wavenumber_public_base_url(args: argparse.Namespace) -> str | None:
+    """Resolve the hosted URL base for wavenumber spectral assets."""
+    if args.wavenumber_public_base_url is not None:
+        return str(args.wavenumber_public_base_url)
+    return _nested_asset_location(
+        args.public_base_url, DEFAULT_WAVENUMBER_OUTPUT_DIR_NAME
+    )
+
+
+def _wavenumber_rclone_remote(args: argparse.Namespace) -> str | None:
+    """Resolve the rclone destination for wavenumber spectral assets."""
+    if args.wavenumber_rclone_remote is not None:
+        return str(args.wavenumber_rclone_remote)
+    return _nested_asset_location(
+        args.rclone_remote, DEFAULT_WAVENUMBER_OUTPUT_DIR_NAME
+    )
 
 
 def _single_export_args(
@@ -728,6 +805,27 @@ def _export_temporal_outputs_for_standard_run(
     }
 
 
+def _export_wavenumber_outputs_for_standard_run(
+    args: argparse.Namespace,
+    *,
+    paired_run_dir: Path,
+) -> dict[str, Any]:
+    """Compute spectral diagnostics for the paired production output."""
+    output_dir = args.wavenumber_output_dir
+    if output_dir is None:
+        output_dir = paired_run_dir / DEFAULT_WAVENUMBER_OUTPUT_DIR_NAME
+    return export_wavenumber_spectra(
+        run_dirs=[paired_run_dir],
+        output_dir=Path(output_dir),
+        variables=("temperature", "salinity"),
+        include_temporal_runs=bool(args.wavenumber_include_temporal_runs),
+        write_plots=bool(args.wavenumber_plots),
+        write_dashboard=True,
+        public_base_url=_wavenumber_public_base_url(args),
+        rclone_remote=_wavenumber_rclone_remote(args),
+    )
+
+
 def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
     """Run paired variable exports and package one combined globe directory."""
     args = _apply_sampling_defaults_from_config(args)
@@ -776,6 +874,12 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
             temperature_result=temperature_result,
             salinity_result=salinity_result,
         )
+    wavenumber_spectra_result = None
+    if bool(args.export_wavenumber_spectra):
+        wavenumber_spectra_result = _export_wavenumber_outputs_for_standard_run(
+            args,
+            paired_run_dir=paired_run_dir,
+        )
 
     summary = {
         "selected_date": int(temperature_result.selected_date),
@@ -809,6 +913,7 @@ def run_global_variable_inference(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "globe_packaging": packaging_result,
         "temporal_consistency": temporal_consistency_result,
+        "wavenumber_spectra": wavenumber_spectra_result,
     }
     summary_path = paired_run_dir / "run_summary.yaml"
     with summary_path.open("w", encoding="utf-8") as f:

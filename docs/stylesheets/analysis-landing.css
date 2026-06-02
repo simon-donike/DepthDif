@@ -108,19 +108,25 @@ html.analysis-landing-root,
 }
 
 .analysis-landing-grid {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   align-self: center;
-  grid-template-columns: repeat(3, minmax(280px, 430px));
-  justify-content: center;
-  place-content: center;
   gap: 20px;
   min-height: 0;
+}
+
+.analysis-landing-row {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  min-width: 0;
 }
 
 .analysis-landing-tile {
   position: relative;
   display: grid;
   grid-template-rows: auto minmax(112px, 1fr);
+  width: min(100%, 430px);
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--analysis-landing-border);
@@ -229,14 +235,19 @@ html.analysis-landing-root,
 }
 
 @media (max-width: 1180px) {
-  .analysis-landing-grid {
-    grid-template-columns: repeat(2, minmax(280px, 500px));
+  .analysis-landing-row {
+    flex-wrap: wrap;
   }
 }
 
 @media (max-width: 900px) {
-  .analysis-landing-grid {
-    grid-template-columns: minmax(0, 560px);
+  .analysis-landing-row {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .analysis-landing-tile {
+    width: min(100%, 560px);
   }
 }
 

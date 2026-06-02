@@ -586,6 +586,13 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     "depth_recon.inference.export_global_variables.export_temporal_cesium_globe_assets",
                     return_value={"output_dir": "temporal-globe", "upload_ok": True},
                 ) as temporal_globe_mock,
+                mock.patch(
+                    "depth_recon.inference.export_global_variables.export_wavenumber_spectra",
+                    return_value={
+                        "output_dir": "wavenumber_spectra",
+                        "upload_ok": None,
+                    },
+                ) as wavenumber_mock,
             ):
                 summary = run_global_variable_inference(args)
 
@@ -631,6 +638,103 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(
             summary["temporal_consistency"]["globe"],
             {"output_dir": "temporal-globe", "upload_ok": True},
+        )
+        wavenumber_kwargs = wavenumber_mock.call_args.kwargs
+        self.assertEqual(
+            wavenumber_kwargs["output_dir"],
+            output_root / "standard_temporal" / "wavenumber_spectra",
+        )
+        self.assertTrue(wavenumber_kwargs["include_temporal_runs"])
+        self.assertIsNone(wavenumber_kwargs["rclone_remote"])
+        self.assertEqual(
+            summary["wavenumber_spectra"],
+            {"output_dir": "wavenumber_spectra", "upload_ok": None},
+        )
+
+    def test_standard_variable_inference_uploads_wavenumber_spectra_by_default(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir)
+            args = _build_standard_variable_parser().parse_args(
+                [
+                    "--year",
+                    "2018",
+                    "--iso-week",
+                    "25",
+                    "--temperature-checkpoint",
+                    "temperature.ckpt",
+                    "--salinity-checkpoint",
+                    "salinity.ckpt",
+                    "--device",
+                    "cpu",
+                    "--output-root",
+                    str(output_root),
+                    "--output-name",
+                    "standard_spectral",
+                    "--public-base-url",
+                    "https://example.com/inference_production/globe",
+                    "--rclone-remote",
+                    "r2:bucket/inference_production/globe",
+                    "--no-multi-gpu",
+                ]
+            )
+
+            def fake_run_global_inference(parsed_args):
+                run_dir = Path(parsed_args.output_root) / parsed_args.output_name
+                run_dir.mkdir(parents=True, exist_ok=True)
+                summary_path = run_dir / "run_summary.yaml"
+                summary_path.write_text("{}\n", encoding="utf-8")
+                return SimpleNamespace(
+                    run_dir=run_dir,
+                    summary_path=summary_path,
+                    selected_date=20180620,
+                    iso_year=parsed_args.year,
+                    iso_week=parsed_args.iso_week,
+                    uncertainty_tif_path=None,
+                )
+
+            with (
+                mock.patch(
+                    "depth_recon.inference.export_global_variables.run_global_inference",
+                    side_effect=fake_run_global_inference,
+                ),
+                mock.patch(
+                    "depth_recon.inference.export_global_variables.export_cesium_globe_variable_assets",
+                    return_value={"globe_dir": "globe"},
+                ),
+                mock.patch(
+                    "depth_recon.inference.export_global_variables.export_wavenumber_spectra",
+                    return_value={
+                        "output_dir": "wavenumber_spectra",
+                        "upload_ok": True,
+                    },
+                ) as wavenumber_mock,
+            ):
+                summary = run_global_variable_inference(args)
+
+        wavenumber_kwargs = wavenumber_mock.call_args.kwargs
+        self.assertEqual(
+            wavenumber_kwargs["run_dirs"], [output_root / "standard_spectral"]
+        )
+        self.assertEqual(
+            wavenumber_kwargs["output_dir"],
+            output_root / "standard_spectral" / "wavenumber_spectra",
+        )
+        self.assertEqual(wavenumber_kwargs["variables"], ("temperature", "salinity"))
+        self.assertEqual(
+            wavenumber_kwargs["public_base_url"],
+            "https://example.com/inference_production/globe/wavenumber_spectra",
+        )
+        self.assertEqual(
+            wavenumber_kwargs["rclone_remote"],
+            "r2:bucket/inference_production/globe/wavenumber_spectra",
+        )
+        self.assertTrue(wavenumber_kwargs["write_dashboard"])
+        self.assertTrue(wavenumber_kwargs["write_plots"])
+        self.assertEqual(
+            summary["wavenumber_spectra"],
+            {"output_dir": "wavenumber_spectra", "upload_ok": True},
         )
 
     def test_standard_variable_temporal_sampling_defaults_use_yaml_uncertainty(

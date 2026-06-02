@@ -7,7 +7,9 @@
 #   --min-wavelength-km 30 \
 #   --max-wavelength-km 1000 \
 #   --wavelength-bin-count 32 \
-#   --basin-overlap-threshold 0.75
+#   --basin-overlap-threshold 0.75 \
+#   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe/wavenumber_spectra \
+#   --rclone-remote r2:depth-data/inference_production/globe/wavenumber_spectra
 # Optional switches for non-default behavior: --allow-incomplete-patches --no-plots --no-dashboard
 """Export 2D wavenumber spectra from existing inference GeoTIFF runs."""
 
@@ -39,6 +41,7 @@ from shapely.geometry import box, shape
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from depth_recon.inference.export_cesium_globe_assets import _sync_with_rclone
 from depth_recon.inference.export_error_analysis_dashboard import (
     world_ocean_region_geojson_features,
 )
@@ -679,7 +682,7 @@ def _depth_layer_specs(run: VariableRun) -> list[DepthLayerSpec]:
                 variable=run.variable,
                 layer="surface_observation",
                 suffix="surface",
-                label="Surface observation",
+                label="Surface",
                 requested_depth_m=0.0,
                 actual_depth_m=0.0,
                 channel_index=0,
@@ -1103,6 +1106,15 @@ def write_spectral_dashboard_assets(
     }
 
 
+def _spectrum_line_label(layer: str, depth_label: str) -> str:
+    """Return a compact legend label for one plotted spectrum."""
+    layer_label = LAYER_LABELS.get(str(layer), str(layer))
+    depth_text = str(depth_label)
+    if str(layer) == "surface_observation" or depth_text.lower() == layer_label.lower():
+        return layer_label
+    return f"{layer_label} {depth_text}"
+
+
 def write_spectrum_plots(
     aggregated: pd.DataFrame,
     *,
@@ -1145,7 +1157,7 @@ def write_spectrum_plots(
                 linestyle=LAYER_LINESTYLES.get(str(layer), "-"),
                 color=cmap(float(np.clip(color_value, 0.0, 1.0))),
                 linewidth=1.6,
-                label=f"{LAYER_LABELS.get(str(layer), layer)} {depth_label}",
+                label=_spectrum_line_label(str(layer), str(depth_label)),
             )
 
         if not ax.lines:
@@ -1180,6 +1192,8 @@ def export_wavenumber_spectra(
     require_complete_patches: bool = True,
     write_plots: bool = True,
     write_dashboard: bool = True,
+    public_base_url: str | None = None,
+    rclone_remote: str | None = None,
 ) -> dict[str, Any]:
     """Compute and write wavenumber spectra for existing inference runs."""
     if not run_dirs:
@@ -1264,6 +1278,11 @@ def export_wavenumber_spectra(
         "basin_overlap_threshold": float(basin_overlap_threshold),
         "require_complete_patches": bool(require_complete_patches),
         "dashboard_enabled": bool(write_dashboard),
+        "public_base_url": public_base_url,
+        "upload_requested": rclone_remote is not None,
+        "upload_remote": rclone_remote,
+        "upload_ok": None,
+        "upload_message": None,
         "artifacts": {
             "patch_spectra_npz": "patch_spectra.npz",
             "patch_spectra_records_csv": "patch_spectra_records.csv",
@@ -1289,6 +1308,10 @@ def export_wavenumber_spectra(
     with (output_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
         f.write("\n")
+    if rclone_remote is not None:
+        ok, message = _sync_with_rclone(output_dir, rclone_remote)
+        summary["upload_ok"] = bool(ok)
+        summary["upload_message"] = str(message)
     return summary
 
 
@@ -1360,6 +1383,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip spectral dashboard JSON/static asset generation.",
     )
+    parser.add_argument(
+        "--public-base-url",
+        type=str,
+        default=None,
+        help="Optional hosted base URL recorded in summary metadata.",
+    )
+    parser.add_argument(
+        "--rclone-remote",
+        type=str,
+        default=None,
+        help="Optional rclone destination for uploading generated spectra assets.",
+    )
     return parser
 
 
@@ -1378,6 +1413,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         require_complete_patches=not bool(args.allow_incomplete_patches),
         write_plots=not bool(args.no_plots),
         write_dashboard=not bool(args.no_dashboard),
+        public_base_url=args.public_base_url,
+        rclone_remote=args.rclone_remote,
     )
     print(
         "Wrote wavenumber spectra: "

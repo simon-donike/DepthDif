@@ -258,6 +258,26 @@
       state.activeVariable = variableSelect.value;
       render();
     });
+
+    const basinSelect = $("temporal-basin-select");
+    basinSelect.innerHTML = [
+      '<option value="">Global</option>',
+      ...(state.config.basins || []).map((basin) => {
+        const name = basin.name || "";
+        const label = basin.label || name;
+        return `<option value="${escapeHtml(name)}">${escapeHtml(label)}</option>`;
+      }),
+    ].join("");
+    basinSelect.value = state.activeBasin || "";
+    basinSelect.addEventListener("change", async function () {
+      state.activeBasin = basinSelect.value || null;
+      if (state.activeBasin) {
+        await loadActiveBasinData();
+      } else {
+        await loadGlobalBasinData();
+      }
+      render();
+    });
   }
 
   function setRunLabel() {
@@ -466,6 +486,10 @@
   function render() {
     setRunLabel();
     const selectedLabel = basinLabel(state.activeBasin);
+    const basinSelect = $("temporal-basin-select");
+    if (basinSelect) {
+      basinSelect.value = state.activeBasin || "";
+    }
     $("temporal-selection-pill").textContent = selectedLabel;
     $("temporal-map-caption").textContent = `${selectedLabel} | validation year ${state.config.validation_year}`;
     renderMap();

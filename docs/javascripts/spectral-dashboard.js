@@ -15,6 +15,7 @@
     modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"],
   };
   const DEPTH_PALETTE = ["#7cc8ff", "#ffd166", "#6cc4a1", "#e17c78", "#b39ddb", "#f2a65a", "#88a7ff", "#c7e75f"];
+  const SURFACE_REFERENCE_COLOR = "#9aa8b5";
   const DASH_MAP = {
     analysis: "../spatial-dashboard/",
     temporal: "../temporal-dashboard/",
@@ -184,6 +185,22 @@
     return parts[1] || String(key);
   }
 
+  function spectrumTraceLabel(row) {
+    const layer = layerLabel(row.layer);
+    const depth = row.depth_label || "";
+    if (row.layer === "surface_observation" || String(depth).toLowerCase() === String(layer).toLowerCase()) {
+      return layer;
+    }
+    return `${layer} ${depth}`.trim();
+  }
+
+  function spectrumTraceDetail(row) {
+    if (row.layer === "surface_observation") {
+      return "Surface reference";
+    }
+    return row.depth_label || "";
+  }
+
   function rowsForActiveBasin() {
     const payload = state.basinDataCache[state.activeBasin];
     return payload && Array.isArray(payload.rows) ? payload.rows : [];
@@ -233,6 +250,9 @@
     const rows = filteredRows({ includeDepth: false });
     const depthMap = new Map();
     rows.forEach((row) => {
+      if (row.layer === "surface_observation") {
+        return;
+      }
       depthMap.set(depthKey(row), row.depth_label || depthKey(row));
     });
     return Array.from(depthMap.entries()).sort((left, right) => {
@@ -475,6 +495,13 @@
     return DEPTH_PALETTE[index % DEPTH_PALETTE.length];
   }
 
+  function spectrumTraceColor(row) {
+    if (row.layer === "surface_observation") {
+      return SURFACE_REFERENCE_COLOR;
+    }
+    return depthColor(depthKey(row));
+  }
+
   function sortedFiniteRows(rows) {
     return rows
       .filter((row) => Number.isFinite(Number(row.wavelength_km)) && Number.isFinite(Number(row.power_mean)) && Number(row.power_mean) > 0)
@@ -499,15 +526,16 @@
         return;
       }
       const first = sorted[0];
-      const depthKeyValue = depthKey(first);
+      const color = spectrumTraceColor(first);
       traces.push({
-        customdata: sorted.map((row) => [layerLabel(row.layer), row.depth_label, row.spectrum_count || 0]),
+        customdata: sorted.map((row) => [spectrumTraceLabel(row), spectrumTraceDetail(row), row.spectrum_count || 0]),
         hovertemplate:
-          "%{customdata[0]} %{customdata[1]}<br>Wavelength: %{x:.2f} km<br>Power: %{y:.4g}<br>Spectra: %{customdata[2]}<extra></extra>",
-        line: { color: depthColor(depthKeyValue), dash: lineDash(first.layer), width: first.layer === "prediction" ? 2.6 : 2 },
+          "%{customdata[0]}<br>%{customdata[1]}<br>Wavelength: %{x:.2f} km<br>Power: %{y:.4g}<br>Spectra: %{customdata[2]}<extra></extra>",
+        line: { color, dash: lineDash(first.layer), width: first.layer === "prediction" ? 2.6 : 2 },
         mode: "lines+markers",
-        marker: { size: 4, color: depthColor(depthKeyValue) },
-        name: `${layerLabel(first.layer)} ${first.depth_label}`,
+        marker: { size: 4, color },
+        name: spectrumTraceLabel(first),
+        visible: first.layer === "surface_observation" ? "legendonly" : true,
         x: sorted.map((row) => Number(row.wavelength_km)),
         y: sorted.map((row) => Number(row.power_mean)),
       });

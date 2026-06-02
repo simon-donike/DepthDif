@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -376,6 +377,54 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertFalse((output_dir / "spectral-config.json").exists())
             self.assertFalse((output_dir / "basin-map.geojson").exists())
             self.assertFalse((output_dir / "index.html").exists())
+
+    def test_export_wavenumber_spectra_uploads_bundle_when_remote_configured(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir) / "temperature"
+            run_dir.mkdir()
+            pd.DataFrame(columns=["lon0", "lon1", "lat0", "lat1"]).to_csv(
+                run_dir / "selected_patches.csv",
+                index=False,
+            )
+            (run_dir / "run_summary.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "variable": "temperature",
+                        "selected_date": 20180620,
+                        "iso_year": 2018,
+                        "iso_week": 25,
+                        "depth_exports": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_dir = Path(tmp_dir) / "spectra"
+            with mock.patch(
+                "depth_recon.inference.export_wavenumber_spectra._sync_with_rclone",
+                return_value=(True, "uploaded"),
+            ) as sync_mock:
+                summary = export_wavenumber_spectra(
+                    run_dirs=[run_dir],
+                    output_dir=output_dir,
+                    variables=["temperature"],
+                    write_dashboard=False,
+                    public_base_url="https://example.test/globe/wavenumber_spectra",
+                    rclone_remote="r2:bucket/globe/wavenumber_spectra",
+                )
+
+            sync_mock.assert_called_once_with(
+                output_dir, "r2:bucket/globe/wavenumber_spectra"
+            )
+            self.assertTrue(summary["upload_requested"])
+            self.assertTrue(summary["upload_ok"])
+            self.assertEqual(summary["upload_message"], "uploaded")
+            self.assertEqual(
+                summary["public_base_url"],
+                "https://example.test/globe/wavenumber_spectra",
+            )
 
     def test_spectral_dashboard_static_page_exposes_expected_controls(self) -> None:
         html = Path("docs/spectral-dashboard/index.html").read_text(encoding="utf-8")
