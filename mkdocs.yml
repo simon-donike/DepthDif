@@ -74,6 +74,7 @@ nav:
       - Model Description: model.md
       - EMA Weights: ema.md
       - Sampling Diagnostics: sampling-diagnostics.md
+      - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
       - Date + Time Injection: data-coordinate-injection.md
       - Model Settings: settings.md

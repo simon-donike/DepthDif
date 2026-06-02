@@ -394,6 +394,10 @@
         window.location.href = "../temporal-dashboard/";
         return;
       }
+      if (dashboardSelect.value === "spectral") {
+        window.location.href = "../spectral-dashboard/";
+        return;
+      }
       dashboardSelect.value = "analysis";
     });
   }

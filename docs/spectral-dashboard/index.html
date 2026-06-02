@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" class="standalone-spectral-root">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DepthDif Spectral Dashboard</title>
+    <meta
+      name="description"
+      content="Standalone DepthDif dashboard for wavenumber spectral diagnostics."
+    />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://unpkg.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.plot.ly" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback"
+    />
+    <link rel="icon" href="../assets/branding/website_icon.webp" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="../stylesheets/spectral-dashboard.css" />
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script defer src="../javascripts/spectral-dashboard.js"></script>
+  </head>
+  <body class="standalone-spectral-page">
+    <main class="spectral-shell">
+      <header class="spectral-header">
+        <div>
+          <span class="spectral-eyebrow">DepthDif Diagnostics</span>
+          <h1>Spectral Dashboard</h1>
+          <p id="spectral-run-label">Loading wavenumber spectra...</p>
+        </div>
+        <nav class="spectral-links" aria-label="Dashboard links">
+          <a href="../analysis/">Back to Analysis</a>
+        </nav>
+      </header>
+
+      <section class="spectral-controls" aria-label="Spectral dashboard controls">
+        <label>
+          <span>Dashboard</span>
+          <select id="spectral-dashboard-select" aria-label="Dashboard">
+            <option value="analysis">Absolute Error</option>
+            <option value="temporal">Temporal</option>
+            <option value="spectral" selected>Spectral</option>
+          </select>
+        </label>
+        <label>
+          <span>Variable</span>
+          <select id="spectral-variable-select"></select>
+        </label>
+        <label>
+          <span>Basin</span>
+          <select id="spectral-basin-select"></select>
+        </label>
+        <label>
+          <span>Period</span>
+          <select id="spectral-period-type-select"></select>
+        </label>
+        <label>
+          <span>Window</span>
+          <select id="spectral-period-label-select"></select>
+        </label>
+        <label>
+          <span>Depth</span>
+          <select id="spectral-depth-select"></select>
+        </label>
+        <label>
+          <span>Metric</span>
+          <select id="spectral-metric-select">
+            <option value="ratio" selected>Power Ratio</option>
+            <option value="relative_bias">Relative Bias</option>
+            <option value="difference">Power Difference</option>
+          </select>
+        </label>
+      </section>
+
+      <article class="spectral-panel spectral-summary-strip">
+        <div class="spectral-panel__header">
+          <div>
+            <h2>Selected Spectra</h2>
+            <p id="spectral-summary-caption">Active spectral summary</p>
+          </div>
+        </div>
+        <div id="spectral-summary-cards" class="spectral-summary-cards" aria-label="Selected spectral summary"></div>
+      </article>
+
+      <section class="spectral-workspace">
+        <article class="spectral-panel spectral-panel--map">
+          <div class="spectral-panel__header">
+            <div>
+              <h2>Basin Map</h2>
+              <p id="spectral-map-caption">Ocean basin selection</p>
+            </div>
+            <span id="spectral-selection-pill" class="spectral-pill">All Oceans</span>
+          </div>
+          <div id="spectral-map" class="spectral-map" role="application" aria-label="World map of spectral basins"></div>
+        </article>
+
+        <div class="spectral-chart-stack">
+          <article class="spectral-panel spectral-panel--spectrum">
+            <div class="spectral-panel__header">
+              <div>
+                <h2>Wavenumber Spectrum</h2>
+                <p id="spectral-spectrum-caption">Mean spectral power by wavelength</p>
+              </div>
+            </div>
+            <div id="spectral-spectrum-chart" class="spectral-chart" role="img" aria-label="Wavenumber spectral power chart"></div>
+          </article>
+
+          <article class="spectral-panel spectral-panel--bias">
+            <div class="spectral-panel__header">
+              <div>
+                <h2>Prediction Bias</h2>
+                <p id="spectral-bias-caption">Prediction compared with GLORYS</p>
+              </div>
+            </div>
+            <div id="spectral-bias-chart" class="spectral-chart" role="img" aria-label="Prediction spectral bias chart"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

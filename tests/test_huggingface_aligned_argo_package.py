@@ -179,21 +179,21 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             self.assertTrue((package_dir / "masks/land_mask.tif").exists())
             readme_text = (package_dir / "README.md").read_text()
             self.assertTrue(
-                (package_dir / "assets/figures/depthdif_schema.png").exists()
+                (package_dir / "assets/figures/depthdif_schema.webp").exists()
             )
             self.assertTrue(
                 (
-                    package_dir / "assets/data/geotiff_dataset_random100_surface.png"
+                    package_dir / "assets/data/geotiff_dataset_random100_surface.webp"
                 ).exists()
             )
             self.assertTrue(
                 (
-                    package_dir / "assets/data/profile_comparison_good_alignment.png"
+                    package_dir / "assets/data/profile_comparison_good_alignment.webp"
                 ).exists()
             )
             self.assertIn("rasters/", readme_text)
             self.assertIn(
-                "assets/data/geotiff_dataset_random100_surface.png", readme_text
+                "assets/data/geotiff_dataset_random100_surface.webp", readme_text
             )
             self.assertIn("ARGO Alignment Examples", readme_text)
             self.assertEqual(

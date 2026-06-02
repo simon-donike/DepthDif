@@ -28,7 +28,7 @@ html.analysis-landing-root,
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
-  width: min(1240px, 100%);
+  width: min(1500px, 100%);
   height: min(100vh, 1080px);
   min-height: 0;
   margin: 0 auto;
@@ -110,7 +110,7 @@ html.analysis-landing-root,
 .analysis-landing-grid {
   display: grid;
   align-self: center;
-  grid-template-columns: repeat(2, minmax(300px, 500px));
+  grid-template-columns: repeat(3, minmax(280px, 430px));
   justify-content: center;
   place-content: center;
   gap: 20px;
@@ -148,7 +148,7 @@ html.analysis-landing-root,
   aspect-ratio: 16 / 9;
   width: 100%;
   min-height: 0;
-  max-height: min(28vh, 270px);
+  max-height: min(24vh, 235px);
   overflow: hidden;
   background:
     linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
@@ -199,6 +199,15 @@ html.analysis-landing-root,
     linear-gradient(135deg, rgba(4, 19, 31, 0.96), rgba(13, 70, 82, 0.86));
 }
 
+
+
+.analysis-landing-tile--spectral .analysis-landing-tile__media {
+  background:
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/spectral_dashboard_tile.webp") center / cover no-repeat,
+    linear-gradient(135deg, rgba(3, 18, 31, 0.96), rgba(24, 58, 85, 0.86));
+}
+
 .analysis-landing-tile__body {
   display: grid;
   align-content: start;
@@ -217,6 +226,12 @@ html.analysis-landing-root,
   color: var(--analysis-landing-muted);
   font-size: 0.93rem;
   line-height: 1.42;
+}
+
+@media (max-width: 1180px) {
+  .analysis-landing-grid {
+    grid-template-columns: repeat(2, minmax(280px, 500px));
+  }
 }
 
 @media (max-width: 900px) {

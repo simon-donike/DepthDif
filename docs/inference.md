@@ -242,7 +242,7 @@ Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wave
   --output-dir inference/outputs/global_variables_2018_W25_v2/wavenumber_spectra
 ```
 
-For each complete finite selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, and per-basin season/year PNG plots under `plots/`. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
+For each complete finite selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, a copied interactive `index.html` spectral dashboard with `spectral-config.json`/`basins/*.json`/`basin-map.geojson`, and per-basin season/year PNG plots under `plots/`. Pass `--no-dashboard` to skip the hosted dashboard assets. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:

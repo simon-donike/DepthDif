@@ -308,6 +308,19 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertEqual(summary["spectrum_count"], 6)
             self.assertEqual(saved_summary["spectrum_count"], 6)
             self.assertTrue((output_dir / "patch_spectra.npz").is_file())
+            self.assertTrue((output_dir / "spectral-config.json").is_file())
+            self.assertTrue((output_dir / "basin-map.geojson").is_file())
+            self.assertTrue((output_dir / "basins" / "all_oceans.json").is_file())
+            self.assertTrue(
+                (output_dir / "basins" / "north_pacific_ocean.json").is_file()
+            )
+            self.assertTrue((output_dir / "index.html").is_file())
+            self.assertTrue(
+                (output_dir / "javascripts" / "spectral-dashboard.js").is_file()
+            )
+            self.assertTrue(
+                (output_dir / "stylesheets" / "spectral-dashboard.css").is_file()
+            )
             self.assertEqual(
                 set(records["layer"].tolist()),
                 {"prediction", "glorys", "surface_observation"},
@@ -316,6 +329,102 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertIn("North Pacific Ocean", set(aggregated["basin"].tolist()))
             self.assertEqual(int(aggregated["spectrum_count"].max()), 2)
             self.assertTrue(any((output_dir / "plots").glob("*.png")))
+            config = json.loads(
+                (output_dir / "spectral-config.json").read_text(encoding="utf-8")
+            )
+            all_oceans_payload = json.loads(
+                (output_dir / "basins" / "all_oceans.json").read_text(encoding="utf-8")
+            )
+            copied_html = (output_dir / "index.html").read_text(encoding="utf-8")
+            self.assertEqual(config["kind"], "wavenumber_spectral_dashboard")
+            self.assertEqual(config["available_variables"], ["temperature"])
+            self.assertIn(ALL_OCEANS_BASIN, config["basin_data_urls"])
+            self.assertGreater(len(all_oceans_payload["rows"]), 0)
+            self.assertIn("stylesheets/spectral-dashboard.css", copied_html)
+            self.assertIn("javascripts/spectral-dashboard.js", copied_html)
+
+    def test_export_wavenumber_spectra_can_skip_dashboard_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir) / "temperature"
+            run_dir.mkdir()
+            pd.DataFrame(columns=["lon0", "lon1", "lat0", "lat1"]).to_csv(
+                run_dir / "selected_patches.csv",
+                index=False,
+            )
+            (run_dir / "run_summary.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "variable": "temperature",
+                        "selected_date": 20180620,
+                        "iso_year": 2018,
+                        "iso_week": 25,
+                        "depth_exports": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output_dir = Path(tmp_dir) / "spectra"
+            summary = export_wavenumber_spectra(
+                run_dirs=[run_dir],
+                output_dir=output_dir,
+                variables=["temperature"],
+                write_dashboard=False,
+            )
+
+            self.assertFalse(summary["dashboard_enabled"])
+            self.assertFalse((output_dir / "spectral-config.json").exists())
+            self.assertFalse((output_dir / "basin-map.geojson").exists())
+            self.assertFalse((output_dir / "index.html").exists())
+
+    def test_spectral_dashboard_static_page_exposes_expected_controls(self) -> None:
+        html = Path("docs/spectral-dashboard/index.html").read_text(encoding="utf-8")
+
+        for expected_id in (
+            "spectral-dashboard-select",
+            "spectral-variable-select",
+            "spectral-basin-select",
+            "spectral-period-type-select",
+            "spectral-period-label-select",
+            "spectral-depth-select",
+            "spectral-metric-select",
+            "spectral-map",
+            "spectral-spectrum-chart",
+            "spectral-bias-chart",
+            "spectral-summary-cards",
+        ):
+            self.assertIn(f'id="{expected_id}"', html)
+
+    def test_analysis_landing_and_dashboard_switchers_link_spectral_dashboard(
+        self,
+    ) -> None:
+        landing = Path("docs/analysis/index.html").read_text(encoding="utf-8")
+        landing_css = Path("docs/stylesheets/analysis-landing.css").read_text(
+            encoding="utf-8"
+        )
+        analysis_html = Path("docs/spatial-dashboard/index.html").read_text(
+            encoding="utf-8"
+        )
+        temporal_html = Path("docs/temporal-dashboard/index.html").read_text(
+            encoding="utf-8"
+        )
+        analysis_js = Path("docs/javascripts/analysis-dashboard.js").read_text(
+            encoding="utf-8"
+        )
+        temporal_js = Path("docs/javascripts/temporal-dashboard.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('href="../spectral-dashboard/"', landing)
+        self.assertIn("spectral_dashboard_tile.webp", landing)
+        self.assertIn("analysis-landing-tile--spectral", landing_css)
+        self.assertIn('value="spectral"', analysis_html)
+        self.assertIn('value="spectral"', temporal_html)
+        self.assertIn("../spectral-dashboard/", analysis_js)
+        self.assertIn("../spectral-dashboard/", temporal_js)
+        self.assertTrue(
+            Path("docs/assets/tiles/spectral_dashboard_tile.webp").is_file()
+        )
 
 
 if __name__ == "__main__":

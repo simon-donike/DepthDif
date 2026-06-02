@@ -8,7 +8,7 @@
 #   --max-wavelength-km 1000 \
 #   --wavelength-bin-count 32 \
 #   --basin-overlap-threshold 0.75
-# Optional switches for non-default behavior: --allow-incomplete-patches --no-plots
+# Optional switches for non-default behavior: --allow-incomplete-patches --no-plots --no-dashboard
 """Export 2D wavenumber spectra from existing inference GeoTIFF runs."""
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 import re
+import shutil
 import sys
 from typing import Any, Sequence
 
@@ -48,6 +49,9 @@ DEFAULT_MIN_WAVELENGTH_KM = 30.0
 DEFAULT_MAX_WAVELENGTH_KM = 1000.0
 DEFAULT_WAVELENGTH_BIN_COUNT = 32
 DEFAULT_BASIN_OVERLAP_THRESHOLD = 0.75
+SPECTRAL_DASHBOARD_CONFIG_NAME = "spectral-config.json"
+SPECTRAL_DASHBOARD_BASIN_MAP_NAME = "basin-map.geojson"
+SPECTRAL_DASHBOARD_BASIN_DIR_NAME = "basins"
 ALL_OCEANS_BASIN = "All Oceans"
 SOURCE_LAYER_BY_VARIABLE = {
     "temperature": ("ostia", "analysed_sst", "analysed_sst"),
@@ -343,24 +347,23 @@ def _window_for_row(
     )
 
 
-def read_patch_window(
-    path: Path,
+def _read_patch_window_from_dataset(
+    dataset: rasterio.DatasetReader,
     row: dict[str, Any],
     *,
     variable: str,
     band_index: int = 1,
     decode_uint8: bool = False,
 ) -> np.ndarray | None:
-    """Read one selected-patch window from a raster path."""
-    with rasterio.open(path) as dataset:
-        window = _window_for_row(dataset, row)
-        if window is None:
-            return None
-        if int(band_index) < 1 or int(band_index) > int(dataset.count):
-            return None
-        data = dataset.read(int(band_index), window=window, masked=False)
-        tags = dataset.tags()
-        nodata = dataset.nodata
+    """Read one selected-patch window from an already opened raster."""
+    window = _window_for_row(dataset, row)
+    if window is None:
+        return None
+    if int(band_index) < 1 or int(band_index) > int(dataset.count):
+        return None
+    data = dataset.read(int(band_index), window=window, masked=False)
+    tags = dataset.tags()
+    nodata = dataset.nodata
     if decode_uint8 or (
         np.issubdtype(data.dtype, np.integer) and "stretch_min" in tags
     ):
@@ -375,6 +378,25 @@ def read_patch_window(
         out = out.copy()
         out[np.isclose(out, float(nodata), atol=0.0, rtol=0.0)] = np.nan
     return out
+
+
+def read_patch_window(
+    path: Path,
+    row: dict[str, Any],
+    *,
+    variable: str,
+    band_index: int = 1,
+    decode_uint8: bool = False,
+) -> np.ndarray | None:
+    """Read one selected-patch window from a raster path."""
+    with rasterio.open(path) as dataset:
+        return _read_patch_window_from_dataset(
+            dataset,
+            row,
+            variable=variable,
+            band_index=band_index,
+            decode_uint8=decode_uint8,
+        )
 
 
 @lru_cache(maxsize=1)
@@ -721,79 +743,80 @@ def _spectra_for_run(
         return records, spectra, skip_counts
 
     basin_cache: dict[str, str | None] = {}
-    for row in patches:
-        patch_key = str(row.get("patch_id", len(basin_cache)))
-        if patch_key not in basin_cache:
-            basin_cache[patch_key] = assign_patch_basin_by_overlap(
-                row,
-                threshold=basin_overlap_threshold,
-            )
-        patch_basin = basin_cache[patch_key]
-        for layer_spec in layer_specs:
-            patch = read_patch_window(
-                layer_spec.path,
-                row,
-                variable=run.variable,
-                band_index=layer_spec.band_index,
-                decode_uint8=layer_spec.decode_stretched_uint8,
-            )
-            if patch is None:
-                skip_counts["missing_windows"] += 1
-                continue
-            if require_complete_patches and not np.all(np.isfinite(patch)):
-                skip_counts["incomplete_patches"] += 1
-                continue
-            pixel_x_km, pixel_y_km = _pixel_sizes_km(row, patch.shape)
-            spectrum_result = radial_wavenumber_spectrum(
-                patch,
-                pixel_size_x_km=pixel_x_km,
-                pixel_size_y_km=pixel_y_km,
-                wavelength_edges_km=wavelength_edges,
-                require_complete=require_complete_patches,
-            )
-            if spectrum_result is None:
-                skip_counts["empty_spectra"] += 1
-                continue
-            spectrum, bin_counts = spectrum_result
-            if not np.any(np.isfinite(spectrum)):
-                skip_counts["empty_spectra"] += 1
-                continue
-            record = {
-                "spectrum_index": len(spectra),
-                "variable": run.variable,
-                "layer": layer_spec.layer,
-                "layer_label": LAYER_LABELS.get(layer_spec.layer, layer_spec.layer),
-                "source_kind": layer_spec.source_kind,
-                "run_dir": str(run.run_dir),
-                "selected_date": date_value,
-                "iso_year": iso_year,
-                "iso_week": iso_week,
-                "year": year,
-                "month": month,
-                "season": season,
-                "patch_id": str(row.get("patch_id", "")),
-                "grid_y0": int(row.get("grid_y0", -1)),
-                "grid_x0": int(row.get("grid_x0", -1)),
-                "lon0": float(row.get("lon0", np.nan)),
-                "lon1": float(row.get("lon1", np.nan)),
-                "lat0": float(row.get("lat0", np.nan)),
-                "lat1": float(row.get("lat1", np.nan)),
-                "basin": "" if patch_basin is None else patch_basin,
-                "included_in_basin": bool(patch_basin is not None),
-                "depth_suffix": layer_spec.suffix,
-                "depth_label": layer_spec.label,
-                "requested_depth_m": layer_spec.requested_depth_m,
-                "actual_depth_m": layer_spec.actual_depth_m,
-                "channel_index": layer_spec.channel_index,
-                "raster_path": str(layer_spec.path),
-                "raster_band_index": int(layer_spec.band_index),
-                "finite_pixel_count": int(np.count_nonzero(np.isfinite(patch))),
-                "pixel_size_x_km": float(pixel_x_km),
-                "pixel_size_y_km": float(pixel_y_km),
-                "fft_bin_count_total": int(np.sum(bin_counts)),
-            }
-            spectra.append(spectrum.astype(np.float32, copy=False))
-            records.append(record)
+    for layer_spec in layer_specs:
+        with rasterio.open(layer_spec.path) as dataset:
+            for row in patches:
+                patch_key = str(row.get("patch_id", len(basin_cache)))
+                if patch_key not in basin_cache:
+                    basin_cache[patch_key] = assign_patch_basin_by_overlap(
+                        row,
+                        threshold=basin_overlap_threshold,
+                    )
+                patch_basin = basin_cache[patch_key]
+                patch = _read_patch_window_from_dataset(
+                    dataset,
+                    row,
+                    variable=run.variable,
+                    band_index=layer_spec.band_index,
+                    decode_uint8=layer_spec.decode_stretched_uint8,
+                )
+                if patch is None:
+                    skip_counts["missing_windows"] += 1
+                    continue
+                if require_complete_patches and not np.all(np.isfinite(patch)):
+                    skip_counts["incomplete_patches"] += 1
+                    continue
+                pixel_x_km, pixel_y_km = _pixel_sizes_km(row, patch.shape)
+                spectrum_result = radial_wavenumber_spectrum(
+                    patch,
+                    pixel_size_x_km=pixel_x_km,
+                    pixel_size_y_km=pixel_y_km,
+                    wavelength_edges_km=wavelength_edges,
+                    require_complete=require_complete_patches,
+                )
+                if spectrum_result is None:
+                    skip_counts["empty_spectra"] += 1
+                    continue
+                spectrum, bin_counts = spectrum_result
+                if not np.any(np.isfinite(spectrum)):
+                    skip_counts["empty_spectra"] += 1
+                    continue
+                record = {
+                    "spectrum_index": len(spectra),
+                    "variable": run.variable,
+                    "layer": layer_spec.layer,
+                    "layer_label": LAYER_LABELS.get(layer_spec.layer, layer_spec.layer),
+                    "source_kind": layer_spec.source_kind,
+                    "run_dir": str(run.run_dir),
+                    "selected_date": date_value,
+                    "iso_year": iso_year,
+                    "iso_week": iso_week,
+                    "year": year,
+                    "month": month,
+                    "season": season,
+                    "patch_id": str(row.get("patch_id", "")),
+                    "grid_y0": int(row.get("grid_y0", -1)),
+                    "grid_x0": int(row.get("grid_x0", -1)),
+                    "lon0": float(row.get("lon0", np.nan)),
+                    "lon1": float(row.get("lon1", np.nan)),
+                    "lat0": float(row.get("lat0", np.nan)),
+                    "lat1": float(row.get("lat1", np.nan)),
+                    "basin": "" if patch_basin is None else patch_basin,
+                    "included_in_basin": bool(patch_basin is not None),
+                    "depth_suffix": layer_spec.suffix,
+                    "depth_label": layer_spec.label,
+                    "requested_depth_m": layer_spec.requested_depth_m,
+                    "actual_depth_m": layer_spec.actual_depth_m,
+                    "channel_index": layer_spec.channel_index,
+                    "raster_path": str(layer_spec.path),
+                    "raster_band_index": int(layer_spec.band_index),
+                    "finite_pixel_count": int(np.count_nonzero(np.isfinite(patch))),
+                    "pixel_size_x_km": float(pixel_x_km),
+                    "pixel_size_y_km": float(pixel_y_km),
+                    "fft_bin_count_total": int(np.sum(bin_counts)),
+                }
+                spectra.append(spectrum.astype(np.float32, copy=False))
+                records.append(record)
     return records, spectra, skip_counts
 
 
@@ -892,6 +915,194 @@ def _sanitize_filename(value: str) -> str:
     return text.strip("_").lower() or "item"
 
 
+def _json_ready_value(value: Any) -> Any:
+    """Return a JSON-serializable scalar with missing values normalized."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return value
+
+
+def _json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return dataframe records safe for compact dashboard JSON files."""
+    records: list[dict[str, Any]] = []
+    for raw_record in frame.to_dict(orient="records"):
+        records.append(
+            {str(key): _json_ready_value(value) for key, value in raw_record.items()}
+        )
+    return records
+
+
+def _spectral_basin_map_payload() -> dict[str, Any]:
+    """Return authoritative ocean-region polygons for spectral basin selection."""
+    return {
+        "type": "FeatureCollection",
+        "name": "DepthDif world_oceans.geojson spectral basins",
+        "features": world_ocean_region_geojson_features(),
+    }
+
+
+def _copy_spectral_dashboard_static_files(output_dir: Path) -> list[str]:
+    """Copy standalone spectral dashboard files beside generated JSON data."""
+    repo_root = Path(__file__).resolve().parents[3]
+    source_files = {
+        repo_root
+        / "docs"
+        / "spectral-dashboard"
+        / "index.html": Path(output_dir)
+        / "index.html",
+        repo_root
+        / "docs"
+        / "javascripts"
+        / "spectral-dashboard.js": Path(output_dir)
+        / "javascripts"
+        / "spectral-dashboard.js",
+        repo_root
+        / "docs"
+        / "stylesheets"
+        / "spectral-dashboard.css": Path(output_dir)
+        / "stylesheets"
+        / "spectral-dashboard.css",
+    }
+    copied: list[str] = []
+    for source_path, destination_path in source_files.items():
+        if not source_path.exists():
+            continue
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        if source_path.name == "index.html":
+            html = source_path.read_text(encoding="utf-8")
+            # Exported dashboards live at output_dir/index.html, unlike docs pages.
+            html = html.replace("../stylesheets/", "stylesheets/")
+            html = html.replace("../javascripts/", "javascripts/")
+            destination_path.write_text(html, encoding="utf-8")
+        else:
+            shutil.copy2(source_path, destination_path)
+        copied.append(str(destination_path.relative_to(output_dir)))
+    return copied
+
+
+def write_spectral_dashboard_assets(
+    aggregated: pd.DataFrame,
+    *,
+    output_dir: Path,
+    run_paths: Sequence[Path],
+    wavelength_edges: np.ndarray,
+    wavelength_centers: np.ndarray,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Write compact JSON and static files for the spectral dashboard."""
+    output_path = Path(output_dir)
+    basin_dir = output_path / SPECTRAL_DASHBOARD_BASIN_DIR_NAME
+    basin_dir.mkdir(parents=True, exist_ok=True)
+
+    map_payload = _spectral_basin_map_payload()
+    with (output_path / SPECTRAL_DASHBOARD_BASIN_MAP_NAME).open(
+        "w", encoding="utf-8"
+    ) as f:
+        json.dump(map_payload, f)
+        f.write("\n")
+
+    if aggregated.empty or "basin" not in aggregated.columns:
+        basin_names = [ALL_OCEANS_BASIN]
+    else:
+        names = [str(name) for name in aggregated["basin"].dropna().unique().tolist()]
+        basin_names = [ALL_OCEANS_BASIN] + sorted(
+            name for name in names if name != ALL_OCEANS_BASIN
+        )
+
+    basin_entries: list[dict[str, Any]] = []
+    basin_data_urls: dict[str, str] = {}
+    for basin_name in basin_names:
+        file_name = f"{_sanitize_filename(basin_name)}.json"
+        relative_url = f"{SPECTRAL_DASHBOARD_BASIN_DIR_NAME}/{file_name}"
+        basin_rows = (
+            aggregated[aggregated["basin"] == basin_name]
+            if not aggregated.empty and "basin" in aggregated.columns
+            else aggregated
+        )
+        payload = {
+            "schema_version": 1,
+            "kind": "wavenumber_spectral_basin",
+            "basin": basin_name,
+            "is_global": basin_name == ALL_OCEANS_BASIN,
+            "rows": _json_records(basin_rows),
+        }
+        with (basin_dir / file_name).open("w", encoding="utf-8") as f:
+            json.dump(payload, f)
+            f.write("\n")
+        basin_entries.append(
+            {
+                "name": basin_name,
+                "label": basin_name,
+                "is_global": basin_name == ALL_OCEANS_BASIN,
+                "data_url": relative_url,
+            }
+        )
+        basin_data_urls[basin_name] = relative_url
+
+    variables = []
+    if not aggregated.empty and "variable" in aggregated.columns:
+        variables = sorted(
+            str(value) for value in aggregated["variable"].dropna().unique()
+        )
+    default_variable = (
+        "temperature"
+        if "temperature" in variables
+        else (variables[0] if variables else None)
+    )
+    period_types = []
+    if not aggregated.empty and "period_type" in aggregated.columns:
+        period_types = sorted(
+            str(value) for value in aggregated["period_type"].dropna().unique()
+        )
+    layer_order = [key for key in ("prediction", "glorys", "surface_observation")]
+    config = {
+        "schema_version": 1,
+        "kind": "wavenumber_spectral_dashboard",
+        "available_variables": variables,
+        "default_variable": default_variable,
+        "period_types": period_types,
+        "layers": LAYER_LABELS,
+        "layer_order": layer_order,
+        "line_styles": LAYER_LINESTYLES,
+        "wavelength_bin_edges_km": [
+            float(value) for value in wavelength_edges.tolist()
+        ],
+        "wavelength_bin_centers_km": [
+            float(value) for value in wavelength_centers.tolist()
+        ],
+        "basins": basin_entries,
+        "basin_data_urls": basin_data_urls,
+        "basin_map_geojson_url": SPECTRAL_DASHBOARD_BASIN_MAP_NAME,
+        "run_dirs": [str(path) for path in run_paths],
+        "source_summary": summary,
+    }
+    with (output_path / SPECTRAL_DASHBOARD_CONFIG_NAME).open(
+        "w", encoding="utf-8"
+    ) as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+
+    copied_files = _copy_spectral_dashboard_static_files(output_path)
+    return {
+        "dashboard_config_json": SPECTRAL_DASHBOARD_CONFIG_NAME,
+        "dashboard_basin_map_geojson": SPECTRAL_DASHBOARD_BASIN_MAP_NAME,
+        "dashboard_basin_dir": SPECTRAL_DASHBOARD_BASIN_DIR_NAME,
+        "dashboard_basin_count": len(basin_entries),
+        "dashboard_static_files": copied_files,
+    }
+
+
 def write_spectrum_plots(
     aggregated: pd.DataFrame,
     *,
@@ -968,6 +1179,7 @@ def export_wavenumber_spectra(
     basin_overlap_threshold: float = DEFAULT_BASIN_OVERLAP_THRESHOLD,
     require_complete_patches: bool = True,
     write_plots: bool = True,
+    write_dashboard: bool = True,
 ) -> dict[str, Any]:
     """Compute and write wavenumber spectra for existing inference runs."""
     if not run_dirs:
@@ -1051,6 +1263,7 @@ def export_wavenumber_spectra(
         "wavelength_max_km": float(max_wavelength_km),
         "basin_overlap_threshold": float(basin_overlap_threshold),
         "require_complete_patches": bool(require_complete_patches),
+        "dashboard_enabled": bool(write_dashboard),
         "artifacts": {
             "patch_spectra_npz": "patch_spectra.npz",
             "patch_spectra_records_csv": "patch_spectra_records.csv",
@@ -1061,6 +1274,18 @@ def export_wavenumber_spectra(
         },
         "skipped_by_run": skipped_by_run,
     }
+    if write_dashboard:
+        dashboard_artifacts = write_spectral_dashboard_assets(
+            aggregated_df,
+            output_dir=output_dir,
+            run_paths=run_paths,
+            wavelength_edges=edges,
+            wavelength_centers=centers,
+            summary={
+                key: value for key, value in summary.items() if key != "artifacts"
+            },
+        )
+        summary["artifacts"].update(dashboard_artifacts)
     with (output_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
         f.write("\n")
@@ -1130,6 +1355,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip PNG plot generation and only write tabular/intermediate artifacts.",
     )
+    parser.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="Skip spectral dashboard JSON/static asset generation.",
+    )
     return parser
 
 
@@ -1147,6 +1377,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         basin_overlap_threshold=float(args.basin_overlap_threshold),
         require_complete_patches=not bool(args.allow_incomplete_patches),
         write_plots=not bool(args.no_plots),
+        write_dashboard=not bool(args.no_dashboard),
     )
     print(
         "Wrote wavenumber spectra: "

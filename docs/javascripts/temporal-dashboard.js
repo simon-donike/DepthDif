@@ -237,6 +237,10 @@
         window.location.href = "../spatial-dashboard/";
         return;
       }
+      if (dashboardSelect.value === "spectral") {
+        window.location.href = "../spectral-dashboard/";
+        return;
+      }
       dashboardSelect.value = "temporal";
     });
   }

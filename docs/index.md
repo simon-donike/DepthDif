@@ -57,6 +57,7 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 - [Public Inference Package](public-inference-package.md): `depth-recon` install, API, CLI, asset resolution, and outputs
 - [FUll settings documentation](settings.md#full-settings-documentation): per-file config keys, defaults, and explanations
 - [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling
+- [Spectral Wavenumber Validation](spectral-wavenumber-validation.md): post-inference spectral validation procedure and wavenumber formulas
 - [Experiments](experiments.md): qualitative test results
 - [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference
 - [Development](development.md): known issues, TODOs, and roadmap

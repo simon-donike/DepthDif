@@ -39,24 +39,24 @@ DEFAULT_DATA_SUBDIR = Path("data")
 REPO_ROOT = Path(__file__).resolve().parents[5]
 DATASET_CARD_ASSETS = (
     (
-        Path("docs/assets/figures/depthdif_schema.png"),
-        Path("assets/figures/depthdif_schema.png"),
+        Path("docs/assets/figures/depthdif_schema.webp"),
+        Path("assets/figures/depthdif_schema.webp"),
     ),
     (
-        Path("docs/assets/data/geotiff_dataset_random100_surface.png"),
-        Path("assets/data/geotiff_dataset_random100_surface.png"),
+        Path("docs/assets/data/geotiff_dataset_random100_surface.webp"),
+        Path("assets/data/geotiff_dataset_random100_surface.webp"),
     ),
     (
         Path("docs/assets/data/argo_on_glorys_grid_3D.gif"),
         Path("assets/data/argo_on_glorys_grid_3D.gif"),
     ),
     (
-        Path("docs/assets/data/profile_comparison_good_alignment.png"),
-        Path("assets/data/profile_comparison_good_alignment.png"),
+        Path("docs/assets/data/profile_comparison_good_alignment.webp"),
+        Path("assets/data/profile_comparison_good_alignment.webp"),
     ),
     (
-        Path("docs/assets/data/profile_comparison_bad_alignment.png"),
-        Path("assets/data/profile_comparison_bad_alignment.png"),
+        Path("docs/assets/data/profile_comparison_bad_alignment.webp"),
+        Path("assets/data/profile_comparison_bad_alignment.webp"),
     ),
 )
 
@@ -349,11 +349,11 @@ def _write_readme(
     """Write the Hugging Face dataset card."""
     start_date, end_date = _date_bounds(profile_df)
     assets = {path.as_posix() for path in dataset_card_assets}
-    schema_asset = "assets/figures/depthdif_schema.png"
-    raster_asset = "assets/data/geotiff_dataset_random100_surface.png"
+    schema_asset = "assets/figures/depthdif_schema.webp"
+    raster_asset = "assets/data/geotiff_dataset_random100_surface.webp"
     argo_grid_asset = "assets/data/argo_on_glorys_grid_3D.gif"
-    good_alignment_asset = "assets/data/profile_comparison_good_alignment.png"
-    bad_alignment_asset = "assets/data/profile_comparison_bad_alignment.png"
+    good_alignment_asset = "assets/data/profile_comparison_good_alignment.webp"
+    bad_alignment_asset = "assets/data/profile_comparison_bad_alignment.webp"
     overview_section = ""
     if schema_asset in assets:
         overview_section = f"""
@@ -437,11 +437,11 @@ the enriched ARGO profile Zarr used to create it.
 
 ```text
 assets/
-  figures/depthdif_schema.png
-  data/geotiff_dataset_random100_surface.png
+  figures/depthdif_schema.webp
+  data/geotiff_dataset_random100_surface.webp
   data/argo_on_glorys_grid_3D.gif
-  data/profile_comparison_good_alignment.png
-  data/profile_comparison_bad_alignment.png
+  data/profile_comparison_good_alignment.webp
+  data/profile_comparison_bad_alignment.webp
 rasters/
   glorys/thetao/
   glorys/so/
