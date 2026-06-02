@@ -231,6 +231,19 @@ inference/outputs/global_variables_<YYYY>_W<WW>/
 
 The salinity export uses `y_hat_salinity_denorm`, `y_salinity`, `y_salinity_valid_mask`, salinity normalization/denormalization, and decoded GLORYS salinity patches from `_load_y_salinity_patch`. Its GeoTIFFs are written in PSU, and salinity globe layers use the default 30-40 PSU fixed color scale.
 
+### Post-Inference Wavenumber Spectra
+Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wavenumber spectra from finished global or paired variable inference runs without re-running inference. The command reads `selected_patches.csv`, finalized prediction GeoTIFFs, exported GLORYS rasters when present, packaged GLORYS source rasters as a fallback, and packaged surface-reference rasters (`OSTIA analysed_sst` for temperature, `SSS sos` for salinity). It assigns patch footprints to `world_oceans.geojson` regions only when at least 75% of the patch overlaps one basin; lower-overlap patches remain in the global aggregate only.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_wavenumber_spectra \
+  --run-dir inference/outputs/global_variables_2018_W25_v2 \
+  --include-temporal-runs \
+  --variables temperature salinity \
+  --output-dir inference/outputs/global_variables_2018_W25_v2/wavenumber_spectra
+```
+
+For each complete finite selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, and per-basin season/year PNG plots under `plots/`. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
+
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
 - loads the configured checkpoint and the explicit dataset split selected by `--split` (`val` by default)

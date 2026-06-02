@@ -25,6 +25,7 @@ dependencies = [
     "requests",
     "scikit-image",
     "scipy",
+    "shapely",
     "torch",
     "torchvision",
     "tqdm",
