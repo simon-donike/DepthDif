@@ -329,6 +329,14 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertIn(ALL_OCEANS_BASIN, set(aggregated["basin"].tolist()))
             self.assertIn("North Pacific Ocean", set(aggregated["basin"].tolist()))
             self.assertEqual(int(aggregated["spectrum_count"].max()), 2)
+            self.assertIn("psd_mean", aggregated.columns)
+            finite_psd = aggregated[aggregated["psd_mean"].notna()].iloc[0]
+            self.assertGreater(float(finite_psd["wavenumber_bin_width_cpkm"]), 0.0)
+            self.assertAlmostEqual(
+                float(finite_psd["psd_mean"]),
+                float(finite_psd["power_mean"])
+                / float(finite_psd["wavenumber_bin_width_cpkm"]),
+            )
             self.assertTrue(any((output_dir / "plots").glob("*.png")))
             config = json.loads(
                 (output_dir / "spectral-config.json").read_text(encoding="utf-8")
@@ -339,7 +347,15 @@ class TestWavenumberSpectra(unittest.TestCase):
             copied_html = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertEqual(config["kind"], "wavenumber_spectral_dashboard")
             self.assertEqual(config["available_variables"], ["temperature"])
+            self.assertIn("horizontal_wavenumber_bin_centers_cpkm", config)
             self.assertIn(ALL_OCEANS_BASIN, config["basin_data_urls"])
+            self.assertIn("Mediterranean Sea", config["basin_data_urls"])
+            mediterranean_payload = json.loads(
+                (output_dir / "basins" / "mediterranean_sea.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(mediterranean_payload["rows"], [])
             self.assertGreater(len(all_oceans_payload["rows"]), 0)
             self.assertIn("stylesheets/spectral-dashboard.css", copied_html)
             self.assertIn("javascripts/spectral-dashboard.js", copied_html)

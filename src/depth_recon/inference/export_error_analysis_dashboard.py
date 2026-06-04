@@ -1598,7 +1598,7 @@ def build_error_analysis_payload_from_depth_arrays(
     depth_levels: list[dict[str, Any]] = []
     progress = tqdm(
         total=len(depth_levels_metadata),
-        desc=f"{variable_metadata['label']} full-depth error analysis",
+        desc=f"{variable_metadata['label']} depth error analysis",
         unit="depth",
     )
     try:

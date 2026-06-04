@@ -160,8 +160,8 @@ $$
 \lambda_q^\ast = \sqrt{e_q e_{q+1}}
 $$
 
-Patch spectral power for bin `q` is the mean Fourier power over all coefficients
-whose wavelengths fall inside the bin:
+Patch spectral power for bin `q` is first computed as the mean Fourier power
+over all coefficients whose wavelengths fall inside the bin:
 
 $$
 S_q =
@@ -169,6 +169,19 @@ S_q =
 \sum_{(m,n)\in B_q} P(m,n),
 \quad
 B_q = \{(m,n): e_q \le \lambda(m,n) < e_{q+1}\}
+$$
+
+The exporter also converts each wavelength bin to its horizontal-wavenumber
+width in cycles per kilometer:
+
+$$
+\Delta k_q = \frac{1}{e_q} - \frac{1}{e_{q+1}}
+$$
+
+and reports a one-dimensional radial PSD estimate:
+
+$$
+PSD_q = \frac{S_q}{\Delta k_q}
 $$
 
 Bins with no FFT coefficients are recorded as missing.
@@ -229,6 +242,67 @@ $$
 Values below 1 in `R_q` indicate that predictions contain less variance than
 GLORYS at that wavelength. Values above 1 indicate excess variance.
 
+## Interpretation
+
+The dashboard displays horizontal wavenumber in cycles per kilometer (`cpkm`)
+on a reversed log axis, so high-wavenumber, short-wavelength texture appears
+on the left and low-wavenumber, broad ocean structure appears on the right.
+Hover labels also report the equivalent wavelength in kilometers. Because each
+patch is detrended before the FFT, the spectra describe residual spatial
+variability within patches, not the patch mean or a local linear gradient.
+
+The dashboard plots `psd_mean`, which is `power_mean` divided by the
+horizontal-wavenumber bin width. The paper-style velocity unit
+`m^2/(s^4 cpkm)` still does not apply because our fields are temperature and
+salinity rather than that velocity-derived quantity. The dashboard labels the
+y-axis as `PSD [degC^2/cpkm]` for temperature and `PSD [salinity^2/cpkm]` for
+salinity. A good prediction spectrum tracks the GLORYS spectrum with a similar
+level and slope across the wavelength range. A clearly lower prediction curve
+means the model is too smooth at those scales. A clearly higher curve means it
+is adding too much variance, often visible as noisy or speckled texture at
+short wavelengths.
+
+The prediction/GLORYS ratio is the most direct quality signal:
+
+- `R_q = 1` is ideal agreement at that wavelength.
+- roughly `0.8` to `1.25` is usually a close scale match.
+- values around `0.5` to `0.8` indicate moderate smoothing.
+- values below `0.5` indicate severe loss of variance at that scale.
+- values around `1.25` to `2` indicate excess variance.
+- values above `2` indicate strong over-energizing or likely artifacts.
+
+These ranges are rules of thumb, not pass/fail limits. They should be judged
+more strictly where many spectra contribute and more cautiously where
+`spectrum_count` is small or bins contain few FFT coefficients.
+
+For dashboard metrics, `relative_bias = 0` is ideal, negative values mean
+smoothing, and positive values mean excess variance. Ratio and relative bias are
+unitless; relative bias is plotted as a fraction, so `0.25` means `+25%`. The
+`difference` metric is in PSD units and is best used to see where the
+absolute mismatch is largest. The magnitude is not directly comparable across
+variables or depths. The summary cards use the currently selected metric:
+`High freq` averages the short-wavelength range up to about
+100 km, and `Large scale` averages the long-wavelength range from about 300 km
+upward. `Slope diff` is the fitted log-power-vs-log-wavelength slope for
+prediction minus GLORYS. Values near zero are best. Positive values usually
+mean the prediction is too dominated by large scales; negative values usually
+mean relatively too much small-scale power.
+
+Good diagnostics therefore look like:
+
+- prediction and GLORYS curves nearly parallel and close together
+- prediction/GLORYS ratio near 1 across both short and long wavelengths
+- relative bias near 0 without a persistent sign across wavelengths
+- high `spectrum_count` for the selected basin and period
+
+Bad diagnostics commonly look like:
+
+- low short-wavelength ratio, showing over-smoothed fronts or missing eddies
+- high short-wavelength ratio, showing noisy or speckled predictions
+- low long-wavelength ratio, showing basin-scale structure is muted
+- high long-wavelength ratio, showing broad false gradients or large blobs
+- large slope differences, showing the model has the wrong scale balance
+
 ## Test Coverage
 
 `tests/test_wavenumber_spectra.py` validates the scientific and export
@@ -255,7 +329,7 @@ The procedure writes:
 - `patch_spectra.npz`: dense patch-by-wavelength spectrum matrix and wavelength
   edges/centers
 - `patch_spectra_records.csv`: one metadata row per accepted patch spectrum
-- `aggregated_spectra.csv`: grouped mean spectra used by plots and dashboards
+- `aggregated_spectra.csv`: grouped spectra with `power_mean`, `psd_mean`, and wavenumber-bin metadata used by plots and dashboards
 - `summary.json`: run, binning, skip-count, and artifact metadata
 - `plots/*.png`: default log-log seasonal/yearly spectra
 - `spectral-config.json`, `basin-map.geojson`, `basins/*.json`, and copied

@@ -1337,7 +1337,7 @@ def _absolute_error_array_from_signed_accumulator(
     return values
 
 
-def _write_full_depth_error_analysis_json(
+def _write_depth_error_analysis_json(
     *,
     output_path: Path,
     run_summary: dict[str, Any],
@@ -1347,7 +1347,7 @@ def _write_full_depth_error_analysis_json(
     layout: MosaicLayout,
     land_mask: np.ndarray | None,
 ) -> Path:
-    """Write full-native-depth error analysis JSON from signed-error mosaics."""
+    """Write selected-depth error analysis JSON from signed-error mosaics."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     depth_metadata = [
         {
@@ -2804,7 +2804,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         resolve_depth_export_levels(depth_axis_m),
         getattr(args, "depth_export_suffix", None),
     )
-    analysis_depth_levels = resolve_full_depth_analysis_levels(depth_axis_m)
+    analysis_depth_levels = list(depth_export_levels)
     collect_full_depth_error_analysis = bool(export_prediction and export_ground_truth)
     export_compact_basin_depth_error = bool(
         collect_full_depth_error_analysis and args.compact_basin_depth_error
@@ -3747,7 +3747,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         run_summary["error_analysis_grid_geojson_path"] = _summary_artifact_path(
             error_analysis_grid_geojson_path
         )
-        _write_full_depth_error_analysis_json(
+        _write_depth_error_analysis_json(
             output_path=error_analysis_json_path,
             run_summary=run_summary,
             variable_spec=variable_spec,
@@ -3760,7 +3760,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             output_path=error_analysis_grid_geojson_path,
             land_mask_path=effective_land_mask_path,
         )
-        print(f"Wrote full-depth error analysis JSON: {error_analysis_json_path}")
+        print(f"Wrote depth error analysis JSON: {error_analysis_json_path}")
         print(f"Wrote analysis ocean grid GeoJSON: {error_analysis_grid_geojson_path}")
     if export_compact_basin_depth_error:
         compact_error_path = run_dir / DEFAULT_TEMPORAL_BASIN_DEPTH_ERRORS_JSON_NAME

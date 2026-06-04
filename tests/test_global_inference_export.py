@@ -32,7 +32,7 @@ from depth_recon.inference.export_global import (
     _patch_split_feature_for_row,
     _full_profile_feature_for_sample,
     _write_full_profile_sample_artifacts,
-    _write_full_depth_error_analysis_json,
+    _write_depth_error_analysis_json,
     _default_run_stem,
     filter_selection_by_rectangle,
     _normalize_cli_args,
@@ -49,7 +49,6 @@ from depth_recon.inference.export_global import (
     build_global_mosaic,
     global_inference_dataset_overrides,
     resolve_depth_export_levels,
-    resolve_full_depth_analysis_levels,
     select_export_indices,
     write_absolute_error_geotiff,
     write_global_top_band_geotiff,
@@ -1284,19 +1283,29 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertAlmostEqual(levels[3].requested_depth_m, 100.0)
         self.assertAlmostEqual(levels[3].actual_depth_m, 97.0)
 
-    def test_full_depth_error_analysis_json_includes_every_native_depth(self) -> None:
-        depth_levels = resolve_full_depth_analysis_levels(
-            np.asarray([0.5, 1.5, 10.0], dtype=np.float64)
+    def test_depth_error_analysis_json_uses_globe_depth_levels(self) -> None:
+        depth_axis_m = np.asarray(
+            [0.5, 9.8, 52.0, 97.0, 247.0, 505.0, 980.0, 1990.0, 2502.0, 4997.0],
+            dtype=np.float64,
         )
+        depth_levels = resolve_depth_export_levels(depth_axis_m)
 
         self.assertEqual(
             [level.label for level in depth_levels],
-            ["Surface", "1.5m", "10m"],
+            [
+                "Surface",
+                "10m",
+                "50m",
+                "100m",
+                "250m",
+                "500m",
+                "1000m",
+                "2000m",
+                "2500m",
+                "5000m",
+            ],
         )
-        self.assertEqual(
-            [level.suffix for level in depth_levels],
-            ["depth_000", "depth_001", "depth_002"],
-        )
+        self.assertEqual(depth_levels[0].channel_index, 0)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1323,9 +1332,11 @@ class TestGlobalInferenceExport(unittest.TestCase):
             }
             try:
                 signed_errors = [
-                    np.asarray([[-99.0, -1.0], [2.0, -3.0]], dtype=np.float64),
-                    np.asarray([[99.0, -5.0], [10.0, -10.0]], dtype=np.float64),
-                    np.asarray([[99.0, -2.0], [4.0, -6.0]], dtype=np.float64),
+                    np.asarray(
+                        [[99.0, -float(index + 1)], [2.0 * (index + 1), -3.0]],
+                        dtype=np.float64,
+                    )
+                    for index, _level in enumerate(depth_levels)
                 ]
                 for level, signed_error in zip(
                     depth_levels, signed_errors, strict=True
@@ -1360,7 +1371,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
                         ds.write(values, 1)
 
                 json_path = tmp_path / DEFAULT_ANALYSIS_JSON_NAME
-                _write_full_depth_error_analysis_json(
+                _write_depth_error_analysis_json(
                     output_path=json_path,
                     run_summary={
                         "run_dir": str(tmp_path),
@@ -1388,10 +1399,22 @@ class TestGlobalInferenceExport(unittest.TestCase):
 
         self.assertEqual(
             [depth["label"] for depth in payload["depth_levels"]],
-            ["All Depths", "Surface", "1.5m", "10m"],
+            [
+                "All Depths",
+                "Surface",
+                "10m",
+                "50m",
+                "100m",
+                "250m",
+                "500m",
+                "1000m",
+                "2000m",
+                "2500m",
+                "5000m",
+            ],
         )
-        self.assertEqual(payload["depth_levels"][0]["depth_count"], 3)
-        self.assertEqual(payload["depth_levels"][0]["global"]["count"], 9)
+        self.assertEqual(payload["depth_levels"][0]["depth_count"], 10)
+        self.assertEqual(payload["depth_levels"][0]["global"]["count"], 30)
         self.assertEqual(payload["depth_levels"][1]["global"]["count"], 3)
         self.assertEqual(payload["depth_levels"][1]["global"]["median"], 2.0)
         self.assertEqual(payload["depth_levels"][3]["channel_index"], 2)

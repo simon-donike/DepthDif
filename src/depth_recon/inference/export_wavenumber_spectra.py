@@ -827,10 +827,15 @@ def aggregate_spectra(
     records: pd.DataFrame,
     spectra: np.ndarray,
     wavelength_centers: np.ndarray,
+    wavelength_edges: np.ndarray,
 ) -> pd.DataFrame:
     """Aggregate patch spectra by basin, time period, layer, and depth."""
     if records.empty or spectra.size == 0:
         return pd.DataFrame()
+    wavelength_edges = np.asarray(wavelength_edges, dtype=np.float64)
+    wavenumber_edges = 1.0 / wavelength_edges[::-1]
+    wavenumber_centers = 1.0 / np.asarray(wavelength_centers, dtype=np.float64)
+    wavenumber_widths = np.diff(wavenumber_edges)[::-1]
     rows: list[dict[str, Any]] = []
     base_group_cols = [
         "variable",
@@ -881,6 +886,13 @@ def aggregate_spectra(
                     )
                 finite_rows = np.any(np.isfinite(group_spectra), axis=1)
                 for bin_idx, wavelength in enumerate(wavelength_centers.tolist()):
+                    power_value = mean_power[bin_idx]
+                    width_value = wavenumber_widths[bin_idx]
+                    psd_value = (
+                        power_value / width_value
+                        if np.isfinite(power_value) and width_value > 0.0
+                        else np.nan
+                    )
                     rows.append(
                         {
                             "variable": values["variable"],
@@ -900,11 +912,18 @@ def aggregate_spectra(
                             "actual_depth_m": float(values["actual_depth_m"]),
                             "channel_index": int(values["channel_index"]),
                             "wavelength_km": float(wavelength),
+                            "horizontal_wavenumber_cpkm": float(
+                                wavenumber_centers[bin_idx]
+                            ),
+                            "wavenumber_bin_width_cpkm": float(width_value),
                             "wavelength_bin_index": int(bin_idx),
                             "power_mean": (
                                 None
-                                if not np.isfinite(mean_power[bin_idx])
-                                else float(mean_power[bin_idx])
+                                if not np.isfinite(power_value)
+                                else float(power_value)
+                            ),
+                            "psd_mean": (
+                                None if not np.isfinite(psd_value) else float(psd_value)
                             ),
                             "spectrum_count": int(np.count_nonzero(finite_rows)),
                         }
@@ -1015,13 +1034,14 @@ def write_spectral_dashboard_assets(
         json.dump(map_payload, f)
         f.write("\n")
 
-    if aggregated.empty or "basin" not in aggregated.columns:
-        basin_names = [ALL_OCEANS_BASIN]
-    else:
-        names = [str(name) for name in aggregated["basin"].dropna().unique().tolist()]
-        basin_names = [ALL_OCEANS_BASIN] + sorted(
-            name for name in names if name != ALL_OCEANS_BASIN
-        )
+    map_basin_names = [
+        str(feature.get("properties", {}).get("name"))
+        for feature in map_payload.get("features", [])
+        if feature.get("properties", {}).get("name")
+    ]
+    basin_names = [ALL_OCEANS_BASIN] + [
+        name for name in map_basin_names if name != ALL_OCEANS_BASIN
+    ]
 
     basin_entries: list[dict[str, Any]] = []
     basin_data_urls: dict[str, str] = {}
@@ -1084,6 +1104,12 @@ def write_spectral_dashboard_assets(
         "wavelength_bin_centers_km": [
             float(value) for value in wavelength_centers.tolist()
         ],
+        "horizontal_wavenumber_bin_edges_cpkm": [
+            float(value) for value in (1.0 / wavelength_edges[::-1]).tolist()
+        ],
+        "horizontal_wavenumber_bin_centers_cpkm": [
+            float(value) for value in (1.0 / wavelength_centers).tolist()
+        ],
         "basins": basin_entries,
         "basin_data_urls": basin_data_urls,
         "basin_map_geojson_url": SPECTRAL_DASHBOARD_BASIN_MAP_NAME,
@@ -1113,6 +1139,15 @@ def _spectrum_line_label(layer: str, depth_label: str) -> str:
     if str(layer) == "surface_observation" or depth_text.lower() == layer_label.lower():
         return layer_label
     return f"{layer_label} {depth_text}"
+
+
+def _spectral_power_unit_label(variable: str) -> str:
+    """Return the dashboard display unit for spectral density."""
+    if str(variable).strip().lower() == "temperature":
+        return "degC^2/cpkm"
+    if str(variable).strip().lower() == "salinity":
+        return "salinity^2/cpkm"
+    return "field^2/cpkm"
 
 
 def write_spectrum_plots(
@@ -1145,8 +1180,14 @@ def write_spectrum_plots(
         for line_keys, line_group in group.groupby(line_cols, sort=True):
             layer, depth_label, actual_depth_m, _channel_index = line_keys
             line_group = line_group.sort_values("wavelength_km")
-            y = line_group["power_mean"].to_numpy(dtype=np.float64)
-            x = line_group["wavelength_km"].to_numpy(dtype=np.float64)
+            y = line_group["psd_mean"].to_numpy(dtype=np.float64)
+            wavelength = line_group["wavelength_km"].to_numpy(dtype=np.float64)
+            x = np.divide(
+                1.0,
+                wavelength,
+                out=np.full_like(wavelength, np.nan),
+                where=wavelength > 0.0,
+            )
             valid = np.isfinite(x) & np.isfinite(y) & (y > 0.0)
             if not np.any(valid):
                 continue
@@ -1163,8 +1204,9 @@ def write_spectrum_plots(
         if not ax.lines:
             plt.close(fig)
             continue
-        ax.set_xlabel("Wavelength (km)")
-        ax.set_ylabel("Mean spectral power")
+        ax.invert_xaxis()
+        ax.set_xlabel("Horizontal wavenumber [cpkm]")
+        ax.set_ylabel(f"PSD [{_spectral_power_unit_label(variable)}]")
         ax.set_title(f"{variable.title()} spectra - {basin} - {period_label}")
         ax.grid(True, which="both", alpha=0.25)
         ax.legend(loc="best", fontsize=7)
@@ -1247,7 +1289,7 @@ def export_wavenumber_spectra(
         else np.zeros((0, centers.size), dtype=np.float32)
     )
     records_df = pd.DataFrame.from_records(all_records)
-    aggregated_df = aggregate_spectra(records_df, spectra_array, centers)
+    aggregated_df = aggregate_spectra(records_df, spectra_array, centers, edges)
 
     np.savez_compressed(
         output_dir / "patch_spectra.npz",
