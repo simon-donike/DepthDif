@@ -37,6 +37,7 @@ dist
 *.csv
 *.geojson
 *.json
+!docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.json
 *.tif
 *.tiff
 *.geotiff

@@ -1,0 +1,49 @@
+{
+  "date": "20180622",
+  "dataset_root": "/work/data/depthdif",
+  "manifest_path": "/work/data/depthdif/manifest.yaml",
+  "argo_path": "/work/data/depthdif/argo/argo_profiles_on_grid.zarr",
+  "ostia_raster": "/work/data/depthdif/rasters/ostia/analysed_sst/analysed_sst_20180622.tif",
+  "glorys_temperature_raster": "/work/data/depthdif/rasters/glorys/thetao/thetao_20180622.tif",
+  "glorys_salinity_raster": "/work/data/depthdif/rasters/glorys/so/so_20180622.tif",
+  "ssh_raster": "/work/data/depthdif/rasters/sealevel/adt/adt_20180622.tif",
+  "sss_raster": "/work/data/depthdif/rasters/sss/sos/sos_20180622.tif",
+  "land_mask_path": "/work/data/depthdif/masks/world_land_mask_glorys_0p1.tif",
+  "world_geojson_path": "/work/code/DepthDif/src/depth_recon/data/dataset_creation/data_download_raw/get_world/world.geojson",
+  "region_bounds": {
+    "lon_min": -82.0,
+    "lon_max": -45.0,
+    "lat_min": 24.0,
+    "lat_max": 47.0
+  },
+  "argo_profile_count": 6608517,
+  "argo_processed_profile_count": 6608517,
+  "argo_valid_profile_count": 6608321,
+  "argo_ocean_profile_count": 6087588,
+  "argo_week_count": 736,
+  "rendering": {
+    "projection": "Equal Earth",
+    "hex_gridsize": 41,
+    "argo_density_units": "mean_profiles_per_week_per_hex",
+    "land_stride": 8,
+    "glorys_max_depth_m": 1000.0,
+    "glorys_render": "temperature_and_salinity_cubes",
+    "temperature_vmin_c": 4.0,
+    "temperature_vmax_c": 29.0,
+    "glorys_salinity_vmin_psu": 31.6,
+    "glorys_salinity_vmax_psu": 37.6,
+    "ssh_vmin_m": -0.35000000000000003,
+    "ssh_vmax_m": 1.55,
+    "sss_vmin_psu": 31.6,
+    "sss_vmax_psu": 37.6,
+    "figure_width_in": 7.48,
+    "figure_height_in": 6.4,
+    "dpi": 300,
+    "image_width_px": 2244,
+    "image_height_px": 1920
+  },
+  "outputs": {
+    "png": "docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.png",
+    "webp": "docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.webp"
+  }
+}
