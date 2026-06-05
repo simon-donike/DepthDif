@@ -40,8 +40,10 @@ $$
 T_C = T_K - 273.15
 $$
 
-By default, only complete finite patch windows are analyzed. A patch containing
-nodata or `NaN` is skipped unless `--allow-incomplete-patches` is used.
+By default, patch windows with nodata or `NaN` are included. The exporter fits
+the detrending plane on finite pixels, then zero-fills missing residuals before
+the Hann-windowed FFT so prediction and GLORYS use the same land/coast support.
+Pass `--require-complete-patches` to keep only complete finite patch windows.
 
 ## Patch Geometry
 
@@ -194,11 +196,11 @@ assigned to the basin with maximum overlap only when:
 $$
 \frac{\mathrm{area}(A_{\mathrm{patch}} \cap A_{\mathrm{basin}})}
 {\mathrm{area}(A_{\mathrm{patch}})}
-\ge 0.75
+\ge 0.30
 $$
 
-The threshold is controlled by `--basin-overlap-threshold`. Patches below the
-threshold remain in `All Oceans` but are excluded from named-basin aggregates.
+The default threshold is `0.30` and is controlled by `--basin-overlap-threshold`.
+Patches below the threshold remain in `All Oceans` but are excluded from named-basin aggregates.
 
 ## Aggregation
 
@@ -245,10 +247,10 @@ GLORYS at that wavelength. Values above 1 indicate excess variance.
 ## Interpretation
 
 The dashboard displays horizontal wavenumber in cycles per kilometer (`cpkm`)
-on a reversed log axis, so high-wavenumber, short-wavelength texture appears
-on the left and low-wavenumber, broad ocean structure appears on the right.
-Hover labels also report the equivalent wavelength in kilometers. Because each
-patch is detrended before the FFT, the spectra describe residual spatial
+on a log axis that increases left-to-right by default. Use the X Axis selector
+to switch the display to wavelength in kilometers (`km`), also on an increasing
+left-to-right log axis. Hover labels report the equivalent wavelength. Because
+each patch is detrended before the FFT, the spectra describe residual spatial
 variability within patches, not the patch mean or a local linear gradient.
 
 The dashboard plots `psd_mean`, which is `power_mean` divided by the
@@ -290,7 +292,7 @@ mean relatively too much small-scale power.
 
 Good diagnostics therefore look like:
 
-- prediction and GLORYS curves nearly parallel and close together
+- prediction, GLORYS, and OSTIA/SSS curves nearly parallel and close together
 - prediction/GLORYS ratio near 1 across both short and long wavelengths
 - relative bias near 0 without a persistent sign across wavelengths
 - high `spectrum_count` for the selected basin and period

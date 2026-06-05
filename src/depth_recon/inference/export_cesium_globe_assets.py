@@ -57,6 +57,7 @@ DEFAULT_ABSOLUTE_ERROR_COLOR_PALETTE = "absolute_error_green_red"
 DEFAULT_EXTRA_ZOOM_LEVELS = 0
 DEFAULT_RASTER_EDGE_EROSION_PIXELS = 2
 DEFAULT_RASTER_EDGE_FEATHER_PIXELS = 4
+DEFAULT_PERIODIC_LONGITUDE_REPAIR_PIXELS = 16
 DEFAULT_RCLONE_SYNC_SCOPE = "globe"
 DEFAULT_ERROR_ANALYSIS_JSON_NAME = "error-analysis.json"
 DEFAULT_ANALYSIS_GRID_GEOJSON_NAME = "analysis-grid.geojson"
@@ -515,17 +516,26 @@ def _colorize_raster(
         raise RuntimeError("gdaldem was not found on PATH.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    repair_width = max(
+        DEFAULT_PERIODIC_LONGITUDE_REPAIR_PIXELS,
+        int(raster_edge_erosion_pixels) + int(raster_edge_feather_pixels),
+    )
+    color_relief_input_path = _periodic_longitude_source_for_colorization(
+        input_path,
+        output_path.with_name(f"{output_path.stem}_periodic_source.tif"),
+        minimum_repair_width=repair_width,
+    )
     command = [
         gdaldem_exe,
         "color-relief",
         "-alpha",
-        str(input_path),
+        str(color_relief_input_path),
         str(color_ramp_path),
         str(output_path),
     ]
     subprocess.run(command, check=True)
     _apply_alpha_mask_to_colorized_raster(
-        input_path,
+        color_relief_input_path,
         output_path,
         raster_edge_erosion_pixels=raster_edge_erosion_pixels,
         raster_edge_feather_pixels=raster_edge_feather_pixels,
@@ -635,6 +645,145 @@ def _transparent_pixel_mask(
         if ds.nodata is not None:
             transparent |= np.isclose(data, float(ds.nodata))
     return transparent
+
+
+def _valid_single_band_raster_mask(
+    data: np.ndarray,
+    *,
+    nodata: float | None,
+) -> np.ndarray:
+    """Return finite pixels that are not equal to the source nodata value."""
+    valid = np.isfinite(data)
+    if nodata is not None and np.isfinite(float(nodata)):
+        valid &= ~np.isclose(data, float(nodata), atol=0.0, rtol=0.0)
+    return valid
+
+
+def _fill_periodic_longitude_exterior_nodata_gaps_2d(
+    image: np.ndarray,
+    *,
+    nodata: float | None,
+    edge_width: int,
+) -> tuple[np.ndarray, bool, int]:
+    """Fill west/east exterior nodata runs from their periodic counterpart."""
+    patch = np.asarray(image, dtype=np.float32)
+    if patch.ndim != 2:
+        raise RuntimeError(
+            "Expected a 2D raster for longitude wrap repair, "
+            f"got shape {tuple(patch.shape)}."
+        )
+
+    requested_width = max(0, int(edge_width))
+    effective_width = min(requested_width, int(patch.shape[1]) // 2)
+    if effective_width <= 0:
+        return patch.copy(), False, 0
+
+    out = patch.copy()
+    left_edge = out[:, :effective_width]
+    # Reverse the east edge so each column aligns with the opposite side of the cut.
+    right_edge = out[:, -effective_width:][:, ::-1]
+    left_valid = _valid_single_band_raster_mask(left_edge, nodata=nodata)
+    right_valid = _valid_single_band_raster_mask(right_edge, nodata=nodata)
+    left_boundary_gap = np.logical_and.accumulate(~left_valid, axis=1)
+    right_boundary_gap = np.logical_and.accumulate(~right_valid, axis=1)
+    left_fill_mask = left_boundary_gap & right_valid
+    right_fill_mask = right_boundary_gap & left_valid
+    if np.any(left_fill_mask):
+        left_edge[left_fill_mask] = right_edge[left_fill_mask]
+    if np.any(right_fill_mask):
+        right_edge[right_fill_mask] = left_edge[right_fill_mask]
+    did_fill = bool(np.any(left_fill_mask) or np.any(right_fill_mask))
+    return out, did_fill, effective_width
+
+
+def _raster_spans_periodic_longitude(
+    *,
+    left: float,
+    right: float,
+    pixel_width: float,
+) -> bool:
+    """Return True when raster bounds cover the full -180..180 longitude span."""
+    lon_span = float(right) - float(left)
+    tolerance = max(abs(float(pixel_width)) * 1.0e-6, 1.0e-6)
+    return (
+        float(left) <= -180.0 + tolerance
+        and float(right) >= 180.0 - tolerance
+        and abs(lon_span - 360.0) <= tolerance
+    )
+
+
+def _periodic_longitude_repair_width(
+    *,
+    tags: dict[str, Any],
+    minimum_width: int,
+    raster_width: int,
+) -> int:
+    """Resolve how many west/east edge columns are eligible for gap repair."""
+    tag_width = 0
+    tag_value = tags.get("longitude_wrap_blend_width_pixels")
+    if tag_value is not None:
+        try:
+            tag_width = int(float(tag_value))
+        except (TypeError, ValueError):
+            tag_width = 0
+    requested_width = max(int(minimum_width), int(tag_width), 0)
+    return min(requested_width, int(raster_width) // 2)
+
+
+def _periodic_longitude_source_for_colorization(
+    input_path: Path,
+    repair_path: Path,
+    *,
+    minimum_repair_width: int = DEFAULT_PERIODIC_LONGITUDE_REPAIR_PIXELS,
+) -> Path:
+    """Return a source raster with boundary nodata gaps repaired for color relief."""
+    with rasterio.open(input_path) as ds:
+        bounds = ds.bounds
+        pixel_width = abs(float(ds.transform.a)) if ds.width > 0 else 0.0
+        if not _raster_spans_periodic_longitude(
+            left=float(bounds.left),
+            right=float(bounds.right),
+            pixel_width=pixel_width,
+        ):
+            return input_path
+        repair_width = _periodic_longitude_repair_width(
+            tags=ds.tags(),
+            minimum_width=int(minimum_repair_width),
+            raster_width=int(ds.width),
+        )
+        if repair_width <= 0:
+            return input_path
+        data = ds.read(1, masked=False)
+        nodata = None if ds.nodata is None else float(ds.nodata)
+        repaired, did_repair, effective_width = (
+            _fill_periodic_longitude_exterior_nodata_gaps_2d(
+                data,
+                nodata=nodata,
+                edge_width=repair_width,
+            )
+        )
+        if not did_repair:
+            return input_path
+        profile = ds.profile.copy()
+        tags = ds.tags()
+        band_description = ds.descriptions[0] if ds.descriptions else None
+
+    repair_path.parent.mkdir(parents=True, exist_ok=True)
+    repair_tags = dict(tags)
+    repair_tags.update(
+        {
+            "periodic_longitude_edge_gap_repaired": "true",
+            "periodic_longitude_edge_gap_repair_width_pixels": str(
+                int(effective_width)
+            ),
+        }
+    )
+    with rasterio.open(repair_path, "w", **profile) as out_ds:
+        out_ds.write(repaired.astype(np.float32, copy=False), 1)
+        if band_description:
+            out_ds.set_band_description(1, band_description)
+        out_ds.update_tags(**repair_tags)
+    return repair_path
 
 
 def _raster_edge_alpha_scale(

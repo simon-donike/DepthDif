@@ -33,6 +33,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _copy_precomputed_error_analysis_json,
     _estimate_native_zoom_level,
     _export_base_map_tiles,
+    _periodic_longitude_source_for_colorization,
     _prefix_geojson_graph_paths,
     _prefix_variable_config_asset_urls,
     _read_raster_metadata,
@@ -579,6 +580,57 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertTrue(np.all(rgba[3, :, :2] == 255))
         self.assertTrue(np.all(rgba[3, :, -2:] == 255))
         self.assertTrue(np.all(rgba[3, :, 2:-2] == 0))
+
+    def test_periodic_longitude_source_for_colorization_repairs_boundary_gap(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            input_path = tmp_path / "input.tif"
+            repair_path = tmp_path / "input_repaired.tif"
+            transform = from_origin(-180.0, 2.0, 45.0, 1.0)
+            data = np.asarray(
+                [
+                    [
+                        [-9999.0, -9999.0, 8.0, 9.0, 10.0, 11.0, 18.0, 20.0],
+                        [1.0, -9999.0, 8.0, 9.0, 10.0, 11.0, 18.0, 20.0],
+                    ]
+                ],
+                dtype=np.float32,
+            )
+
+            with rasterio.open(
+                input_path,
+                "w",
+                driver="GTiff",
+                height=2,
+                width=8,
+                count=1,
+                dtype="float32",
+                nodata=-9999.0,
+                crs="EPSG:4326",
+                transform=transform,
+            ) as ds:
+                ds.write(data)
+                ds.update_tags(longitude_wrap_blend_width_pixels="2")
+
+            repaired_path = _periodic_longitude_source_for_colorization(
+                input_path,
+                repair_path,
+                minimum_repair_width=1,
+            )
+
+            with rasterio.open(repaired_path) as ds:
+                repaired = ds.read(1)
+                tags = ds.tags()
+
+        self.assertEqual(repaired_path, repair_path)
+        self.assertEqual(tags["periodic_longitude_edge_gap_repaired"], "true")
+        self.assertEqual(tags["periodic_longitude_edge_gap_repair_width_pixels"], "2")
+        self.assertEqual(float(repaired[0, 0]), 20.0)
+        self.assertEqual(float(repaired[0, 1]), 18.0)
+        self.assertEqual(float(repaired[1, 0]), 1.0)
+        self.assertEqual(float(repaired[1, 1]), -9999.0)
 
     def test_validate_raster_transparency_contract_rejects_zeroed_land(
         self,

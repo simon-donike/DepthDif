@@ -138,7 +138,7 @@ Use `src/depth_recon/inference/export_global.py` when you want the standard prod
 - runs one stochastic prediction per patch; the global smoothing/variance reduction comes from 25% spatial overlap and overlap-weighted stitching
 - can fan out inference over all visible CUDA devices via `--multi-gpu` / `--no-multi-gpu`
 - streams patch outputs into on-disk accumulation buffers instead of holding the full world tensor in RAM
-- stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, feathering the periodic `-180/180` longitude edge when overlap exists, then conservatively fills tiny nodata seams
+- stitches prediction GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m by averaging overlap counts, repairing boundary-contiguous nodata at the periodic `-180/180` longitude edge, feathering the wrap when overlap exists, then conservatively filling tiny internal nodata seams
 - applies the configured land-mask GeoTIFF at the final write step so land pixels and uncovered water use the same GeoTIFF nodata value
 - maps requested depths to the nearest GLORYS/model channel and records requested depth, actual source depth, and channel index in TIFF metadata and `run_summary.yaml`
 - exports matching GLORYS rasters for the same ten depth levels by default via `--export-ground-truth` / `--no-export-ground-truth`; compact GeoTIFF-backed sources are decoded/dequantized into the active variable unit
@@ -232,7 +232,7 @@ inference/outputs/global_variables_<YYYY>_W<WW>/
 The salinity export uses `y_hat_salinity_denorm`, `y_salinity`, `y_salinity_valid_mask`, salinity normalization/denormalization, and decoded GLORYS salinity patches from `_load_y_salinity_patch`. Its GeoTIFFs are written in PSU, and salinity globe layers use the default 30-40 PSU fixed color scale.
 
 ### Post-Inference Wavenumber Spectra
-Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wavenumber spectra from finished global or paired variable inference runs without re-running inference. The command reads `selected_patches.csv`, finalized prediction GeoTIFFs, exported GLORYS rasters when present, packaged GLORYS source rasters as a fallback, and packaged surface-reference rasters (`OSTIA analysed_sst` for temperature, `SSS sos` for salinity). It assigns patch footprints to `world_oceans.geojson` regions only when at least 75% of the patch overlaps one basin; lower-overlap patches remain in the global aggregate only.
+Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wavenumber spectra from finished global or paired variable inference runs without re-running inference. The command reads `selected_patches.csv`, finalized prediction GeoTIFFs, exported GLORYS rasters when present, packaged GLORYS source rasters as a fallback, and packaged surface-reference rasters (`OSTIA analysed_sst` for temperature, `SSS sos` for salinity). It assigns patch footprints to `world_oceans.geojson` regions only when at least 30% of the patch overlaps one basin; lower-overlap patches remain in the global aggregate only.
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_wavenumber_spectra \
@@ -244,7 +244,7 @@ Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wave
   --rclone-remote r2:depth-data/inference_production/globe/wavenumber_spectra
 ```
 
-For each complete finite selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, a copied interactive `index.html` spectral dashboard with `spectral-config.json`/`basins/*.json`/`basin-map.geojson`, and per-basin season/year PNG plots under `plots/`. Pass `--rclone-remote` to upload this bundle, or `--no-dashboard` to skip the hosted dashboard assets. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
+For each selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, a copied interactive `index.html` spectral dashboard with `spectral-config.json`/`basins/*.json`/`basin-map.geojson`, and per-basin season/year PNG plots under `plots/`. Pass `--rclone-remote` to upload this bundle, or `--no-dashboard` to skip the hosted dashboard assets. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:

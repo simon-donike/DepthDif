@@ -7,10 +7,10 @@
 #   --min-wavelength-km 30 \
 #   --max-wavelength-km 1000 \
 #   --wavelength-bin-count 32 \
-#   --basin-overlap-threshold 0.75 \
+#   --basin-overlap-threshold 0.30 \
 #   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe/wavenumber_spectra \
 #   --rclone-remote r2:depth-data/inference_production/globe/wavenumber_spectra
-# Optional switches for non-default behavior: --allow-incomplete-patches --no-plots --no-dashboard
+# Optional switches for non-default behavior: --require-complete-patches --no-plots --no-dashboard
 """Export 2D wavenumber spectra from existing inference GeoTIFF runs."""
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ DEFAULT_OUTPUT_DIR_NAME = "wavenumber_spectra"
 DEFAULT_MIN_WAVELENGTH_KM = 30.0
 DEFAULT_MAX_WAVELENGTH_KM = 1000.0
 DEFAULT_WAVELENGTH_BIN_COUNT = 32
-DEFAULT_BASIN_OVERLAP_THRESHOLD = 0.75
+DEFAULT_BASIN_OVERLAP_THRESHOLD = 0.30
 SPECTRAL_DASHBOARD_CONFIG_NAME = "spectral-config.json"
 SPECTRAL_DASHBOARD_BASIN_MAP_NAME = "basin-map.geojson"
 SPECTRAL_DASHBOARD_BASIN_DIR_NAME = "basins"
@@ -67,7 +67,7 @@ GLORYS_SOURCE_BY_VARIABLE = {
 LAYER_LABELS = {
     "prediction": "Prediction",
     "glorys": "GLORYS",
-    "surface_observation": "Surface observation",
+    "surface_observation": "OSTIA",
 }
 LAYER_LINESTYLES = {
     "prediction": "-",
@@ -237,8 +237,15 @@ def radial_wavenumber_spectrum(
         return None
 
     detrended = detrend_plane_2d(data)
-    if not np.all(np.isfinite(detrended)):
+    finite_detrended = np.isfinite(detrended)
+    if require_complete and not np.all(finite_detrended):
         return None
+    if not np.any(finite_detrended):
+        return None
+    if not np.all(finite_detrended):
+        # Missing pixels have no fitted residual; zero-fill them after detrending
+        # so prediction and GLORYS spectra use the same land/coast support.
+        detrended = np.where(finite_detrended, detrended, 0.0)
     window = hann_window_2d(detrended.shape)
     windowed = detrended * window
     transform = np.fft.fft2(windowed)
@@ -1204,7 +1211,6 @@ def write_spectrum_plots(
         if not ax.lines:
             plt.close(fig)
             continue
-        ax.invert_xaxis()
         ax.set_xlabel("Horizontal wavenumber [cpkm]")
         ax.set_ylabel(f"PSD [{_spectral_power_unit_label(variable)}]")
         ax.set_title(f"{variable.title()} spectra - {basin} - {period_label}")
@@ -1231,7 +1237,7 @@ def export_wavenumber_spectra(
     max_wavelength_km: float = DEFAULT_MAX_WAVELENGTH_KM,
     wavelength_bin_count: int = DEFAULT_WAVELENGTH_BIN_COUNT,
     basin_overlap_threshold: float = DEFAULT_BASIN_OVERLAP_THRESHOLD,
-    require_complete_patches: bool = True,
+    require_complete_patches: bool = False,
     write_plots: bool = True,
     write_dashboard: bool = True,
     public_base_url: str | None = None,
@@ -1411,9 +1417,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BASIN_OVERLAP_THRESHOLD,
     )
     parser.add_argument(
-        "--allow-incomplete-patches",
+        "--require-complete-patches",
         action="store_true",
-        help="Allow patches with nodata/NaN. By default only complete finite patches are used.",
+        help="Use only patches with complete finite raster windows.",
+    )
+    parser.add_argument(
+        "--allow-incomplete-patches",
+        action="store_false",
+        dest="require_complete_patches",
+        help="Allow patches with nodata/NaN. This is the default.",
     )
     parser.add_argument(
         "--no-plots",
@@ -1452,7 +1464,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         max_wavelength_km=float(args.max_wavelength_km),
         wavelength_bin_count=int(args.wavelength_bin_count),
         basin_overlap_threshold=float(args.basin_overlap_threshold),
-        require_complete_patches=not bool(args.allow_incomplete_patches),
+        require_complete_patches=bool(args.require_complete_patches),
         write_plots=not bool(args.no_plots),
         write_dashboard=not bool(args.no_dashboard),
         public_base_url=args.public_base_url,

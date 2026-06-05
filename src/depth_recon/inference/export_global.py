@@ -104,6 +104,7 @@ DEFAULT_FULL_SAMPLE_COUNT = 1000
 DEFAULT_PROFILE_GRAPH_WEBP_QUALITY = 95
 DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA = 0.0
 DEFAULT_EXPORT_GAUSSIAN_BLUR_KERNEL_SIZE = 3
+DEFAULT_PERIODIC_LONGITUDE_REPAIR_PIXELS = 16
 PREDICTION_ZERO_ARTIFACT_EPSILON = 1.0e-6
 DEFAULT_INFERENCE_NUM_WORKERS = 8
 DEFAULT_INFERENCE_PREFETCH_FACTOR = 2
@@ -1841,7 +1842,7 @@ def _apply_periodic_longitude_edge_blend_2d(
     blend_width: int,
     layout: MosaicLayout,
 ) -> tuple[np.ndarray, bool, int]:
-    """Blend valid west/east edge pixels for periodic longitude mosaics."""
+    """Fill and blend west/east edge pixels for periodic longitude mosaics."""
     patch = np.asarray(image, dtype=np.float32)
     if patch.ndim != 2:
         raise RuntimeError(
@@ -1850,25 +1851,49 @@ def _apply_periodic_longitude_edge_blend_2d(
         )
 
     requested_width = int(blend_width)
-    if requested_width <= 0 or not _layout_spans_periodic_longitude(layout):
+    if not _layout_spans_periodic_longitude(layout):
         return patch.copy(), False, 0
 
-    edge_width = min(requested_width, int(patch.shape[1]) // 2)
+    edge_width = min(
+        (
+            requested_width
+            if requested_width > 0
+            else DEFAULT_PERIODIC_LONGITUDE_REPAIR_PIXELS
+        ),
+        int(patch.shape[1]) // 2,
+    )
     if edge_width <= 0:
         return patch.copy(), False, 0
 
-    left_edge = patch[:, :edge_width]
+    out = patch.copy()
+    out_left = out[:, :edge_width]
     # Reverse the eastern edge so column 0 pairs with the pixel nearest +180.
-    right_edge = patch[:, -edge_width:][:, ::-1]
+    out_right = out[:, -edge_width:][:, ::-1]
+    left_valid = _valid_raster_mask(out_left, nodata)
+    right_valid = _valid_raster_mask(out_right, nodata)
+    left_boundary_gap = np.logical_and.accumulate(~left_valid, axis=1)
+    right_boundary_gap = np.logical_and.accumulate(~right_valid, axis=1)
+    left_fill_mask = left_boundary_gap & right_valid
+    right_fill_mask = right_boundary_gap & left_valid
+    if np.any(left_fill_mask):
+        out_left[left_fill_mask] = out_right[left_fill_mask]
+    if np.any(right_fill_mask):
+        out_right[right_fill_mask] = out_left[right_fill_mask]
+
+    offsets = np.arange(edge_width, dtype=np.float32)
+    other_weight = (0.5 * (float(edge_width) - offsets) / float(edge_width))[None, :]
+    left_edge = out_left.copy()
+    right_edge = out_right.copy()
     valid_pair_mask = _valid_raster_mask(left_edge, nodata) & _valid_raster_mask(
         right_edge,
         nodata,
     )
+    did_fill = bool(np.any(left_fill_mask) or np.any(right_fill_mask))
+    if requested_width <= 0:
+        return out, did_fill, edge_width if did_fill else 0
     if not np.any(valid_pair_mask):
-        return patch.copy(), False, edge_width
+        return out, did_fill, edge_width
 
-    offsets = np.arange(edge_width, dtype=np.float32)
-    other_weight = (0.5 * (float(edge_width) - offsets) / float(edge_width))[None, :]
     left_blended = (
         (left_edge * (np.float32(1.0) - other_weight)) + (right_edge * other_weight)
     ).astype(np.float32, copy=False)
@@ -1876,9 +1901,6 @@ def _apply_periodic_longitude_edge_blend_2d(
         (right_edge * (np.float32(1.0) - other_weight)) + (left_edge * other_weight)
     ).astype(np.float32, copy=False)
 
-    out = patch.copy()
-    out_left = out[:, :edge_width]
-    out_right = out[:, -edge_width:][:, ::-1]
     out_left[valid_pair_mask] = left_blended[valid_pair_mask]
     out_right[valid_pair_mask] = right_blended[valid_pair_mask]
     return out, True, edge_width

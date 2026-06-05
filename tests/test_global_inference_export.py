@@ -726,7 +726,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
             np.asarray([[6.0, 4.5, 5.0, 7.0, 7.5, 6.0]], dtype=np.float32),
         )
 
-    def test_periodic_longitude_edge_blend_does_not_fill_nodata(self) -> None:
+    def test_periodic_longitude_edge_blend_fills_boundary_nodata(self) -> None:
         layout = MosaicLayout(
             left=-180.0,
             bottom=0.0,
@@ -758,7 +758,7 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertTrue(did_blend)
         self.assertEqual(effective_width, 1)
         self.assertEqual(blended[0, 0], 1.0)
-        self.assertEqual(blended[0, -1], -9999.0)
+        self.assertEqual(blended[0, -1], 1.0)
         self.assertEqual(blended[1, 0], 5.0)
         self.assertEqual(blended[1, -1], 5.0)
 
@@ -797,6 +797,14 @@ class TestGlobalInferenceExport(unittest.TestCase):
             blend_width=0,
             layout=global_layout,
         )
+        gap_repaired, did_gap_repair, effective_gap_repair = (
+            _apply_periodic_longitude_edge_blend_2d(
+                np.asarray([[-9999.0, 3.0, 9.0, 11.0]], dtype=np.float32),
+                nodata=-9999.0,
+                blend_width=0,
+                layout=global_layout,
+            )
+        )
         regional, did_regional, effective_regional = (
             _apply_periodic_longitude_edge_blend_2d(
                 raster,
@@ -809,6 +817,12 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertFalse(did_zero)
         self.assertEqual(effective_zero, 0)
         np.testing.assert_allclose(zero_width, raster)
+        self.assertTrue(did_gap_repair)
+        self.assertEqual(effective_gap_repair, 2)
+        np.testing.assert_allclose(
+            gap_repaired,
+            np.asarray([[11.0, 3.0, 9.0, 11.0]], dtype=np.float32),
+        )
         self.assertFalse(did_regional)
         self.assertEqual(effective_regional, 0)
         np.testing.assert_allclose(regional, raster)
@@ -927,6 +941,62 @@ class TestGlobalInferenceExport(unittest.TestCase):
                 self.assertEqual(tags["longitude_wrap_blend_width_pixels"], "2")
                 np.testing.assert_allclose(band[:, 0], np.full((4,), 6.0))
                 np.testing.assert_allclose(band[:, -1], np.full((4,), 6.0))
+                np.testing.assert_allclose(band[:, 1], np.full((4,), 4.5))
+                np.testing.assert_allclose(band[:, -2], np.full((4,), 7.5))
+            finally:
+                _cleanup_accumulator(accumulator)
+
+    def test_write_global_top_band_geotiff_repairs_periodic_boundary_gap(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            layout = MosaicLayout(
+                left=-180.0,
+                bottom=0.0,
+                right=180.0,
+                top=4.0,
+                pixel_width=45.0,
+                pixel_height=1.0,
+                width=8,
+                height=4,
+                patch_width=4,
+                patch_height=4,
+                transform=from_origin(-180.0, 4.0, 45.0, 1.0),
+            )
+            accumulator = create_raster_accumulator(
+                root_dir=tmp_path / "scratch",
+                stem="prediction_wrap_gap",
+                layout=layout,
+            )
+            try:
+                accumulator.sum_array[:] = 5.0
+                accumulator.count_array[:] = 1
+                accumulator.sum_array[:, 1] = 3.0
+                accumulator.sum_array[:, -2] = 9.0
+                accumulator.sum_array[:, -1] = 11.0
+                accumulator.sum_array[:, 0] = 0.0
+                accumulator.count_array[:, 0] = 0.0
+
+                tif_path = tmp_path / "prediction_wrap_gap.tif"
+                write_global_top_band_geotiff(
+                    output_path=tif_path,
+                    accumulator=accumulator,
+                    layout=layout,
+                    nodata=-9999.0,
+                    band_description="predicted_surface_celsius",
+                    tags={"kind": "prediction"},
+                    periodic_longitude_blend_width=2,
+                )
+
+                with rasterio.open(tif_path) as ds:
+                    band = ds.read(1)
+                    tags = ds.tags()
+
+                self.assertEqual(tags["longitude_wrap_stitching"], "true")
+                self.assertEqual(tags["longitude_wrap_blend_width_pixels"], "2")
+                np.testing.assert_allclose(band[:, 0], np.full((4,), 11.0))
+                np.testing.assert_allclose(band[:, -1], np.full((4,), 11.0))
                 np.testing.assert_allclose(band[:, 1], np.full((4,), 4.5))
                 np.testing.assert_allclose(band[:, -2], np.full((4,), 7.5))
             finally:

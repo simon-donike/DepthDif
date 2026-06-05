@@ -31,6 +31,7 @@
     activePeriodLabel: null,
     activeDepthKey: "__all__",
     activeMetric: "ratio",
+    activeXAxisUnit: "cpkm",
     map: null,
     basinLayer: null,
   };
@@ -96,7 +97,7 @@
   function setControlsDisabled(disabled) {
     document
       .querySelectorAll(
-        "#spectral-dashboard-select, #spectral-variable-select, #spectral-basin-select, #spectral-period-type-select, #spectral-period-label-select, #spectral-depth-select, #spectral-metric-select"
+        "#spectral-dashboard-select, #spectral-variable-select, #spectral-basin-select, #spectral-period-type-select, #spectral-period-label-select, #spectral-depth-select, #spectral-metric-select, #spectral-x-axis-select"
       )
       .forEach((element) => {
         element.disabled = Boolean(disabled);
@@ -159,7 +160,10 @@
     return (basin && basin.label) || name || ALL_OCEANS;
   }
 
-  function layerLabel(layer) {
+  function layerLabel(layer, variable) {
+    if (layer === "surface_observation") {
+      return variable === "salinity" ? "SSS" : "OSTIA";
+    }
     return (state.config.layers && state.config.layers[layer]) || layer;
   }
 
@@ -186,7 +190,7 @@
   }
 
   function spectrumTraceLabel(row) {
-    const layer = layerLabel(row.layer);
+    const layer = layerLabel(row.layer, row.variable);
     const depth = row.depth_label || "";
     if (row.layer === "surface_observation" || String(depth).toLowerCase() === String(layer).toLowerCase()) {
       return layer;
@@ -196,7 +200,7 @@
 
   function spectrumTraceDetail(row) {
     if (row.layer === "surface_observation") {
-      return "Surface reference";
+      return layerLabel(row.layer, row.variable);
     }
     return row.depth_label || "";
   }
@@ -321,6 +325,7 @@
       .join("");
     depthSelect.value = state.activeDepthKey;
     $("spectral-metric-select").value = state.activeMetric;
+    $("spectral-x-axis-select").value = state.activeXAxisUnit;
   }
 
   function setupControls() {
@@ -351,6 +356,10 @@
     });
     $("spectral-metric-select").addEventListener("change", async function () {
       state.activeMetric = this.value;
+      await render();
+    });
+    $("spectral-x-axis-select").addEventListener("change", async function () {
+      state.activeXAxisUnit = this.value === "km" ? "km" : "cpkm";
       await render();
     });
   }
@@ -446,11 +455,10 @@
         font: { color: cssVar("--spectral-text", "#d7e9f7") },
       },
       xaxis: {
-        autorange: "reversed",
         automargin: true,
         color: cssVar("--spectral-muted", "rgba(215,233,247,0.72)"),
         gridcolor: "rgba(223,244,239,0.1)",
-        title: { text: "Horizontal wavenumber [cpkm]", standoff: 10 },
+        title: { text: xAxisTitle(), standoff: 10 },
         type: "log",
       },
       yaxis: {
@@ -514,12 +522,32 @@
   function sortedFiniteRows(rows) {
     return rows
       .filter((row) => Number.isFinite(Number(row.wavelength_km)) && Number.isFinite(spectralValue(row)) && spectralValue(row) > 0)
-      .sort((left, right) => Number(left.wavelength_km) - Number(right.wavelength_km));
+      .sort((left, right) => Number(xAxisValue(left.wavelength_km)) - Number(xAxisValue(right.wavelength_km)));
   }
 
   function horizontalWavenumber(wavelengthKm) {
     const wavelength = Number(wavelengthKm);
     return Number.isFinite(wavelength) && wavelength > 0 ? 1 / wavelength : null;
+  }
+
+  function xAxisValue(wavelengthKm) {
+    const wavelength = Number(wavelengthKm);
+    if (!Number.isFinite(wavelength) || wavelength <= 0) {
+      return null;
+    }
+    return state.activeXAxisUnit === "km" ? wavelength : 1 / wavelength;
+  }
+
+  function xAxisTitle() {
+    return state.activeXAxisUnit === "km" ? "Wavelength [km]" : "Horizontal wavenumber [cpkm]";
+  }
+
+  function xAxisHoverLabel() {
+    return state.activeXAxisUnit === "km" ? "Wavelength" : "Horizontal wavenumber";
+  }
+
+  function xAxisHoverUnit() {
+    return state.activeXAxisUnit === "km" ? "km" : "cpkm";
   }
 
   function spectralPowerAxisTitle() {
@@ -548,14 +576,14 @@
       traces.push({
         customdata: sorted.map((row) => [spectrumTraceLabel(row), spectrumTraceDetail(row), row.spectrum_count || 0, row.wavelength_km]),
         hovertemplate:
-          "%{customdata[0]}<br>%{customdata[1]}<br>Horizontal wavenumber: %{x:.4g} cpkm<br>" +
+          `%{customdata[0]}<br>%{customdata[1]}<br>${xAxisHoverLabel()}: %{x:.4g} ${xAxisHoverUnit()}<br>` +
           "Wavelength: %{customdata[3]:.2f} km<br>PSD: %{y:.4g}<br>Spectra: %{customdata[2]}<extra></extra>",
         line: { color, dash: lineDash(first.layer), width: first.layer === "prediction" ? 2.6 : 2 },
         mode: "lines+markers",
         marker: { size: 4, color },
         name: spectrumTraceLabel(first),
         visible: true,
-        x: sorted.map((row) => horizontalWavenumber(row.wavelength_km)),
+        x: sorted.map((row) => xAxisValue(row.wavelength_km)),
         y: sorted.map((row) => spectralValue(row)),
       });
     });
@@ -604,7 +632,7 @@
           } else if (state.activeMetric === "difference") {
             value = pred - truth;
           }
-          return { wavelength, wavenumber: horizontalWavenumber(wavelength), value, pred, truth };
+          return { wavelength, xValue: xAxisValue(wavelength), value, pred, truth };
         })
         .filter(Boolean);
       if (values.length > 0) {
@@ -660,18 +688,18 @@
     const traces = groups.map((group) => ({
       customdata: group.values.map((row) => [group.label, row.pred, row.truth, row.wavelength]),
       hovertemplate:
-        "%{customdata[0]}<br>Horizontal wavenumber: %{x:.4g} cpkm<br>Wavelength: %{customdata[3]:.2f} km<br>" +
+        `%{customdata[0]}<br>${xAxisHoverLabel()}: %{x:.4g} ${xAxisHoverUnit()}<br>Wavelength: %{customdata[3]:.2f} km<br>` +
         `${biasMetricAxisTitle()}: %{y:.4g}` +
         "<br>Prediction: %{customdata[1]:.4g}<br>GLORYS: %{customdata[2]:.4g}<extra></extra>",
       line: { color: depthColor(group.depthKeyValue), width: 2.4 },
       marker: { color: depthColor(group.depthKeyValue), size: 5 },
       mode: "lines+markers",
       name: group.label,
-      x: group.values.map((row) => row.wavenumber),
+      x: group.values.map((row) => row.xValue),
       y: group.values.map((row) => row.value),
     }));
     window.Plotly.react($("spectral-bias-chart"), traces, layout, PLOTLY_CONFIG);
-    $("spectral-bias-caption").textContent = `${basinLabel(state.activeBasin)} ${biasMetricLabel().toLowerCase()} by horizontal wavenumber`;
+    $("spectral-bias-caption").textContent = `${basinLabel(state.activeBasin)} ${biasMetricLabel().toLowerCase()} by ${state.activeXAxisUnit === "km" ? "wavelength" : "horizontal wavenumber"}`;
   }
 
   function averageBiasInRange(minWavelength, maxWavelength) {

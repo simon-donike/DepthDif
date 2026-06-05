@@ -103,7 +103,7 @@ class TestWavenumberSpectra(unittest.TestCase):
         self.assertEqual(int(np.nanargmax(spectrum)), 1)
         self.assertGreater(int(counts[1]), 0)
 
-    def test_radial_spectrum_skips_incomplete_patch_by_default(self) -> None:
+    def test_radial_spectrum_skips_incomplete_patch_when_required(self) -> None:
         values = np.ones((8, 8), dtype=np.float64)
         values[2, 3] = np.nan
 
@@ -112,9 +112,31 @@ class TestWavenumberSpectra(unittest.TestCase):
             pixel_size_x_km=1.0,
             pixel_size_y_km=1.0,
             wavelength_edges_km=np.asarray([2.0, 4.0, 8.0]),
+            require_complete=True,
         )
 
         self.assertIsNone(result)
+
+    def test_radial_spectrum_allows_incomplete_patch_with_zero_filled_residuals(
+        self,
+    ) -> None:
+        x = np.arange(8, dtype=np.float64)
+        values = np.sin(2.0 * np.pi * x[None, :] / 4.0)
+        values = np.repeat(values, 8, axis=0)
+        values[2, 3] = np.nan
+
+        result = radial_wavenumber_spectrum(
+            values,
+            pixel_size_x_km=1.0,
+            pixel_size_y_km=1.0,
+            wavelength_edges_km=np.asarray([2.0, 4.0, 8.0]),
+            require_complete=False,
+        )
+
+        self.assertIsNotNone(result)
+        spectrum, counts = result
+        self.assertTrue(np.any(np.isfinite(spectrum)))
+        self.assertGreater(int(np.sum(counts)), 0)
 
     def test_read_patch_window_marks_raster_nodata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -347,6 +369,7 @@ class TestWavenumberSpectra(unittest.TestCase):
             copied_html = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertEqual(config["kind"], "wavenumber_spectral_dashboard")
             self.assertEqual(config["available_variables"], ["temperature"])
+            self.assertEqual(config["layers"]["surface_observation"], "OSTIA")
             self.assertIn("horizontal_wavenumber_bin_centers_cpkm", config)
             self.assertIn(ALL_OCEANS_BASIN, config["basin_data_urls"])
             self.assertIn("Mediterranean Sea", config["basin_data_urls"])
@@ -453,12 +476,29 @@ class TestWavenumberSpectra(unittest.TestCase):
             "spectral-period-label-select",
             "spectral-depth-select",
             "spectral-metric-select",
+            "spectral-x-axis-select",
             "spectral-map",
             "spectral-spectrum-chart",
             "spectral-bias-chart",
             "spectral-summary-cards",
         ):
             self.assertIn(f'id="{expected_id}"', html)
+
+    def test_spectral_axes_are_log_increasing_and_switchable(self) -> None:
+        script = Path("docs/javascripts/spectral-dashboard.js").read_text(
+            encoding="utf-8"
+        )
+        exporter = Path(
+            "src/depth_recon/inference/export_wavenumber_spectra.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('activeXAxisUnit: "cpkm"', script)
+        self.assertIn("xAxisValue", script)
+        self.assertIn("Wavelength [km]", script)
+        self.assertIn("OSTIA", script)
+        self.assertIn("surface_observation", script)
+        self.assertNotIn('autorange: "reversed"', script)
+        self.assertNotIn("ax.invert_xaxis()", exporter)
 
     def test_analysis_landing_and_dashboard_switchers_link_spectral_dashboard(
         self,
