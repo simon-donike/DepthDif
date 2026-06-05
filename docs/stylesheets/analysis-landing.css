@@ -191,6 +191,13 @@ html.analysis-landing-root,
     linear-gradient(135deg, rgba(7, 30, 51, 0.98), rgba(8, 50, 76, 0.92));
 }
 
+.analysis-landing-tile--comparison-globe .analysis-landing-tile__media {
+  background:
+    linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),
+    url("../assets/tiles/comparison_tile.webp") center / cover no-repeat,
+    linear-gradient(135deg, rgba(7, 30, 51, 0.98), rgba(8, 50, 76, 0.92));
+}
+
 .analysis-landing-tile--spatial-error .analysis-landing-tile__media {
   background:
     linear-gradient(180deg, rgba(4, 19, 31, 0) 48%, rgba(4, 19, 31, 0.28) 100%),

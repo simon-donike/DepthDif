@@ -1662,8 +1662,8 @@
     const weekLabel = resolveComparisonWeekLabel(config);
     const titleText = "Model Comparison Globe";
     const descriptionText = weekLabel
-      ? "Compare GLORYS, DepthDif, and baseline reconstructions for " + weekLabel + "."
-      : "Compare GLORYS, DepthDif, and baseline reconstructions for the selected ocean variable.";
+      ? "Compare GLORYS, DepthDif, and baseline reconstructions at the 10 m depth level for " + weekLabel + "."
+      : "Compare GLORYS, DepthDif, and baseline reconstructions at the 10 m depth level for the selected ocean variable.";
 
     document.title = weekLabel ? titleText + " " + weekLabel : titleText;
     const metaDescription = document.querySelector('meta[name="description"]');
