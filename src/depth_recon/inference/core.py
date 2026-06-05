@@ -11,12 +11,15 @@ import yaml
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.models.baselines import IDWInterpolationBaseline
 from depth_recon.models.diffusion import PixelDiffusionConditional
 from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import resolve_config_path
 
 VARIABLE_SCENARIO_KEY = "variable_scenario"
 INFERENCE_SAMPLERS = ("ddpm", "ddim")
+MODEL_TYPES = ("cond_px_dif", "latent_cond_dif", "idw_baseline")
+CHECKPOINT_FREE_MODEL_TYPES = {"idw_baseline"}
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
@@ -139,12 +142,18 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     model_type = str(
         model_cfg.get("model", {}).get("model_type", "cond_px_dif")
     ).strip()
-    if model_type in {"cond_px_dif", "latent_cond_dif"}:
+    if model_type in MODEL_TYPES:
         return model_type
+    supported = "', '".join(MODEL_TYPES)
     raise ValueError(
         "Unsupported model.model_type value "
-        f"'{model_type}'. Supported values: 'cond_px_dif', 'latent_cond_dif'."
+        f"'{model_type}'. Supported values: '{supported}'."
     )
+
+
+def model_requires_checkpoint(model_cfg: dict[str, Any]) -> bool:
+    """Return whether the configured model type has trainable checkpoint weights."""
+    return resolve_model_type(model_cfg) not in CHECKPOINT_FREE_MODEL_TYPES
 
 
 def build_datamodule(
@@ -180,9 +189,16 @@ def build_model(
     training_config_path: str,
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
-) -> PixelDiffusionConditional | LatentDiffusionConditional:
+) -> PixelDiffusionConditional | LatentDiffusionConditional | IDWInterpolationBaseline:
     """Build and return model."""
     model_type = resolve_model_type(model_cfg)
+    if model_type == "idw_baseline":
+        return IDWInterpolationBaseline.from_config(
+            model_config_path=model_config_path,
+            data_config_path=data_config_path,
+            training_config_path=training_config_path,
+            datamodule=datamodule,
+        )
     if model_type == "latent_cond_dif":
         return LatentDiffusionConditional.from_config(
             model_config_path=model_config_path,

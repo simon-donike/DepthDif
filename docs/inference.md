@@ -376,6 +376,40 @@ Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for buck
 
 When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON. Make sure `.webp` files are served as `image/webp`.
 
+## Workflow 1h: Host the Comparison Globe
+The standalone comparison viewer lives at `docs/comparison-globe/index.html`. It uses the same Cesium styling and controls as the spatial globe, but its raster selector compares `GLORYS`, `DepthDif`, `IDW`, and `LSTM` layers. By default it fetches `https://globe-assets.hyperalislabs.com/inference_production/comparison-globe/comparison-globe-config.json`; append `?config=<url>` to test another hosted manifest.
+
+The comparison manifest follows the same variable/depth shape as `globe-config.json`, with model tiles grouped per depth level:
+
+```json
+{
+  "default_variable": "temperature",
+  "variables": {
+    "temperature": {
+      "variable": "temperature",
+      "variable_label": "Temperature",
+      "value_units": "degC",
+      "color_scale_min": 0,
+      "color_scale_max": 30,
+      "depth_levels": [
+        {
+          "label": "10 m",
+          "requested_depth_m": 10,
+          "layers": {
+            "glorys": { "tiles_url": "../globe/ground_truth_tiles_10m/" },
+            "depthdif": { "tiles_url": "../globe/prediction_tiles_10m/" },
+            "idw": { "tiles_url": "../baselines/idw/prediction_tiles_10m/" },
+            "lstm": { "tiles_url": "../baselines/lstm/prediction_tiles_10m/" }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+For convenience, each depth level also accepts direct URL fields: `glorys_tiles_url` or `ground_truth_tiles_url`, `depthdif_tiles_url` or `prediction_tiles_url`, `idw_tiles_url`, and `lstm_tiles_url`. Optional `argo_sample_locations_url` and `patch_splits_url` can be placed either at the root or inside each variable config.
+
 ## Workflow 2: Direct `predict_step`
 The model inference entry points are:
 - `PixelDiffusionConditional.predict_step(batch, batch_idx=0)`

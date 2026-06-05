@@ -31,6 +31,7 @@ from depth_recon.inference.core import (
     choose_device,
     load_checkpoint_weights,
     load_yaml,
+    model_requires_checkpoint,
     resolve_checkpoint_path,
     to_device,
 )
@@ -507,12 +508,17 @@ def main() -> None:
     )
     ckpt_path = resolve_checkpoint_path(args.checkpoint_path, model_cfg)
     if ckpt_path is None:
-        raise RuntimeError("Validation summary export requires a resolved checkpoint.")
-    weight_source = load_checkpoint_weights(
-        model,
-        ckpt_path,
-        strict=bool(args.strict_load),
-    )
+        if model_requires_checkpoint(model_cfg):
+            raise RuntimeError(
+                "Validation summary export requires a resolved checkpoint."
+            )
+        weight_source = "none"
+    else:
+        weight_source = load_checkpoint_weights(
+            model,
+            ckpt_path,
+            strict=bool(args.strict_load),
+        )
     device = choose_device(args.device)
     model.to(device)
     model.eval()

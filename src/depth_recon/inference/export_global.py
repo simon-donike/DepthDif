@@ -85,6 +85,7 @@ from depth_recon.inference.core import (
     choose_device,
     load_checkpoint_weights,
     load_yaml,
+    model_requires_checkpoint,
     resolve_checkpoint_path,
 )
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers import (
@@ -3002,15 +3003,18 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
 
     ckpt_path = resolve_checkpoint_path(args.checkpoint_path, model_cfg)
     if ckpt_path is None:
-        raise RuntimeError(
-            "No checkpoint was resolved. Set --checkpoint-path or configure "
-            "model.resume_checkpoint."
+        if model_requires_checkpoint(model_cfg):
+            raise RuntimeError(
+                "No checkpoint was resolved. Set --checkpoint-path or configure "
+                "model.resume_checkpoint."
+            )
+        weight_source = "none"
+    else:
+        weight_source = load_checkpoint_weights(
+            model,
+            ckpt_path,
+            strict=bool(args.strict_load),
         )
-    weight_source = load_checkpoint_weights(
-        model,
-        ckpt_path,
-        strict=bool(args.strict_load),
-    )
     model = model.to(device)
     model.eval()
     uncertainty_sampler = None

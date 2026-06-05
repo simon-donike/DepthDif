@@ -11,6 +11,8 @@ Core stack:
 
 The model learns to generate `y` while conditioning on observed channels (`x`), optional `eo`, ARGO observation support (`x_valid_mask`), and GLORYS spatial support (`land_mask`).
 
+The baseline package in `src/depth_recon/models/baselines/` provides non-diffusion comparison models that share the same Lightning `predict_step` output contract. The initial `IDWInterpolationBaseline` is selected with `model.model_type: idw_baseline` and reconstructs each active field/depth band from sparse observations using inverse-distance weighting; it has no trainable checkpoint weights, and bands with no ARGO observations are emitted as nodata.
+
 ## Conditioning Setup
 Three conditioning layouts are selected by the pixel scenario resolver:
 

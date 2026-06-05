@@ -30,6 +30,7 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
+from depth_recon.models.baselines import IDWInterpolationBaseline
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
@@ -295,11 +296,13 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     model_type = str(
         model_cfg.get("model", {}).get("model_type", "cond_px_dif")
     ).strip()
-    if model_type in {"cond_px_dif", "latent_cond_dif"}:
+    supported_model_types = ("cond_px_dif", "latent_cond_dif", "idw_baseline")
+    if model_type in supported_model_types:
         return model_type
+    supported = "', '".join(supported_model_types)
     raise ValueError(
         "Unsupported model.model_type value "
-        f"'{model_type}'. Supported values: 'cond_px_dif', 'latent_cond_dif'."
+        f"'{model_type}'. Supported values: '{supported}'."
     )
 
 
@@ -510,16 +513,25 @@ def main(
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
 
-    if model_type != "cond_px_dif":
-        raise ValueError("train.py supports only pixel model_type='cond_px_dif'.")
-
-    # Instantiate the pixel model from the effective super-config materialization.
-    model = PixelDiffusionConditional.from_config(
-        model_config_path=effective_model_config_path,
-        data_config_path=effective_data_config_path,
-        training_config_path=effective_training_config_path,
-        datamodule=datamodule,
-    )
+    if model_type == "idw_baseline":
+        model = IDWInterpolationBaseline.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
+    elif model_type == "cond_px_dif":
+        # Instantiate the pixel model from the effective super-config materialization.
+        model = PixelDiffusionConditional.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
+    else:
+        raise ValueError(
+            "train.py supports only model_type='cond_px_dif' or 'idw_baseline'."
+        )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
         weight_source = load_weights_only_checkpoint(model, resume_ckpt_path)
@@ -558,12 +570,12 @@ def main(
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
-    ema_callback = build_ema_callback(model_cfg)
-    callbacks: list[pl.Callback] = [
-        checkpoint_callback,
-        latest_checkpoint_callback,
-        lr_monitor_callback,
-    ]
+    ema_callback = (
+        None if model_type == "idw_baseline" else build_ema_callback(model_cfg)
+    )
+    callbacks: list[pl.Callback] = [checkpoint_callback, latest_checkpoint_callback]
+    if model_type != "idw_baseline":
+        callbacks.append(lr_monitor_callback)
     if ema_callback is not None:
         # Restore raw training weights before ModelCheckpoint writes resume state.
         callbacks = [

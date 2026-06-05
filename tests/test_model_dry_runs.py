@@ -15,6 +15,8 @@ from torch.utils.data import Dataset
 import yaml
 
 from depth_recon.data.datamodule import DepthTileDataModule
+from depth_recon.inference.core import build_model, model_requires_checkpoint
+from depth_recon.models.baselines import IDWInterpolationBaseline
 from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from depth_recon.models.latent.Autoencoder import (
     DepthBandAutoencoder,
@@ -355,6 +357,85 @@ class TestModelDryRuns(unittest.TestCase):
 
             self.assertEqual(model.output_fields, ("temperature", "salinity"))
             self.assertTrue(model.predicts_salinity)
+
+    def test_idw_baseline_predict_step_interpolates_temperature(self) -> None:
+        model = IDWInterpolationBaseline(power=2.0, output_fields=("temperature",))
+        x = torch.zeros((1, 1, 3, 3), dtype=torch.float32)
+        x[:, :, 0, 0] = 1.0
+        x[:, :, 0, 2] = 3.0
+        x_valid_mask = torch.zeros_like(x, dtype=torch.bool)
+        x_valid_mask[:, :, 0, 0] = True
+        x_valid_mask[:, :, 0, 2] = True
+        batch = {
+            "x": x,
+            "x_valid_mask": x_valid_mask,
+            "y_valid_mask": torch.ones_like(x, dtype=torch.bool),
+            "land_mask": torch.ones((1, 1, 3, 3), dtype=torch.float32),
+        }
+
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertTrue(torch.equal(pred["y_hat"][:, :, 0, 0], x[:, :, 0, 0]))
+        self.assertTrue(torch.equal(pred["y_hat"][:, :, 0, 2], x[:, :, 0, 2]))
+        self.assertTrue(
+            torch.allclose(
+                pred["y_hat"][:, :, 0, 1],
+                torch.tensor([[2.0]], dtype=torch.float32),
+                atol=1e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                pred["y_hat"][:, :, 2, 2],
+                torch.tensor([[2.3333333]], dtype=torch.float32),
+                atol=1e-5,
+            )
+        )
+
+    def test_idw_baseline_empty_argo_patch_returns_nan(self) -> None:
+        model = IDWInterpolationBaseline(power=2.0, output_fields=("temperature",))
+        x = torch.zeros((1, 1, 3, 3), dtype=torch.float32)
+        batch = {
+            "x": x,
+            "x_valid_mask": torch.zeros_like(x, dtype=torch.bool),
+            "y_valid_mask": torch.ones_like(x, dtype=torch.bool),
+            "land_mask": torch.ones((1, 1, 3, 3), dtype=torch.float32),
+        }
+
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertTrue(torch.isnan(pred["y_hat"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
+
+    def test_idw_baseline_from_factory_needs_no_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            model_config_path = tmp_path / "model.yaml"
+            data_config_path = tmp_path / "data.yaml"
+            training_config_path = tmp_path / "training.yaml"
+            model_cfg = {
+                "model": {
+                    "model_type": "idw_baseline",
+                    "output_fields": ["temperature"],
+                    "scenario": "temperature",
+                    "idw": {"power": 1.5, "chunk_size": 2},
+                }
+            }
+            _write_yaml(model_config_path, model_cfg)
+            _write_yaml(data_config_path, {"dataset": {}})
+            _write_yaml(training_config_path, {"training": {}})
+
+            model = build_model(
+                model_config_path=str(model_config_path),
+                data_config_path=str(data_config_path),
+                training_config_path=str(training_config_path),
+                model_cfg=model_cfg,
+                datamodule=_make_datamodule(),
+            )
+
+        self.assertIsInstance(model, IDWInterpolationBaseline)
+        self.assertEqual(model.power, 1.5)
+        self.assertFalse(model_requires_checkpoint(model_cfg))
 
     def test_latent_diffusion_from_config_wires_land_mask_conditioning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

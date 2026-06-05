@@ -790,6 +790,41 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("variables", default_config)
         self.assertIn("uncertainty_tiles_url", default_config)
 
+    def test_comparison_globe_page_uses_baseline_layer_controls(self) -> None:
+        html = Path("docs/comparison-globe/index.html").read_text(encoding="utf-8")
+        loader = Path("docs/javascripts/load-comparison-globe.js").read_text(
+            encoding="utf-8"
+        )
+        globe_script = Path("docs/javascripts/comparison-globe.js").read_text(
+            encoding="utf-8"
+        )
+        analysis_html = Path("docs/analysis/index.html").read_text(encoding="utf-8")
+        inference_docs = Path("docs/inference.md").read_text(encoding="utf-8")
+
+        self.assertIn('class="standalone-globe-root"', html)
+        self.assertIn("Model Comparison Globe", html)
+        self.assertIn("load-comparison-globe.js", html)
+        self.assertIn('id="globe-toggle-glorys"', html)
+        self.assertIn('id="globe-toggle-depthdif"', html)
+        self.assertIn('id="globe-toggle-idw"', html)
+        self.assertIn('id="globe-toggle-lstm"', html)
+        self.assertIn('name="globe-variable"', html)
+        self.assertIn('name="globe-points-layer"', html)
+        self.assertIn('name="globe-patch-splits-layer"', html)
+        self.assertIn("comparison-globe.js", loader)
+        self.assertIn("initDepthDifComparisonGlobe", loader)
+        self.assertIn("DEFAULT_COMPARISON_CONFIG_URL", globe_script)
+        self.assertIn('key: "glorys"', globe_script)
+        self.assertIn('key: "depthdif"', globe_script)
+        self.assertIn('key: "idw"', globe_script)
+        self.assertIn('key: "lstm"', globe_script)
+        self.assertIn("function layerTilesUrl", globe_script)
+        self.assertIn("function resolveActiveVectorUrl", globe_script)
+        self.assertIn('href="../comparison-globe/"', analysis_html)
+        self.assertIn("Workflow 1h: Host the Comparison Globe", inference_docs)
+        self.assertIn("idw_tiles_url", inference_docs)
+        self.assertIn("lstm_tiles_url", inference_docs)
+
     def test_sync_with_rclone_warns_when_missing(self) -> None:
         with mock.patch(
             "depth_recon.inference.export_cesium_globe_assets.shutil.which",
