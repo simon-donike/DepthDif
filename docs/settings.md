@@ -96,7 +96,7 @@ These keys live under top-level `model` in both pixel super-configs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, or checkpoint-free `idw_baseline`. |
+| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, checkpoint-free `idw_baseline`, or trainable `lstm_baseline`. |
 | `model.depth_channels` | `50` | Depth channels per active output field. Used by scenario derivation. |
 | `model.resume_checkpoint` | `false` | `false`/`null` starts from scratch; a path resumes or warm-starts from that checkpoint. |
 | `model.load_checkpoint_only` | `false` | When true, loads model weights only and reinitializes optimizer/trainer state. |
@@ -113,6 +113,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.parameterization` | `x0` | Diffusion target, either `x0` or `epsilon`. |
 | `model.log_intermediates` | `false` | Captures reverse-process intermediates when enabled by the caller. |
 | `model.idw.*` | `power=2.0`, `eps=1e-6`, `chunk_size=4096` | IDW baseline controls used when `model.model_type=idw_baseline`; bands with no ARGO observations are emitted as nodata. |
+| `model.lstm.*` | `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `bidirectional=true`, `weight_decay=0.0` | Point-wise LSTM baseline controls used when `model.model_type=lstm_baseline`; each pixel is modeled as an independent vertical profile and no-ARGO patches emit nodata. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
 | `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |

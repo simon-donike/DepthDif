@@ -30,7 +30,7 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
-from depth_recon.models.baselines import IDWInterpolationBaseline
+from depth_recon.models.baselines import IDWInterpolationBaseline, PointwiseLSTMBaseline
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
@@ -296,7 +296,12 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     model_type = str(
         model_cfg.get("model", {}).get("model_type", "cond_px_dif")
     ).strip()
-    supported_model_types = ("cond_px_dif", "latent_cond_dif", "idw_baseline")
+    supported_model_types = (
+        "cond_px_dif",
+        "latent_cond_dif",
+        "idw_baseline",
+        "lstm_baseline",
+    )
     if model_type in supported_model_types:
         return model_type
     supported = "', '".join(supported_model_types)
@@ -520,6 +525,13 @@ def main(
             training_config_path=effective_training_config_path,
             datamodule=datamodule,
         )
+    elif model_type == "lstm_baseline":
+        model = PointwiseLSTMBaseline.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
     elif model_type == "cond_px_dif":
         # Instantiate the pixel model from the effective super-config materialization.
         model = PixelDiffusionConditional.from_config(
@@ -530,7 +542,8 @@ def main(
         )
     else:
         raise ValueError(
-            "train.py supports only model_type='cond_px_dif' or 'idw_baseline'."
+            "train.py supports model_type='cond_px_dif', 'idw_baseline', "
+            "or 'lstm_baseline'."
         )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
@@ -570,8 +583,9 @@ def main(
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
+    baseline_model_types = {"idw_baseline", "lstm_baseline"}
     ema_callback = (
-        None if model_type == "idw_baseline" else build_ema_callback(model_cfg)
+        None if model_type in baseline_model_types else build_ema_callback(model_cfg)
     )
     callbacks: list[pl.Callback] = [checkpoint_callback, latest_checkpoint_callback]
     if model_type != "idw_baseline":

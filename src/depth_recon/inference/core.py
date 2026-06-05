@@ -11,14 +11,14 @@ import yaml
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from depth_recon.models.baselines import IDWInterpolationBaseline
+from depth_recon.models.baselines import IDWInterpolationBaseline, PointwiseLSTMBaseline
 from depth_recon.models.diffusion import PixelDiffusionConditional
 from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.paths import resolve_config_path
 
 VARIABLE_SCENARIO_KEY = "variable_scenario"
 INFERENCE_SAMPLERS = ("ddpm", "ddim")
-MODEL_TYPES = ("cond_px_dif", "latent_cond_dif", "idw_baseline")
+MODEL_TYPES = ("cond_px_dif", "latent_cond_dif", "idw_baseline", "lstm_baseline")
 CHECKPOINT_FREE_MODEL_TYPES = {"idw_baseline"}
 
 
@@ -189,11 +189,23 @@ def build_model(
     training_config_path: str,
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
-) -> PixelDiffusionConditional | LatentDiffusionConditional | IDWInterpolationBaseline:
+) -> (
+    PixelDiffusionConditional
+    | LatentDiffusionConditional
+    | IDWInterpolationBaseline
+    | PointwiseLSTMBaseline
+):
     """Build and return model."""
     model_type = resolve_model_type(model_cfg)
     if model_type == "idw_baseline":
         return IDWInterpolationBaseline.from_config(
+            model_config_path=model_config_path,
+            data_config_path=data_config_path,
+            training_config_path=training_config_path,
+            datamodule=datamodule,
+        )
+    if model_type == "lstm_baseline":
+        return PointwiseLSTMBaseline.from_config(
             model_config_path=model_config_path,
             data_config_path=data_config_path,
             training_config_path=training_config_path,

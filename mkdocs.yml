@@ -72,6 +72,7 @@ nav:
       - Public Inference Package: public-inference-package.md
       - Quickstart: quickstart.md
       - Model Description: model.md
+      - Baselines: baselines.md
       - EMA Weights: ema.md
       - Sampling Diagnostics: sampling-diagnostics.md
       - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
