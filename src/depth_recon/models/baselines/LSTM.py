@@ -8,7 +8,15 @@ import pytorch_lightning as pl
 import torch
 
 from depth_recon.models.baselines.IDW import IDWInterpolationBaseline
-from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
+from depth_recon.utils.normalizations import (
+    PLOT_CMAP,
+    PLOT_SALINITY_CMAP,
+    salinity_normalize,
+    temperature_normalize,
+)
+from depth_recon.utils.validation_denoise import (
+    log_wandb_conditional_reconstruction_grid,
+)
 
 
 class PointwiseLSTMBaseline(IDWInterpolationBaseline):
@@ -638,12 +646,125 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
             moved[key] = value.to(self.device) if torch.is_tensor(value) else value
         return moved
 
+    def _trainer_or_none(self) -> pl.Trainer | None:
+        """Return the attached Trainer, or None when called outside Trainer scope."""
+        try:
+            return self.trainer
+        except RuntimeError:
+            return None
+
+    def _apply_invalid_to_nan(
+        self, tensor: torch.Tensor, mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Return tensor with values outside an optional mask set to NaN."""
+        if mask is None:
+            return tensor
+        aligned_mask = self._align_mask_to_reference(
+            (mask > 0.5).to(dtype=tensor.dtype, device=tensor.device),
+            tensor,
+            mask_name="validation_plot_mask",
+        )
+        return torch.where(
+            aligned_mask > 0.5,
+            tensor,
+            torch.full_like(tensor, float("nan")),
+        )
+
+    def _log_full_reconstruction_image(
+        self,
+        *,
+        field: str,
+        cached: dict[str, Any],
+        pred: dict[str, Any],
+        target_denorm: torch.Tensor,
+        eval_mask: torch.Tensor | None,
+    ) -> None:
+        """Log one denormalized LSTM validation reconstruction image grid."""
+        input_key = self._field_batch_key(field, role="x")
+        target_key = self._field_batch_key(field, role="y")
+        input_valid_key = "x_valid_mask"
+        target_valid_key = "y_valid_mask"
+        if field == "salinity":
+            input_valid_key = "x_salinity_valid_mask"
+            target_valid_key = "y_salinity_valid_mask"
+        input_tensor = self._require_batch_tensor(cached, input_key)
+        target_tensor = self._require_batch_tensor(cached, target_key)
+        input_valid_mask = cached.get(input_valid_key)
+        target_valid_mask = cached.get(target_valid_key)
+        input_denorm = self._denormalize_field(field, input_tensor)
+        target_full_denorm = self._denormalize_field(field, target_tensor)
+        y_denorm_masked = self._apply_invalid_to_nan(
+            target_full_denorm,
+            self._supervision_mask(
+                target_full_denorm,
+                target_valid_mask if torch.is_tensor(target_valid_mask) else None,
+                cached.get("land_mask"),
+            ),
+        )
+        target_denorm_masked = self._apply_invalid_to_nan(target_denorm, eval_mask)
+        y_hat_denorm = pred[f"y_hat_{field}_denorm"]
+        y_hat_denorm_for_plot = pred.get(f"y_hat_{field}_denorm_for_plot", y_hat_denorm)
+        is_salinity = field == "salinity"
+
+        eo_denorm = None
+        if torch.is_tensor(cached.get("eo")):
+            eo_denorm = (
+                salinity_normalize(mode="denorm", tensor=cached["eo"])
+                if is_salinity
+                else temperature_normalize(mode="denorm", tensor=cached["eo"])
+            )
+
+        prefix = "val_salinity_imgs" if is_salinity else "val_imgs"
+        image_key = (
+            "salinity_full_reconstruction" if is_salinity else "x_y_full_reconstruction"
+        )
+        try:
+            log_wandb_conditional_reconstruction_grid(
+                logger=self.logger,
+                x=input_denorm,
+                y=y_denorm_masked,
+                eo=eo_denorm,
+                y_hat=y_hat_denorm_for_plot,
+                y_target=target_denorm_masked,
+                valid_mask=(
+                    input_valid_mask if torch.is_tensor(input_valid_mask) else None
+                ),
+                land_mask=(
+                    cached.get("land_mask")
+                    if torch.is_tensor(cached.get("land_mask"))
+                    else None
+                ),
+                prefix=prefix,
+                image_key=image_key,
+                cmap=PLOT_SALINITY_CMAP if is_salinity else PLOT_CMAP,
+                show_valid_mask_panel=False,
+                plot_unit="salinity" if is_salinity else "temperature",
+                error_metric_prefix=(
+                    "val_salinity_absolute_band_error"
+                    if is_salinity
+                    else "val_absolute_band_error"
+                ),
+                error_metric_unit="psu" if is_salinity else "deg",
+                error_metric_label="L1 (PSU)" if is_salinity else "L1 (deg)",
+                error_metric_title=(
+                    "Generated-Pixel Salinity L1 by Band"
+                    if is_salinity
+                    else "Generated-Pixel L1 by Band"
+                ),
+            )
+        except Exception as exc:
+            warnings.warn(
+                f"LSTM baseline validation image logging failed for {field}: {exc}",
+                stacklevel=2,
+            )
+
     @torch.no_grad()
     def on_validation_epoch_end(self) -> None:
         """Log denormalized full-reconstruction metrics for the cached val batch."""
+        trainer = self._trainer_or_none()
         if (
-            self.trainer is not None
-            and self.trainer.sanity_checking
+            trainer is not None
+            and trainer.sanity_checking
             and self.skip_full_reconstruction_in_sanity_check
         ):
             self._log_full_reconstruction_placeholders()
@@ -686,6 +807,13 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
                     recon_ssim=metrics[3],
                     batch_size=batch_size,
                     metric_prefix=metric_prefix,
+                )
+                self._log_full_reconstruction_image(
+                    field=field,
+                    cached=cached,
+                    pred=pred,
+                    target_denorm=target_denorm,
+                    eval_mask=eval_mask,
                 )
         except Exception as exc:
             warnings.warn(

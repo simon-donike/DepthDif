@@ -566,6 +566,114 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertIn("y_hat_temperature_denorm", pred)
         self.assertIn("y_hat_salinity_denorm", pred)
 
+    def test_lstm_validation_epoch_logs_temperature_image_grid(self) -> None:
+        model = PointwiseLSTMBaseline(
+            hidden_size=4,
+            num_layers=1,
+            bidirectional=False,
+            output_fields=("temperature",),
+            depth_axis_m=[0.0, 10.0],
+        )
+        batch = _make_pixel_batch()
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+        model._cache_validation_batch(batch, n_cache=1)
+        temperature_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
+        pred = {
+            "y_hat": batch["y"],
+            "y_hat_temperature": batch["y"],
+            "y_hat_temperature_denorm": temperature_denorm,
+            "y_hat_temperature_denorm_for_plot": temperature_denorm,
+            "y_hat_denorm": temperature_denorm,
+            "y_hat_denorm_for_plot": temperature_denorm,
+        }
+        reconstruction_calls: list[dict[str, Any]] = []
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch.object(
+                model,
+                "_compute_full_reconstruction_metrics",
+                lambda **kwargs: tuple(
+                    torch.zeros((), dtype=torch.float32) for _ in range(4)
+                ),
+            ),
+            patch(
+                "depth_recon.models.baselines.LSTM.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: reconstruction_calls.append(kwargs),
+            ),
+        ):
+            model.on_validation_epoch_end()
+
+        self.assertEqual(len(reconstruction_calls), 1)
+        call = reconstruction_calls[0]
+        self.assertEqual(call["prefix"], "val_imgs")
+        self.assertEqual(call["image_key"], "x_y_full_reconstruction")
+        self.assertEqual(call["plot_unit"], "temperature")
+        self.assertEqual(call["error_metric_unit"], "deg")
+        self.assertTrue(
+            torch.equal(
+                call["x"], temperature_normalize(mode="denorm", tensor=batch["x"])
+            )
+        )
+        self.assertTrue(torch.equal(call["valid_mask"], batch["x_valid_mask"]))
+        self.assertTrue(torch.equal(call["y_hat"], temperature_denorm))
+
+    def test_lstm_validation_epoch_logs_salinity_image_grid(self) -> None:
+        model = PointwiseLSTMBaseline(
+            hidden_size=4,
+            num_layers=1,
+            bidirectional=False,
+            output_fields=("salinity",),
+            depth_axis_m=[0.0, 10.0],
+        )
+        batch = _make_pixel_batch(include_salinity=True)
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+        model._cache_validation_batch(batch, n_cache=1)
+        salinity_denorm = salinity_normalize(mode="denorm", tensor=batch["y_salinity"])
+        pred = {
+            "y_hat": batch["y_salinity"],
+            "y_hat_salinity": batch["y_salinity"],
+            "y_hat_salinity_denorm": salinity_denorm,
+            "y_hat_salinity_denorm_for_plot": salinity_denorm,
+            "y_hat_denorm": salinity_denorm,
+            "y_hat_denorm_for_plot": salinity_denorm,
+        }
+        reconstruction_calls: list[dict[str, Any]] = []
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch.object(
+                model,
+                "_compute_full_reconstruction_metrics",
+                lambda **kwargs: tuple(
+                    torch.zeros((), dtype=torch.float32) for _ in range(4)
+                ),
+            ),
+            patch(
+                "depth_recon.models.baselines.LSTM.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: reconstruction_calls.append(kwargs),
+            ),
+        ):
+            model.on_validation_epoch_end()
+
+        self.assertEqual(len(reconstruction_calls), 1)
+        call = reconstruction_calls[0]
+        self.assertEqual(call["prefix"], "val_salinity_imgs")
+        self.assertEqual(call["image_key"], "salinity_full_reconstruction")
+        self.assertEqual(call["plot_unit"], "salinity")
+        self.assertEqual(call["error_metric_unit"], "psu")
+        self.assertEqual(call["error_metric_label"], "L1 (PSU)")
+        self.assertTrue(
+            torch.equal(
+                call["x"],
+                salinity_normalize(mode="denorm", tensor=batch["x_salinity"]),
+            )
+        )
+        self.assertTrue(torch.equal(call["valid_mask"], batch["x_salinity_valid_mask"]))
+        self.assertTrue(torch.equal(call["y_hat"], salinity_denorm))
+
     def test_latent_diffusion_from_config_wires_land_mask_conditioning(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
