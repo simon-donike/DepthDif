@@ -1,2 +1,22 @@
-# Direct dependencies are curated in pyproject.toml.
--e .
+affine
+copernicusmarine
+dask
+h5netcdf
+matplotlib
+numpy>=1.26,<2.1
+pandas
+Pillow
+pyarrow
+pytorch-lightning
+PyYAML
+rasterio
+requests
+scikit-image
+scipy
+shapely
+torch
+torchvision
+tqdm
+wandb
+xarray
+zarr

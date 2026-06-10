@@ -11,12 +11,12 @@ from depth_recon.data.dataset_creation.data_download_packaged import (
 class TestDownloadAlignedArgoZarr(unittest.TestCase):
     def test_parse_hf_dataset_url_defaults_revision(self) -> None:
         endpoint, repo_id, revision, subdir = downloader._parse_hf_dataset_url(
-            "https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/",
+            "https://huggingface.co/datasets/anonymous-org/anonymous-aligned-argo/",
             default_revision="main",
         )
 
         self.assertEqual(endpoint, "https://huggingface.co")
-        self.assertEqual(repo_id, "simon-donike/OceanVariableReconstruction")
+        self.assertEqual(repo_id, "anonymous-org/anonymous-aligned-argo")
         self.assertEqual(revision, "main")
         self.assertEqual(subdir, "")
 
@@ -34,8 +34,8 @@ class TestDownloadAlignedArgoZarr(unittest.TestCase):
     def test_download_hf_package_mirrors_package_files_and_validates_zarr(self) -> None:
         repo_files = [
             "README.md",
-            "data/argo_glors_ostia_ssh.zarr/.zgroup",
-            "data/argo_glors_ostia_ssh.zarr/profile/.zarray",
+            "data/aligned_argo_profiles.zarr/.zgroup",
+            "data/aligned_argo_profiles.zarr/profile/.zarray",
             "indices/profiles.parquet",
             "unrelated.bin",
         ]
@@ -77,7 +77,7 @@ class TestDownloadAlignedArgoZarr(unittest.TestCase):
                 )
 
             self.assertEqual(len(written_paths), 4)
-            self.assertTrue((output_dir / "data/argo_glors_ostia_ssh.zarr").exists())
+            self.assertTrue((output_dir / "data/aligned_argo_profiles.zarr").exists())
             self.assertTrue((output_dir / "indices/profiles.parquet").exists())
             self.assertFalse((output_dir / "unrelated.bin").exists())
             self.assertFalse(any(path.endswith("unrelated.bin") for path in downloaded))

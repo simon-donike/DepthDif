@@ -1,11 +1,11 @@
 # Example with all options:
 # /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
-#   --input-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
-#   --raster-root /work/data/depthdif/rasters \
-#   --compact-argo-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
-#   --manifest-path /work/data/depthdif/manifest.yaml \
-#   --masks-dir /work/data/depthdif/masks \
-#   --output-dir /work/data/OceanVariableReconstruction \
+#   --input-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+#   --raster-root ./data/ocean_depth_reconstruction/rasters \
+#   --compact-argo-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr \
+#   --manifest-path ./data/ocean_depth_reconstruction/manifest.yaml \
+#   --masks-dir ./data/ocean_depth_reconstruction/masks \
+#   --output-dir ./data/review_artifact \
 #   --zarr-name argo_glors_ostia_ssh.zarr \
 #   --file-mode copy \
 #   --overwrite
@@ -26,40 +26,16 @@ import pandas as pd
 import xarray as xr
 import yaml
 
-DEFAULT_GEOTIFF_ROOT = Path("/work/data/depthdif")
+DEFAULT_GEOTIFF_ROOT = Path("./data/ocean_depth_reconstruction")
 DEFAULT_INPUT_ZARR = DEFAULT_GEOTIFF_ROOT / "enriched_argo_profiles.zarr"
 DEFAULT_RASTER_ROOT = DEFAULT_GEOTIFF_ROOT / "rasters"
 DEFAULT_COMPACT_ARGO_ZARR = DEFAULT_GEOTIFF_ROOT / "argo" / "argo_profiles_on_grid.zarr"
 DEFAULT_MANIFEST_PATH = DEFAULT_GEOTIFF_ROOT / "manifest.yaml"
 DEFAULT_MASKS_DIR = DEFAULT_GEOTIFF_ROOT / "masks"
-DEFAULT_OUTPUT_DIR = Path("/work/data/OceanVariableReconstruction")
-DEFAULT_ZARR_NAME = "argo_glors_ostia_ssh.zarr"
-DEFAULT_DATASET_SLUG = "OceanVariableReconstruction"
+DEFAULT_OUTPUT_DIR = Path("./data/review_artifact")
+DEFAULT_ZARR_NAME = "aligned_argo_profiles.zarr"
+DEFAULT_DATASET_SLUG = "ocean-depth-reconstruction"
 DEFAULT_DATA_SUBDIR = Path("data")
-REPO_ROOT = Path(__file__).resolve().parents[5]
-DATASET_CARD_ASSETS = (
-    (
-        Path("docs/assets/figures/depthdif_schema.webp"),
-        Path("assets/figures/depthdif_schema.webp"),
-    ),
-    (
-        Path("docs/assets/data/geotiff_dataset_random100_surface.webp"),
-        Path("assets/data/geotiff_dataset_random100_surface.webp"),
-    ),
-    (
-        Path("docs/assets/data/argo_on_glorys_grid_3D.gif"),
-        Path("assets/data/argo_on_glorys_grid_3D.gif"),
-    ),
-    (
-        Path("docs/assets/data/profile_comparison_good_alignment.webp"),
-        Path("assets/data/profile_comparison_good_alignment.webp"),
-    ),
-    (
-        Path("docs/assets/data/profile_comparison_bad_alignment.webp"),
-        Path("assets/data/profile_comparison_bad_alignment.webp"),
-    ),
-)
-
 PROFILE_SCALAR_COLUMNS = (
     "profile_source_file",
     "profile_idx",
@@ -214,18 +190,6 @@ def _stage_optional_geotiff_assets(
     return staged
 
 
-def _stage_dataset_card_assets(output_dir: Path, *, file_mode: str) -> list[Path]:
-    """Stage README illustration assets into the upload package."""
-    staged_assets: list[Path] = []
-    for source_relative_path, target_relative_path in DATASET_CARD_ASSETS:
-        source_path = REPO_ROOT / source_relative_path
-        if not source_path.exists():
-            raise FileNotFoundError(f"Dataset card asset does not exist: {source_path}")
-        _stage_file(source_path, output_dir / target_relative_path, file_mode=file_mode)
-        staged_assets.append(target_relative_path)
-    return staged_assets
-
-
 def _as_1d_values(ds: xr.Dataset, name: str, profile_size: int) -> np.ndarray:
     """Read one profile-length variable into memory for Parquet export."""
     values = np.asarray(ds[name].values).reshape(-1)
@@ -349,7 +313,7 @@ def _write_readme(
     """Write the Hugging Face dataset card."""
     start_date, end_date = _date_bounds(profile_df)
     assets = {path.as_posix() for path in dataset_card_assets}
-    schema_asset = "assets/figures/depthdif_schema.webp"
+    schema_asset = "assets/figures/ocean_depth_reconstruction_schema.webp"
     raster_asset = "assets/data/geotiff_dataset_random100_surface.webp"
     argo_grid_asset = "assets/data/argo_on_glorys_grid_3D.gif"
     good_alignment_asset = "assets/data/profile_comparison_good_alignment.webp"
@@ -360,7 +324,7 @@ def _write_readme(
 ## Dataset Overview
 
 <p align="center">
-  <img src="{schema_asset}" width="85%" alt="DepthDif dataset and model overview" />
+  <img src="{schema_asset}" width="85%" alt="Ocean Depth Reconstruction dataset and model overview" />
 </p>
 """
     raster_example_section = ""
@@ -409,9 +373,11 @@ representation and profile-level alignment quality.
     ]
     if include_geotiff_assets:
         tags.append("geotiff")
-    pretty_name = "DepthDif aligned ARGO profile collocation dataset"
+    pretty_name = "Ocean Depth Reconstruction aligned ARGO profile collocation dataset"
     if include_geotiff_assets:
-        pretty_name = "DepthDif GeoTIFF raster and aligned ARGO dataset"
+        pretty_name = (
+            "Ocean Depth Reconstruction GeoTIFF raster and aligned ARGO dataset"
+        )
     card_metadata = {
         "license": "other",
         "pretty_name": pretty_name,
@@ -427,9 +393,9 @@ representation and profile-level alignment quality.
         ],
     }
     if include_geotiff_assets:
-        body = f"""# DepthDif GeoTIFF Raster and Aligned ARGO Dataset
+        body = f"""# Ocean Depth Reconstruction GeoTIFF Raster and Aligned ARGO Dataset
 
-This dataset package contains the model-ready DepthDif GeoTIFF raster store and
+This dataset package contains the model-ready Ocean Depth Reconstruction GeoTIFF raster store and
 the enriched ARGO profile Zarr used to create it.
 {overview_section}
 
@@ -437,7 +403,7 @@ the enriched ARGO profile Zarr used to create it.
 
 ```text
 assets/
-  figures/depthdif_schema.webp
+  figures/ocean_depth_reconstruction_schema.webp
   data/geotiff_dataset_random100_surface.webp
   data/argo_on_glorys_grid_3D.gif
   data/profile_comparison_good_alignment.webp
@@ -528,7 +494,7 @@ OSTIA, sea-level, and sea-surface-salinity products still apply.
     else:
         body = f"""# {dataset_slug}
 
-This dataset package contains the DepthDif enriched ARGO profile Zarr store and
+This dataset package contains the Ocean Depth Reconstruction enriched ARGO profile Zarr store and
 lightweight Parquet indices for Hugging Face preview/search workflows.
 {overview_section}
 
@@ -649,10 +615,10 @@ def _write_metadata_files(
     )
     (metadata_dir / "citation.cff").write_text(
         """cff-version: 1.2.0
-message: "If you use this dataset, cite DepthDif and the upstream EN4/ARGO, GLORYS, OSTIA, sea-level, and SSS products."
-title: "DepthDif aligned ARGO profile collocation dataset"
+message: "If you use this dataset, cite Ocean Depth Reconstruction and the upstream EN4/ARGO, GLORYS, OSTIA, sea-level, and SSS products."
+title: "Ocean Depth Reconstruction aligned ARGO profile collocation dataset"
 authors:
-  - family-names: "DepthDif contributors"
+  - family-names: "Ocean Depth Reconstruction contributors"
 license: "other"
 """,
         encoding="utf-8",
@@ -749,7 +715,7 @@ def build_huggingface_aligned_argo_package(
     manifest_path: str | Path | None = None,
     masks_dir: str | Path | None = None,
 ) -> Path:
-    """Build a Hugging Face-style folder around DepthDif dataset outputs."""
+    """Build a Hugging Face-style folder around Ocean Depth Reconstruction dataset outputs."""
     input_zarr = Path(input_zarr)
     output_dir = Path(output_dir)
     if file_mode not in {"hardlink", "copy"}:
@@ -778,9 +744,7 @@ def build_huggingface_aligned_argo_package(
             output_dir / "indices/variables.parquet",
             zarr_relative_path=zarr_relative_path,
         )
-        dataset_card_assets = _stage_dataset_card_assets(
-            output_dir, file_mode=file_mode
-        )
+        dataset_card_assets: list[Path] = []
         _write_readme(
             output_dir,
             dataset_slug=DEFAULT_DATASET_SLUG,

@@ -16,8 +16,8 @@ from rasterio.transform import from_origin
 import requests
 
 DEFAULT_SOURCE_URL = (
-    "https://raw.githubusercontent.com/simon-donike/file_hosting/"
-    "89a324d74f362a9820452fba87a64dbff99f53df/world.geojson"
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/"
+    "master/geojson/ne_110m_land.geojson"
 )
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent
 DEFAULT_GEOJSON_NAME = "world.geojson"

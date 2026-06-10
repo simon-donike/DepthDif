@@ -1,4 +1,4 @@
-"""Config loading and scenario resolution helpers for DepthDif."""
+"""Config loading and scenario resolution helpers for Ocean Depth Reconstruction."""
 
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_INFERENCE_CONFIG_PATH,

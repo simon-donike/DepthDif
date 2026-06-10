@@ -1,6 +1,6 @@
 # Example with all options:
 # /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_exported_geotiff_dataset \
-#   --output-dir /work/data/depthdif/geotiff_export \
+#   --output-dir ./data/ocean_depth_reconstruction/geotiff_export \
 #   --archive-name exported_geotiff_dataset.zip \
 #   --timeout-seconds 120 \
 #   --chunk-size-mb 8 \
@@ -23,11 +23,11 @@ from depth_recon.data.dataset_creation.data_download_packaged._dataset_links imp
     load_dataset_url,
 )
 
-DATASET_LINK_KEY = "depthdif_training"
+DATASET_LINK_KEY = "geotiff_training"
 DEFAULT_ARCHIVE_NAME = "exported_geotiff_dataset.zip"
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_CHUNK_SIZE_MB = 8
-REQUEST_HEADERS = {"User-Agent": "DepthDif packaged dataset downloader"}
+REQUEST_HEADERS = {"User-Agent": "ocean-depth-reconstruction dataset downloader"}
 
 
 class GoogleDriveDownloadParser(HTMLParser):

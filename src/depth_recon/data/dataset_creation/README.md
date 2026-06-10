@@ -17,7 +17,7 @@ Folder layout:
 The current default source root is:
 
 ```bash
-/data1/datasets/depth_v2
+./data/raw
 ```
 
 Use the project Python environment explicitly:
@@ -33,7 +33,7 @@ Download OSTIA daily surface fields:
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_ostia/download_ostia.sh \
-  /data1/datasets/depth_v2/ostia
+  ./data/raw/ostia
 ```
 
 Download EN4 / ARGO profile archives:
@@ -41,7 +41,7 @@ Download EN4 / ARGO profile archives:
 ```bash
 START_YEAR=2010 END_YEAR=2025 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh \
-  /data1/datasets/depth_v2/en4_profiles
+  ./data/raw/en4_profiles
 ```
 
 Download GLORYS files:
@@ -49,7 +49,7 @@ Download GLORYS files:
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 STEP_DAYS=7 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh \
-  /data1/datasets/depth_v2/glorys
+  ./data/raw/glorys
 ```
 
 Download daily sea-level files:
@@ -57,7 +57,7 @@ Download daily sea-level files:
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_sealevel/download_sealevel_daily.sh \
-  /data1/datasets/depth_v2/sealevel_daily
+  ./data/raw/sealevel_daily
 ```
 
 Download daily sea-surface salinity files:
@@ -65,7 +65,7 @@ Download daily sea-surface salinity files:
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
-  /data1/datasets/depth_v2/sss_daily
+  ./data/raw/sss_daily
 ```
 
 The current pixel training path first exports these sources into the GeoTIFF store used by `training_super_config.yaml`.
@@ -81,7 +81,7 @@ scenario resolver sets `output.fields`; `--scenario salinity` skips temperature 
 returns `x_salinity`, `y_salinity`, and their validity masks, while `--scenario joint`
 returns both field groups. Use `salinity_normalize(..., mode="denorm")` to recover
 physical PSU values. The dataloader does not concatenate variables;
-`PixelDiffusionConditional` selects or stacks fields according to the resolved scenario.
+The selected baseline stacks fields according to the resolved scenario.
 The authoritative land-mask GeoTIFF is copied into `masks/` in the export root
 and recorded in `manifest.yaml`.
 Dense raster dates are exported with process workers by default; use `--workers`
@@ -105,19 +105,19 @@ codes `0..126` plus nodata `127`. A signed int8 remapped across all 255
 non-nodata codes would have the same precision as uint8, but the unsigned layout
 keeps the transform simpler and interoperates better with raster tooling.
 
-By default, the working dataset root is `/work/data/depthdif`. The ARGO
+By default, the working dataset root is `./data/ocean_depth_reconstruction`. The ARGO
 exporter owns both ARGO Zarr products: the full enriched profile-level Zarr and
 the compact grid-indexed Zarr consumed by the GeoTIFF dataloader:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
-  --argo-dir /data1/datasets/depth_v2/en4_profiles \
-  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
-  --ostia-dir /data1/datasets/depth_v2/ostia \
-  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-  --sss-dir /data1/datasets/depth_v2/sss_daily \
-  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
-  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --argo-dir ./data/raw/en4_profiles \
+  --glorys-dir ./data/raw/glorys_weekly \
+  --ostia-dir ./data/raw/ostia \
+  --sealevel-dir ./data/raw/sealevel_daily \
+  --sss-dir ./data/raw/sss_daily \
+  --output-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --compact-output-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr \
   --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --start-date 20100101 \
   --end-date 20240731 \
@@ -130,12 +130,12 @@ compact ARGO Zarr has already been written by the ARGO exporter:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
-  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
-  --ostia-dir /data1/datasets/depth_v2/ostia \
-  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-  --sss-dir /data1/datasets/depth_v2/sss_daily \
+  --glorys-dir ./data/raw/glorys_weekly \
+  --ostia-dir ./data/raw/ostia \
+  --sealevel-dir ./data/raw/sealevel_daily \
+  --sss-dir ./data/raw/sss_daily \
   --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
-  --output-dir /work/data/depthdif \
+  --output-dir ./data/ocean_depth_reconstruction \
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
@@ -147,19 +147,19 @@ compact ARGO Zarr has already been written by the ARGO exporter:
 Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
 without rewriting existing modality/date rasters.
 
-## Package DepthDif Dataset for Hugging Face
+## Package Ocean Depth Reconstruction Dataset for Hugging Face
 
 After ARGO and raster exports complete, assemble a self-contained upload folder
 with root-level `rasters/` using:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
-  --input-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
-  --raster-root /work/data/depthdif/rasters \
-  --compact-argo-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
-  --manifest-path /work/data/depthdif/manifest.yaml \
-  --masks-dir /work/data/depthdif/masks \
-  --output-dir /work/data/OceanVariableReconstruction \
+  --input-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --raster-root ./data/ocean_depth_reconstruction/rasters \
+  --compact-argo-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr \
+  --manifest-path ./data/ocean_depth_reconstruction/manifest.yaml \
+  --masks-dir ./data/ocean_depth_reconstruction/masks \
+  --output-dir /work/data/OceanDepthReconstruction \
   --zarr-name argo_glors_ostia_ssh.zarr \
   --file-mode copy \
   --overwrite

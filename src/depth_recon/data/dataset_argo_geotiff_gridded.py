@@ -546,9 +546,9 @@ class GeoTIFFPatchIndex:
         return support_counts
 
 
-DEFAULT_DATASET_ROOT_DIR = Path("/work/data/OceanVariableReconstruction")
+DEFAULT_DATASET_ROOT_DIR = Path("./data/ocean_depth_reconstruction")
 DEFAULT_GEOTIFF_ROOT_DIR = DEFAULT_DATASET_ROOT_DIR.as_posix()
-DEFAULT_METADATA_CACHE_DIR = (DEFAULT_DATASET_ROOT_DIR / "depthdif_cache").as_posix()
+DEFAULT_METADATA_CACHE_DIR = (DEFAULT_DATASET_ROOT_DIR / "metadata_cache").as_posix()
 DEFAULT_LAND_MASK_RELATIVE_PATH = "masks/world_land_mask_glorys_0p1.tif"
 EO_SOURCE_DEFAULTS = {"ostia": "analysed_sst", "sss": "sos"}
 EO_STRETCH_BY_SOURCE_VAR = {
@@ -563,7 +563,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     DEFAULT_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
     DEFAULT_GEOTIFF_ROOT_DIR = DEFAULT_DATASET_ROOT_DIR.as_posix()
     DEFAULT_METADATA_CACHE_DIR = (
-        DEFAULT_DATASET_ROOT_DIR / "depthdif_cache"
+        DEFAULT_DATASET_ROOT_DIR / "metadata_cache"
     ).as_posix()
 
     def __init__(

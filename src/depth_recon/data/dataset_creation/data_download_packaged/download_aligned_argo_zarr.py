@@ -1,8 +1,8 @@
 # Example with all options:
 # /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_aligned_argo_zarr \
-#   --output-dir /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh \
+#   --output-dir ./data/aligned_argo \
 #   --revision main \
-#   --zarr-path data/argo_glors_ostia_ssh.zarr \
+#   --zarr-path data/aligned_argo_profiles.zarr \
 #   --timeout-seconds 120 \
 #   --chunk-size-mb 8 \
 #   --force-download \
@@ -26,14 +26,12 @@ from depth_recon.data.dataset_creation.data_download_packaged._dataset_links imp
 
 DATASET_LINK_KEY = "argo_aligned"
 DEFAULT_ARCHIVE_NAME = "aligned_argo_zarr.zip"
-DEFAULT_OUTPUT_DIR = Path(
-    "/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh"
-)
+DEFAULT_OUTPUT_DIR = Path("./data/aligned_argo")
 DEFAULT_REVISION = "main"
-DEFAULT_ZARR_PATH = Path("data/argo_glors_ostia_ssh.zarr")
+DEFAULT_ZARR_PATH = Path("data/aligned_argo_profiles.zarr")
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_CHUNK_SIZE_MB = 8
-REQUEST_HEADERS = {"User-Agent": "DepthDif packaged dataset downloader"}
+REQUEST_HEADERS = {"User-Agent": "ocean-depth-reconstruction dataset downloader"}
 HF_PACKAGE_PREFIXES = (
     "data/",
     "indices/",

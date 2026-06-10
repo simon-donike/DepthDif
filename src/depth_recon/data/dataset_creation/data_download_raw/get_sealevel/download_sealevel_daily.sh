@@ -14,7 +14,7 @@ else
 fi
 START_DATE="${START_DATE:-2010-01-01}"
 END_DATE="${END_DATE:-2024-07-31}"
-OUTPUT_DIR="${1:-/data1/datasets/depth_v2/sealevel_daily}"
+OUTPUT_DIR="${1:-./data/raw/sealevel_daily}"
 DRY_RUN_ONLY="${DRY_RUN_ONLY:-0}"
 
 mkdir -p "${OUTPUT_DIR}"

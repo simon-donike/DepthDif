@@ -1,1 +1,1 @@
-"""Utility modules for DepthDif."""
+"""Utility modules for Ocean Depth Reconstruction."""

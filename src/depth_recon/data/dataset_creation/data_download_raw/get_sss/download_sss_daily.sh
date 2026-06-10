@@ -3,10 +3,10 @@ set -euo pipefail
 
 # Example:
 # START_DATE=2010-01-01 END_DATE=2024-07-31 DRY_RUN_ONLY=0 \
-# CSV_LOG_PATH=/data1/datasets/depth_v2/sss_daily/sss_daily_download_log.csv \
+# CSV_LOG_PATH=./data/raw/sss_daily/sss_daily_download_log.csv \
 # SSS_DATASET_ID=cmems_obs-mob_glo_phy-sss_my_multi_P1D \
 #   src/depth_recon/data/dataset_creation/data_download_raw/get_sss/download_sss_daily.sh \
-#   /data1/datasets/depth_v2/sss_daily
+#   ./data/raw/sss_daily
 
 # Reprocessed global sea-surface salinity/density product requested by user:
 # MULTIOBS_GLO_PHY_S_SURFACE_MYNRT_015_013
@@ -21,7 +21,7 @@ else
 fi
 START_DATE="${START_DATE:-2010-01-01}"
 END_DATE="${END_DATE:-2024-07-31}"
-OUTPUT_DIR="${1:-/data1/datasets/depth_v2/sss_daily}"
+OUTPUT_DIR="${1:-./data/raw/sss_daily}"
 DRY_RUN_ONLY="${DRY_RUN_ONLY:-0}"
 
 mkdir -p "${OUTPUT_DIR}"

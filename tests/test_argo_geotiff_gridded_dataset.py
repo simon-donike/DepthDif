@@ -716,12 +716,10 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             "argo_geotiff_gridded",
         )
         core = payload["data"]["dataset"]["core"]
-        self.assertEqual(
-            core["geotiff_root_dir"], "/work/data/OceanVariableReconstruction"
-        )
+        self.assertEqual(core["geotiff_root_dir"], "./data/ocean_depth_reconstruction")
         self.assertEqual(
             core["metadata_cache_dir"],
-            "/work/data/OceanVariableReconstruction/depthdif_cache",
+            "./data/ocean_depth_reconstruction/metadata_cache",
         )
         grid = payload["data"]["dataset"]["grid"]
         self.assertEqual(grid["patch_grid_source"], "land_mask")

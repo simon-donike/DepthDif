@@ -16,7 +16,7 @@ else
 fi
 START_DATE="${START_DATE:-2010-01-01}"
 END_DATE="${END_DATE:-$(date -u +%F)}"
-OUTPUT_DIR="${1:-/data1/datasets/depth_v2/glorys_weekly}"
+OUTPUT_DIR="${1:-./data/raw/glorys_weekly}"
 DRY_RUN_ONLY="${DRY_RUN_ONLY:-0}"
 STEP_DAYS="${STEP_DAYS:-7}"
 

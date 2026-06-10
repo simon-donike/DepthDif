@@ -1,8 +1,8 @@
-"""Train the main diffusion model from YAML configs.
+"""Train the dataset-paper baseline models from YAML configs.
 
-This script builds the dataset/datamodule, instantiates the configured pixel-space
-or latent diffusion model, restores checkpoints when requested, and launches the
-PyTorch Lightning training run.
+This script builds the dataset/datamodule, instantiates the configured IDW, LSTM,
+or U-Net baseline, restores checkpoints when requested, and launches the PyTorch
+Lightning training run.
 
 Typical CLI:
     /work/envs/depth/bin/python train.py --scenario temperature
@@ -30,8 +30,11 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
-from depth_recon.models.baselines import IDWInterpolationBaseline, PointwiseLSTMBaseline
-from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
+from depth_recon.models.baselines import (
+    IDWInterpolationBaseline,
+    PointwiseLSTMBaseline,
+    UNetInfillingBaseline,
+)
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
     PIXEL_SCENARIOS,
@@ -82,16 +85,16 @@ def resolve_load_checkpoint_only(model_cfg: dict[str, Any]) -> bool:
 
 
 def load_weights_only_checkpoint(model: torch.nn.Module, ckpt_path: str) -> str:
-    """Load only model weights from a checkpoint, preferring EMA weights if present.
+    """Load only model weights from a Lightning checkpoint.
 
     Args:
         model (torch.nn.Module): Model receiving the loaded state dict.
         ckpt_path (str): Checkpoint path to load.
 
     Returns:
-        str: Loaded weight source, either "ema" or "standard".
+        str: Loaded weight source, normally "standard" for baseline checkpoints.
     """
-    return load_checkpoint_weights(model, ckpt_path, strict=True, prefer_ema=True)
+    return load_checkpoint_weights(model, ckpt_path, strict=True, prefer_ema=False)
 
 
 # Build process rank defensively across common launchers.
@@ -172,7 +175,7 @@ def build_wandb_logger(
     """
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
-        project=wandb_cfg.get("project", "DepthDif"),
+        project=wandb_cfg.get("project", "ocean-depth-reconstruction"),
         entity=wandb_cfg.get("entity"),
         name=wandb_cfg.get("run_name"),
         log_model=wandb_cfg.get("log_model", "all"),
@@ -294,13 +297,12 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
         str: Computed scalar output.
     """
     model_type = str(
-        model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+        model_cfg.get("model", {}).get("model_type", "unet_baseline")
     ).strip()
     supported_model_types = (
-        "cond_px_dif",
-        "latent_cond_dif",
         "idw_baseline",
         "lstm_baseline",
+        "unet_baseline",
     )
     if model_type in supported_model_types:
         return model_type
@@ -308,61 +310,6 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
     raise ValueError(
         "Unsupported model.model_type value "
         f"'{model_type}'. Supported values: '{supported}'."
-    )
-
-
-def parse_config_bool(value: Any, *, key: str) -> bool:
-    """Parse a strict boolean value from YAML config data."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "yes", "on", "1"}:
-            return True
-        if normalized in {"false", "no", "off", "0"}:
-            return False
-    raise ValueError(f"{key} must be a boolean value.")
-
-
-def build_ema_callback(model_cfg: dict[str, Any]) -> EMA | None:
-    """Build the optional EMA callback from model config."""
-    ema_cfg = model_cfg.get("model", {}).get("ema", {})
-    if ema_cfg is None or ema_cfg is False:
-        return None
-    if not isinstance(ema_cfg, dict):
-        raise ValueError("model.ema must be a mapping, false, or null.")
-    if not parse_config_bool(ema_cfg.get("enabled", False), key="model.ema.enabled"):
-        return None
-
-    decay = float(ema_cfg.get("decay", 0.9999))
-    if not (0.0 <= decay < 1.0):
-        raise ValueError("model.ema.decay must be >= 0.0 and < 1.0.")
-
-    apply_every_n_steps = int(
-        ema_cfg.get(
-            "apply_every_n_steps",
-            ema_cfg.get("apply_ema_every_n_steps", 1),
-        )
-    )
-    if apply_every_n_steps < 1:
-        raise ValueError("model.ema.apply_every_n_steps must be >= 1.")
-
-    start_step = int(ema_cfg.get("start_step", 0))
-    if start_step < 0:
-        raise ValueError("model.ema.start_step must be >= 0.")
-
-    return EMA(
-        decay=decay,
-        apply_ema_every_n_steps=apply_every_n_steps,
-        start_step=start_step,
-        save_ema_weights_in_callback_state=parse_config_bool(
-            ema_cfg.get("save_ema_weights_in_callback_state", True),
-            key="model.ema.save_ema_weights_in_callback_state",
-        ),
-        evaluate_ema_weights_instead=parse_config_bool(
-            ema_cfg.get("evaluate_ema_weights_instead", True),
-            key="model.ema.evaluate_ema_weights_instead",
-        ),
     )
 
 
@@ -532,9 +479,8 @@ def main(
             training_config_path=effective_training_config_path,
             datamodule=datamodule,
         )
-    elif model_type == "cond_px_dif":
-        # Instantiate the pixel model from the effective super-config materialization.
-        model = PixelDiffusionConditional.from_config(
+    elif model_type == "unet_baseline":
+        model = UNetInfillingBaseline.from_config(
             model_config_path=effective_model_config_path,
             data_config_path=effective_data_config_path,
             training_config_path=effective_training_config_path,
@@ -542,8 +488,8 @@ def main(
         )
     else:
         raise ValueError(
-            "train.py supports model_type='cond_px_dif', 'idw_baseline', "
-            "or 'lstm_baseline'."
+            "train.py supports model_type='idw_baseline', 'lstm_baseline', "
+            "or 'unet_baseline'."
         )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
@@ -583,21 +529,9 @@ def main(
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
-    baseline_model_types = {"idw_baseline", "lstm_baseline"}
-    ema_callback = (
-        None if model_type in baseline_model_types else build_ema_callback(model_cfg)
-    )
     callbacks: list[pl.Callback] = [checkpoint_callback, latest_checkpoint_callback]
     if model_type != "idw_baseline":
         callbacks.append(lr_monitor_callback)
-    if ema_callback is not None:
-        # Restore raw training weights before ModelCheckpoint writes resume state.
-        callbacks = [
-            ema_callback,
-            checkpoint_callback,
-            latest_checkpoint_callback,
-            lr_monitor_callback,
-        ]
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
@@ -671,7 +605,7 @@ def parse_args() -> argparse.Namespace:
     Returns:
         argparse.Namespace: Computed output value.
     """
-    parser = argparse.ArgumentParser(description="Train DepthDif models.")
+    parser = argparse.ArgumentParser(description="Train dataset-paper baseline models.")
     parser.add_argument(
         "--config",
         default=PIXEL_TRAINING_CONFIG_PATH,
@@ -720,6 +654,7 @@ if __name__ == "__main__":
 # Training quick start (single command):
 python train.py --scenario temperature
 
-# Sweep quick start (single command):
-./src/depth_recon/scripts/start_occlusion_sweep.sh
+# Baseline selector examples:
+python train.py --scenario temperature --set model.model_type=lstm_baseline
+python train.py --scenario temperature --set model.model_type=unet_baseline
 """

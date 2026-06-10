@@ -13,7 +13,7 @@ from depth_recon.configs.config_resolver_pixel import (
     load_yaml,
     resolve_pixel_scenario,
 )
-from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
+from depth_recon.models.baselines import UNetInfillingBaseline
 from tests.test_argo_geotiff_gridded_dataset import _make_geotiff_dataset
 from train import build_dataset
 
@@ -63,7 +63,7 @@ def _minimal_super_config(
             "dataloader": {"num_workers": 0, "prefetch_factor": 2, "val_shuffle": True},
         },
         "model": {
-            "model_type": "cond_px_dif",
+            "model_type": "unet_baseline",
             "depth_channels": 50,
             "resume_checkpoint": False,
             "load_checkpoint_only": False,
@@ -81,6 +81,15 @@ def _minimal_super_config(
                 "gaussian_blur": {"enabled": False, "sigma": 0.75, "kernel_size": 5}
             },
             "coord_conditioning": {"enabled": False, "include_date": False},
+            "unet_baseline": {
+                "base_channels": 8,
+                "channel_mults": [1],
+                "norm_groups": 4,
+                "dropout": 0.0,
+                "lr": None,
+                "weight_decay": 1.0e-4,
+                "per_channel_valid_mask": True,
+            },
             "unet": {"dim": 8, "dim_mults": [1], "with_time_emb": True},
         },
         "inference": {
@@ -134,7 +143,7 @@ class TestPixelConfig(unittest.TestCase):
         self.assertEqual(bundle.scenario, "temperature")
         self.assertEqual(bundle.model_cfg["model"]["output_fields"], ["temperature"])
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 50)
-        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 53)
+        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 4)
         self.assertFalse(bundle.data_cfg["dataset"]["output"]["include_salinity"])
         self.assertEqual(bundle.data_cfg["dataset"]["sampling"]["eo_source"], "ostia")
         self.assertEqual(
@@ -158,7 +167,7 @@ class TestPixelConfig(unittest.TestCase):
 
         self.assertEqual(bundle.model_cfg["model"]["output_fields"], ["salinity"])
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 50)
-        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 53)
+        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 4)
         self.assertEqual(bundle.data_cfg["dataset"]["output"]["fields"], ["salinity"])
         self.assertTrue(bundle.data_cfg["dataset"]["output"]["include_salinity"])
         self.assertEqual(bundle.data_cfg["dataset"]["sampling"]["eo_source"], "sss")
@@ -180,7 +189,7 @@ class TestPixelConfig(unittest.TestCase):
             bundle.model_cfg["model"]["output_fields"], ["temperature", "salinity"]
         )
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 100)
-        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 103)
+        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 6)
         self.assertEqual(
             bundle.data_cfg["dataset"]["output"]["fields"],
             ["temperature", "salinity"],
@@ -223,6 +232,36 @@ class TestPixelConfig(unittest.TestCase):
         )
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 12)
 
+    def test_unet_baseline_override_derives_per_channel_condition_channels(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_path = tmp_path / "super.yaml"
+            config = _minimal_super_config(tmp_path, scenario="temperature")
+            config["model"]["depth_channels"] = 2
+            _write_yaml(config_path, config)
+
+            training_bundle = load_pixel_training_config(
+                config_path_value=config_path,
+                overrides=["model.model_type=unet_baseline"],
+                runtime_config_dir=tmp_path / "training_runtime",
+                write_snapshots=False,
+            )
+            inference_bundle = load_pixel_inference_config(
+                config_path_value=config_path,
+                overrides=["model.model_type=unet_baseline"],
+                runtime_config_dir=tmp_path / "inference_runtime",
+                write_snapshots=False,
+            )
+
+            for bundle in (training_bundle, inference_bundle):
+                model_section = bundle.model_cfg["model"]
+                self.assertEqual(model_section["model_type"], "unet_baseline")
+                self.assertEqual(model_section["generated_channels"], 2)
+                self.assertEqual(model_section["condition_mask_channels"], 1)
+                self.assertEqual(model_section["condition_channels"], 4)
+
     def test_selected_scenarios_materialize_expected_training_and_inference_settings(
         self,
     ) -> None:
@@ -231,7 +270,7 @@ class TestPixelConfig(unittest.TestCase):
                 "fields": ["temperature"],
                 "include_salinity": False,
                 "generated_channels": 50,
-                "condition_channels": 53,
+                "condition_channels": 4,
                 "eo_source": "ostia",
                 "eo_var_name": "analysed_sst",
             },
@@ -239,7 +278,7 @@ class TestPixelConfig(unittest.TestCase):
                 "fields": ["salinity"],
                 "include_salinity": True,
                 "generated_channels": 50,
-                "condition_channels": 53,
+                "condition_channels": 4,
                 "eo_source": "sss",
                 "eo_var_name": "sos",
             },
@@ -247,7 +286,7 @@ class TestPixelConfig(unittest.TestCase):
                 "fields": ["temperature", "salinity"],
                 "include_salinity": True,
                 "generated_channels": 100,
-                "condition_channels": 103,
+                "condition_channels": 6,
                 "eo_source": "ostia",
                 "eo_var_name": "analysed_sst",
             },
@@ -343,7 +382,7 @@ class TestPixelConfig(unittest.TestCase):
                 bundle.data_cfg["dataset"],
                 split="train",
             )
-            model = PixelDiffusionConditional.from_config(
+            model = UNetInfillingBaseline.from_config(
                 bundle.effective_model_config_path,
                 bundle.effective_data_config_path,
                 bundle.effective_training_config_path,
@@ -351,8 +390,8 @@ class TestPixelConfig(unittest.TestCase):
 
             self.assertGreater(len(dataset), 0)
             self.assertEqual(model.output_fields, ("temperature",))
-            self.assertEqual(model.model.generated_channels, 2)
-            self.assertEqual(model.model.condition_channels, 3)
+            self.assertEqual(model.generated_channels, 2)
+            self.assertEqual(model.condition_channels, 2)
             self.assertTrue((tmp_path / "snapshots" / "super.yaml").is_file())
             self.assertTrue(
                 (tmp_path / "snapshots" / "data_config_effective.yaml").is_file()
@@ -360,12 +399,12 @@ class TestPixelConfig(unittest.TestCase):
 
     def test_inference_super_config_derives_all_scenarios(self) -> None:
         expected = {
-            "temperature": (["temperature"], 50, 53, False, "ostia", "analysed_sst"),
-            "salinity": (["salinity"], 50, 53, True, "sss", "sos"),
+            "temperature": (["temperature"], 50, 4, False, "ostia", "analysed_sst"),
+            "salinity": (["salinity"], 50, 4, True, "sss", "sos"),
             "joint": (
                 ["temperature", "salinity"],
                 100,
-                103,
+                6,
                 True,
                 "ostia",
                 "analysed_sst",
@@ -460,7 +499,7 @@ class TestPixelConfig(unittest.TestCase):
                 bundle.data_cfg["dataset"],
                 split="train",
             )
-            model = PixelDiffusionConditional.from_config(
+            model = UNetInfillingBaseline.from_config(
                 bundle.effective_model_config_path,
                 bundle.effective_data_config_path,
                 bundle.effective_training_config_path,
@@ -493,8 +532,8 @@ class TestPixelConfig(unittest.TestCase):
                 effective_inference["inference"]["dataloader"]["num_workers"], 0
             )
             self.assertEqual(model.output_fields, ("salinity",))
-            self.assertEqual(model.model.generated_channels, 2)
-            self.assertEqual(model.model.condition_channels, 5)
+            self.assertEqual(model.generated_channels, 2)
+            self.assertEqual(model.condition_channels, 5)
             self.assertTrue((tmp_path / "snapshots" / "inference_super.yaml").is_file())
             self.assertTrue(
                 (tmp_path / "snapshots" / "inference_config_effective.yaml").is_file()

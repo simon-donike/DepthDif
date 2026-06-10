@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 
 from depth_recon.models.baselines.IDW import IDWInterpolationBaseline
 from depth_recon.utils.normalizations import (
@@ -19,67 +20,209 @@ from depth_recon.utils.validation_denoise import (
 )
 
 
-class PointwiseLSTMBaseline(IDWInterpolationBaseline):
-    """Point-wise vertical LSTM baseline for sparse field reconstruction."""
+def _group_count(channels: int, requested_groups: int) -> int:
+    """Return a valid GroupNorm group count for one channel width."""
+    groups = min(max(1, int(requested_groups)), int(channels))
+    while int(channels) % groups != 0:
+        groups -= 1
+    return groups
+
+
+class _DoubleConvBlock(torch.nn.Module):
+    """Two 3D convolution, normalization, and activation layers."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        *,
+        norm_groups: int,
+        dropout: float,
+    ) -> None:
+        """Initialize the 3D convolution block."""
+        super().__init__()
+        layers: list[torch.nn.Module] = []
+        current_channels = int(in_channels)
+        for _ in range(2):
+            layers.extend(
+                [
+                    torch.nn.Conv3d(
+                        current_channels,
+                        int(out_channels),
+                        kernel_size=3,
+                        padding=1,
+                    ),
+                    torch.nn.GroupNorm(
+                        _group_count(int(out_channels), int(norm_groups)),
+                        int(out_channels),
+                    ),
+                    torch.nn.ReLU(inplace=True),
+                ]
+            )
+            current_channels = int(out_channels)
+        if float(dropout) > 0.0:
+            layers.append(torch.nn.Dropout3d(float(dropout)))
+        self.net = torch.nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the block forward pass."""
+        return self.net(x)
+
+
+class _PlainUNet3D(torch.nn.Module):
+    """Standard 3D U-Net for depth-aware patch-to-patch regression."""
 
     def __init__(
         self,
         *,
-        hidden_size: int = 64,
-        num_layers: int = 2,
+        in_channels: int,
+        out_channels: int,
+        base_channels: int,
+        channel_mults: Sequence[int],
+        norm_groups: int,
+        dropout: float,
+    ) -> None:
+        """Initialize the 3D U-Net."""
+        super().__init__()
+        widths = [int(base_channels) * int(mult) for mult in channel_mults]
+        if not widths:
+            raise ValueError("model.unet_baseline.channel_mults must not be empty.")
+
+        self.down_blocks = torch.nn.ModuleList()
+        current_channels = int(in_channels)
+        for width in widths:
+            self.down_blocks.append(
+                _DoubleConvBlock(
+                    current_channels,
+                    width,
+                    norm_groups=int(norm_groups),
+                    dropout=float(dropout),
+                )
+            )
+            current_channels = width
+
+        self.pool = torch.nn.MaxPool3d(kernel_size=2, stride=2)
+        self.up_transpose = torch.nn.ModuleList()
+        self.up_blocks = torch.nn.ModuleList()
+        for skip_width in reversed(widths[:-1]):
+            self.up_transpose.append(
+                torch.nn.ConvTranspose3d(
+                    current_channels,
+                    skip_width,
+                    kernel_size=2,
+                    stride=2,
+                )
+            )
+            self.up_blocks.append(
+                _DoubleConvBlock(
+                    skip_width * 2,
+                    skip_width,
+                    norm_groups=int(norm_groups),
+                    dropout=float(dropout),
+                )
+            )
+            current_channels = skip_width
+
+        self.output = torch.nn.Conv3d(
+            current_channels, int(out_channels), kernel_size=1
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run U-Net encoder, decoder, and final projection."""
+        skips: list[torch.Tensor] = []
+        h = x
+        for idx, block in enumerate(self.down_blocks):
+            h = block(h)
+            skips.append(h)
+            if idx != len(self.down_blocks) - 1:
+                h = self.pool(h)
+
+        for upsample, block, skip in zip(
+            self.up_transpose,
+            self.up_blocks,
+            reversed(skips[:-1]),
+        ):
+            h = upsample(h)
+            if tuple(h.shape[-3:]) != tuple(skip.shape[-3:]):
+                # Odd depth or patch sizes can drift by one voxel through pooling;
+                # align to the skip feature before concatenating.
+                h = F.interpolate(
+                    h,
+                    size=tuple(skip.shape[-3:]),
+                    mode="trilinear",
+                    align_corners=False,
+                )
+            h = block(torch.cat([skip, h], dim=1))
+
+        return self.output(h)
+
+
+class UNetInfillingBaseline(IDWInterpolationBaseline):
+    """Trainable 3D U-Net baseline for sparse patch infilling."""
+
+    def __init__(
+        self,
+        *,
+        generated_channels: int,
+        base_channels: int = 32,
+        channel_mults: Sequence[int] = (1, 2, 4, 8),
+        norm_groups: int = 8,
         dropout: float = 0.0,
-        bidirectional: bool = True,
-        include_eo: bool = True,
+        condition_include_eo: bool = True,
+        condition_use_valid_mask: bool = True,
+        condition_use_land_mask: bool = True,
+        condition_mask_channels: int | None = None,
+        per_channel_valid_mask: bool = True,
         lr: float = 1.0e-3,
-        weight_decay: float = 0.0,
-        depth_axis_m: Sequence[float] | torch.Tensor | None = None,
+        weight_decay: float = 1.0e-4,
         output_fields: Sequence[str] | str | None = None,
         variable_scenario: str | None = None,
         datamodule: pl.LightningDataModule | None = None,
         skip_full_reconstruction_in_sanity_check: bool = True,
         max_full_reconstruction_samples: int = 1,
+        model_summary_input_size: int = 128,
     ) -> None:
-        """Initialize the point-wise LSTM baseline.
-
-        Args:
-            hidden_size (int): Hidden size for each field-specific LSTM.
-            num_layers (int): Number of LSTM layers.
-            dropout (float): Inter-layer LSTM dropout.
-            bidirectional (bool): Whether to use bidirectional LSTMs.
-            include_eo (bool): Whether to append the per-pixel EO surface value.
-            lr (float): AdamW learning rate.
-            weight_decay (float): AdamW weight decay.
-            depth_axis_m (Sequence[float] | torch.Tensor | None): Optional depth axis.
-            output_fields (Sequence[str] | str | None): Active output fields.
-            variable_scenario (str | None): Scenario metadata stored in checkpoints.
-            datamodule (pl.LightningDataModule | None): Optional Lightning datamodule.
-            skip_full_reconstruction_in_sanity_check (bool): Skip expensive sanity logs.
-            max_full_reconstruction_samples (int): Cached val samples for recon metrics.
-
-        Returns:
-            None: No value is returned.
-        """
+        """Initialize the U-Net infilling baseline."""
         pl.LightningModule.__init__(self)
-        if int(hidden_size) < 1:
-            raise ValueError("model.lstm.hidden_size must be >= 1.")
-        if int(num_layers) < 1:
-            raise ValueError("model.lstm.num_layers must be >= 1.")
+        if int(generated_channels) < 1:
+            raise ValueError("model.generated_channels must be >= 1.")
+        if int(base_channels) < 1:
+            raise ValueError("model.unet_baseline.base_channels must be >= 1.")
+        if int(norm_groups) < 1:
+            raise ValueError("model.unet_baseline.norm_groups must be >= 1.")
         if not (0.0 <= float(dropout) < 1.0):
-            raise ValueError("model.lstm.dropout must be >= 0.0 and < 1.0.")
+            raise ValueError("model.unet_baseline.dropout must be >= 0.0 and < 1.0.")
         if float(lr) <= 0.0:
-            raise ValueError("model.lstm.lr must be > 0.")
+            raise ValueError("model.unet_baseline.lr must be > 0.")
         if float(weight_decay) < 0.0:
-            raise ValueError("model.lstm.weight_decay must be >= 0.0.")
+            raise ValueError("model.unet_baseline.weight_decay must be >= 0.0.")
 
-        self.hidden_size = int(hidden_size)
-        self.num_layers = int(num_layers)
+        self.generated_channels = int(generated_channels)
+        self.base_channels = int(base_channels)
+        self.channel_mults = self._parse_channel_mults(channel_mults)
+        self.norm_groups = int(norm_groups)
         self.dropout = float(dropout)
-        self.bidirectional = bool(bidirectional)
-        self.include_eo = bool(include_eo)
-        self.condition_include_eo = self.include_eo
+        self.condition_include_eo = bool(condition_include_eo)
+        self.condition_use_valid_mask = bool(condition_use_valid_mask)
+        self.condition_use_land_mask = bool(condition_use_land_mask)
+        self.per_channel_valid_mask = bool(per_channel_valid_mask)
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
         self.output_fields = self._normalize_output_fields(output_fields)
+        self.field_channels = len(self.output_fields)
+        if self.generated_channels % self.field_channels != 0:
+            raise ValueError(
+                "model.generated_channels must be divisible by the active output "
+                "field count."
+            )
+        self.depth_channels = self.generated_channels // self.field_channels
+        if condition_mask_channels is None:
+            default_mask_channels = (
+                self.field_channels if self.per_channel_valid_mask else 1
+            )
+        else:
+            default_mask_channels = max(0, int(condition_mask_channels))
+        self.condition_mask_channels = default_mask_channels
         self.variable_scenario = variable_scenario
         self.datamodule = datamodule
         self.skip_full_reconstruction_in_sanity_check = bool(
@@ -91,33 +234,34 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         self.automatic_optimization = True
         self._cached_val_example: dict[str, Any] | None = None
 
-        input_size = 4 if self.include_eo else 3
-        recurrent_dropout = self.dropout if self.num_layers > 1 else 0.0
-        output_size = self.hidden_size * (2 if self.bidirectional else 1)
-        self.field_lstms = torch.nn.ModuleDict()
-        self.field_heads = torch.nn.ModuleDict()
-        for field in self.output_fields:
-            self.field_lstms[field] = torch.nn.LSTM(
-                input_size=input_size,
-                hidden_size=self.hidden_size,
-                num_layers=self.num_layers,
-                batch_first=True,
-                dropout=recurrent_dropout,
-                bidirectional=self.bidirectional,
-            )
-            self.field_heads[field] = torch.nn.Linear(output_size, 1)
+        input_channels = self.field_channels
+        if self.condition_include_eo:
+            input_channels += 1
+        if self.condition_use_valid_mask:
+            input_channels += self.condition_mask_channels
+        if self.condition_use_land_mask:
+            input_channels += 1
+        self.condition_channels = int(input_channels)
 
-        resolved_depth_axis = self._resolve_depth_axis_m(
-            depth_axis_m=depth_axis_m,
-            datamodule=datamodule,
+        self.net = _PlainUNet3D(
+            in_channels=self.condition_channels,
+            out_channels=self.field_channels,
+            base_channels=self.base_channels,
+            channel_mults=self.channel_mults,
+            norm_groups=self.norm_groups,
+            dropout=self.dropout,
         )
-        self.generated_channels = (
-            len(self.output_fields) * int(resolved_depth_axis.numel())
-            if int(resolved_depth_axis.numel()) > 0
-            else len(self.output_fields)
+        self.example_input_array = torch.zeros(
+            (
+                1,
+                self.condition_channels,
+                self.depth_channels,
+                max(1, int(model_summary_input_size)),
+                max(1, int(model_summary_input_size)),
+            ),
+            dtype=torch.float32,
         )
-        self.save_hyperparameters(ignore=["datamodule", "depth_axis_m"])
-        self.register_buffer("depth_axis_m", resolved_depth_axis, persistent=True)
+        self.save_hyperparameters(ignore=["datamodule"])
         self.register_buffer("_empty", torch.empty(0), persistent=False)
 
     @staticmethod
@@ -132,48 +276,19 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
     @staticmethod
     def _validation_sampling_section(training_cfg: dict[str, Any]) -> dict[str, Any]:
         """Return validation sampling settings from a config."""
-        section = PointwiseLSTMBaseline._training_section(training_cfg)
+        section = UNetInfillingBaseline._training_section(training_cfg)
         val_sampling = section.get("validation_sampling", {})
         return val_sampling if isinstance(val_sampling, dict) else {}
 
     @staticmethod
-    def _depth_axis_from_dataset(dataset: Any) -> torch.Tensor | None:
-        """Return depth_axis_m from a dataset or wrapped subset, when available."""
-        visited: set[int] = set()
-        current = dataset
-        while current is not None and id(current) not in visited:
-            visited.add(id(current))
-            depth_axis = getattr(current, "depth_axis_m", None)
-            if depth_axis is not None:
-                tensor = torch.as_tensor(depth_axis, dtype=torch.float32).reshape(-1)
-                if int(tensor.numel()) > 0:
-                    return tensor
-            # torch.utils.data.Subset exposes the wrapped dataset as .dataset.
-            current = getattr(current, "dataset", None)
-        return None
-
-    @classmethod
-    def _resolve_depth_axis_m(
-        cls,
-        *,
-        depth_axis_m: Sequence[float] | torch.Tensor | None,
-        datamodule: pl.LightningDataModule | None,
-    ) -> torch.Tensor:
-        """Resolve the physical depth axis from config or datamodule metadata."""
-        if depth_axis_m is not None:
-            tensor = torch.as_tensor(depth_axis_m, dtype=torch.float32).reshape(-1)
-            if int(tensor.numel()) == 0:
-                raise ValueError("model.lstm.depth_axis_m must not be empty.")
-            return tensor
-
-        for name in ("dataset", "val_dataset", "train_dataset"):
-            dataset = (
-                getattr(datamodule, name, None) if datamodule is not None else None
-            )
-            tensor = cls._depth_axis_from_dataset(dataset)
-            if tensor is not None:
-                return tensor
-        return torch.empty(0, dtype=torch.float32)
+    def _parse_channel_mults(value: Sequence[int]) -> tuple[int, ...]:
+        """Return normalized positive U-Net channel multipliers."""
+        mults = tuple(int(mult) for mult in value)
+        if not mults:
+            raise ValueError("model.unet_baseline.channel_mults must not be empty.")
+        if any(mult < 1 for mult in mults):
+            raise ValueError("model.unet_baseline.channel_mults values must be >= 1.")
+        return mults
 
     @classmethod
     def from_config(
@@ -182,39 +297,50 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         data_config_path: str | None = None,
         training_config_path: str | None = None,
         datamodule: pl.LightningDataModule | None = None,
-    ) -> "PointwiseLSTMBaseline":
-        """Build the point-wise LSTM baseline from config files."""
+    ) -> "UNetInfillingBaseline":
+        """Build the U-Net baseline from config files."""
         if model_config_path is None:
-            raise ValueError("model_config_path is required for PointwiseLSTMBaseline.")
+            raise ValueError("model_config_path is required for UNetInfillingBaseline.")
         model_cfg = cls._load_yaml(model_config_path)
         training_cfg = (
             cls._load_yaml(training_config_path) if training_config_path else {}
         )
         m = model_cfg.get("model", {})
-        lstm_cfg = m.get("lstm", {})
-        if lstm_cfg is None:
-            lstm_cfg = {}
-        if not isinstance(lstm_cfg, dict):
-            raise ValueError("model.lstm must be a mapping when provided.")
+        unet_cfg = m.get("unet_baseline", {})
+        if unet_cfg is None:
+            unet_cfg = {}
+        if not isinstance(unet_cfg, dict):
+            raise ValueError("model.unet_baseline must be a mapping when provided.")
         _ = data_config_path
 
+        output_fields = cls._normalize_output_fields(m.get("output_fields", None))
+        depth_channels = int(m.get("depth_channels", 50))
+        generated_channels = int(
+            m.get("generated_channels", depth_channels * len(output_fields))
+        )
         training_section = cls._training_section(training_cfg)
         val_sampling_cfg = cls._validation_sampling_section(training_cfg)
-        lr_cfg = lstm_cfg.get("lr", None)
+        lr_cfg = unet_cfg.get("lr", None)
         lr = training_section.get("lr", 1.0e-3) if lr_cfg is None else lr_cfg
 
         return cls(
-            hidden_size=int(lstm_cfg.get("hidden_size", 64)),
-            num_layers=int(lstm_cfg.get("num_layers", 2)),
-            dropout=float(lstm_cfg.get("dropout", 0.0)),
-            bidirectional=bool(lstm_cfg.get("bidirectional", True)),
-            include_eo=bool(
-                lstm_cfg.get("include_eo", m.get("condition_include_eo", True))
+            generated_channels=generated_channels,
+            base_channels=int(unet_cfg.get("base_channels", 32)),
+            channel_mults=unet_cfg.get("channel_mults", [1, 2, 4, 8]),
+            norm_groups=int(unet_cfg.get("norm_groups", 8)),
+            dropout=float(unet_cfg.get("dropout", 0.0)),
+            condition_include_eo=bool(m.get("condition_include_eo", True)),
+            condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
+            condition_use_land_mask=bool(m.get("condition_use_land_mask", True)),
+            condition_mask_channels=(
+                int(m["condition_mask_channels"])
+                if "condition_mask_channels" in m
+                else None
             ),
-            lr=lr,
-            weight_decay=float(lstm_cfg.get("weight_decay", 0.0)),
-            depth_axis_m=lstm_cfg.get("depth_axis_m", None),
-            output_fields=m.get("output_fields", None),
+            per_channel_valid_mask=bool(unet_cfg.get("per_channel_valid_mask", True)),
+            lr=float(lr),
+            weight_decay=float(unet_cfg.get("weight_decay", 1.0e-4)),
+            output_fields=output_fields,
             variable_scenario=m.get("scenario", None),
             datamodule=datamodule,
             skip_full_reconstruction_in_sanity_check=bool(
@@ -223,156 +349,223 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
             max_full_reconstruction_samples=int(
                 val_sampling_cfg.get("max_full_reconstruction_samples", 1)
             ),
+            model_summary_input_size=int(unet_cfg.get("model_summary_input_size", 128)),
         )
 
-    def _normalized_depth_positions(
-        self, depth_size: int, *, device: torch.device, dtype: torch.dtype
-    ) -> torch.Tensor:
-        """Return normalized depth coordinates for the active channel count."""
-        if int(depth_size) < 1:
-            raise RuntimeError("Depth channel count must be >= 1.")
-        depth_axis = self.depth_axis_m.to(device=device, dtype=dtype)
-        if int(depth_axis.numel()) == 0:
-            return torch.linspace(0.0, 1.0, int(depth_size), device=device, dtype=dtype)
-        if int(depth_axis.numel()) != int(depth_size):
+    def forward(self, condition: torch.Tensor) -> torch.Tensor:
+        """Predict dense normalized output fields from a 3D condition volume."""
+        if condition.ndim != 5:
             raise RuntimeError(
-                "Configured depth_axis_m length does not match input channels: "
-                f"{int(depth_axis.numel())} != {int(depth_size)}."
+                "condition must be shaped (B,C,D,H,W), "
+                f"got {tuple(condition.shape)}."
             )
-        finite = torch.isfinite(depth_axis)
-        if not bool(finite.all().item()):
-            raise RuntimeError("depth_axis_m must contain only finite values.")
-        depth_min = depth_axis.min()
-        depth_range = depth_axis.max() - depth_min
-        if bool(depth_range <= 0):
-            return torch.zeros(int(depth_size), device=device, dtype=dtype)
-        return (depth_axis - depth_min) / depth_range
+        if int(condition.size(1)) != self.condition_channels:
+            raise RuntimeError(
+                "U-Net condition channel mismatch: "
+                f"got {int(condition.size(1))}, expected {self.condition_channels}."
+            )
+        if int(condition.size(2)) != self.depth_channels:
+            raise RuntimeError(
+                "U-Net condition depth mismatch: "
+                f"got {int(condition.size(2))}, expected {self.depth_channels}."
+            )
+        return self._volume_to_flat(self.net(condition))
 
-    def _prepare_eo_sequence(
+    def _flat_to_volume(
+        self, tensor: torch.Tensor, *, tensor_name: str
+    ) -> torch.Tensor:
+        """Reshape flattened field/depth channels into a 3D volume."""
+        if tensor.ndim != 4:
+            raise RuntimeError(
+                f"{tensor_name} must be shaped (B,C,H,W), got {tuple(tensor.shape)}."
+            )
+        if int(tensor.size(1)) != self.generated_channels:
+            raise RuntimeError(
+                f"{tensor_name} channel mismatch: got {int(tensor.size(1))}, "
+                f"expected {self.generated_channels}."
+            )
+        batch_size, _channels, height, width = tensor.shape
+        return tensor.reshape(
+            int(batch_size),
+            self.field_channels,
+            self.depth_channels,
+            int(height),
+            int(width),
+        )
+
+    def _volume_to_flat(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Flatten field/depth volume channels back to the output contract."""
+        if tensor.ndim != 5:
+            raise RuntimeError(
+                f"U-Net output must be shaped (B,F,D,H,W), got {tuple(tensor.shape)}."
+            )
+        if int(tensor.size(1)) != self.field_channels:
+            raise RuntimeError(
+                "U-Net output field-channel mismatch: "
+                f"got {int(tensor.size(1))}, expected {self.field_channels}."
+            )
+        if int(tensor.size(2)) != self.depth_channels:
+            raise RuntimeError(
+                "U-Net output depth mismatch: "
+                f"got {int(tensor.size(2))}, expected {self.depth_channels}."
+            )
+        batch_size, _fields, _depth, height, width = tensor.shape
+        return tensor.reshape(
+            int(batch_size), self.generated_channels, int(height), int(width)
+        )
+
+    def _prepare_surface_condition(
         self,
-        eo: torch.Tensor | None,
+        tensor: torch.Tensor | None,
+        reference: torch.Tensor,
         *,
-        batch_size: int,
-        depth_size: int,
-        height: int,
-        width: int,
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> torch.Tensor | None:
-        """Return EO as a repeated depth sequence feature."""
-        if not self.include_eo:
-            return None
-        if eo is None:
-            raise RuntimeError("PointwiseLSTMBaseline requires batch['eo'].")
-        eo_tensor = eo.to(device=device, dtype=dtype)
-        if eo_tensor.ndim == 3:
-            eo_tensor = eo_tensor.unsqueeze(1)
-        if eo_tensor.ndim != 4:
-            raise RuntimeError("batch['eo'] must be shaped as (B,1,H,W) or (B,H,W).")
-        if int(eo_tensor.size(0)) != int(batch_size):
-            raise RuntimeError("batch['eo'] batch size does not match input x.")
-        if int(eo_tensor.size(1)) != 1:
-            raise RuntimeError("PointwiseLSTMBaseline expects exactly one EO channel.")
-        if tuple(eo_tensor.shape[2:]) != (int(height), int(width)):
-            raise RuntimeError("batch['eo'] spatial shape does not match input x.")
-        return eo_tensor.expand(-1, int(depth_size), -1, -1)
-
-    def _forward_field(
-        self,
-        field: str,
-        x: torch.Tensor,
-        valid_mask: torch.Tensor,
-        eo: torch.Tensor | None,
+        tensor_name: str,
     ) -> torch.Tensor:
-        """Predict one physical field from independent per-pixel depth sequences."""
-        if x.ndim != 4:
-            raise RuntimeError(f"x must be shaped (B,C,H,W), got {tuple(x.shape)}.")
-        batch_size, depth_size, height, width = map(int, x.shape)
-        mask = self._align_mask_to_reference(
-            valid_mask.to(device=x.device), x, mask_name=f"{field}_valid_mask"
-        )
-        observed = (mask > 0.5) & torch.isfinite(x)
-        safe_x = torch.where(observed, x, torch.zeros_like(x))
-        depth_positions = self._normalized_depth_positions(
-            depth_size, device=x.device, dtype=x.dtype
-        ).view(1, depth_size, 1, 1)
-        features = [
-            safe_x,
-            observed.to(dtype=x.dtype),
-            depth_positions.expand(batch_size, -1, height, width),
-        ]
-        eo_sequence = self._prepare_eo_sequence(
-            eo,
-            batch_size=batch_size,
-            depth_size=depth_size,
-            height=height,
-            width=width,
-            device=x.device,
-            dtype=x.dtype,
-        )
-        if eo_sequence is not None:
-            features.append(eo_sequence)
-
-        sequence = torch.stack(features, dim=-1)
-        sequence = sequence.permute(0, 2, 3, 1, 4).reshape(
-            batch_size * height * width, depth_size, len(features)
-        )
-        lstm_out, _ = self.field_lstms[field](sequence)
-        prediction = self.field_heads[field](lstm_out).squeeze(-1)
-        prediction = prediction.reshape(batch_size, height, width, depth_size).permute(
-            0, 3, 1, 2
-        )
-
-        # Nodata is a patch-level decision; individual missing pixels can still use
-        # EO, depth, and mask features when another ARGO profile exists in the patch.
-        patch_has_argo = observed.flatten(1).any(dim=1)
-        return torch.where(
-            patch_has_argo.view(batch_size, 1, 1, 1),
-            prediction,
-            torch.full_like(prediction, float("nan")),
-        )
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        valid_mask: torch.Tensor,
-        eo: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Predict dense normalized fields while preserving patch tensor shape."""
-        if x.ndim != 4:
-            raise RuntimeError(f"x must be shaped (B,C,H,W), got {tuple(x.shape)}.")
-        if int(x.size(1)) % len(self.output_fields) != 0:
+        """Return one surface condition channel repeated over depth."""
+        if tensor is None:
             raise RuntimeError(
-                "Input channels must be divisible by the number of output fields."
+                f"{tensor_name}=true requires the matching batch tensor."
             )
+        surface = tensor.to(device=reference.device, dtype=reference.dtype)
+        if surface.ndim == 3:
+            surface = surface.unsqueeze(1)
+        if surface.ndim != 4:
+            raise RuntimeError(f"{tensor_name} must be shaped as (B,1,H,W) or (B,H,W).")
+        if int(surface.size(0)) != int(reference.size(0)):
+            raise RuntimeError(f"{tensor_name} batch size does not match x.")
+        if tuple(surface.shape[2:]) != tuple(reference.shape[2:]):
+            raise RuntimeError(f"{tensor_name} spatial shape does not match x.")
+        if int(surface.size(1)) != 1:
+            surface = surface.amax(dim=1, keepdim=True)
+        # EO and land mask are surface rasters, so repeat them along depth while
+        # preserving depth as the Conv3d axis.
+        return surface.unsqueeze(2).expand(-1, -1, self.depth_channels, -1, -1)
+
+    def _prepare_eo_condition(
+        self, eo: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Return EO condition aligned to the 3D sparse input volume."""
+        if not self.condition_include_eo:
+            return None
+        return self._prepare_surface_condition(
+            eo,
+            reference,
+            tensor_name="condition_include_eo",
+        )
+
+    def _prepare_valid_mask_condition(
+        self, valid_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Return ARGO support mask volumes for the condition tensor."""
+        if not self.condition_use_valid_mask or self.condition_mask_channels <= 0:
+            return None
+        if valid_mask is None:
+            raise RuntimeError(
+                "condition_use_valid_mask=true requires batch['x_valid_mask']."
+            )
+        mask = self._align_mask_to_reference(
+            valid_mask.to(device=reference.device),
+            reference,
+            mask_name="x_valid_mask",
+        ).to(dtype=reference.dtype)
+        mask_volume = self._flat_to_volume(mask, tensor_name="x_valid_mask")
+        expected_channels = int(self.condition_mask_channels)
+        if int(mask_volume.size(1)) == expected_channels:
+            return mask_volume
+        if expected_channels == 1:
+            return mask_volume.amax(dim=1, keepdim=True)
+        if int(mask_volume.size(1)) == 1 and expected_channels > 1:
+            return mask_volume.expand(-1, expected_channels, -1, -1, -1)
+        raise RuntimeError(
+            "Could not match x_valid_mask field channels to condition_mask_channels "
+            f"(mask={int(mask_volume.size(1))}, expected={expected_channels})."
+        )
+
+    def _prepare_land_condition(
+        self, land_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Return GLORYS spatial-support condition volume when enabled."""
+        if not self.condition_use_land_mask:
+            return None
+        return self._prepare_surface_condition(
+            land_mask,
+            reference,
+            tensor_name="condition_use_land_mask",
+        )
+
+    def _build_condition(
+        self,
+        batch: dict[str, Any],
+        *,
+        include_y: bool,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build the U-Net condition volume and model-facing batch tensors."""
+        model_batch = self._prepare_model_batch_tensors(batch, include_y=include_y)
+        x = model_batch["x"]
+        valid_mask = model_batch["x_valid_mask"]
         mask = self._align_mask_to_reference(
             valid_mask.to(device=x.device), x, mask_name="x_valid_mask"
         )
-        channels_per_field = int(x.size(1)) // len(self.output_fields)
-        predictions: list[torch.Tensor] = []
-        for idx, field in enumerate(self.output_fields):
-            start = idx * channels_per_field
-            end = start + channels_per_field
-            predictions.append(
-                self._forward_field(field, x[:, start:end], mask[:, start:end], eo)
+        # Invalid sparse inputs are semantic missing values; keep them at zero and
+        # let the explicit mask channel distinguish missingness from observations.
+        sparse_x = torch.where(
+            (mask > 0.5) & torch.isfinite(x),
+            x,
+            torch.zeros_like(x),
+        )
+        sparse_volume = self._flat_to_volume(sparse_x, tensor_name="x")
+
+        parts: list[torch.Tensor] = []
+        eo_condition = self._prepare_eo_condition(batch.get("eo"), sparse_x)
+        if eo_condition is not None:
+            parts.append(eo_condition)
+        parts.append(sparse_volume)
+        mask_condition = self._prepare_valid_mask_condition(valid_mask, sparse_x)
+        if mask_condition is not None:
+            parts.append(mask_condition)
+        land_condition = self._prepare_land_condition(batch.get("land_mask"), sparse_x)
+        if land_condition is not None:
+            parts.append(land_condition)
+
+        condition = torch.cat(parts, dim=1)
+        if int(condition.size(1)) != self.condition_channels:
+            raise RuntimeError(
+                "UNet condition channel mismatch: "
+                f"built={int(condition.size(1))}, expected={self.condition_channels}."
             )
-        return torch.cat(predictions, dim=1) if len(predictions) > 1 else predictions[0]
+        return condition, model_batch
+
+    def _apply_no_argo_to_prediction(
+        self,
+        prediction: torch.Tensor,
+        batch: dict[str, Any],
+        model_batch: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Set sample/field predictions without ARGO support to NaN."""
+        mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
+        prediction_by_field = self._split_output_tensor(prediction, batch)
+        cleaned: list[torch.Tensor] = []
+        for field in self.output_fields:
+            field_prediction = prediction_by_field[field]
+            has_argo = (mask_by_field[field] > 0.5).flatten(1).any(dim=1)
+            keep_shape = [int(has_argo.size(0))] + [1] * (
+                int(field_prediction.ndim) - 1
+            )
+            keep = has_argo.to(device=field_prediction.device).reshape(keep_shape)
+            cleaned.append(
+                torch.where(
+                    keep,
+                    field_prediction,
+                    torch.full_like(field_prediction, float("nan")),
+                )
+            )
+        return torch.cat(cleaned, dim=1) if len(cleaned) > 1 else cleaned[0]
 
     def _predict_normalized(self, batch: dict[str, Any]) -> torch.Tensor:
         """Predict normalized output fields from an unmodified dataloader batch."""
-        model_batch = self._prepare_model_batch_tensors(batch, include_y=False)
-        x_by_field = self._split_output_tensor(model_batch["x"], batch)
-        mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
-        predictions = [
-            self._forward_field(
-                field,
-                x_by_field[field],
-                mask_by_field[field],
-                batch.get("eo"),
-            )
-            for field in self.output_fields
-        ]
-        return torch.cat(predictions, dim=1) if len(predictions) > 1 else predictions[0]
+        condition, model_batch = self._build_condition(batch, include_y=False)
+        prediction = self.forward(condition)
+        return self._apply_no_argo_to_prediction(prediction, batch, model_batch)
 
     def _shared_step(
         self,
@@ -382,8 +575,9 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         batch_size: int,
     ) -> torch.Tensor:
         """Run one train/validation step and log masked normalized MSE."""
-        model_batch = self._prepare_model_batch_tensors(batch, include_y=True)
-        prediction = self._predict_normalized(batch)
+        condition, model_batch = self._build_condition(batch, include_y=True)
+        prediction = self.forward(condition)
+        prediction = self._apply_no_argo_to_prediction(prediction, batch, model_batch)
         mask = self._supervision_mask(
             model_batch["y"],
             model_batch["y_valid_mask"],
@@ -419,7 +613,7 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         return loss
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
-        """Log train loss for one LSTM baseline optimization step."""
+        """Log train loss for one U-Net baseline optimization step."""
         _ = batch_idx
         return self._shared_step(
             batch,
@@ -680,7 +874,7 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         target_denorm: torch.Tensor,
         eval_mask: torch.Tensor | None,
     ) -> None:
-        """Log one denormalized LSTM validation reconstruction image grid."""
+        """Log one denormalized U-Net validation reconstruction image grid."""
         input_key = self._field_batch_key(field, role="x")
         target_key = self._field_batch_key(field, role="y")
         input_valid_key = "x_valid_mask"
@@ -755,7 +949,7 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
             )
         except Exception as exc:
             warnings.warn(
-                f"LSTM baseline validation image logging failed for {field}: {exc}",
+                f"U-Net baseline validation image logging failed for {field}: {exc}",
                 stacklevel=2,
             )
 
@@ -818,21 +1012,13 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
                 )
         except Exception as exc:
             warnings.warn(
-                "LSTM baseline full validation reconstruction failed; logging "
+                "U-Net baseline full validation reconstruction failed; logging "
                 f"placeholder metrics instead. Error: {exc}",
                 stacklevel=2,
             )
             self._log_full_reconstruction_placeholders()
         finally:
             self._cached_val_example = None
-
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        """Create the AdamW optimizer for trainable LSTM baseline weights."""
-        return torch.optim.AdamW(
-            filter(lambda parameter: parameter.requires_grad, self.parameters()),
-            lr=self.lr,
-            weight_decay=self.weight_decay,
-        )
 
     def _apply_no_argo_nodata(
         self,
@@ -895,22 +1081,10 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         )
         return outputs
 
-    @torch.no_grad()
-    def uncertainty_step(
-        self,
-        batch: dict[str, Any],
-        batch_idx: int,
-        dataloader_idx: int = 0,
-        num_samples: int = 20,
-        sampler: torch.nn.Module | None = None,
-        collapse_channels: bool = True,
-    ) -> dict[str, Any]:
-        """Return deterministic zero uncertainty for the LSTM baseline."""
-        return super().uncertainty_step(
-            batch=batch,
-            batch_idx=batch_idx,
-            dataloader_idx=dataloader_idx,
-            num_samples=num_samples,
-            sampler=sampler,
-            collapse_channels=collapse_channels,
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        """Create the AdamW optimizer for trainable U-Net baseline weights."""
+        return torch.optim.AdamW(
+            filter(lambda parameter: parameter.requires_grad, self.parameters()),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
         )

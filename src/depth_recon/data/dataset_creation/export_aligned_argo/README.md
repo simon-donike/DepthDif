@@ -9,8 +9,8 @@ zarr, run:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
-  --input-zarr /data1/datasets/depth_v2/aligned_argo/enriched_argo_profiles.zarr \
-  --output-dir /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh \
+  --input-zarr ./data/raw/aligned_argo/enriched_argo_profiles.zarr \
+  --output-dir ./data/raw/aligned_argo/hf_argo_glors_ostia_ssh \
   --zarr-name argo_glors_ostia_ssh.zarr \
   --file-mode hardlink \
   --overwrite
@@ -30,7 +30,7 @@ hf_argo_glors_ostia_ssh/
   metadata/dataset_description.json
   metadata/citation.cff
   metadata/stac-item.json
-  assets/figures/depthdif_schema.webp
+  assets/figures/ocean_depth_reconstruction_schema.webp
   assets/data/geotiff_dataset_random100_surface.webp
   assets/data/argo_on_glorys_grid_3D.gif
   assets/data/profile_comparison_good_alignment.webp
@@ -42,5 +42,5 @@ The zarr store is unchanged, including the SSS variables `sss_sos`, `sss_dos`,
 the packaged copy:
 
 ```bash
---enriched-argo-zarr /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
+--enriched-argo-zarr ./data/raw/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
 ```

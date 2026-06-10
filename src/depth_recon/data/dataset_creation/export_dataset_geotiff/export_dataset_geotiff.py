@@ -1,14 +1,14 @@
 """
 Example:
  /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
-   --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
-   --ostia-dir /data1/datasets/depth_v2/ostia \
-   --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-   --sss-dir /data1/datasets/depth_v2/sss_daily \
-   --enriched-argo-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
-   --argo-dir /data1/datasets/depth_v2/en4_profiles \
+   --glorys-dir ./data/raw/glorys_weekly \
+   --ostia-dir ./data/raw/ostia \
+   --sealevel-dir ./data/raw/sealevel_daily \
+   --sss-dir ./data/raw/sss_daily \
+   --enriched-argo-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+   --argo-dir ./data/raw/en4_profiles \
    --land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
-   --output-dir /work/data/depthdif \
+   --output-dir ./data/ocean_depth_reconstruction \
    --start-date 20100101 \
    --end-date 20240731 \
    --surface-aggregate-days 7 \
@@ -57,7 +57,7 @@ from depth_recon.data.netcdf_sources import (
     _align_argo_profile_to_glorys_depths,
 )
 
-DEFAULT_OUTPUT_DIR = Path("/work/data/depthdif")
+DEFAULT_OUTPUT_DIR = Path("./data/ocean_depth_reconstruction")
 DEFAULT_ENRICHED_ARGO_ZARR = (
     DEFAULT_OUTPUT_DIR / "aligned_argo" / "enriched_argo_profiles.zarr"
 )
@@ -65,11 +65,11 @@ DEFAULT_LAND_MASK_PATH = (
     Path(__file__).resolve().parents[2]
     / "dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
 )
-DEFAULT_GLORYS_DIR = Path("/data1/datasets/depth_v2/glorys_weekly")
-DEFAULT_OSTIA_DIR = Path("/data1/datasets/depth_v2/ostia")
-DEFAULT_SEALEVEL_DIR = Path("/data1/datasets/depth_v2/sealevel_daily")
-DEFAULT_SSS_DIR = Path("/data1/datasets/depth_v2/sss_daily")
-DEFAULT_ARGO_DIR = Path("/data1/datasets/depth_v2/en4_profiles")
+DEFAULT_GLORYS_DIR = Path("./data/raw/glorys_weekly")
+DEFAULT_OSTIA_DIR = Path("./data/raw/ostia")
+DEFAULT_SEALEVEL_DIR = Path("./data/raw/sealevel_daily")
+DEFAULT_SSS_DIR = Path("./data/raw/sss_daily")
+DEFAULT_ARGO_DIR = Path("./data/raw/en4_profiles")
 DEFAULT_START_DATE = 20100101
 DEFAULT_END_DATE = 20240731
 DEFAULT_SURFACE_AGGREGATE_DAYS = 7

@@ -1,1 +1,1 @@
-"""Model modules for DepthDif."""
+"""Model modules for Ocean Depth Reconstruction."""

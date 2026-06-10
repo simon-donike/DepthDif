@@ -1,14 +1,14 @@
 """
-Default overlap-range check using the standard /data1/datasets/depth_v2 paths:
+Default overlap-range check using the standard ./data/raw paths:
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.a_check_export_sourcefiles
 
 Explicit full-path equivalent:
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.a_check_export_sourcefiles \
-  --argo-dir /data1/datasets/depth_v2/en4_profiles \
-  --glorys-dir /data1/datasets/depth_v2/glorys_weekly \
-  --ostia-dir /data1/datasets/depth_v2/ostia \
-  --sealevel-dir /data1/datasets/depth_v2/sealevel_daily \
-  --sss-dir /data1/datasets/depth_v2/sss_daily \
+  --argo-dir ./data/raw/en4_profiles \
+  --glorys-dir ./data/raw/glorys_weekly \
+  --ostia-dir ./data/raw/ostia \
+  --sealevel-dir ./data/raw/sealevel_daily \
+  --sss-dir ./data/raw/sss_daily \
   --start-date 20100101 \
   --end-date 20240731
 
@@ -419,27 +419,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--argo-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/en4_profiles"),
+        default=Path("./data/raw/en4_profiles"),
     )
     parser.add_argument(
         "--glorys-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/glorys_weekly"),
+        default=Path("./data/raw/glorys_weekly"),
     )
     parser.add_argument(
         "--ostia-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/ostia"),
+        default=Path("./data/raw/ostia"),
     )
     parser.add_argument(
         "--sealevel-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/sealevel_daily"),
+        default=Path("./data/raw/sealevel_daily"),
     )
     parser.add_argument(
         "--sss-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/sss_daily"),
+        default=Path("./data/raw/sss_daily"),
     )
     parser.add_argument(
         "--start-date",

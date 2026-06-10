@@ -4,8 +4,8 @@ Production-range enriched ARGO export:
   --start-date 20100101 \
   --end-date 20240731 \
   --workers 4 \
-  --output-zarr /work/data/depthdif/enriched_argo_profiles.zarr \
-  --compact-output-zarr /work/data/depthdif/argo/argo_profiles_on_grid.zarr \
+  --output-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --compact-output-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr \
   --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --compact-chunk-profile 50000
 
@@ -17,7 +17,7 @@ Small smoke export:
   --end-date 20100101 \
   --max-profiles 4 \
   --batch-size 2 \
-  --output-zarr /tmp/depthdif_enriched_argo_profiles_smoke.zarr \
+  --output-zarr /tmp/ocean_depth_reconstruction_enriched_argo_profiles_smoke.zarr \
   --overwrite
 """
 
@@ -73,7 +73,7 @@ from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geo
 )
 
 CATEGORICAL_VARS = {"mask", "flag_ice"}
-DEFAULT_WORK_DATASET_DIR = Path("/work/data/depthdif")
+DEFAULT_WORK_DATASET_DIR = Path("./data/ocean_depth_reconstruction")
 DEFAULT_ENRICHED_ARGO_ZARR = DEFAULT_WORK_DATASET_DIR / "enriched_argo_profiles.zarr"
 DEFAULT_COMPACT_ARGO_ZARR = (
     DEFAULT_WORK_DATASET_DIR / "argo" / "argo_profiles_on_grid.zarr"
@@ -2145,7 +2145,7 @@ def export_enriched_argo_profiles(
     ostia_dir: Path,
     sealevel_dir: Path,
     output_zarr: Path,
-    sss_dir: Path = Path("/data1/datasets/depth_v2/sss_daily"),
+    sss_dir: Path = Path("./data/raw/sss_daily"),
     start_date: int | None = None,
     end_date: int | None = None,
     batch_size: int = 2048,
@@ -2468,25 +2468,23 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Export ARGO profiles enriched with collocated GLORYS, OSTIA, sea-level, and SSS fields."
     )
     parser.add_argument(
-        "--argo-dir", type=Path, default=Path("/data1/datasets/depth_v2/en4_profiles")
+        "--argo-dir", type=Path, default=Path("./data/raw/en4_profiles")
     )
     parser.add_argument(
         "--glorys-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/glorys_weekly"),
+        default=Path("./data/raw/glorys_weekly"),
     )
-    parser.add_argument(
-        "--ostia-dir", type=Path, default=Path("/data1/datasets/depth_v2/ostia")
-    )
+    parser.add_argument("--ostia-dir", type=Path, default=Path("./data/raw/ostia"))
     parser.add_argument(
         "--sealevel-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/sealevel_daily"),
+        default=Path("./data/raw/sealevel_daily"),
     )
     parser.add_argument(
         "--sss-dir",
         type=Path,
-        default=Path("/data1/datasets/depth_v2/sss_daily"),
+        default=Path("./data/raw/sss_daily"),
     )
     parser.add_argument(
         "--output-zarr",

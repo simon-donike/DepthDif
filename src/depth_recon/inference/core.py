@@ -1,4 +1,4 @@
-"""Shared inference helpers used by scripts and export tooling."""
+"""Shared helpers for dataset-paper baseline training and prediction."""
 
 from __future__ import annotations
 
@@ -11,76 +11,22 @@ import yaml
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
-from depth_recon.models.baselines import IDWInterpolationBaseline, PointwiseLSTMBaseline
-from depth_recon.models.diffusion import PixelDiffusionConditional
-from depth_recon.models.latent import LatentDiffusionConditional
+from depth_recon.models.baselines import (
+    IDWInterpolationBaseline,
+    PointwiseLSTMBaseline,
+    UNetInfillingBaseline,
+)
 from depth_recon.paths import resolve_config_path
 
 VARIABLE_SCENARIO_KEY = "variable_scenario"
-INFERENCE_SAMPLERS = ("ddpm", "ddim")
-MODEL_TYPES = ("cond_px_dif", "latent_cond_dif", "idw_baseline", "lstm_baseline")
+MODEL_TYPES = ("idw_baseline", "lstm_baseline", "unet_baseline")
 CHECKPOINT_FREE_MODEL_TYPES = {"idw_baseline"}
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
-    """Load and return yaml data."""
+    """Load and return YAML data from a package-relative or filesystem path."""
     with resolve_config_path(path).open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def apply_inference_sampling_config(
-    training_cfg: dict[str, Any],
-    *,
-    sampler: str | None = None,
-    ddim_num_timesteps: int | None = None,
-) -> dict[str, Any]:
-    """Apply inference sampler overrides to a mutable training config."""
-    training_section = training_cfg.setdefault("training", {})
-    if not isinstance(training_section, dict):
-        raise ValueError("training config root must contain a 'training' mapping.")
-    validation_sampling = training_section.setdefault("validation_sampling", {})
-    if not isinstance(validation_sampling, dict):
-        raise ValueError("training.validation_sampling must be a mapping.")
-
-    if ddim_num_timesteps is not None and sampler is None:
-        # Passing --ddim-steps alone is treated as an explicit DDIM request.
-        sampler = "ddim"
-    if sampler is not None:
-        normalized_sampler = str(sampler).strip().lower()
-        if normalized_sampler not in INFERENCE_SAMPLERS:
-            supported = ", ".join(INFERENCE_SAMPLERS)
-            raise ValueError(
-                f"inference sampler must be one of {{{supported}}} "
-                f"(got {sampler!r})."
-            )
-        validation_sampling["sampler"] = normalized_sampler
-    if ddim_num_timesteps is not None:
-        steps = int(ddim_num_timesteps)
-        if steps < 1:
-            raise ValueError("ddim_num_timesteps must be >= 1.")
-        validation_sampling["ddim_num_timesteps"] = steps
-
-    resolved_sampler = str(validation_sampling.get("sampler", "ddpm")).strip().lower()
-    if resolved_sampler not in INFERENCE_SAMPLERS:
-        supported = ", ".join(INFERENCE_SAMPLERS)
-        raise ValueError(
-            "training.validation_sampling.sampler must be one of "
-            f"{{{supported}}} (got {resolved_sampler!r})."
-        )
-    noise_cfg = training_section.get("noise", {})
-    if not isinstance(noise_cfg, dict):
-        noise_cfg = {}
-    diffusion_steps = int(noise_cfg.get("num_timesteps", 1000))
-    ddim_steps = int(validation_sampling.get("ddim_num_timesteps", diffusion_steps))
-    if ddim_steps < 1:
-        raise ValueError(
-            "training.validation_sampling.ddim_num_timesteps must be >= 1."
-        )
-    return {
-        "sampler": resolved_sampler,
-        "diffusion_num_timesteps": diffusion_steps,
-        "ddim_num_timesteps": ddim_steps,
-    }
+        return yaml.safe_load(f) or {}
 
 
 def ds_cfg_value(
@@ -104,7 +50,7 @@ def ds_cfg_value(
 
 
 def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> str:
-    """Resolve and validate dataset variant."""
+    """Resolve and validate the configured dataset variant."""
     variant = ds_cfg_value(
         ds_cfg,
         "core.dataset_variant",
@@ -122,7 +68,7 @@ def build_dataset(
     split: str = "all",
     dataset_overrides: dict[str, Any] | None = None,
 ) -> torch.utils.data.Dataset:
-    """Build and return dataset."""
+    """Build and return the configured dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant == "argo_geotiff_gridded":
         return ArgoGeoTIFFGriddedPatchDataset.from_config(
@@ -132,22 +78,21 @@ def build_dataset(
         )
     raise ValueError(
         "Unsupported dataset variant "
-        f"'{dataset_variant}'. Expected one of "
-        "['argo_geotiff_gridded']."
+        f"{dataset_variant!r}. Expected 'argo_geotiff_gridded'."
     )
 
 
 def resolve_model_type(model_cfg: dict[str, Any]) -> str:
-    """Resolve and validate model type."""
+    """Resolve and validate the configured baseline model type."""
     model_type = str(
-        model_cfg.get("model", {}).get("model_type", "cond_px_dif")
+        model_cfg.get("model", {}).get("model_type", "unet_baseline")
     ).strip()
     if model_type in MODEL_TYPES:
         return model_type
     supported = "', '".join(MODEL_TYPES)
     raise ValueError(
         "Unsupported model.model_type value "
-        f"'{model_type}'. Supported values: '{supported}'."
+        f"{model_type!r}. Supported values: '{supported}'."
     )
 
 
@@ -161,7 +106,7 @@ def build_datamodule(
     data_cfg: dict[str, Any],
     training_cfg: dict[str, Any],
 ) -> DepthTileDataModule:
-    """Build and return datamodule."""
+    """Build and return a Lightning datamodule for one dataset."""
     split_cfg = data_cfg.get("split", {})
     dataloader_cfg = dict(training_cfg.get("dataloader", {}))
     data_dataloader_cfg = data_cfg.get("dataloader", {})
@@ -189,13 +134,8 @@ def build_model(
     training_config_path: str,
     model_cfg: dict[str, Any],
     datamodule: DepthTileDataModule,
-) -> (
-    PixelDiffusionConditional
-    | LatentDiffusionConditional
-    | IDWInterpolationBaseline
-    | PointwiseLSTMBaseline
-):
-    """Build and return model."""
+) -> IDWInterpolationBaseline | PointwiseLSTMBaseline | UNetInfillingBaseline:
+    """Build and return the configured baseline model."""
     model_type = resolve_model_type(model_cfg)
     if model_type == "idw_baseline":
         return IDWInterpolationBaseline.from_config(
@@ -211,14 +151,7 @@ def build_model(
             training_config_path=training_config_path,
             datamodule=datamodule,
         )
-    if model_type == "latent_cond_dif":
-        return LatentDiffusionConditional.from_config(
-            model_config_path=model_config_path,
-            data_config_path=data_config_path,
-            training_config_path=training_config_path,
-            datamodule=datamodule,
-        )
-    return PixelDiffusionConditional.from_config(
+    return UNetInfillingBaseline.from_config(
         model_config_path=model_config_path,
         data_config_path=data_config_path,
         training_config_path=training_config_path,
@@ -229,15 +162,14 @@ def build_model(
 def resolve_checkpoint_path(
     ckpt_override: str | None, model_cfg: dict[str, Any]
 ) -> str | None:
-    """Resolve and validate checkpoint path."""
+    """Resolve and validate an optional checkpoint path."""
     if ckpt_override:
         ckpt_path = Path(ckpt_override).expanduser()
         if not ckpt_path.is_file():
             raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
         return str(ckpt_path)
 
-    model_section = model_cfg.get("model", {})
-    resume_cfg = model_section.get("resume_checkpoint", False)
+    resume_cfg = model_cfg.get("model", {}).get("resume_checkpoint", False)
     if resume_cfg in (False, None):
         return None
     ckpt_path = Path(str(resume_cfg)).expanduser()
@@ -324,7 +256,7 @@ def _validate_checkpoint_variable_scenario(
     if checkpoint_scenario is None:
         warnings.warn(
             "Checkpoint does not contain variable_scenario metadata; "
-            f"loading legacy checkpoint without scenario validation: {checkpoint_path}",
+            f"loading checkpoint without scenario validation: {checkpoint_path}",
             stacklevel=2,
         )
         return
@@ -343,9 +275,9 @@ def load_checkpoint_weights(
     checkpoint_path: str | Path,
     *,
     strict: bool = False,
-    prefer_ema: bool = True,
+    prefer_ema: bool = False,
 ) -> str:
-    """Load checkpoint weights into a model, preferring EMA weights when available."""
+    """Load Lightning checkpoint weights into a baseline model."""
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
     _validate_checkpoint_variable_scenario(model, checkpoint, checkpoint_path)
     if prefer_ema:
@@ -380,91 +312,14 @@ def pretty_shape(value: Any) -> str:
     return type(value).__name__
 
 
-def build_random_batch(
-    model: Any,
-    data_cfg: dict[str, Any],
-    batch_size: int,
-    height: int,
-    width: int,
-    device: torch.device,
-) -> dict[str, Any]:
-    """Build and return random batch."""
-    m = model.hparams if hasattr(model, "hparams") else {}
-
-    generated_channels = int(getattr(m, "generated_channels", 1))
-    condition_channels = int(getattr(m, "condition_channels", generated_channels))
-    condition_mask_channels = int(getattr(m, "condition_mask_channels", 0))
-    include_eo = bool(getattr(m, "condition_include_eo", False))
-    coord_enabled = bool(getattr(m, "coord_conditioning_enabled", False))
-    date_enabled = bool(getattr(m, "date_conditioning_enabled", False))
-
-    eo_channels = 1 if include_eo else 0
-    x_channels = condition_channels - condition_mask_channels - eo_channels
-    if x_channels <= 0:
-        x_channels = generated_channels
-
-    x = torch.randn(batch_size, x_channels, height, width, device=device)
-    mask_channels = max(1, generated_channels)
-    x_valid_mask = (
-        torch.rand(batch_size, mask_channels, height, width, device=device) > 0.25
-    )
-    y_valid_mask = torch.ones(
-        batch_size, generated_channels, height, width, device=device, dtype=torch.bool
-    )
-    x_valid_mask_1d = x_valid_mask.any(dim=1, keepdim=True)
-    land_mask = torch.ones(
-        batch_size, 1, height, width, device=device, dtype=torch.bool
-    )
-
-    batch: dict[str, Any] = {
-        "x": x,
-        "x_valid_mask": x_valid_mask,
-        "y_valid_mask": y_valid_mask,
-        "x_valid_mask_1d": x_valid_mask_1d,
-        "land_mask": land_mask,
-    }
-
-    if include_eo:
-        batch["eo"] = torch.randn(batch_size, 1, height, width, device=device)
-
-    if coord_enabled or bool(
-        ds_cfg_value(
-            data_cfg.get("dataset", {}),
-            "output.return_coords",
-            "return_coords",
-            default=False,
-        )
-    ):
-        lat = -90.0 + 180.0 * torch.rand(batch_size, 1, device=device)
-        lon = -180.0 + 360.0 * torch.rand(batch_size, 1, device=device)
-        batch["coords"] = torch.cat([lat, lon], dim=1)
-        if date_enabled:
-            # Match dataset convention for monthly tiles so direct random runs still
-            # exercise the date-conditioning path with realistic integer encodings.
-            months = torch.randint(
-                1, 13, (batch_size,), device=device, dtype=torch.long
-            )
-            batch["date"] = torch.full_like(months, 2024) * 10000 + months * 100 + 15
-
-    return batch
-
-
-def run_predict_once(
-    model: Any,
-    batch: dict[str, Any],
-    include_intermediates: bool,
-) -> dict[str, Any]:
-    """Compute run predict once and return the result."""
-    if include_intermediates:
-        batch = dict(batch)
-        batch["return_intermediates"] = True
-
+def run_predict_once(model: Any, batch: dict[str, Any]) -> dict[str, Any]:
+    """Run one model predict step without gradients."""
     with torch.no_grad():
         return model.predict_step(batch, batch_idx=0)
 
 
 def choose_device(device_arg: str) -> torch.device:
-    """Choose and return device."""
+    """Choose and return a torch device from a CLI argument."""
     if device_arg == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device_arg == "cuda" and not torch.cuda.is_available():

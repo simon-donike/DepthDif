@@ -1,275 +1,101 @@
-<p align="center">
-  <a href="https://pypi.org/project/depth-recon/">
-    <img src="https://img.shields.io/pypi/v/depth-recon?style=for-the-badge&label=PyPI" alt="PyPI version" />
-  </a>
-  <img src="https://img.shields.io/badge/python-%3E%3D3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python >= 3.12" />
-  <img src="https://img.shields.io/badge/PyTorch-2.10.0-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white" alt="PyTorch 2.10.0" />
-  <img src="https://img.shields.io/badge/Lightning-2.6.1-792EE5?style=for-the-badge&logo=lightning&logoColor=white" alt="PyTorch Lightning 2.6.1" />
-  <a href="https://github.com/simon-donike/DepthDif/actions/workflows/publish-pypi.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/simon-donike/DepthDif/publish-pypi.yml?branch=main&label=tests&style=for-the-badge" alt="Test workflow status" />
-  </a>
-  <img src="https://img.shields.io/badge/license-not%20declared-lightgrey?style=for-the-badge" alt="License not declared" />
-  <a href="https://depthdif.donike.net/">
-    <img src="https://img.shields.io/badge/docs-online-0b2e4f?style=for-the-badge" alt="Open Documentation" />
-  </a>
-  <a href="https://depthdif.donike.net/experiments/">
-    <img src="https://img.shields.io/badge/experiments-online-0f3f68?style=for-the-badge" alt="Check Experiments" />
-  </a>
-  <a href="https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/">
-    <img src="https://img.shields.io/badge/Hugging%20Face-dataset-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000000" alt="Hugging Face dataset" />
-  </a>
-  <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb">
-    <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab" />
-  </a>
-</p>
+# Ocean Depth Reconstruction Dataset Code
 
+This repository branch contains the code associated with the dataset-paper submission: raw source downloads, ARGO/profile alignment, GeoTIFF dataset export, the dataset loader, and IDW, LSTM, and 3D U-Net baselines. It intentionally excludes the original diffusion model, hosted dashboard/export tooling, notebooks, deployment assets, install/build metadata, and a separate docs site.
 
-<p align="center">
-  <img src="docs/assets/branding/banner_depthdif.webp" width="65%" style="border-radius: 12px;" />
-</p>
+The source tree keeps the import name `depth_recon` for compatibility with the existing scripts. Default hosted artifact links have been anonymized; replace placeholder dataset URLs in `src/depth_recon/data/dataset_creation/data_download_packaged/dataset_links.yaml` with review-safe artifact URLs.
 
-# DepthDif
+## Environment
 
-DepthDif is a conditional diffusion project for densifying sparse ocean temperature observations. Visit the [Documentation](https://depthdif.donike.net/) for more info on the models, datasets, and auxiliary data - or follow along with the [Experiments](https://depthdif.donike.net/experiments/).
-
-
-## Demo
-
-Run the public inference notebook directly in Google Colab:
-
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb)
-
-## Installation
-
-This project uses Python 3.12.3.
+Use Python 3.12 from the repository root. Install dependencies into your environment, then run scripts with `src` on `PYTHONPATH` instead of installing this repository as a package:
 
 ```bash
-python -m pip install -r requirements.txt
+/work/envs/depth/bin/python -m pip install -r requirements.txt
+export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
-The root `requirements.txt` delegates to `pyproject.toml` so local installs and
-package metadata use the same curated dependency list.
+## Repository Layout
 
-For public inference only, install the published PyPI package:
+- `src/depth_recon/data/dataset_creation/data_download_raw/`: shell/Python helpers for raw EN4/ARGO, GLORYS, OSTIA, sea-level, SSS, and land-mask sources.
+- `src/depth_recon/data/dataset_creation/data_download_packaged/`: helpers for downloading hosted review artifacts listed in `dataset_links.yaml`.
+- `src/depth_recon/data/dataset_creation/export_aligned_argo/`: source checks, ARGO/profile alignment, enriched Zarr export, compact ARGO-on-grid export, and optional review-artifact staging.
+- `src/depth_recon/data/dataset_creation/export_dataset_geotiff/`: model-ready GeoTIFF raster export, masks, and manifest writing.
+- `src/depth_recon/data/dataset_argo_geotiff_gridded.py`: lazy GeoTIFF plus aligned-ARGO patch dataset used by baselines.
+- `src/depth_recon/models/baselines/`: IDW, point-wise LSTM, and 3D U-Net baselines.
+- `src/depth_recon/configs/px_space/`: scenario-aware super-configs for temperature, salinity, and joint runs.
+- `train.py`: baseline training entry point.
+
+## Dataset Pipeline
+
+The dataset pipeline is implemented under `src/depth_recon/data/dataset_creation/`. Raw source download scripts collect upstream EN4/ARGO, GLORYS, OSTIA, sea-level, SSS, and land-mask inputs. The alignment exporter maps ARGO profiles onto the GLORYS depth axis, collocates auxiliary fields, and writes an enriched Zarr store plus a compact ARGO-on-grid Zarr used by the training dataset. The GeoTIFF exporter writes uint8-stretched rasters, masks, and `manifest.yaml` for lazy patch loading.
+
+Packaged download helpers read artifact URLs from `data_download_packaged/dataset_links.yaml`; those URLs are placeholders in this anonymous branch and should be replaced with review-safe hosted artifacts.
+
+1. Download raw source files with the scripts under `data_download_raw/`.
+2. Check source coverage:
 
 ```bash
-python -m pip install depth-recon
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.a_check_export_sourcefiles
 ```
 
-To install a branch or tag directly from GitHub, use the same package metadata:
+3. Align ARGO profiles to GLORYS depth levels and collocate auxiliary variables:
 
 ```bash
-python -m pip install "depth-recon @ git+https://github.com/simon-donike/DepthDif.git@main"
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
+  --argo-dir ./data/raw/en4_profiles \
+  --glorys-dir ./data/raw/glorys_weekly \
+  --ostia-dir ./data/raw/ostia \
+  --sealevel-dir ./data/raw/sealevel_daily \
+  --sss-dir ./data/raw/sss_daily \
+  --output-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --compact-output-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr
 ```
 
-The equivalent explicit editable install is:
+4. Export the model-ready GeoTIFF dataset:
 
 ```bash
-python -m pip install -e .
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff \
+  --glorys-dir ./data/raw/glorys_weekly \
+  --ostia-dir ./data/raw/ostia \
+  --sealevel-dir ./data/raw/sealevel_daily \
+  --sss-dir ./data/raw/sss_daily \
+  --enriched-argo-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --output-dir ./data/ocean_depth_reconstruction
 ```
 
-PyPI releases are published by GitHub Actions when a version tag such as
-`v0.1.0` is pushed on `main`. The tag must match `project.version` in
-`pyproject.toml`, and the repository's `pypi` environment must provide PyPI
-publishing credentials.
-
-## Model Overview
-
-- Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
-- Active dataset: `src/depth_recon/data/dataset_argo_geotiff_gridded.py` (`ArgoGeoTIFFGriddedPatchDataset`) reads exported GeoTIFF rasters and preprocessed ARGO/EN4 profiles through the pixel super-configs.
-- Optional dataset ablation: `dataset.synthetic.enabled=true` builds sparse `x` from random GLORYS `y` pixels, controlled by `dataset.synthetic.pixel_count`.
-- Config layout:
-  - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
-  - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
-  - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
-
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context.
-
-Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
-See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
-![depthdif_schema](docs/assets/figures/depthdif_schema.webp)
-
-## Data Example
-
-Representative surface-level training patches:
-
-<p align="center">
-  <img src="docs/assets/data/geotiff_dataset_random100_surface.webp" width="85%" alt="Random surface-level training dataset patches" />
-</p>
-
-## Training
-
-Pixel-space GeoTIFF training uses `src/depth_recon/configs/px_space/training_super_config.yaml` plus one scenario selector to keep the data/model channel contract aligned:
+5. Optionally assemble the anonymous review artifact folder:
 
 ```bash
-/work/envs/depth/bin/python train.py --scenario temperature
-/work/envs/depth/bin/python train.py --scenario salinity
-/work/envs/depth/bin/python train.py --scenario joint
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.c_package_huggingface_aligned_argo \
+  --input-zarr ./data/ocean_depth_reconstruction/enriched_argo_profiles.zarr \
+  --raster-root ./data/ocean_depth_reconstruction/rasters \
+  --compact-argo-zarr ./data/ocean_depth_reconstruction/argo/argo_profiles_on_grid.zarr \
+  --manifest-path ./data/ocean_depth_reconstruction/manifest.yaml \
+  --masks-dir ./data/ocean_depth_reconstruction/masks \
+  --output-dir ./data/review_artifact
 ```
 
-Ambient-occlusion objective example:
+## Baselines
+
+All baselines consume batches from `ArgoGeoTIFFGriddedPatchDataset` and return the same normalized and denormalized prediction keys used by the retained evaluation helpers.
+
+- `idw_baseline`: checkpoint-free inverse-distance interpolation over sparse ARGO observations.
+- `lstm_baseline`: trainable point-wise vertical LSTM with optional EO surface context.
+- `unet_baseline`: trainable 3D U-Net that treats field, depth, height, and width as a volume-inpainting problem.
+
+Train a baseline by selecting `model.model_type` in the super-config or CLI override. Validation loaders remain shuffled by default in the provided configs.
 
 ```bash
-/work/envs/depth/bin/python train.py \
-  --scenario temperature \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.25 \
-  --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
+/work/envs/depth/bin/python train.py --scenario temperature --set model.model_type=idw_baseline
+/work/envs/depth/bin/python train.py --scenario temperature --set model.model_type=lstm_baseline
+/work/envs/depth/bin/python train.py --scenario temperature --set model.model_type=unet_baseline
 ```
 
-Notes:
-- Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `data.dataset.sampling.eo_source`/`eo_var_name`, `model.generated_channels`, and `model.condition_channels`.
-- `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
-- Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
-- `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.
-- Latent diffusion workflow configs live in `src/depth_recon/configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
-- Pixel config details and key meanings are documented in `docs/settings.md`; latent diffusion still uses the `src/depth_recon/configs/lat_space/` config files documented in `docs/autoencoder.md`.
+The `--scenario` selector supports `temperature`, `salinity`, and `joint`; it derives output fields, salinity loading, EO source selection, generated channels, and baseline condition channels.
 
-## Inference
+## Tests
 
-Public ISO-week inference is available from the `depth-recon` PyPI package. It
-downloads the public model/config artifacts from Hugging Face, downloads EN4/ARGO
-and optionally OSTIA source files, and writes stitched prediction GeoTIFFs plus
-metadata for one ISO-week Wednesday.
-
-```python
-from depth_recon import run_week_inference
-
-run_dir = run_week_inference(
-    year=2015,
-    iso_week=25,
-    rectangle=(-20.0, 30.0, 10.0, 50.0),
-    device="cuda",
-    config_repo="simon-donike/DepthDif",
-)
-```
-
-The public API downloads configs/checkpoints and the land mask from Hugging Face,
-downloads EN4/ARGO and, by default, OSTIA for the selected ISO week, and returns
-the GeoTIFF run directory. Pass `export_uncertainty=True` to also write a 20-sample 1-channel uncertainty raster. Existing cached files are reused automatically. Pass
-`auto_download_ostia=False` without `ostia_dir` to run ARGO-only inference.
-The package API uses non-overlapping public inference patches by default
-(`patch_stride=tile_size`, normally 128), so small rectangles select compact
-patch sets.
-GLORYS is not required for the standard public inference path; it is only needed
-for training or optional ground-truth comparison exports.
-EN4/ARGO downloads use the Met Office annual EN.4.2.2 profile archives for each
-calendar month touched by the selected ISO week.
-OSTIA downloads use the Copernicus Marine CLI credentials configured in the
-environment, or credentials passed to `run_week_inference` via
-`copernicus_username` plus `copernicus_token`. The Copernicus Marine toolbox
-accepts that token through its password field, so `copernicus_password` remains
-supported as a backwards-compatible alias.
-
-By default, the package uses `simon-donike/DepthDif` at revision `main`, cached public config/checkpoint assets, and `world_land_mask_glorys_0p1.tif`; the runtime call materializes an inference super-config before export.
-
-To prepare the public model files and land mask before a run:
-
-```python
-from depth_recon import resolve_public_inference_assets
-
-bundle = resolve_public_inference_assets()
-print(bundle.assets.checkpoint)
-print(bundle.land_mask_path)
-```
-
-To fetch source files separately:
+Run the retained test suite with:
 
 ```bash
-depth-recon-download-argo --year 2015 --iso-week 25 --output-dir ./en4_profiles
-depth-recon-download-ostia --year 2015 --iso-week 25 --output-dir ./ostia
+tests/run_tests.sh
 ```
-
-The same inference call is also exposed as a console script:
-
-```bash
-depth-recon-infer-week \
-  --year 2015 \
-  --iso-week 25 \
-  --rectangle -20 30 10 50 \
-  --device cuda
-```
-
-Use `src/depth_recon/inference/run_single.py` for a local smoke test. Set `CONFIG_PATH`, optional `SCENARIO`, and `CHECKPOINT_PATH` at the top of the file, then run:
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.inference.run_single
-```
-
-For a full spatial export, use `src/depth_recon/inference/export_global.py`. It selects the nearest available dataset snapshot inside the requested ISO week, runs inference on every patch for that day, streams the accumulation to disk, and writes stitched prediction, decoded/dequantized GLORYS, and absolute prediction-vs-GLORYS error GeoTIFFs for Surface, 10m, 50m, 100m, 250m, 500m, 1000m, 2000m, 2500m, and 5000m under `inference/outputs/global_top_band_<YYYYMMDD>/`. With `--export-ground-truth`, it also writes `error-analysis.json` directly from inference for the same configured depth levels used by the globe, including Surface, plus an `All Depths` aggregate. Pass `--export-uncertainty` to also write 20-sample uncertainty GeoTIFFs for the same exported depth levels; add `--uncertainty-collapse-depth` to keep the older single collapsed uncertainty raster. Temperature exports are in degrees Celsius; salinity exports are in PSU. Requested depths are mapped to the nearest GLORYS channel and each TIFF records both the requested and actual source depth in metadata. By default it also writes GeoJSON exports for observed Argo point locations, up to 1000 sampled full-profile locations with per-point graphs, and patch squares. The exporter defaults to the GeoTIFF-backed dataset, reads its dedicated inference grid from `src/depth_recon/configs/px_space/inference_super_config.yaml`, stitches overlaps with deterministic spatial weights, applies periodic dateline edge blending for full-world outputs, and masks final land pixels to the GeoTIFF nodata value. Extra export-time Gaussian blur is disabled by default; pass a positive `--sigma` only when explicitly needed. Existing runs need inference rerun to get true full-depth dashboard JSON.
-
-For a pooled validation-set depth summary, use `src/depth_recon/inference/export_validation_error_summary.py`. It loads the configured dataset `val` split, runs inference across the whole split, computes per-depth median absolute error against both GLORYS and the observed ARGO values, writes `validation_error_by_depth.csv`, and saves both a single-panel error graph and a two-panel median-profile/error figure under `inference/outputs/validation_error_summary/` by default.
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.inference.export_validation_error_summary \
-  --scenario temperature \
-  --checkpoint logs/<run>/best.ckpt \
-  --split val \
-  --year 2015 \
-  --iso-week 25 \
-  --device cuda
-```
-
-The standalone Analysis Dashboard data is generated during inference when prediction and ground truth are both exported. The JSON groups stitched prediction-vs-GLORYS errors for every native depth channel by approximate ocean basin and fixed lat-lon cells. A companion `analysis-grid.geojson` stores coast-clipped ocean geometry for those cells so the dashboard map follows the run land mask instead of drawing full rectangles over land. When `--export-uncertainty` is enabled, the absolute-error dashboard also packages a top-band uncertainty reliability payload comparing stochastic uncertainty against realized absolute error; this is not used by the temporal dashboard. The globe packager copies those precomputed files beside `globe-config.json` for `docs/spatial-dashboard/index.html` to read. Older runs without the precomputed JSON still use the packager fallback, which can only analyze the exported absolute-error GeoTIFF depths but can still generate the clipped grid geometry when a run land mask is available.
-
-For temporal consistency diagnostics during the standard dual-variable production inference, pass `--export-temporal-consistency` to `src/depth_recon/inference/export_global_variables.py`. It runs any extra consecutive weekly temperature and salinity exports needed for the temporal window, aggregates basin depth errors plus per-date basin mean absolute errors into `temporal-config.json` and compact per-basin JSON files for `docs/temporal-dashboard/index.html`, and uploads the `temporal/` bundle to the sibling bucket prefix when `--rclone-remote` is set. The same paired production command now computes wavenumber spectral diagnostics by default under `wavenumber_spectra/` and uploads them to `<rclone-remote>/wavenumber_spectra`; use `--no-export-wavenumber-spectra` for quick runs that should skip spectral analysis. The temporal dashboard starts with no basin selected; choose or clear a basin on the map or selector to control the date-vs-error chart. The standalone `src/depth_recon/inference/export_temporal_global_variables.py` command remains available for temporal-only runs.
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
-  --year 2018 \
-  --iso-week 22 \
-  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
-  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
-  --device cuda \
-  --export-temporal-consistency \
-  --temporal-week-count 7 \
-  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
-  --rclone-remote r2:depth-data/inference_production/globe
-```
-
-To package one exported run for the Cesium globe viewer in the docs, use:
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.inference.export_cesium_globe_assets \
-  --run-dir inference/outputs/global_top_band_<YYYYMMDD> \
-  --public-base-url https://<bucket-or-site>/inference_production/globe/ \
-  --rclone-remote r2:<bucket>/inference_production/globe \
-  --rclone-sync-scope globe
-```
-
-The globe packager copies the precomputed `error-analysis.json` by default, tiles every exported prediction, GLORYS, and absolute-error depth level into Cesium-ready WebP folders, retaining the estimated native raster zoom by default with fixed 256 px tiles, tiles optional uncertainty rasters for each exported depth when present, copies exported WebP profile-comparison graphs, and uploads those assets, GeoJSON, and `globe-config.json` when `--rclone-sync-scope globe` is used. Hosted raster tiles repair boundary-contiguous nodata at the periodic west/east raster exterior before color relief, then erode valid-support edges by 2 pixels and feather the next 4 pixels inward by default for smoother coastlines while preserving valid wrap pixels; override this with `--raster-edge-erosion-pixels` and `--raster-edge-feather-pixels`, using `0` to disable either step. When `src/depth_recon/data/local_data/NE2_LR_LC_SR_W_DR.tif` exists locally, the same bundle also includes a higher-quality Natural Earth basemap under `basemaps/natural_earth_ii_webp_q95/`. Raw GeoTIFFs remain local in the run directory. The standalone viewer page lives at `docs/spatial-globe/index.html` and can load a hosted `globe-config.json`.
-
-For the production globe with both variables, run separate temperature and salinity checkpoints through the wrapper. It writes `inference/outputs/global_variables_<YYYY>_W<WW>/globe/` with `variables.temperature`, `variables.salinity`, and a viewer Temperature/Salinity selector. By default each variable export writes at most 1000 full-profile graph images. Add `--export-uncertainty` to generate and tile uncertainty maps by depth for each variable; the viewer hides the Uncertainty option when a manifest does not include uncertainty tile URLs. Add `--export-temporal-consistency` to also write and upload `inference/outputs/global_variables_<YYYY>_W<WW>/temporal/`; when the normal hosted path ends in `/globe`, the temporal upload path defaults to the sibling `/temporal` prefix. Wavenumber spectral diagnostics are generated by default and uploaded under the nested `/globe/wavenumber_spectra` prefix. The website should load `https://globe-assets.hyperalislabs.com/inference_production/globe/globe-config.json`, `https://globe-assets.hyperalislabs.com/inference_production/temporal/temporal-config.json`, and `https://globe-assets.hyperalislabs.com/inference_production/globe/wavenumber_spectra/spectral-config.json`.
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
-  --year 2018 \
-  --iso-week 25 \
-  --temperature-checkpoint logs/<temperature-run>/best.ckpt \
-  --salinity-checkpoint logs/<salinity-run>/best.ckpt \
-  --device cuda \
-  --export-temporal-consistency \
-  --temporal-week-count 7 \
-  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe \
-  --rclone-remote r2:depth-data/inference_production/globe \
-  --rclone-sync-scope globe
-```
-
-## Experiment Script
-
-Use `src/depth_recon/experiments/experiments.py` for quick qualitative ablations on a single dataloader sample. It loads the configured model and checkpoint, runs a few fixed conditioning cases (`eo_plus_x`, `x_only_no_eo`, `coords_date_only_no_eo_no_x`), saves comparison plots under `temp/images/`, and prints compact tensor statistics for each case.
-
-Typical run:
-
-```bash
-/work/envs/depth/bin/python src/depth_recon/experiments/experiments.py
-```
-
-Before running, check the config and checkpoint constants at the top of `src/depth_recon/experiments/experiments.py` if you want a different model, dataset split, or checkpoint.
-
-## Documentation
-
-- Full documentation: `docs/` (or build/serve with MkDocs).
-- Autoencoder + latent workflow guide: `docs/autoencoder.md`.
-- Experiments page: `docs/experiments.md`.

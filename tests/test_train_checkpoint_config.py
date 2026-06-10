@@ -53,7 +53,7 @@ class TestTrainCheckpointConfig(unittest.TestCase):
         ):
             resolve_load_checkpoint_only(model_cfg)
 
-    def test_weights_only_checkpoint_prefers_ema_state_when_present(self) -> None:
+    def test_weights_only_checkpoint_loads_standard_state_dict(self) -> None:
         module = _TinyCheckpointModule()
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "ema.ckpt"
@@ -64,7 +64,7 @@ class TestTrainCheckpointConfig(unittest.TestCase):
                         "counter": torch.tensor([2], dtype=torch.long),
                     },
                     "callbacks": {
-                        "depth_recon.models.diffusion.EMA": {
+                        "EMA": {
                             "ema_weights": {
                                 "weight": torch.tensor([3.0]),
                                 "counter": torch.tensor([4], dtype=torch.long),
@@ -77,9 +77,9 @@ class TestTrainCheckpointConfig(unittest.TestCase):
 
             weight_source = load_weights_only_checkpoint(module, str(checkpoint_path))
 
-        self.assertEqual(weight_source, "ema")
-        self.assertTrue(torch.allclose(module.weight.detach(), torch.tensor([3.0])))
-        self.assertTrue(torch.equal(module.counter, torch.tensor([4])))
+        self.assertEqual(weight_source, "standard")
+        self.assertTrue(torch.allclose(module.weight.detach(), torch.tensor([5.0])))
+        self.assertTrue(torch.equal(module.counter, torch.tensor([2])))
 
 
 if __name__ == "__main__":

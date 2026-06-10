@@ -1,7 +1,0 @@
-recursive-include src/depth_recon/configs *.yaml
-recursive-include src/depth_recon/scripts *.sh
-recursive-include src/depth_recon/data *.sh *.tif *.yaml *.geojson
-recursive-include src/depth_recon/inference *.yaml
-recursive-include src/depth_recon/inference/transforms *.json *.txt
-prune src/depth_recon/inference/outputs
-global-exclude __pycache__ *.py[cod]

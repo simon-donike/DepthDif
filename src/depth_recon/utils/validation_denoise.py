@@ -16,59 +16,6 @@ from depth_recon.utils.normalizations import (
     temperature_to_plot_unit,
 )
 
-PROFILE_GRAPH_LOGO_PATH = (
-    Path(__file__).resolve().parents[1] / "docs/assets/branding/website_icon.png"
-)
-
-
-def _overlay_profile_graph_logo(
-    *,
-    output_path: str | Path,
-    dpi: int,
-    webp_quality: int = 95,
-) -> None:
-    """Stamp the small website icon onto the saved profile graph."""
-    try:
-        from PIL import Image
-    except Exception:
-        return
-
-    output_path = Path(output_path)
-    if not output_path.exists() or not PROFILE_GRAPH_LOGO_PATH.exists():
-        return
-
-    font_size_pt = float(plt.rcParams.get("font.size", 10.0))
-    text_height_px = max(1, int(round((font_size_pt / 72.0) * float(dpi))))
-    logo_height_px = max(12, int(round(text_height_px * 1.5)))
-    logo_padding_px = max(6, int(round(text_height_px * 0.4)))
-
-    try:
-        base = Image.open(output_path).convert("RGBA")
-        logo = Image.open(PROFILE_GRAPH_LOGO_PATH).convert("RGBA")
-    except Exception:
-        return
-
-    if logo.height <= 0 or logo.width <= 0:
-        return
-
-    logo_width_px = max(1, int(round((logo.width / logo.height) * logo_height_px)))
-    resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
-    logo = logo.resize((logo_width_px, logo_height_px), resample=resampling)
-
-    # Add the icon after matplotlib has finished so figure layout stays untouched.
-    overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
-    overlay.alpha_composite(logo, dest=(logo_padding_px, logo_padding_px))
-    base = Image.alpha_composite(base, overlay)
-    if output_path.suffix.lower() == ".webp":
-        base.convert("RGB").save(
-            output_path,
-            "WEBP",
-            quality=int(webp_quality),
-            method=6,
-        )
-    else:
-        base.save(output_path)
-
 
 def build_capture_indices(
     total_steps: int,
@@ -1608,11 +1555,6 @@ def save_glorys_profile_comparison_plot(
                 "pil_kwargs": {"quality": int(webp_quality), "method": 6},
             }
         fig.savefig(output_path, dpi=int(dpi), **save_kwargs)
-        _overlay_profile_graph_logo(
-            output_path=output_path,
-            dpi=int(dpi),
-            webp_quality=int(webp_quality),
-        )
     finally:
         if fig is not None:
             plt.close(fig)
@@ -1649,7 +1591,6 @@ def save_average_glorys_profile_error_plot(
         else:
             fig.tight_layout()
         fig.savefig(output_path, dpi=int(dpi))
-        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
     finally:
         if fig is not None:
             plt.close(fig)
@@ -1714,7 +1655,6 @@ def save_average_glorys_profile_and_error_plot(
         else:
             fig.tight_layout()
         fig.savefig(output_path, dpi=int(dpi))
-        _overlay_profile_graph_logo(output_path=output_path, dpi=int(dpi))
     finally:
         if fig is not None:
             plt.close(fig)

@@ -1,3 +1,4 @@
-# Dataset Links
-argo_aligned: "https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/"
-depthdif_training: "https://drive.google.com/file/d/18niqMxNu8bMyi6kSXGncXjhnGLP6VMG0/view?usp=sharing"
+# Dataset links for packaged artifacts.
+# Replace the placeholders with anonymous artifact URLs before distribution.
+argo_aligned: "https://huggingface.co/datasets/anonymous-org/anonymous-aligned-argo/"
+geotiff_training: "https://drive.google.com/file/d/GOOGLE_DRIVE_FILE_ID/view?usp=sharing"

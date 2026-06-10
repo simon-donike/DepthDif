@@ -1,4 +1,4 @@
-"""Package-relative paths for bundled DepthDif resources."""
+"""Package-relative paths for bundled Ocean Depth Reconstruction resources."""
 
 from __future__ import annotations
 

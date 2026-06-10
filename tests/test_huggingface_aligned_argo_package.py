@@ -137,7 +137,7 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             self.assertTrue((package_dir / "metadata/stac-item.json").exists())
             self.assertTrue((package_dir / "LICENSE").exists())
 
-    def test_package_can_assemble_full_depthdif_upload_layout(self) -> None:
+    def test_package_can_assemble_full_dataset_upload_layout(self) -> None:
         """The package builder can stage the complete upload root without links."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -154,12 +154,12 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             masks_dir.mkdir()
             (masks_dir / "land_mask.tif").write_bytes(b"mask")
             manifest_path.write_text(
-                "output_dir: /work/data/depthdif\n", encoding="utf-8"
+                "output_dir: ./data/ocean_depth_reconstruction\n", encoding="utf-8"
             )
 
             package_dir = build_huggingface_aligned_argo_package(
                 input_zarr=input_zarr,
-                output_dir=tmp_path / "OceanVariableReconstruction",
+                output_dir=tmp_path / "OceanDepthReconstruction",
                 file_mode="copy",
                 overwrite=True,
                 raster_root=raster_root,
@@ -178,24 +178,7 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             self.assertEqual(packaged_manifest["output_dir"], package_dir.as_posix())
             self.assertTrue((package_dir / "masks/land_mask.tif").exists())
             readme_text = (package_dir / "README.md").read_text()
-            self.assertTrue(
-                (package_dir / "assets/figures/depthdif_schema.webp").exists()
-            )
-            self.assertTrue(
-                (
-                    package_dir / "assets/data/geotiff_dataset_random100_surface.webp"
-                ).exists()
-            )
-            self.assertTrue(
-                (
-                    package_dir / "assets/data/profile_comparison_good_alignment.webp"
-                ).exists()
-            )
             self.assertIn("rasters/", readme_text)
-            self.assertIn(
-                "assets/data/geotiff_dataset_random100_surface.webp", readme_text
-            )
-            self.assertIn("ARGO Alignment Examples", readme_text)
             self.assertEqual(
                 (package_dir / "rasters/sss/sos/sos_20240102.tif").stat().st_nlink,
                 1,
