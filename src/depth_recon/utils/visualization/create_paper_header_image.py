@@ -14,10 +14,12 @@
 #   --region-bounds -82 -45 24 47 \
 #   --glorys-max-depth-m 1000 \
 #   --max-argo-profiles 0 \
+#   --max-argo-profile-lines 180 \
+#   --en4-profile-grid-size 9 \
 #   --hex-gridsize 41 \
 #   --land-stride 8 \
 #   --argo-chunk-size 200000 \
-#   --fig-width 7.48 \
+#   --fig-width 9.6 \
 #   --fig-height 6.4 \
 #   --dpi 300 \
 #   --output-png docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.png \
@@ -42,6 +44,7 @@ from matplotlib.collections import PolyCollection
 from matplotlib.colors import ListedColormap, LogNorm, Normalize, TwoSlopeNorm
 from matplotlib.ticker import FormatStrFormatter, FuncFormatter, MaxNLocator
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from pyproj import CRS, Transformer
 from rasterio.enums import Resampling
 from rasterio.windows import Window, from_bounds
@@ -61,7 +64,7 @@ DEFAULT_WORLD_GEOJSON_PATH = (
 DEFAULT_OUTPUT_STEM = Path(
     "docs/assets/figures/depthdif_paper_header_gulf_stream_20180622"
 )
-DEFAULT_FIG_WIDTH_IN = 7.48
+DEFAULT_FIG_WIDTH_IN = 9.6
 DEFAULT_FIG_HEIGHT_IN = 6.4
 DEFAULT_DPI = 300
 EQUAL_EARTH = CRS.from_proj4("+proj=eqearth +lon_0=0 +datum=WGS84 +units=m +no_defs")
@@ -265,6 +268,272 @@ def _load_argo_density_points(
         "processed_profile_count": limit,
         "valid_profile_count": valid_profile_count,
         "week_count": week_count,
+    }
+
+
+def _sample_profile_indices(
+    count: int, *, max_profile_lines: int, random_seed: int
+) -> np.ndarray:
+    """Return deterministic profile indices for 3D profile drawing."""
+    count = int(count)
+    max_profile_lines = int(max_profile_lines)
+    if count <= 0 or max_profile_lines <= 0:
+        return np.zeros((0,), dtype=np.int64)
+    if count <= max_profile_lines:
+        return np.arange(count, dtype=np.int64)
+    rng = np.random.default_rng(int(random_seed))
+    return np.sort(rng.choice(count, size=max_profile_lines, replace=False))
+
+
+def _profile_payload(
+    *,
+    lon: list[np.ndarray],
+    lat: list[np.ndarray],
+    values: list[np.ndarray],
+    valid: list[np.ndarray],
+    depth_m: np.ndarray,
+    bounds: tuple[float, ...],
+    profile_grid_size: int,
+    max_profile_lines: int,
+    random_seed: int,
+    convert_kelvin_to_celsius: bool,
+    drop_low_tail_quantile: float | None = None,
+) -> dict[str, Any]:
+    """Build one coarsened sampled EN4-aligned profile payload for plotting."""
+    if not lon:
+        return {
+            "longitude": np.zeros((0,), dtype=np.float32),
+            "latitude": np.zeros((0,), dtype=np.float32),
+            "values": np.zeros((0, depth_m.size), dtype=np.float32),
+            "valid": np.zeros((0, depth_m.size), dtype=bool),
+            "depth_m": depth_m,
+            "filtered_count": 0,
+            "column_count": 0,
+            "outlier_column_count": 0,
+            "plotted_count": 0,
+        }
+
+    lon_all = np.concatenate(lon).astype(np.float32, copy=False)
+    lat_all = np.concatenate(lat).astype(np.float32, copy=False)
+    values_all = np.concatenate(values, axis=0).astype(np.float32, copy=False)
+    valid_all = np.concatenate(valid, axis=0).astype(bool, copy=False)
+    values_all[~valid_all] = np.nan
+    if convert_kelvin_to_celsius:
+        values_all = _kelvin_to_celsius(values_all)
+
+    lon_min, lon_max, lat_min, lat_max = [float(value) for value in bounds]
+    grid_size = int(max(1, profile_grid_size))
+    lon_edges = np.linspace(lon_min, lon_max, grid_size + 1, dtype=np.float64)
+    lat_edges = np.linspace(lat_min, lat_max, grid_size + 1, dtype=np.float64)
+    lon_bin = np.clip(
+        np.searchsorted(lon_edges, lon_all, side="right") - 1, 0, grid_size - 1
+    )
+    lat_bin = np.clip(
+        np.searchsorted(lat_edges, lat_all, side="right") - 1, 0, grid_size - 1
+    )
+    flat_bin = lat_bin * grid_size + lon_bin
+
+    # Aggregate aligned profiles before plotting so the panel reads as thicker
+    # regional columns instead of many needle-thin raw profile sticks.
+    value_for_sum = np.where(valid_all, values_all, 0.0).astype(np.float64, copy=False)
+    sums = np.zeros((grid_size * grid_size, depth_m.size), dtype=np.float64)
+    counts = np.zeros((grid_size * grid_size, depth_m.size), dtype=np.int32)
+    np.add.at(sums, flat_bin, value_for_sum)
+    np.add.at(counts, flat_bin, valid_all.astype(np.int32, copy=False))
+    column_valid = counts > 0
+    column_has_profile = np.any(column_valid, axis=1)
+    column_values = np.full(sums.shape, np.nan, dtype=np.float32)
+    column_values[column_valid] = (sums[column_valid] / counts[column_valid]).astype(
+        np.float32, copy=False
+    )
+
+    column_indices = np.flatnonzero(column_has_profile)
+    column_lat_bin = column_indices // grid_size
+    column_lon_bin = column_indices % grid_size
+    lon_centers = 0.5 * (lon_edges[:-1] + lon_edges[1:])
+    lat_centers = 0.5 * (lat_edges[:-1] + lat_edges[1:])
+    lon_columns = lon_centers[column_lon_bin].astype(np.float32, copy=False)
+    lat_columns = lat_centers[column_lat_bin].astype(np.float32, copy=False)
+    values_columns = column_values[column_indices]
+    valid_columns = column_valid[column_indices]
+    column_count = int(lon_columns.size)
+
+    column_low = np.nanpercentile(values_columns, 5.0, axis=1)
+    column_high = np.nanpercentile(values_columns, 95.0, axis=1)
+    finite_low = column_low[np.isfinite(column_low)]
+    finite_high = column_high[np.isfinite(column_high)]
+    keep_columns = np.ones((column_count,), dtype=bool)
+    if finite_low.size >= 4 and finite_high.size >= 4:
+        low_q1, low_q3 = np.percentile(finite_low, [25.0, 75.0])
+        high_q1, high_q3 = np.percentile(finite_high, [25.0, 75.0])
+        low_iqr = float(low_q3 - low_q1)
+        high_iqr = float(high_q3 - high_q1)
+        low_threshold = float(low_q1 - 1.5 * low_iqr)
+        high_threshold = float(high_q3 + 1.5 * high_iqr)
+        # Drop only whole coarsened columns with unusually extreme aligned values;
+        # normal depth gradients remain because filtering happens after aggregation.
+        keep_columns = (column_low >= low_threshold) & (column_high <= high_threshold)
+        if drop_low_tail_quantile is not None:
+            low_tail_threshold = float(
+                np.percentile(finite_low, float(drop_low_tail_quantile))
+            )
+            keep_columns &= column_low >= low_tail_threshold
+    outlier_column_count = int(column_count - np.count_nonzero(keep_columns))
+    lon_columns = lon_columns[keep_columns]
+    lat_columns = lat_columns[keep_columns]
+    values_columns = values_columns[keep_columns]
+    valid_columns = valid_columns[keep_columns]
+
+    sample = _sample_profile_indices(
+        lon_columns.size,
+        max_profile_lines=max_profile_lines,
+        random_seed=random_seed,
+    )
+    return {
+        "longitude": lon_columns[sample],
+        "latitude": lat_columns[sample],
+        "values": values_columns[sample],
+        "valid": valid_columns[sample],
+        "depth_m": depth_m,
+        "filtered_count": int(lon_all.size),
+        "column_count": column_count,
+        "outlier_column_count": outlier_column_count,
+        "plotted_count": int(sample.size),
+    }
+
+
+def _load_argo_region_profiles(
+    argo_path: Path,
+    *,
+    bounds: tuple[float, ...],
+    date_text: str,
+    depth_mask: np.ndarray,
+    depth_axis_m: np.ndarray,
+    temperature_stretch: dict[str, Any],
+    salinity_stretch: dict[str, Any],
+    chunk_size: int,
+    max_profile_lines: int,
+    profile_grid_size: int,
+    random_seed: int,
+) -> dict[str, dict[str, Any]]:
+    """Load selected-week regional aligned EN4 temperature and salinity profiles."""
+    if not argo_path.exists():
+        raise FileNotFoundError(f"ARGO Zarr does not exist: {argo_path}")
+
+    group = zarr.open_group(argo_path, mode="r")
+    required = {
+        "latitude",
+        "longitude",
+        "target_date",
+        "argo_temp_kelvin_uint8",
+        "argo_psal_uint8",
+        "argo_temp_valid",
+        "argo_psal_valid",
+    }
+    missing = sorted(required.difference(group.array_keys()))
+    if missing:
+        raise RuntimeError(
+            f"ARGO Zarr is missing required aligned EN4 arrays {missing}."
+        )
+
+    depth_mask = np.asarray(depth_mask, dtype=bool)
+    profile_depth_count = int(group["argo_temp_kelvin_uint8"].shape[1])
+    if profile_depth_count != depth_mask.size:
+        raise RuntimeError(
+            "Aligned EN4 profile depth count does not match manifest depth_axis_m: "
+            f"{profile_depth_count} != {depth_mask.size}."
+        )
+
+    lon_min, lon_max, lat_min, lat_max = [float(value) for value in bounds]
+    target_date = int(date_text)
+    depth_m = np.asarray(depth_axis_m, dtype=np.float32)[depth_mask]
+    deep_profile_mask = depth_m > 150.0
+    profile_count = int(group["latitude"].shape[0])
+    chunk_size = int(max(1, chunk_size))
+    temp_lon_parts: list[np.ndarray] = []
+    temp_lat_parts: list[np.ndarray] = []
+    temp_value_parts: list[np.ndarray] = []
+    temp_valid_parts: list[np.ndarray] = []
+    salinity_lon_parts: list[np.ndarray] = []
+    salinity_lat_parts: list[np.ndarray] = []
+    salinity_value_parts: list[np.ndarray] = []
+    salinity_valid_parts: list[np.ndarray] = []
+
+    for start in range(0, profile_count, chunk_size):
+        stop = min(start + chunk_size, profile_count)
+        lat = np.asarray(group["latitude"][start:stop], dtype=np.float64)
+        lon = np.asarray(group["longitude"][start:stop], dtype=np.float64)
+        target_dates = np.asarray(group["target_date"][start:stop], dtype=np.int32)
+        in_region = (
+            (target_dates == target_date)
+            & np.isfinite(lat)
+            & np.isfinite(lon)
+            & (lon >= lon_min)
+            & (lon <= lon_max)
+            & (lat >= lat_min)
+            & (lat <= lat_max)
+        )
+        if not np.any(in_region):
+            continue
+
+        temp_valid = np.asarray(group["argo_temp_valid"][start:stop, :])[:, depth_mask]
+        salinity_valid = np.asarray(group["argo_psal_valid"][start:stop, :])[
+            :, depth_mask
+        ]
+        # Keep profile columns visually clean by requiring real subsurface support.
+        temp_keep = in_region & np.any(temp_valid[:, deep_profile_mask] > 0, axis=1)
+        salinity_keep = in_region & np.any(
+            salinity_valid[:, deep_profile_mask] > 0, axis=1
+        )
+        if np.any(temp_keep):
+            temp_encoded = np.asarray(
+                group["argo_temp_kelvin_uint8"][start:stop, :], dtype=np.uint8
+            )[:, depth_mask]
+            temp_lon_parts.append(lon[temp_keep])
+            temp_lat_parts.append(lat[temp_keep])
+            temp_valid_parts.append(temp_valid[temp_keep])
+            temp_value_parts.append(
+                _decode_stretched_uint8(temp_encoded[temp_keep], temperature_stretch)
+            )
+        if np.any(salinity_keep):
+            salinity_encoded = np.asarray(
+                group["argo_psal_uint8"][start:stop, :], dtype=np.uint8
+            )[:, depth_mask]
+            salinity_lon_parts.append(lon[salinity_keep])
+            salinity_lat_parts.append(lat[salinity_keep])
+            salinity_valid_parts.append(salinity_valid[salinity_keep])
+            salinity_value_parts.append(
+                _decode_stretched_uint8(
+                    salinity_encoded[salinity_keep], salinity_stretch
+                )
+            )
+
+    return {
+        "temperature": _profile_payload(
+            lon=temp_lon_parts,
+            lat=temp_lat_parts,
+            values=temp_value_parts,
+            valid=temp_valid_parts,
+            depth_m=depth_m,
+            bounds=bounds,
+            profile_grid_size=profile_grid_size,
+            max_profile_lines=max_profile_lines,
+            random_seed=random_seed,
+            convert_kelvin_to_celsius=True,
+            drop_low_tail_quantile=15.0,
+        ),
+        "salinity": _profile_payload(
+            lon=salinity_lon_parts,
+            lat=salinity_lat_parts,
+            values=salinity_value_parts,
+            valid=salinity_valid_parts,
+            depth_m=depth_m,
+            bounds=bounds,
+            profile_grid_size=profile_grid_size,
+            max_profile_lines=max_profile_lines,
+            random_seed=random_seed + 1,
+            convert_kelvin_to_celsius=False,
+        ),
     }
 
 
@@ -538,7 +807,7 @@ def _draw_argo_density_map(
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.set_title("ARGO Weekly Density", loc="left", pad=8)
+    ax.set_title("EN4 Weekly Density", loc="left", pad=8)
 
     cax = inset_axes(
         ax,
@@ -550,7 +819,7 @@ def _draw_argo_density_map(
         borderpad=0.0,
     )
     cbar = fig.colorbar(hexes, cax=cax, orientation="vertical")
-    cbar.set_label("Average ARGO profiles / week / hex", rotation=90)
+    cbar.set_label("Average EN4 profiles / week / hex", rotation=90)
     cbar.ax.yaxis.set_major_formatter(
         FuncFormatter(
             lambda value, _: f"{value:.1f}" if value < 10.0 else f"{value:.0f}"
@@ -801,6 +1070,111 @@ def _draw_glorys_cube(
     ax.set_title(title, loc="left", pad=5)
 
 
+def _style_3d_profile_axes(
+    ax: plt.Axes,
+    *,
+    bounds: tuple[float, ...],
+    max_depth_m: float,
+) -> None:
+    """Apply compact styling to an EN4 3D profile axis."""
+    ax.set_xlim(float(bounds[0]), float(bounds[1]))
+    ax.set_ylim(float(bounds[2]), float(bounds[3]))
+    ax.set_zlim(float(max_depth_m), 0.0)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_zlabel("")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.tick_params(length=0, labelsize=0)
+    ax.view_init(elev=22.0, azim=-58.0)
+    ax.set_box_aspect((1.0, 0.82, 0.9))
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_facecolor((0.86, 0.88, 0.86, 0.28))
+        axis.pane.set_edgecolor((0.09, 0.14, 0.12, 0.35))
+        axis._axinfo["grid"].update(color=(0.09, 0.14, 0.12, 0.16), linewidth=0.35)
+
+
+def _draw_en4_profile_panel_3d(
+    ax: plt.Axes,
+    *,
+    profile_data: dict[str, Any],
+    bounds: tuple[float, ...],
+    title: str,
+    norm: Normalize,
+    cmap: Any,
+) -> None:
+    """Draw coarsened selected-week aligned EN4 profiles as 3D columns."""
+    lon = np.asarray(profile_data["longitude"], dtype=np.float32)
+    lat = np.asarray(profile_data["latitude"], dtype=np.float32)
+    values = np.asarray(profile_data["values"], dtype=np.float32)
+    valid = np.asarray(profile_data["valid"], dtype=bool)
+    depth_m = np.asarray(profile_data["depth_m"], dtype=np.float32)
+    max_depth_m = float(np.nanmax(depth_m)) if depth_m.size else 1.0
+
+    ax.set_facecolor("#ffffff")
+    ax.set_title(title, loc="left", pad=1.5)
+    _style_3d_profile_axes(ax, bounds=bounds, max_depth_m=max_depth_m)
+    if lon.size == 0:
+        ax.text2D(
+            0.08,
+            0.52,
+            "No selected-week\nEN4 profiles",
+            transform=ax.transAxes,
+            fontsize=6.5,
+            color="#334155",
+        )
+        return
+
+    segments: list[np.ndarray] = []
+    segment_values: list[np.ndarray] = []
+    point_lon: list[float] = []
+    point_lat: list[float] = []
+    point_depth: list[float] = []
+    point_values: list[float] = []
+    for profile_idx in range(lon.size):
+        profile_valid = valid[profile_idx] & np.isfinite(values[profile_idx])
+        if np.count_nonzero(profile_valid) == 0:
+            continue
+        profile_depth = depth_m[profile_valid]
+        profile_values = values[profile_idx, profile_valid]
+        profile_lon = np.full(profile_depth.shape, lon[profile_idx], dtype=np.float32)
+        profile_lat = np.full(profile_depth.shape, lat[profile_idx], dtype=np.float32)
+        coords = np.column_stack([profile_lon, profile_lat, profile_depth])
+        if coords.shape[0] == 1:
+            point_lon.append(float(coords[0, 0]))
+            point_lat.append(float(coords[0, 1]))
+            point_depth.append(float(coords[0, 2]))
+            point_values.append(float(profile_values[0]))
+            continue
+        # Segment coloring follows the local mean value so vertical gradients remain visible.
+        segments.append(np.stack([coords[:-1], coords[1:]], axis=1))
+        segment_values.append(0.5 * (profile_values[:-1] + profile_values[1:]))
+
+    if segments:
+        collection = Line3DCollection(
+            np.concatenate(segments, axis=0),
+            cmap=cmap,
+            norm=norm,
+            linewidths=2.15,
+            alpha=0.9,
+        )
+        collection.set_array(np.concatenate(segment_values, axis=0))
+        ax.add_collection3d(collection)
+    if point_values:
+        ax.scatter(
+            point_lon,
+            point_lat,
+            point_depth,
+            c=point_values,
+            cmap=cmap,
+            norm=norm,
+            s=12.0,
+            alpha=0.82,
+            depthshade=False,
+        )
+
+
 def _save_outputs(
     fig: plt.Figure,
     *,
@@ -867,6 +1241,19 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
         )
     depth_indices = (np.flatnonzero(depth_mask) + 1).astype(int).tolist()
     depth_values_m = depth_axis_m[depth_mask]
+    argo_profiles = _load_argo_region_profiles(
+        argo_path,
+        bounds=region_bounds,
+        date_text=date_text,
+        depth_mask=depth_mask,
+        depth_axis_m=depth_axis_m,
+        temperature_stretch=temperature_stretch,
+        salinity_stretch=salinity_stretch,
+        chunk_size=int(args.argo_chunk_size),
+        max_profile_lines=int(args.max_argo_profile_lines),
+        profile_grid_size=int(args.en4_profile_grid_size),
+        random_seed=int(args.argo_profile_random_seed),
+    )
 
     sst, _, _, sst_extent = _read_decoded_raster_region(
         _dated_raster_path(ostia_dir, "analysed_sst", date_text),
@@ -939,7 +1326,7 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
             "axes.titlesize": 8.5,
             "axes.labelsize": 7,
             "axes.titleweight": "bold",
-            "figure.facecolor": "#f8faf9",
+            "figure.facecolor": "#ffffff",
             "savefig.dpi": int(args.dpi),
         }
     )
@@ -951,19 +1338,30 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
     fig.subplots_adjust(left=0.055, right=0.965, top=0.955, bottom=0.065)
     outer = fig.add_gridspec(
         3,
-        6,
+        1,
         height_ratios=[1.0, 1.62, 1.0],
-        width_ratios=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         hspace=0.34,
-        wspace=0.14,
     )
-    ax_glorys_temp = fig.add_subplot(outer[0, :3])
-    ax_glorys_salinity = fig.add_subplot(outer[0, 3:])
-    ax_map = fig.add_subplot(outer[1, :])
-    ax_sst = fig.add_subplot(outer[2, :2])
-    ax_ssh = fig.add_subplot(outer[2, 2:4])
-    ax_sss = fig.add_subplot(outer[2, 4:])
+    top = outer[0].subgridspec(1, 2, wspace=0.14)
+    middle = outer[1].subgridspec(1, 3, width_ratios=[1.0, 2.5, 1.08], wspace=0.24)
+    bottom = outer[2].subgridspec(1, 3, wspace=0.14)
+    ax_glorys_temp = fig.add_subplot(top[0, 0])
+    ax_glorys_salinity = fig.add_subplot(top[0, 1])
+    ax_argo_temp = fig.add_subplot(middle[0, 0], projection="3d")
+    ax_map = fig.add_subplot(middle[0, 1])
+    ax_argo_salinity = fig.add_subplot(middle[0, 2], projection="3d")
+    ax_sst = fig.add_subplot(bottom[0, 0])
+    ax_ssh = fig.add_subplot(bottom[0, 1])
+    ax_sss = fig.add_subplot(bottom[0, 2])
 
+    _draw_en4_profile_panel_3d(
+        ax_argo_temp,
+        profile_data=argo_profiles["temperature"],
+        bounds=region_bounds,
+        title="EN4 Temperature",
+        norm=temp_norm,
+        cmap=temp_cmap,
+    )
     _draw_argo_density_map(
         fig,
         ax_map,
@@ -973,6 +1371,14 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
         region_bounds=region_bounds,
         hex_gridsize=int(args.hex_gridsize),
         land_stride=int(args.land_stride),
+    )
+    _draw_en4_profile_panel_3d(
+        ax_argo_salinity,
+        profile_data=argo_profiles["salinity"],
+        bounds=region_bounds,
+        title="EN4 Salinity",
+        norm=salinity_norm,
+        cmap=salinity_cmap,
     )
 
     _draw_glorys_cube(
@@ -1107,10 +1513,39 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
         "argo_valid_profile_count": int(argo_points["valid_profile_count"]),
         "argo_ocean_profile_count": int(argo_points.get("ocean_profile_count", 0)),
         "argo_week_count": int(argo_points["week_count"]),
+        "argo_temperature_profile_filtered_count": int(
+            argo_profiles["temperature"]["filtered_count"]
+        ),
+        "en4_temperature_profile_column_count": int(
+            argo_profiles["temperature"]["column_count"]
+        ),
+        "en4_temperature_profile_outlier_column_count": int(
+            argo_profiles["temperature"]["outlier_column_count"]
+        ),
+        "argo_temperature_profile_plotted_count": int(
+            argo_profiles["temperature"]["plotted_count"]
+        ),
+        "argo_salinity_profile_filtered_count": int(
+            argo_profiles["salinity"]["filtered_count"]
+        ),
+        "en4_salinity_profile_column_count": int(
+            argo_profiles["salinity"]["column_count"]
+        ),
+        "en4_salinity_profile_outlier_column_count": int(
+            argo_profiles["salinity"]["outlier_column_count"]
+        ),
+        "argo_salinity_profile_plotted_count": int(
+            argo_profiles["salinity"]["plotted_count"]
+        ),
         "rendering": {
             "projection": "Equal Earth",
             "hex_gridsize": int(args.hex_gridsize),
             "argo_density_units": "mean_profiles_per_week_per_hex",
+            "max_argo_profile_lines": int(args.max_argo_profile_lines),
+            "en4_profile_grid_size": int(args.en4_profile_grid_size),
+            "en4_profile_min_valid_depth_m": 150.0,
+            "en4_profile_outlier_filter": "column_5th_95th_percentile_iqr_1p5_temperature_low_tail_p15",
+            "argo_profile_random_seed": int(args.argo_profile_random_seed),
             "land_stride": int(args.land_stride),
             "glorys_max_depth_m": float(args.glorys_max_depth_m),
             "glorys_render": "temperature_and_salinity_cubes",
@@ -1174,6 +1609,24 @@ def parse_args() -> argparse.Namespace:
         help="Optional profile limit for smoke renders. Use 0 to process all profiles.",
     )
     parser.add_argument("--hex-gridsize", type=int, default=41)
+    parser.add_argument(
+        "--max-argo-profile-lines",
+        type=int,
+        default=180,
+        help="Maximum coarsened selected-week regional EN4 columns to draw per 3D panel.",
+    )
+    parser.add_argument(
+        "--en4-profile-grid-size",
+        type=int,
+        default=9,
+        help="Coarse lon/lat grid size used to average aligned EN4 profiles into thicker columns.",
+    )
+    parser.add_argument(
+        "--argo-profile-random-seed",
+        type=int,
+        default=0,
+        help="Random seed for deterministic ARGO profile sampling.",
+    )
     parser.add_argument("--land-stride", type=int, default=8)
     parser.add_argument("--argo-chunk-size", type=int, default=200000)
     parser.add_argument("--fig-width", type=float, default=DEFAULT_FIG_WIDTH_IN)
