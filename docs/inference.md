@@ -246,6 +246,21 @@ Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wave
 
 For each selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, a copied interactive `index.html` spectral dashboard with `spectral-config.json`/`basins/*.json`/`basin-map.geojson`, and per-basin season/year PNG plots under `plots/`. Pass `--rclone-remote` to upload this bundle, or `--no-dashboard` to skip the hosted dashboard assets. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
 
+## Paper Metrics Export
+Use `depth_recon.inference.export_paper_metrics` for the paper reconstruction table over one explicit standard week. The command consumes existing full-native-depth global run directories for IDW, LSTM, and a deterministic U-Net export, builds or loads an EN4 climatology baseline, selects a deterministic 20% held-out EN4 date-location set, and writes RMSE, MAE, and R² against both held-out EN4 profiles and dense GLORYS12 fields. Metrics are computed by depth first and table values are equal-weighted means across native GLORYS depth channels. Spectral diagnostics are intentionally separate.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
+  --year 2018 \
+  --iso-week 25 \
+  --idw-run-dir inference/outputs/paper_2018_W25_idw \
+  --lstm-run-dir inference/outputs/paper_2018_W25_lstm \
+  --unet-run-dir inference/outputs/paper_2018_W25_unet \
+  --output-dir inference/outputs/paper_metrics_2018_W25
+```
+
+Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and climatology GeoTIFFs when they are built. To generate model runs that do not see the held-out EN4 locations, pass the produced split back into global inference with `--en4-holdout-locations-csv inference/outputs/paper_metrics_2018_W25/en4_holdout_locations.csv`; the dataset removes matching `(date, grid_row, grid_col)` profile locations before sparse ARGO rasterization so overlapping patches cannot reintroduce them.
+
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
 - loads the configured checkpoint and the explicit dataset split selected by `--split` (`val` by default)
