@@ -724,9 +724,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         globe_script = Path("docs/javascripts/cesium-globe.js").read_text(
             encoding="utf-8"
         )
-        default_config = json.loads(
-            Path("docs/spatial-globe/globe-config.json").read_text(encoding="utf-8")
-        )
+        default_config = json.loads(DEFAULT_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
         self.assertIn('class="standalone-globe-root"', html)
         self.assertIn('id="globe-page-eyebrow"', html)

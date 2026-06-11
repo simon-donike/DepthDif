@@ -381,7 +381,7 @@ Representative surface-level training patches from the exported GeoTIFF store:
 </p>""")
     if good_alignment_asset in assets:
         alignment_images.append(f"""<p align="center">
-  <img src="{good_alignment_asset}" width="72%" alt="Example of good ARGO-to-GLORYS profile alignment" />
+  <img src="{good_alignment_asset}" width="72%" alt="Example of good EN4-to-GLORYS temperature and salinity profile alignment" />
 </p>""")
     if bad_alignment_asset in assets:
         alignment_images.append(f"""<p align="center">
@@ -390,10 +390,10 @@ Representative surface-level training patches from the exported GeoTIFF store:
     alignment_section = ""
     if alignment_images:
         alignment_section = f"""
-## ARGO Alignment Examples
+## EN4 Alignment Examples
 
-ARGO profiles are projected onto the fixed 50-level GLORYS depth axis before
-spatial rasterization. The examples below show the grid-indexed ARGO
+EN4 profiles are projected onto the fixed 50-level GLORYS depth axis before
+spatial rasterization. The examples below show the grid-indexed EN4
 representation and profile-level alignment quality.
 
 {chr(10).join(alignment_images)}
@@ -469,7 +469,7 @@ masks/
 
 The `rasters/` directory is intentionally at the repository root. It contains
 the aligned uint8 GeoTIFF products used by the pixel-space dataloader. The
-compact `argo/argo_profiles_on_grid.zarr` store is the grid-indexed ARGO input
+compact `argo/argo_profiles_on_grid.zarr` store is the grid-indexed EN4 input
 used by that dataloader.
 {raster_example_section}
 
@@ -709,7 +709,7 @@ license: "other"
                 "compact_argo": {
                     "href": "argo/argo_profiles_on_grid.zarr",
                     "type": "application/vnd+zarr",
-                    "title": "Compact grid-indexed ARGO Zarr",
+                    "title": "Compact grid-indexed EN4 Zarr",
                 },
                 "manifest": {
                     "href": "manifest.yaml",

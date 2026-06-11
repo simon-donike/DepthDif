@@ -594,6 +594,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return_coords: bool = True,
         include_salinity: bool = False,
         output_fields: Sequence[str] | str | None = None,
+        heldout_argo_locations: Sequence[tuple[int, int, int]] | None = None,
         random_seed: int = 7,
         cache_size: int = 8,
         val_fraction: float = 0.2,
@@ -650,6 +651,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.output_fields = self._normalize_output_fields(
             output_fields, include_salinity=bool(include_salinity)
         )
+        self.heldout_argo_location_keys: set[tuple[int, int, int]] = set()
+        self.set_heldout_argo_locations(heldout_argo_locations)
         self.include_salinity = "salinity" in self.output_fields
         self._loads_temperature = "temperature" in self.output_fields
         self.random_seed = int(random_seed)
@@ -847,6 +850,32 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     def depth_axis_m(self) -> np.ndarray:
         """Return the GLORYS depth axis in meters."""
         return self._depth_axis_m.copy()
+
+    def set_heldout_argo_locations(
+        self, locations: Sequence[tuple[int, int, int]] | None
+    ) -> None:
+        """Set EN4/ARGO locations excluded from sparse model inputs."""
+        self.heldout_argo_location_keys = {
+            (int(date_value), int(grid_row), int(grid_col))
+            for date_value, grid_row, grid_col in (locations or ())
+        }
+
+    def load_heldout_argo_locations_csv(self, path: str | Path) -> None:
+        """Load held-out EN4/ARGO location keys from a metrics CSV file."""
+        df = pd.read_csv(path)
+        required = {"date", "grid_row", "grid_col"}
+        missing = sorted(required - set(df.columns))
+        if missing:
+            raise ValueError(
+                "Held-out EN4 location CSV is missing required columns: "
+                + ", ".join(missing)
+            )
+        self.set_heldout_argo_locations(
+            [
+                (int(row.date), int(row.grid_row), int(row.grid_col))
+                for row in df.itertuples(index=False)
+            ]
+        )
 
     @classmethod
     def from_config(
@@ -1484,12 +1513,26 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         """Return temperature-valid ARGO indices for the current patch."""
         if self.argo_store is None:
             return np.zeros((0,), dtype=np.int64)
-        return self.argo_store.query_indices(
+        indices = self.argo_store.query_indices(
             target_date=int(row["date"]),
             grid_y0=int(row["grid_y0"]),
             grid_x0=int(row["grid_x0"]),
             tile_size=self.tile_size,
         )
+        if indices.size == 0 or not self.heldout_argo_location_keys:
+            return indices
+        keep = np.ones(indices.shape, dtype=bool)
+        for local_idx, profile_idx in enumerate(indices.tolist()):
+            key = (
+                int(self.argo_store.target_date[int(profile_idx)]),
+                int(self.argo_store.grid_row[int(profile_idx)]),
+                int(self.argo_store.grid_col[int(profile_idx)]),
+            )
+            # Held-out locations must be removed before rasterization so
+            # overlapping patches cannot leak validation profiles into x.
+            if key in self.heldout_argo_location_keys:
+                keep[int(local_idx)] = False
+        return indices[keep]
 
     def _rasterize_argo_patch(
         self, row: dict[str, Any]

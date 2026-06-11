@@ -733,9 +733,9 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
         finetune = payload["data"]["dataset"]["finetune_sampling"]
-        self.assertFalse(finetune["enabled"])
-        self.assertAlmostEqual(float(finetune["hard_fraction"]), 0.75)
-        self.assertEqual(finetune["apply_to_splits"], ["train"])
+        self.assertTrue(finetune["enabled"])
+        self.assertAlmostEqual(float(finetune["hard_fraction"]), 0.5)
+        self.assertEqual(finetune["apply_to_splits"], ["train", "val"])
         self.assertTrue(finetune["relax_land_filter"])
         self.assertAlmostEqual(float(finetune["default_max_land_fraction"]), 0.85)
         self.assertEqual(

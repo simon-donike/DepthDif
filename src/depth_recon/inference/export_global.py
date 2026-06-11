@@ -2599,6 +2599,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "0 to disable and any negative value to export all observed locations."
         ),
     )
+    parser.add_argument(
+        "--en4-holdout-locations-csv",
+        type=Path,
+        default=None,
+        help=(
+            "Optional CSV with date, grid_row, and grid_col columns. Matching "
+            "EN4/ARGO locations are removed from sparse model inputs before inference."
+        ),
+    )
     return parser
 
 
@@ -2779,6 +2788,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         min_ocean_fraction=effective_min_ocean_fraction,
         patch_stride=effective_patch_stride,
     )
+    en4_holdout_locations_csv = getattr(args, "en4_holdout_locations_csv", None)
+    if en4_holdout_locations_csv is not None:
+        if not hasattr(dataset, "load_heldout_argo_locations_csv"):
+            raise RuntimeError(
+                "--en4-holdout-locations-csv requires a dataset that supports "
+                "EN4/ARGO location holdouts."
+            )
+        dataset.load_heldout_argo_locations_csv(en4_holdout_locations_csv)
     if hasattr(dataset, "return_info"):
         dataset.return_info = False
     if hasattr(dataset, "return_coords"):
@@ -3756,6 +3773,14 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
             0
             if full_sample_locations_writer is None
             else int(full_sample_locations_writer.feature_count)
+        ),
+        "en4_holdout_locations_csv_path": (
+            None
+            if en4_holdout_locations_csv is None
+            else str(en4_holdout_locations_csv)
+        ),
+        "en4_holdout_location_count": int(
+            len(getattr(dataset, "heldout_argo_location_keys", ()))
         ),
         "graphs_dir_path": (
             None if graphs_dir_path is None else str(graphs_dir_path.name)

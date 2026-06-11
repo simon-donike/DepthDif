@@ -195,7 +195,7 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             self.assertIn(
                 "assets/data/geotiff_dataset_random100_surface.webp", readme_text
             )
-            self.assertIn("ARGO Alignment Examples", readme_text)
+            self.assertIn("EN4 Alignment Examples", readme_text)
             self.assertEqual(
                 (package_dir / "rasters/sss/sos/sos_20240102.tif").stat().st_nlink,
                 1,
