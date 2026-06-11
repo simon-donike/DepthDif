@@ -133,6 +133,76 @@ def apply_config_overrides(
         target[leaf_key] = value
 
 
+def override_key_set(overrides: list[str] | None) -> set[str]:
+    """Return normalized override key paths grouped by top-level root."""
+    keys: set[str] = set()
+    for raw_override in list(overrides or []):
+        root, path_parts, _value = parse_config_override(raw_override)
+        keys.add(".".join([root, *path_parts]))
+    return keys
+
+
+def apply_unet_baseline_condition_contract(
+    model_cfg: dict[str, Any], override_keys: set[str]
+) -> None:
+    """Derive 3D U-Net baseline condition channels after scenario overrides."""
+    model_section = model_cfg.get("model", {})
+    if not isinstance(model_section, dict):
+        return
+    model_type = str(model_section.get("model_type", "cond_px_dif")).strip()
+    if model_type != "unet_baseline":
+        return
+
+    generated_channels = int(model_section.get("generated_channels", 1))
+    if generated_channels < 1:
+        raise ValueError("model.generated_channels must be >= 1.")
+    output_fields = model_section.get("output_fields", ["temperature"])
+    if isinstance(output_fields, str):
+        output_fields = [output_fields]
+    field_channels = len(list(output_fields))
+    if field_channels < 1:
+        raise ValueError("model.output_fields must contain at least one field.")
+    if generated_channels % field_channels != 0:
+        raise ValueError(
+            "model.generated_channels must be divisible by the active output "
+            "field count for unet_baseline."
+        )
+
+    unet_cfg = model_section.get("unet_baseline", {})
+    if unet_cfg is None:
+        unet_cfg = {}
+    if not isinstance(unet_cfg, dict):
+        raise ValueError("model.unet_baseline must be a mapping when provided.")
+
+    use_valid_mask = bool(model_section.get("condition_use_valid_mask", True))
+    per_channel_valid_mask = bool(unet_cfg.get("per_channel_valid_mask", True))
+    if use_valid_mask and per_channel_valid_mask:
+        default_mask_channels = field_channels
+    elif use_valid_mask:
+        default_mask_channels = int(model_section.get("condition_mask_channels", 1))
+    else:
+        default_mask_channels = 0
+
+    # The 3D U-Net keeps depth as a convolution axis, so condition channels count
+    # field streams plus optional surface/mask inputs, not every depth band.
+    if "model.condition_mask_channels" not in override_keys:
+        model_section["condition_mask_channels"] = default_mask_channels
+
+    mask_channels = (
+        int(model_section.get("condition_mask_channels", default_mask_channels))
+        if use_valid_mask
+        else 0
+    )
+    condition_channels = field_channels
+    if bool(model_section.get("condition_include_eo", False)):
+        condition_channels += 1
+    condition_channels += mask_channels
+    if bool(model_section.get("condition_use_land_mask", False)):
+        condition_channels += 1
+    if "model.condition_channels" not in override_keys:
+        model_section["condition_channels"] = condition_channels
+
+
 def resolve_pixel_scenario(
     super_cfg: dict[str, Any], scenario_override: str | None = None
 ) -> str:
@@ -272,6 +342,7 @@ def load_pixel_training_config(
     scenario = resolve_pixel_scenario(super_cfg, scenario_override=scenario_override)
 
     apply_pixel_scenario(model_cfg=model_cfg, data_cfg=data_cfg, scenario=scenario)
+    override_keys = override_key_set(overrides)
     apply_config_overrides(
         list(overrides or []),
         configs_by_root={
@@ -280,6 +351,7 @@ def load_pixel_training_config(
             "training": training_cfg,
         },
     )
+    apply_unet_baseline_condition_contract(model_cfg, override_keys)
 
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
@@ -342,6 +414,7 @@ def load_pixel_inference_config(
     scenario = resolve_pixel_scenario(super_cfg, scenario_override=scenario_override)
 
     apply_pixel_scenario(model_cfg=model_cfg, data_cfg=data_cfg, scenario=scenario)
+    override_keys = override_key_set(overrides)
     apply_config_overrides(
         list(overrides or []),
         configs_by_root={
@@ -351,6 +424,7 @@ def load_pixel_inference_config(
             "inference": inference_cfg["inference"],
         },
     )
+    apply_unet_baseline_condition_contract(model_cfg, override_keys)
 
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(

@@ -104,6 +104,18 @@ model:  # pixel diffusion model settings
     include_date: true  # include day-of-year signal
     date_encoding: day_of_year_sincos  # date encoding type
     embed_dim: null  # FiLM embedding size override
+  unet_baseline:  # direct trainable 3D U-Net baseline
+    base_channels: 32  # base channel width for the baseline U-Net
+    channel_mults:  # encoder/decoder width multipliers
+    - 1  # first stage multiplier
+    - 2  # second stage multiplier
+    - 4  # third stage multiplier
+    - 8  # fourth stage multiplier
+    norm_groups: 8  # maximum GroupNorm group count
+    dropout: 0.0  # dropout after each double-conv block
+    lr: null  # null falls back to training.training.lr
+    weight_decay: 0.0001  # AdamW weight decay
+    per_channel_valid_mask: true  # use one ARGO mask volume per output field
   unet:  # denoiser architecture
     dim: 64  # base channel width
     dim_mults:  # U-Net width multipliers
