@@ -345,7 +345,7 @@ def main(
         run_dir.mkdir(parents=True, exist_ok=False)
 
     runtime_cfg_dir = (
-        Path("/tmp/depthdif_runtime_configs")
+        Path("/tmp/ocean_depth_reconstruction_runtime_configs")
         / f"{run_stamp}_{os.getpid()}_{global_rank}"
     )
     config_bundle = load_pixel_training_config(
