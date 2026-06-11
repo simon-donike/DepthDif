@@ -8,10 +8,12 @@ The currently supported baseline selectors are:
 | --- | --- | ---: | ---: |
 | `idw_baseline` | `IDWInterpolationBaseline` | No | No |
 | `lstm_baseline` | `PointwiseLSTMBaseline` | Yes | Yes |
+| `cnn_baseline` | `ProfileCNNInfillingBaseline` | Yes | Yes |
+| `unet_baseline` | `UNetInfillingBaseline` | Yes | Yes |
 
 ## Shared Batch Contract
 
-Both baselines use the existing GeoTIFF dataloaders unchanged. The dataset still returns sparse ARGO/profile observations, dense GLORYS targets, masks, and optional EO surface context with field-specific keys.
+All baselines use the existing GeoTIFF dataloaders unchanged. The dataset still returns sparse ARGO/profile observations, dense GLORYS targets, masks, and optional EO surface context with field-specific keys.
 
 Temperature mode uses:
 
@@ -44,7 +46,7 @@ x_valid_mask_model = cat([x_valid_mask, x_salinity_valid_mask], dim=1)
 y_valid_mask_model = cat([y_valid_mask, y_salinity_valid_mask], dim=1)
 ```
 
-`land_mask` is not an input feature for the point-wise LSTM. It is used for loss support and output cleanup. `output_land_mask`, when present during export, is only used for final prediction masking.
+`land_mask` is always used for loss support and output cleanup. The point-wise LSTM does not use it as an input feature; the profile CNN and 3D U-Net can use it as configured conditioning. `output_land_mask`, when present during export, is only used for final prediction masking.
 
 ## IDW Baseline
 
@@ -119,6 +121,44 @@ At each pixel and depth step, the LSTM sees:
 
 The depth coordinate comes from the dataset/datamodule `depth_axis_m` when available. If that metadata is not available, the model falls back to evenly spaced normalized channel positions.
 
+## Profile CNN Baseline
+
+`ProfileCNNInfillingBaseline` is selected with:
+
+```yaml
+model:
+  model_type: cnn_baseline
+  cnn_baseline:
+    hidden_channels: 64
+    seed_length: 8
+    transpose_layers: null
+    conv_layers: 3
+    kernel_size: 3
+    batch_norm_momentum: 0.3
+    dropout: 0.0
+    activation: selu
+    weight_decay: 0.0001
+```
+
+This baseline is inspired by profile-reconstruction CNNs that decode a fixed input vector into a vertical profile with `ConvTranspose1d`, then refine it with `Conv1d` layers. In DepthDif, each spatial pixel is still handled independently. The per-pixel vector contains the sparse normalized depth profile, an optional depth-wise observation mask, optional EO surface value, and optional land/ocean support scalar. It does not use neighboring pixels.
+
+For one field with shape `(B, C, H, W)`, the model reshapes internally:
+
+```text
+(B, C, H, W)
+-> (B * H * W, vector_features)
+-> linear seed projection
+-> ConvTranspose1d depth upsampling
+-> Conv1d profile refinement
+-> (B, C, H, W)
+```
+
+The default initializer is LeCun normal and the default activation is SELU. Training, validation loss, full-reconstruction metrics, no-ARGO behavior, deterministic uncertainty, and `predict_step` outputs follow the same trainable-baseline contract as the LSTM.
+
+## 3D U-Net Baseline
+
+`UNetInfillingBaseline` is selected with `model.model_type: unet_baseline`. It keeps depth as a 3D convolution axis, uses sparse fields plus optional EO, valid-mask, and land-mask condition volumes, and predicts dense normalized patches directly. Unlike the LSTM and profile CNN, it can use local spatial context inside the patch.
+
 ## LSTM Training Step
 
 One training step uses the existing dataloader batch directly:
@@ -160,16 +200,16 @@ val_salinity/recon_ssim_full_recon
 
 ## No-ARGO Handling
 
-The two baselines handle missing ARGO support slightly differently because IDW operates per 2D band and the LSTM operates per field profile.
+The baselines handle missing ARGO support slightly differently because IDW operates per 2D band while trainable neural baselines operate per field/sample.
 
 For IDW:
 
 - A depth band with observations is interpolated from those observations.
 - A depth band with no observations emits `NaN`.
 
-For the point-wise LSTM:
+For the point-wise LSTM, profile CNN, and U-Net:
 
-- A pixel with no observed profile can still predict if the patch has ARGO support elsewhere. Its sparse value feature is zero, its observed-mask feature is all zeros, and it still receives EO and depth features.
+- A pixel with no observed profile can still predict if the patch has ARGO support elsewhere. Its sparse value feature is zero, its observed-mask feature is all zeros, and enabled auxiliary features remain available.
 - A whole patch/sample with no ARGO support for a field emits `NaN` for that field.
 - Those `NaN` values are preserved in normalized and denormalized `predict_step` outputs so export writes nodata.
 
@@ -177,7 +217,7 @@ This behavior keeps no-support global inference regions from turning into arbitr
 
 ## Predict Step Outputs
 
-Both baselines return diffusion-compatible prediction keys:
+All baselines return diffusion-compatible prediction keys:
 
 ```text
 y_hat
@@ -197,7 +237,7 @@ further_valid_mask: None
 
 Field-specific salinity keys are present only when salinity is an active output field. `y_hat_denorm` aliases the primary field, using temperature when temperature is present.
 
-Both baselines also implement deterministic uncertainty:
+All baselines also implement deterministic uncertainty:
 
 ```text
 uncertainty_stat: deterministic_zero
@@ -207,10 +247,10 @@ uncertainty_stat: deterministic_zero
 
 Inference uses the same model factory and export path as the diffusion model:
 
-1. Set `model.model_type` to `idw_baseline` or `lstm_baseline`.
+1. Set `model.model_type` to `idw_baseline`, `lstm_baseline`, `cnn_baseline`, or `unet_baseline`.
 2. Keep the same data config and datamodule setup.
 3. For `idw_baseline`, no checkpoint is loaded.
-4. For `lstm_baseline`, provide a trained Lightning checkpoint.
+4. For `lstm_baseline`, `cnn_baseline`, or `unet_baseline`, provide a trained Lightning checkpoint.
 5. The exporter calls `predict_step` and consumes the same normalized, denormalized, and field-specific keys.
 
-For whole-world export, the existing patch inference flow can therefore run either baseline. IDW is checkpoint-free and deterministic. The LSTM requires trained weights but otherwise follows the same output path; no-ARGO patches become nodata during raster stitching/export.
+For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path; no-ARGO patches become nodata during raster stitching/export.

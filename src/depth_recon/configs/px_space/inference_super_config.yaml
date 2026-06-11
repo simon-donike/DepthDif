@@ -104,6 +104,20 @@ model:  # pixel diffusion model settings
     include_date: true  # include day-of-year signal
     date_encoding: day_of_year_sincos  # date encoding type
     embed_dim: null  # FiLM embedding size override
+  cnn_baseline:  # point-wise ConvTranspose1d/Conv1d profile baseline
+    hidden_channels: 64  # profile decoder channel width
+    seed_length: 8  # learned seed sequence length before transpose-conv upsampling
+    transpose_layers: null  # null auto-upsamples until reaching the depth grid
+    conv_layers: 3  # 1D refinement convolution layers after upsampling
+    kernel_size: 3  # odd depth-axis convolution kernel size
+    batch_norm_momentum: 0.3  # BatchNorm1d momentum for profile conv blocks
+    dropout: 0.0  # dropout after profile conv blocks
+    activation: selu  # activation used with LeCun-normal initialization
+    lr: null  # null falls back to training.training.lr
+    weight_decay: 0.0001  # AdamW weight decay
+    include_valid_mask: true  # include depth-wise ARGO support in the profile vector
+    include_eo: null  # null follows model.condition_include_eo
+    include_land_mask: null  # null follows model.condition_use_land_mask
   unet_baseline:  # direct trainable 3D U-Net baseline
     base_channels: 32  # base channel width for the baseline U-Net
     channel_mults:  # encoder/decoder width multipliers

@@ -308,6 +308,30 @@ class TestPixelConfig(unittest.TestCase):
                             contract["eo_var_name"],
                         )
 
+    def test_cnn_baseline_derives_profile_vector_condition_channels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config = _minimal_super_config(tmp_path, scenario="temperature")
+            config["model"]["model_type"] = "cnn_baseline"
+            config["model"]["depth_channels"] = 4
+            config["model"]["cnn_baseline"] = {
+                "include_valid_mask": True,
+                "include_eo": None,
+                "include_land_mask": None,
+            }
+            config_path = tmp_path / "super.yaml"
+            _write_yaml(config_path, config)
+
+            bundle = load_pixel_training_config(
+                config_path_value=config_path,
+                runtime_config_dir=tmp_path / "runtime",
+                write_snapshots=False,
+            )
+
+        self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 4)
+        self.assertEqual(bundle.model_cfg["model"]["condition_mask_channels"], 4)
+        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 10)
+
     def test_invalid_scenario_and_override_fail_clearly(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported pixel scenario"):
             resolve_pixel_scenario({"scenario": "oxygen"})

@@ -203,6 +203,72 @@ def apply_unet_baseline_condition_contract(
         model_section["condition_channels"] = condition_channels
 
 
+def apply_cnn_baseline_condition_contract(
+    model_cfg: dict[str, Any], override_keys: set[str]
+) -> None:
+    """Derive profile-CNN baseline feature count after scenario overrides."""
+    model_section = model_cfg.get("model", {})
+    if not isinstance(model_section, dict):
+        return
+    model_type = str(model_section.get("model_type", "cond_px_dif")).strip()
+    if model_type != "cnn_baseline":
+        return
+
+    generated_channels = int(model_section.get("generated_channels", 1))
+    if generated_channels < 1:
+        raise ValueError("model.generated_channels must be >= 1.")
+    output_fields = model_section.get("output_fields", ["temperature"])
+    if isinstance(output_fields, str):
+        output_fields = [output_fields]
+    field_channels = len(list(output_fields))
+    if field_channels < 1:
+        raise ValueError("model.output_fields must contain at least one field.")
+    if generated_channels % field_channels != 0:
+        raise ValueError(
+            "model.generated_channels must be divisible by the active output "
+            "field count for cnn_baseline."
+        )
+
+    cnn_cfg = model_section.get("cnn_baseline", {})
+    if cnn_cfg is None:
+        cnn_cfg = {}
+    if not isinstance(cnn_cfg, dict):
+        raise ValueError("model.cnn_baseline must be a mapping when provided.")
+
+    depth_channels = generated_channels // field_channels
+
+    def optional_bool(key: str, default: bool) -> bool:
+        value = cnn_cfg.get(key, None)
+        return bool(default) if value is None else bool(value)
+
+    include_valid_mask = optional_bool(
+        "include_valid_mask",
+        bool(model_section.get("condition_use_valid_mask", True)),
+    )
+    include_eo = optional_bool(
+        "include_eo",
+        bool(model_section.get("condition_include_eo", True)),
+    )
+    include_land_mask = optional_bool(
+        "include_land_mask",
+        bool(model_section.get("condition_use_land_mask", True)),
+    )
+
+    mask_channels = depth_channels if include_valid_mask else 0
+    if "model.condition_mask_channels" not in override_keys:
+        model_section["condition_mask_channels"] = mask_channels
+
+    # The profile CNN consumes one vector per pixel, so condition_channels records
+    # vector width: sparse profile, optional depth-wise mask, and scalar surfaces.
+    condition_channels = depth_channels + mask_channels
+    if include_eo:
+        condition_channels += 1
+    if include_land_mask:
+        condition_channels += 1
+    if "model.condition_channels" not in override_keys:
+        model_section["condition_channels"] = condition_channels
+
+
 def resolve_pixel_scenario(
     super_cfg: dict[str, Any], scenario_override: str | None = None
 ) -> str:
@@ -352,6 +418,7 @@ def load_pixel_training_config(
         },
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
+    apply_cnn_baseline_condition_contract(model_cfg, override_keys)
 
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
@@ -425,6 +492,7 @@ def load_pixel_inference_config(
         },
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
+    apply_cnn_baseline_condition_contract(model_cfg, override_keys)
 
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(

@@ -14,6 +14,7 @@ from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatc
 from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
+    ProfileCNNInfillingBaseline,
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import PixelDiffusionConditional
@@ -27,6 +28,7 @@ MODEL_TYPES = (
     "latent_cond_dif",
     "idw_baseline",
     "lstm_baseline",
+    "cnn_baseline",
     "unet_baseline",
 )
 CHECKPOINT_FREE_MODEL_TYPES = {"idw_baseline"}
@@ -204,6 +206,7 @@ def build_model(
     | LatentDiffusionConditional
     | IDWInterpolationBaseline
     | PointwiseLSTMBaseline
+    | ProfileCNNInfillingBaseline
     | UNetInfillingBaseline
 ):
     """Build and return model."""
@@ -217,6 +220,13 @@ def build_model(
         )
     if model_type == "lstm_baseline":
         return PointwiseLSTMBaseline.from_config(
+            model_config_path=model_config_path,
+            data_config_path=data_config_path,
+            training_config_path=training_config_path,
+            datamodule=datamodule,
+        )
+    if model_type == "cnn_baseline":
+        return ProfileCNNInfillingBaseline.from_config(
             model_config_path=model_config_path,
             data_config_path=data_config_path,
             training_config_path=training_config_path,

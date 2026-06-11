@@ -16,7 +16,11 @@ import yaml
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.inference.core import build_model, model_requires_checkpoint
-from depth_recon.models.baselines import IDWInterpolationBaseline, PointwiseLSTMBaseline
+from depth_recon.models.baselines import (
+    IDWInterpolationBaseline,
+    PointwiseLSTMBaseline,
+    ProfileCNNInfillingBaseline,
+)
 from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from depth_recon.models.latent.Autoencoder import (
     DepthBandAutoencoder,
@@ -550,6 +554,139 @@ class TestModelDryRuns(unittest.TestCase):
             bidirectional=False,
             output_fields=("temperature", "salinity"),
             depth_axis_m=[0.0, 10.0],
+        )
+        batch = _make_pixel_batch(include_salinity=True)
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertEqual(tuple(pred["y_hat"].shape), (1, 4, 8, 8))
+        self.assertEqual(
+            tuple(pred["y_hat_temperature"].shape), tuple(batch["x"].shape)
+        )
+        self.assertEqual(
+            tuple(pred["y_hat_salinity"].shape), tuple(batch["x_salinity"].shape)
+        )
+        self.assertIn("y_hat_temperature_denorm", pred)
+        self.assertIn("y_hat_salinity_denorm", pred)
+
+    def test_cnn_baseline_predict_step_returns_contract(self) -> None:
+        model = ProfileCNNInfillingBaseline(
+            generated_channels=2,
+            hidden_channels=4,
+            seed_length=2,
+            conv_layers=1,
+            output_fields=("temperature",),
+        )
+        batch = _make_pixel_batch()
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertEqual(tuple(pred["y_hat"].shape), tuple(batch["x"].shape))
+        self.assertEqual(tuple(pred["y_hat_denorm"].shape), tuple(batch["x"].shape))
+        self.assertEqual(
+            tuple(pred["y_hat_temperature_denorm"].shape), tuple(batch["x"].shape)
+        )
+        self.assertIn("y_hat_denorm_for_plot", pred)
+        self.assertEqual(pred["denoise_samples"], [])
+        self.assertEqual(pred["x0_denoise_samples"], [])
+        self.assertIsNone(pred["sampler"])
+        self.assertIsNone(pred["further_valid_mask"])
+
+    def test_cnn_baseline_pointwise_independence(self) -> None:
+        model = ProfileCNNInfillingBaseline(
+            generated_channels=2,
+            hidden_channels=4,
+            seed_length=2,
+            conv_layers=1,
+            output_fields=("temperature",),
+            include_land_mask=False,
+        )
+        x = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
+        x[:, :, 0, 0] = torch.tensor([0.2, -0.1])
+        x[:, :, 1, 1] = torch.tensor([0.2, -0.1])
+        mask = torch.zeros_like(x, dtype=torch.bool)
+        mask[:, :, 0, 0] = True
+        mask[:, :, 1, 1] = True
+        eo = torch.zeros((1, 1, 2, 2), dtype=torch.float32)
+
+        with torch.no_grad():
+            pred = model(x, mask, eo)
+
+        self.assertTrue(torch.allclose(pred[:, :, 0, 0], pred[:, :, 1, 1]))
+
+    def test_cnn_baseline_empty_argo_patch_returns_nan(self) -> None:
+        model = ProfileCNNInfillingBaseline(
+            generated_channels=2,
+            hidden_channels=4,
+            seed_length=2,
+            conv_layers=1,
+            output_fields=("temperature",),
+        )
+        batch = _make_pixel_batch()
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+        batch["x_valid_mask"] = torch.zeros_like(batch["x_valid_mask"])
+
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertTrue(torch.isnan(pred["y_hat"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
+
+    def test_cnn_baseline_from_factory_requires_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            model_config_path = tmp_path / "model.yaml"
+            data_config_path = tmp_path / "data.yaml"
+            training_config_path = tmp_path / "training.yaml"
+            model_cfg = {
+                "model": {
+                    "model_type": "cnn_baseline",
+                    "depth_channels": 2,
+                    "generated_channels": 2,
+                    "output_fields": ["temperature"],
+                    "scenario": "temperature",
+                    "condition_include_eo": True,
+                    "condition_use_land_mask": True,
+                    "cnn_baseline": {"hidden_channels": 4, "seed_length": 2},
+                }
+            }
+            _write_yaml(model_config_path, model_cfg)
+            _write_yaml(data_config_path, {"dataset": {}})
+            _write_yaml(training_config_path, {"training": {"lr": 2.0e-3}})
+
+            model = build_model(
+                model_config_path=str(model_config_path),
+                data_config_path=str(data_config_path),
+                training_config_path=str(training_config_path),
+                model_cfg=model_cfg,
+                datamodule=_make_datamodule(include_eo=True),
+            )
+
+        self.assertIsInstance(model, ProfileCNNInfillingBaseline)
+        self.assertEqual(model.lr, 2.0e-3)
+        self.assertTrue(model_requires_checkpoint(model_cfg))
+
+    def test_cnn_baseline_trainer_fit_completes_one_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model = ProfileCNNInfillingBaseline(
+                generated_channels=2,
+                hidden_channels=4,
+                seed_length=2,
+                conv_layers=1,
+                output_fields=("temperature",),
+            )
+            trainer = pl.Trainer(**_trainer_kwargs(Path(tmpdir)))
+
+            trainer.fit(model, datamodule=_make_datamodule(include_eo=True))
+
+    def test_cnn_baseline_joint_outputs_split_fields(self) -> None:
+        model = ProfileCNNInfillingBaseline(
+            generated_channels=4,
+            hidden_channels=4,
+            seed_length=2,
+            conv_layers=1,
+            output_fields=("temperature", "salinity"),
         )
         batch = _make_pixel_batch(include_salinity=True)
         batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)

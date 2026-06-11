@@ -33,6 +33,7 @@ from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
+    ProfileCNNInfillingBaseline,
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
@@ -305,6 +306,7 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
         "latent_cond_dif",
         "idw_baseline",
         "lstm_baseline",
+        "cnn_baseline",
         "unet_baseline",
     )
     if model_type in supported_model_types:
@@ -537,6 +539,13 @@ def main(
             training_config_path=effective_training_config_path,
             datamodule=datamodule,
         )
+    elif model_type == "cnn_baseline":
+        model = ProfileCNNInfillingBaseline.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
     elif model_type == "unet_baseline":
         model = UNetInfillingBaseline.from_config(
             model_config_path=effective_model_config_path,
@@ -555,7 +564,7 @@ def main(
     else:
         raise ValueError(
             "train.py supports model_type='cond_px_dif', 'idw_baseline', "
-            "'lstm_baseline', or 'unet_baseline'."
+            "'lstm_baseline', 'cnn_baseline', or 'unet_baseline'."
         )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
@@ -595,7 +604,12 @@ def main(
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
     )
-    baseline_model_types = {"idw_baseline", "lstm_baseline", "unet_baseline"}
+    baseline_model_types = {
+        "idw_baseline",
+        "lstm_baseline",
+        "cnn_baseline",
+        "unet_baseline",
+    }
     ema_callback = (
         None if model_type in baseline_model_types else build_ema_callback(model_cfg)
     )
