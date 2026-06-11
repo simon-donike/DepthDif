@@ -76,7 +76,7 @@ Start from scratch or from a checkpoint trained with the same architecture; temp
 ## Important Config Notes
 - `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.
 - `model.model_type="cond_px_dif"` runs pixel-space diffusion; `lstm_baseline`, `cnn_baseline`, and `unet_baseline` train baseline models on the same dataloaders.
-- Example profile-CNN baseline run:
+- Example profile-CNN baseline run; the CNN loss is evaluated only at ARGO-supported profile columns:
 
 ```bash
 /work/envs/depth/bin/python train.py --scenario temperature \

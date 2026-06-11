@@ -114,7 +114,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.log_intermediates` | `false` | Captures reverse-process intermediates when enabled by the caller. |
 | `model.idw.*` | `power=2.0`, `eps=1e-6`, `chunk_size=4096` | IDW baseline controls used when `model.model_type=idw_baseline`; bands with no ARGO observations are emitted as nodata. |
 | `model.lstm.*` | `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `bidirectional=true`, `weight_decay=0.0` | Point-wise LSTM baseline controls used when `model.model_type=lstm_baseline`; each pixel is modeled as an independent vertical profile and no-ARGO patches emit nodata. |
-| `model.cnn_baseline.*` | `hidden_channels=64`, `seed_length=8`, `conv_layers=3`, `activation=selu`, `weight_decay=0.0001` | Point-wise profile CNN baseline controls used when `model.model_type=cnn_baseline`; sparse profile vectors are decoded with `ConvTranspose1d` and refined with `Conv1d`. |
+| `model.cnn_baseline.*` | `hidden_channels=64`, `seed_length=8`, `conv_layers=3`, `activation=selu`, `weight_decay=0.0001` | Point-wise profile CNN baseline controls used when `model.model_type=cnn_baseline`; supervised loss is evaluated only at ARGO profile locations, while dense inference can run from EO/surface input with zero ARGO masks. |
 | `model.unet_baseline.*` | `base_channels=32`, `channel_mults=[1,2,4,8]`, `norm_groups=8`, `weight_decay=0.0001` | 3D U-Net baseline controls used when `model.model_type=unet_baseline`; depth is treated as a 3D convolution axis. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
 | `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |

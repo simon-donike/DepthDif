@@ -475,14 +475,8 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
             0, 3, 1, 2
         )
 
-        # No-ARGO handling is field/sample-level, matching the trainable baselines:
-        # supported patches can infer unobserved pixels, unsupported patches are nodata.
-        patch_has_argo = observed.flatten(1).any(dim=1)
-        return torch.where(
-            patch_has_argo.view(batch_size, 1, 1, 1),
-            prediction,
-            torch.full_like(prediction, float("nan")),
-        )
+        _ = observed
+        return prediction
 
     def forward(
         self,
@@ -534,6 +528,145 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
         ]
         return torch.cat(predictions, dim=1) if len(predictions) > 1 else predictions[0]
 
+    @staticmethod
+    def _flatten_profile_grid(tensor: torch.Tensor) -> torch.Tensor:
+        """Flatten a patch tensor into per-pixel profile rows."""
+        return tensor.permute(0, 2, 3, 1).reshape(-1, int(tensor.size(1)))
+
+    def _prepare_observed_profile_features(
+        self,
+        x: torch.Tensor,
+        observed: torch.Tensor,
+        profile_support: torch.Tensor,
+        eo: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+        *,
+        tensor_name: str,
+    ) -> torch.Tensor:
+        """Build conditioning vectors only for ARGO-observed profile columns."""
+        support_flat = profile_support.reshape(-1)
+        safe_x = torch.where(observed, x, torch.zeros_like(x))
+        features = [self._flatten_profile_grid(safe_x)[support_flat]]
+        if self.include_valid_mask:
+            features.append(
+                self._flatten_profile_grid(observed.to(dtype=x.dtype))[support_flat]
+            )
+        if self.include_eo:
+            features.append(
+                self._prepare_surface_feature(
+                    eo,
+                    x,
+                    tensor_name=f"{tensor_name}.include_eo",
+                )[support_flat]
+            )
+        if self.include_land_mask:
+            features.append(
+                self._prepare_surface_feature(
+                    land_mask,
+                    x,
+                    tensor_name=f"{tensor_name}.include_land_mask",
+                )[support_flat]
+            )
+        profile_features = torch.cat(features, dim=1)
+        if int(profile_features.size(1)) != self.profile_feature_count:
+            raise RuntimeError(
+                "Sparse profile feature mismatch: "
+                f"built={int(profile_features.size(1))}, "
+                f"expected={self.profile_feature_count}."
+            )
+        return profile_features
+
+    def _field_sparse_argo_loss(
+        self,
+        *,
+        field: str,
+        x: torch.Tensor,
+        x_valid_mask: torch.Tensor,
+        y: torch.Tensor,
+        y_valid_mask: torch.Tensor,
+        eo: torch.Tensor | None,
+        land_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, int, int]:
+        """Compute loss only at spatial columns containing ARGO observations."""
+        x_mask = self._align_mask_to_reference(
+            x_valid_mask.to(device=x.device), x, mask_name=f"{field}_x_valid_mask"
+        )
+        y_mask = self._align_mask_to_reference(
+            y_valid_mask.to(device=y.device), y, mask_name=f"{field}_y_valid_mask"
+        )
+        observed = (x_mask > 0.5) & torch.isfinite(x)
+        target_support = (y_mask > 0.5) & torch.isfinite(y)
+        if land_mask is not None:
+            land = self._align_mask_to_reference(
+                (land_mask > 0.5).to(dtype=y.dtype, device=y.device),
+                y,
+                mask_name="land_mask",
+            )
+            target_support = target_support & (land > 0.5)
+
+        # Select complete profile columns with ARGO input and target support; all
+        # non-ARGO spatial pixels are skipped before the CNN decoder runs.
+        profile_support = observed.any(dim=1) & target_support.any(dim=1)
+        profile_count = int(profile_support.sum().detach().item())
+        if profile_count == 0:
+            return torch.zeros((), dtype=y.dtype, device=y.device), 0, 0
+
+        features = self._prepare_observed_profile_features(
+            x,
+            observed,
+            profile_support,
+            eo,
+            land_mask,
+            tensor_name=f"cnn_baseline.{field}",
+        )
+        prediction = self.field_decoders[field](features)
+        support_flat = profile_support.reshape(-1)
+        target = self._flatten_profile_grid(y)[support_flat]
+        depth_support = self._flatten_profile_grid(target_support)[support_flat]
+        support = depth_support & torch.isfinite(prediction) & torch.isfinite(target)
+        depth_count = int(support.sum().detach().item())
+        if depth_count == 0:
+            return torch.zeros((), dtype=y.dtype, device=y.device), profile_count, 0
+        return (prediction - target).pow(2)[support].mean(), profile_count, depth_count
+
+    def _sparse_argo_loss(
+        self,
+        batch: dict[str, Any],
+        model_batch: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, int, int]:
+        """Compute weighted ARGO-profile loss across active output fields."""
+        x_by_field = self._split_output_tensor(model_batch["x"], batch)
+        y_by_field = self._split_output_tensor(model_batch["y"], batch)
+        x_mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
+        y_mask_by_field = self._split_output_tensor(model_batch["y_valid_mask"], batch)
+        weighted_loss = torch.zeros(
+            (), dtype=model_batch["y"].dtype, device=self.device
+        )
+        total_profiles = 0
+        total_depth_values = 0
+        for field in self.output_fields:
+            loss, profile_count, depth_count = self._field_sparse_argo_loss(
+                field=field,
+                x=x_by_field[field],
+                x_valid_mask=x_mask_by_field[field],
+                y=y_by_field[field],
+                y_valid_mask=y_mask_by_field[field],
+                eo=batch.get("eo"),
+                land_mask=batch.get("land_mask"),
+            )
+            if depth_count > 0:
+                weighted_loss = weighted_loss + loss * float(depth_count)
+                total_depth_values += int(depth_count)
+            total_profiles += int(profile_count)
+        if total_depth_values == 0:
+            zero = torch.zeros((), dtype=model_batch["y"].dtype, device=self.device)
+            return zero, total_profiles, 0
+        return (
+            weighted_loss / float(total_depth_values),
+            total_profiles,
+            total_depth_values,
+        )
+
     def _shared_step(
         self,
         batch: dict[str, Any],
@@ -543,13 +676,7 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
     ) -> torch.Tensor:
         """Run one train/validation step and log masked normalized MSE."""
         model_batch = self._prepare_model_batch_tensors(batch, include_y=True)
-        prediction = self._predict_normalized(batch)
-        mask = self._supervision_mask(
-            model_batch["y"],
-            model_batch["y_valid_mask"],
-            batch.get("land_mask"),
-        )
-        loss = self._masked_mse(prediction, model_batch["y"], mask)
+        loss, profile_count, depth_count = self._sparse_argo_loss(batch, model_batch)
         trainable_zero = torch.zeros((), dtype=loss.dtype, device=loss.device)
         for parameter in self.parameters():
             if parameter.requires_grad:
@@ -563,7 +690,17 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
             prog_bar=prefix == "val",
             logger=True,
             sync_dist=True,
-            batch_size=batch_size,
+            batch_size=max(1, int(depth_count)),
+        )
+        self.log(
+            f"{prefix}/argo_profile_count",
+            float(profile_count),
+            on_step=prefix == "train",
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True,
+            batch_size=max(1, int(batch_size)),
         )
         if prefix == "val":
             self.log(
@@ -574,7 +711,7 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
                 prog_bar=False,
                 logger=True,
                 sync_dist=True,
-                batch_size=batch_size,
+                batch_size=max(1, int(depth_count)),
             )
         return loss
 
@@ -880,33 +1017,8 @@ class ProfileCNNInfillingBaseline(IDWInterpolationBaseline):
         batch: dict[str, Any],
         model_batch: dict[str, torch.Tensor],
     ) -> dict[str, Any]:
-        """Keep all prediction outputs as nodata for samples without ARGO support."""
-        mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
-        for field in self.output_fields:
-            has_argo = (mask_by_field[field] > 0.5).flatten(1).any(dim=1)
-            for key in (
-                f"y_hat_{field}",
-                f"y_hat_{field}_denorm",
-                f"y_hat_{field}_denorm_for_plot",
-            ):
-                tensor = outputs.get(key)
-                if not torch.is_tensor(tensor):
-                    continue
-                keep_shape = [int(has_argo.size(0))] + [1] * (int(tensor.ndim) - 1)
-                keep = has_argo.to(device=tensor.device).reshape(keep_shape)
-                outputs[key] = torch.where(
-                    keep, tensor, torch.full_like(tensor, float("nan"))
-                )
-
-        alias_field = (
-            "temperature"
-            if "temperature" in self.output_fields
-            else self.output_fields[0]
-        )
-        outputs["y_hat_denorm"] = outputs[f"y_hat_{alias_field}_denorm"]
-        outputs["y_hat_denorm_for_plot"] = outputs[
-            f"y_hat_{alias_field}_denorm_for_plot"
-        ]
+        """Return predictions unchanged so surface-only inference stays valid."""
+        _ = batch, model_batch
         return outputs
 
     @torch.no_grad()

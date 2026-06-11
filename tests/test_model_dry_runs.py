@@ -616,7 +616,7 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.allclose(pred[:, :, 0, 0], pred[:, :, 1, 1]))
 
-    def test_cnn_baseline_empty_argo_patch_returns_nan(self) -> None:
+    def test_cnn_baseline_surface_only_inference_without_argo_is_finite(self) -> None:
         model = ProfileCNNInfillingBaseline(
             generated_channels=2,
             hidden_channels=4,
@@ -626,12 +626,49 @@ class TestModelDryRuns(unittest.TestCase):
         )
         batch = _make_pixel_batch()
         batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+        batch["x"] = torch.zeros_like(batch["x"])
         batch["x_valid_mask"] = torch.zeros_like(batch["x_valid_mask"])
 
         pred = model.predict_step(batch, batch_idx=0)
 
-        self.assertTrue(torch.isnan(pred["y_hat"]).all())
-        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
+        self.assertTrue(torch.isfinite(pred["y_hat"]).all())
+        self.assertTrue(torch.isfinite(pred["y_hat_denorm"]).all())
+
+    def test_cnn_baseline_sparse_loss_decodes_only_argo_profiles(self) -> None:
+        model = ProfileCNNInfillingBaseline(
+            generated_channels=2,
+            hidden_channels=4,
+            seed_length=2,
+            conv_layers=1,
+            output_fields=("temperature",),
+            include_land_mask=False,
+        )
+        batch = {
+            "x": torch.zeros((1, 2, 4, 4), dtype=torch.float32),
+            "y": torch.ones((1, 2, 4, 4), dtype=torch.float32),
+            "x_valid_mask": torch.zeros((1, 2, 4, 4), dtype=torch.bool),
+            "y_valid_mask": torch.ones((1, 2, 4, 4), dtype=torch.bool),
+            "eo": torch.full((1, 1, 4, 4), 0.25, dtype=torch.float32),
+            "land_mask": torch.ones((1, 1, 4, 4), dtype=torch.float32),
+        }
+        batch["x"][:, :, 1, 2] = torch.tensor([0.1, -0.2])
+        batch["x_valid_mask"][:, :, 1, 2] = True
+        model_batch = model._prepare_model_batch_tensors(batch, include_y=True)
+
+        def fake_forward(features: torch.Tensor) -> torch.Tensor:
+            self.assertEqual(tuple(features.shape), (1, model.profile_feature_count))
+            return torch.zeros((1, 2), dtype=features.dtype, device=features.device)
+
+        with patch.object(
+            model.field_decoders["temperature"], "forward", side_effect=fake_forward
+        ):
+            loss, profile_count, depth_count = model._sparse_argo_loss(
+                batch, model_batch
+            )
+
+        self.assertEqual(profile_count, 1)
+        self.assertEqual(depth_count, 2)
+        self.assertTrue(torch.isclose(loss, torch.tensor(1.0)))
 
     def test_cnn_baseline_from_factory_requires_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

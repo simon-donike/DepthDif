@@ -153,7 +153,7 @@ For one field with shape `(B, C, H, W)`, the model reshapes internally:
 -> (B, C, H, W)
 ```
 
-The default initializer is LeCun normal and the default activation is SELU. Training, validation loss, full-reconstruction metrics, no-ARGO behavior, deterministic uncertainty, and `predict_step` outputs follow the same trainable-baseline contract as the LSTM.
+The default initializer is LeCun normal and the default activation is SELU. Training and validation loss are computed only at spatial columns with ARGO observations, comparing the decoded profile to the matching GLORYS profile at that location. Dense `predict_step` still runs over the full patch and can use EO/surface input when ARGO support is absent at inference time.
 
 ## 3D U-Net Baseline
 
@@ -207,13 +207,13 @@ For IDW:
 - A depth band with observations is interpolated from those observations.
 - A depth band with no observations emits `NaN`.
 
-For the point-wise LSTM, profile CNN, and U-Net:
+For the point-wise LSTM and U-Net:
 
 - A pixel with no observed profile can still predict if the patch has ARGO support elsewhere. Its sparse value feature is zero, its observed-mask feature is all zeros, and enabled auxiliary features remain available.
 - A whole patch/sample with no ARGO support for a field emits `NaN` for that field.
 - Those `NaN` values are preserved in normalized and denormalized `predict_step` outputs so export writes nodata.
 
-This behavior keeps no-support global inference regions from turning into arbitrary learned prior predictions while still allowing learned predictions for unobserved pixels inside supported patches.
+For the profile CNN, ARGO support is used to choose supervised training profile locations. Dense inference does not require ARGO support and can predict from EO/surface features with zero ARGO inputs and masks.
 
 ## Predict Step Outputs
 
@@ -253,4 +253,4 @@ Inference uses the same model factory and export path as the diffusion model:
 4. For `lstm_baseline`, `cnn_baseline`, or `unet_baseline`, provide a trained Lightning checkpoint.
 5. The exporter calls `predict_step` and consumes the same normalized, denormalized, and field-specific keys.
 
-For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path; no-ARGO patches become nodata during raster stitching/export.
+For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. IDW/LSTM/U-Net no-ARGO patches become nodata; the profile CNN keeps surface-conditioned predictions available.
