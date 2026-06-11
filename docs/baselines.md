@@ -207,13 +207,13 @@ For IDW:
 - A depth band with observations is interpolated from those observations.
 - A depth band with no observations emits `NaN`.
 
-For the point-wise LSTM and U-Net:
+For the U-Net:
 
 - A pixel with no observed profile can still predict if the patch has ARGO support elsewhere. Its sparse value feature is zero, its observed-mask feature is all zeros, and enabled auxiliary features remain available.
 - A whole patch/sample with no ARGO support for a field emits `NaN` for that field.
 - Those `NaN` values are preserved in normalized and denormalized `predict_step` outputs so export writes nodata.
 
-For the profile CNN, ARGO support is used to choose supervised training profile locations. Dense inference does not require ARGO support and can predict from EO/surface features with zero ARGO inputs and masks.
+For the point-wise LSTM and profile CNN, dense inference does not require ARGO support and can predict from EO/surface features with zero ARGO inputs and masks. The profile CNN still uses ARGO support to choose supervised training profile locations.
 
 ## Predict Step Outputs
 
@@ -253,4 +253,4 @@ Inference uses the same model factory and export path as the diffusion model:
 4. For `lstm_baseline`, `cnn_baseline`, or `unet_baseline`, provide a trained Lightning checkpoint.
 5. The exporter calls `predict_step` and consumes the same normalized, denormalized, and field-specific keys.
 
-For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. IDW/LSTM/U-Net no-ARGO patches become nodata; the profile CNN keeps surface-conditioned predictions available.
+For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. IDW/U-Net no-ARGO patches become nodata; the LSTM and profile CNN keep surface-conditioned predictions available.

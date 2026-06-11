@@ -486,7 +486,7 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.allclose(pred[:, :, 0, 0], pred[:, :, 1, 1]))
 
-    def test_lstm_baseline_empty_argo_patch_returns_nan(self) -> None:
+    def test_lstm_baseline_surface_only_inference_without_argo_is_finite(self) -> None:
         model = PointwiseLSTMBaseline(
             hidden_size=4,
             num_layers=1,
@@ -496,12 +496,13 @@ class TestModelDryRuns(unittest.TestCase):
         )
         batch = _make_pixel_batch()
         batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+        batch["x"] = torch.zeros_like(batch["x"])
         batch["x_valid_mask"] = torch.zeros_like(batch["x_valid_mask"])
 
         pred = model.predict_step(batch, batch_idx=0)
 
-        self.assertTrue(torch.isnan(pred["y_hat"]).all())
-        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
+        self.assertTrue(torch.isfinite(pred["y_hat"]).all())
+        self.assertTrue(torch.isfinite(pred["y_hat_denorm"]).all())
 
     def test_lstm_baseline_from_factory_requires_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

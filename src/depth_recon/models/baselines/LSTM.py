@@ -314,14 +314,7 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
             0, 3, 1, 2
         )
 
-        # Nodata is a patch-level decision; individual missing pixels can still use
-        # EO, depth, and mask features when another ARGO profile exists in the patch.
-        patch_has_argo = observed.flatten(1).any(dim=1)
-        return torch.where(
-            patch_has_argo.view(batch_size, 1, 1, 1),
-            prediction,
-            torch.full_like(prediction, float("nan")),
-        )
+        return prediction
 
     def forward(
         self,
@@ -711,33 +704,8 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         batch: dict[str, Any],
         model_batch: dict[str, torch.Tensor],
     ) -> dict[str, Any]:
-        """Keep all prediction outputs as nodata for samples without ARGO support."""
-        mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
-        for field in self.output_fields:
-            has_argo = (mask_by_field[field] > 0.5).flatten(1).any(dim=1)
-            for key in (
-                f"y_hat_{field}",
-                f"y_hat_{field}_denorm",
-                f"y_hat_{field}_denorm_for_plot",
-            ):
-                tensor = outputs.get(key)
-                if not torch.is_tensor(tensor):
-                    continue
-                keep_shape = [int(has_argo.size(0))] + [1] * (int(tensor.ndim) - 1)
-                keep = has_argo.to(device=tensor.device).reshape(keep_shape)
-                outputs[key] = torch.where(
-                    keep, tensor, torch.full_like(tensor, float("nan"))
-                )
-
-        alias_field = (
-            "temperature"
-            if "temperature" in self.output_fields
-            else self.output_fields[0]
-        )
-        outputs["y_hat_denorm"] = outputs[f"y_hat_{alias_field}_denorm"]
-        outputs["y_hat_denorm_for_plot"] = outputs[
-            f"y_hat_{alias_field}_denorm_for_plot"
-        ]
+        """Return predictions unchanged so EO-only inference remains available."""
+        _ = batch, model_batch
         return outputs
 
     @torch.no_grad()
