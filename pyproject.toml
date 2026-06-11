@@ -39,6 +39,7 @@ depth-recon-infer-week = "depth_recon.inference.api:infer_week_cli"
 depth-recon-download-argo = "depth_recon.inference.api:download_argo_cli"
 depth-recon-download-ostia = "depth_recon.inference.api:download_ostia_cli"
 depth-recon-export-paper-metrics = "depth_recon.inference.export_paper_metrics:main"
+depth-recon-export-paper-week = "depth_recon.inference.export_paper_week:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

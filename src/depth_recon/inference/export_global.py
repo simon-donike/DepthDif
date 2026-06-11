@@ -123,6 +123,7 @@ DEFAULT_DEPTH_EXPORT_REQUESTS = (
     ("2500m", "2500m", 2500.0),
     ("5000m", "5000m", 5000.0),
 )
+DEPTH_EXPORT_MODES = ("default", "native")
 MONTH_ABBREVIATIONS = (
     "",
     "Jan",
@@ -1324,6 +1325,23 @@ def resolve_full_depth_analysis_levels(
     ]
 
 
+def resolve_depth_export_levels_for_mode(
+    depth_axis_m: np.ndarray,
+    *,
+    mode: str = "default",
+) -> list[DepthExportLevel]:
+    """Return persisted depth export levels for the requested export mode."""
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode == "default":
+        return resolve_depth_export_levels(depth_axis_m)
+    if normalized_mode == "native":
+        return resolve_full_depth_analysis_levels(depth_axis_m)
+    supported = ", ".join(DEPTH_EXPORT_MODES)
+    raise ValueError(
+        f"Unsupported depth export mode {mode!r}. Use one of: {supported}."
+    )
+
+
 def _absolute_error_array_from_signed_accumulator(
     accumulator: RasterAccumulator,
 ) -> np.ndarray:
@@ -2402,6 +2420,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--depth-export-mode",
+        choices=DEPTH_EXPORT_MODES,
+        default="default",
+        help=(
+            "Depth raster set to persist. 'default' keeps the display-depth set; "
+            "'native' writes one raster for every native GLORYS/model channel."
+        ),
+    )
+    parser.add_argument(
         "--compact-basin-depth-error",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -2840,8 +2867,11 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         selected_rows[0],
         expected_size=int(sample_target.shape[0]),
     )
+    depth_export_mode = (
+        str(getattr(args, "depth_export_mode", "default")).strip().lower()
+    )
     depth_export_levels = _filter_depth_export_levels(
-        resolve_depth_export_levels(depth_axis_m),
+        resolve_depth_export_levels_for_mode(depth_axis_m, mode=depth_export_mode),
         getattr(args, "depth_export_suffix", None),
     )
     analysis_depth_levels = list(depth_export_levels)
@@ -2990,6 +3020,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         f"land_mask_path={effective_land_mask_path}, "
         f"rectangle={args.rectangle}, "
         f"variable={variable_spec.name}, "
+        f"depth_export_mode={depth_export_mode}, "
         f"depth_exports={','.join(level.label for level in depth_export_levels)}"
     )
 
@@ -3698,6 +3729,7 @@ def run_global_inference(args: argparse.Namespace) -> ExportRunResult:
         "prediction_zero_masked_to_nodata": bool(export_prediction),
         "uncertainty_only": bool(uncertainty_only),
         "prediction_zero_mask_epsilon_c": float(PREDICTION_ZERO_ARTIFACT_EPSILON),
+        "depth_export_mode": depth_export_mode,
         "checkpoint_path": str(ckpt_path),
         "model_config": str(args.model_config),
         "data_config": str(args.data_config),

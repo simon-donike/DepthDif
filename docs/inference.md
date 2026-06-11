@@ -246,8 +246,62 @@ Use `depth_recon.inference.export_wavenumber_spectra` to compute 2D spatial wave
 
 For each selected patch window, the exporter removes a fitted 2D plane, applies a 2D Hann window, runs `np.fft.fft2`, and radial-bins power into common logarithmic wavelength bins (`30-1000 km` by default). Outputs include `patch_spectra.npz`, `patch_spectra_records.csv`, `aggregated_spectra.csv`, `summary.json`, a copied interactive `index.html` spectral dashboard with `spectral-config.json`/`basins/*.json`/`basin-map.geojson`, and per-basin season/year PNG plots under `plots/`. Pass `--rclone-remote` to upload this bundle, or `--no-dashboard` to skip the hosted dashboard assets. This v1 analyzes temperature and salinity fields directly; it does not implement buoyancy spectra, IGW/BM partitioning, or frequency-wavenumber time analysis.
 
-## Paper Metrics Export
-Use `depth_recon.inference.export_paper_metrics` for the paper reconstruction table over one explicit standard week. The command consumes existing full-native-depth global run directories for IDW, LSTM, and a deterministic U-Net export, builds or loads an EN4 climatology baseline, selects a deterministic 20% held-out EN4 date-location set, and writes RMSE, MAE, and R² against both held-out EN4 profiles and dense GLORYS12 fields. Metrics are computed by depth first and table values are equal-weighted means across native GLORYS depth channels. Spectral diagnostics are intentionally separate.
+## Paper-Week Inference Bundle And Metrics Export
+Use `depth_recon.inference.export_paper_week` to create the reusable one-week paper bundle first, then run `depth_recon.inference.export_paper_metrics` as a pure disk post-processing step. The bundle path selects the requested ISO week, creates the deterministic held-out EN4/ARGO split before any model inference, removes those held-out locations from sparse ARGO inputs, exports all native GLORYS/model depth channels, persists held-out profile values, and saves dense GLORYS references once for metrics reuse.
+
+Model methods are declared in a YAML file:
+
+```yaml
+methods:
+  idw:
+    label: IDW
+    model_type: idw_baseline
+  cnn:
+    label: CNN
+    model_type: cnn_baseline
+    temperature_checkpoint: logs/<cnn-temp>/best.ckpt
+    salinity_checkpoint: logs/<cnn-sal>/best.ckpt
+  unet:
+    label: U-Net
+    model_type: unet_baseline
+    temperature_checkpoint: logs/<unet-temp>/best.ckpt
+    salinity_checkpoint: logs/<unet-sal>/best.ckpt
+  depthdif:
+    label: DepthDif
+    model_type: cond_px_dif
+    temperature_checkpoint: logs/<dif-temp>/best.ckpt
+    salinity_checkpoint: logs/<dif-sal>/best.ckpt
+```
+
+Typical bundle export:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_paper_week \
+  --year 2018 \
+  --iso-week 25 \
+  --models-config configs/paper_week_models.yaml \
+  --output-dir inference/outputs/paper_2018_W25 \
+  --device cuda \
+  --sampler ddim \
+  --ddim-steps 100 \
+  --batch-size 8 \
+  --en4-holdout-fraction 0.2 \
+  --seed 7
+```
+
+The bundle writes `paper_week_manifest.json`, `references/en4_holdout_locations.csv`, `references/en4_holdout_profiles.csv`, climatology artifacts, and one `methods/<method>/<variable>/` run per enabled method and variable. Each model run uses `depth_export_mode: native`, so `depth_exports` contains `depth_000` through the final native channel.
+
+Run metrics from the saved bundle:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
+  --paper-run-dir inference/outputs/paper_2018_W25 \
+  --output-dir inference/outputs/paper_2018_W25/metrics
+```
+
+Metrics read the manifest dynamically, including CNN and DepthDif when present, and compute RMSE, MAE, and R² by method, variable, target, and depth against the held-out EN4/ARGO profile CSV and the persisted dense GLORYS reference rasters. Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and `paper_metrics_manifest.json`.
+
+The older direct metrics mode remains available for existing runs:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
@@ -258,8 +312,6 @@ Use `depth_recon.inference.export_paper_metrics` for the paper reconstruction ta
   --unet-run-dir inference/outputs/paper_2018_W25_unet \
   --output-dir inference/outputs/paper_metrics_2018_W25
 ```
-
-Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and climatology GeoTIFFs when they are built. To generate model runs that do not see the held-out EN4 locations, pass the produced split back into global inference with `--en4-holdout-locations-csv inference/outputs/paper_metrics_2018_W25/en4_holdout_locations.csv`; the dataset removes matching `(date, grid_row, grid_col)` profile locations before sparse ARGO rasterization so overlapping patches cannot reintroduce them.
 
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:

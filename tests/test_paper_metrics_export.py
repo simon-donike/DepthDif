@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from depth_recon.inference.export_paper_metrics import (
     _metric_stats,
     export_paper_metrics,
     idw_fill_2d,
+    load_method_runs,
+    prediction_specs_by_method,
     summarize_equal_depth_metrics,
 )
 from tests.test_argo_geotiff_gridded_dataset import _make_geotiff_dataset
@@ -39,6 +42,176 @@ class TestPaperMetricsExport(unittest.TestCase):
             nodata=-9999.0,
         ) as dst:
             dst.write(data.astype(np.float32), 1)
+
+    def _write_multiband_raster(self, path: Path, bands: list[np.ndarray]) -> None:
+        """Write a tiny multiband raster matching the fake dataset grid."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            height=int(bands[0].shape[0]),
+            width=int(bands[0].shape[1]),
+            count=len(bands),
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=from_origin(10.0, 2.0, 1.0, 1.0),
+            nodata=-9999.0,
+        ) as dst:
+            for band_index, band in enumerate(bands, start=1):
+                dst.write(np.asarray(band, dtype=np.float32), band_index)
+
+    def _write_climatology_artifacts(self, root: Path) -> Path:
+        """Write minimal climatology artifacts resolvable by the metrics exporter."""
+        references = root / "references"
+        temp_path = references / "climatology_temperature.tif"
+        sal_path = references / "climatology_salinity.tif"
+        self._write_multiband_raster(
+            temp_path,
+            [
+                np.full((2, 2), 11.0, dtype=np.float32),
+                np.full((2, 2), 21.0, dtype=np.float32),
+            ],
+        )
+        self._write_multiband_raster(
+            sal_path,
+            [
+                np.full((2, 2), 35.1, dtype=np.float32),
+                np.full((2, 2), 36.1, dtype=np.float32),
+            ],
+        )
+        summary_path = references / "climatology_summary.json"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "en4_climatology_idw",
+                    "artifacts": {
+                        "temperature": temp_path.name,
+                        "salinity": sal_path.name,
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return summary_path
+
+    def _write_paper_bundle_manifest(
+        self,
+        root: Path,
+        *,
+        geotiff_root: Path,
+        methods: list[str],
+    ) -> Path:
+        """Write a fake paper-week manifest with dynamic methods and disk refs."""
+        references = root / "references"
+        references.mkdir(parents=True, exist_ok=True)
+        climatology_summary = self._write_climatology_artifacts(root)
+        holdout_locations = references / "en4_holdout_locations.csv"
+        pd.DataFrame.from_records(
+            [
+                {
+                    "date": 20240108,
+                    "grid_row": 0,
+                    "grid_col": 0,
+                    "lon": 10.5,
+                    "lat": 1.5,
+                    "profile_index": 0,
+                    "temperature_valid_depth_count": 2,
+                    "salinity_valid_depth_count": 2,
+                    "holdout_fraction": 0.2,
+                    "split_seed": 7,
+                }
+            ]
+        ).to_csv(holdout_locations, index=False)
+        profile_rows = []
+        for variable, values in {
+            "temperature": [10.0, 20.0],
+            "salinity": [35.0, 36.0],
+        }.items():
+            for channel_index, value in enumerate(values):
+                profile_rows.append(
+                    {
+                        "date": 20240108,
+                        "grid_row": 0,
+                        "grid_col": 0,
+                        "profile_index": 0,
+                        "variable": variable,
+                        "channel_index": channel_index,
+                        "depth_m": 0.0 if channel_index == 0 else 10.0,
+                        "value": value,
+                    }
+                )
+        holdout_profiles = references / "en4_holdout_profiles.csv"
+        pd.DataFrame.from_records(profile_rows).to_csv(holdout_profiles, index=False)
+
+        glorys_refs: dict[str, dict[str, list[dict[str, object]]]] = {}
+        for variable, base_values in {
+            "temperature": [10.0, 20.0],
+            "salinity": [35.0, 36.0],
+        }.items():
+            exports = []
+            for channel_index, base in enumerate(base_values):
+                suffix = f"depth_{channel_index:03d}"
+                tif_path = references / "glorys" / f"{variable}_{suffix}.tif"
+                self._write_prediction_raster(
+                    tif_path, np.full((2, 2), base, dtype=np.float32)
+                )
+                exports.append(
+                    {
+                        "suffix": suffix,
+                        "label": suffix,
+                        "requested_depth_m": 0.0 if channel_index == 0 else 10.0,
+                        "actual_depth_m": 0.0 if channel_index == 0 else 10.0,
+                        "channel_index": channel_index,
+                        "path": str(tif_path.relative_to(root)),
+                        "band_index": 1,
+                    }
+                )
+            glorys_refs[variable] = {"depth_exports": exports}
+
+        manifest = {
+            "schema_version": 1,
+            "kind": "paper_week_inference_bundle",
+            "year": 2024,
+            "iso_week": 2,
+            "selected_date": 20240108,
+            "validation_year": 2018,
+            "en4_holdout_fraction": 0.2,
+            "seed": 7,
+            "dataset_root": str(geotiff_root),
+            "variables": ["temperature", "salinity"],
+            "depth_export_mode": "native",
+            "method_order": methods,
+            "methods": {
+                method: {
+                    "kind": "model",
+                    "label": {"idw": "IDW", "cnn": "CNN", "depthdif": "DepthDif"}[
+                        method
+                    ],
+                    "model_type": {
+                        "idw": "idw_baseline",
+                        "cnn": "cnn_baseline",
+                        "depthdif": "cond_px_dif",
+                    }[method],
+                    "run_dir": str((Path("methods") / method)),
+                }
+                for method in methods
+            },
+            "references": {
+                "en4_holdout_locations_csv": str(holdout_locations.relative_to(root)),
+                "en4_holdout_profiles_csv": str(holdout_profiles.relative_to(root)),
+                "climatology_summary_json": str(climatology_summary.relative_to(root)),
+                "glorys": glorys_refs,
+            },
+        }
+        manifest_path = root / "paper_week_manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        return manifest_path
 
     def _write_method_run(
         self,
@@ -253,6 +426,73 @@ class TestPaperMetricsExport(unittest.TestCase):
             ) as f:
                 manifest_json = json.load(f)
             self.assertEqual(manifest_json["depth_averaging"], "equal_depth_mean")
+
+    def test_bundle_metrics_reads_dynamic_methods_and_disk_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            geotiff_root, _cache_dir, _land_mask_path = _make_geotiff_dataset(root)
+            methods = ["idw", "cnn", "depthdif"]
+            for offset, method in enumerate(methods):
+                self._write_method_run(
+                    root / "methods",
+                    method=method,
+                    geotiff_root=geotiff_root,
+                    offset=float(offset) * 0.25,
+                )
+            self._write_paper_bundle_manifest(
+                root, geotiff_root=geotiff_root, methods=methods
+            )
+            output_dir = root / "metrics"
+
+            with (
+                patch(
+                    "depth_recon.inference.export_paper_metrics._load_holdout_profiles",
+                    side_effect=AssertionError("profile store should not be opened"),
+                ),
+                patch(
+                    "depth_recon.inference.export_paper_metrics._manifest_source_raster_path",
+                    side_effect=AssertionError(
+                        "GLORYS source rasters should not be opened"
+                    ),
+                ),
+            ):
+                manifest = export_paper_metrics(
+                    paper_run_dir=root,
+                    output_dir=output_dir,
+                    climatology_idw_neighbors=1,
+                    climatology_idw_chunk_size=8,
+                    profile_chunk_size=2,
+                )
+
+            summary = pd.read_csv(output_dir / "paper_metrics_summary.csv")
+            by_depth = pd.read_csv(output_dir / "paper_metrics_by_depth.csv")
+            labels = set(summary["method_label"].tolist())
+
+            self.assertEqual(manifest["method_order"], methods)
+            self.assertEqual(len(summary), 12)
+            self.assertEqual(len(by_depth), 24)
+            self.assertIn("CNN", labels)
+            self.assertIn("DepthDif", labels)
+            self.assertTrue((output_dir / "en4_holdout_metrics.csv").is_file())
+            self.assertTrue((output_dir / "glorys_field_metrics.csv").is_file())
+
+    def test_metrics_missing_native_depth_raster_fails_clearly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            geotiff_root, _cache_dir, _land_mask_path = _make_geotiff_dataset(root)
+            cnn_run = self._write_method_run(
+                root, method="cnn", geotiff_root=geotiff_root, offset=0.0
+            )
+            (cnn_run / "temperature" / "temperature_depth_001.tif").unlink()
+            runs = load_method_runs({"cnn": cnn_run}, method_labels={"cnn": "CNN"})
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "CNN temperature run must contain all 2 native depth prediction rasters",
+            ):
+                prediction_specs_by_method(
+                    runs, depth_count=2, method_labels={"cnn": "CNN"}
+                )
 
 
 if __name__ == "__main__":

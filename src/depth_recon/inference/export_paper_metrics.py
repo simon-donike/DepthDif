@@ -1,11 +1,19 @@
-# Example:
+# Example bundle mode:
+# /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
+#   --paper-run-dir inference/outputs/paper_2018_W25 \
+#   --output-dir inference/outputs/paper_2018_W25/metrics \
+#   --climatology-path inference/outputs/paper_2018_W25/methods/climatology \
+#   --en4-holdout-fraction 0.2 --seed 7 --validation-year 2018 \
+#   --climatology-idw-power 2.0 --climatology-idw-eps 1.0e-6 \
+#   --climatology-idw-neighbors 16 --climatology-idw-chunk-size 250000 \
+#   --profile-chunk-size 100000 --overwrite-climatology
+# Example legacy mode:
 # /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
 #   --year 2018 --iso-week 25 \
 #   --idw-run-dir inference/outputs/paper_2018_W25_idw \
 #   --lstm-run-dir inference/outputs/paper_2018_W25_lstm \
 #   --unet-run-dir inference/outputs/paper_2018_W25_unet \
-#   --output-dir inference/outputs/paper_metrics_2018_W25 \
-#   --en4-holdout-fraction 0.2 --seed 7
+#   --output-dir inference/outputs/paper_metrics_2018_W25
 """Export paper-ready weekly reconstruction metrics."""
 
 from __future__ import annotations
@@ -42,11 +50,21 @@ from depth_recon.utils.normalizations import CELSIUS_TO_KELVIN_OFFSET  # noqa: E
 
 VARIABLES = ("temperature", "salinity")
 METHOD_ORDER = ("climatology", "idw", "lstm", "unet")
+DEFAULT_PAPER_METHOD_ORDER = (
+    "climatology",
+    "idw",
+    "lstm",
+    "cnn",
+    "unet",
+    "depthdif",
+)
 METHOD_LABELS = {
     "climatology": "Climatology",
     "idw": "IDW",
     "lstm": "LSTM",
+    "cnn": "CNN",
     "unet": "U-Net",
+    "depthdif": "DepthDif",
 }
 TARGET_ORDER = ("en4", "glorys")
 TARGET_LABELS = {"en4": "EN4 Validation Set", "glorys": "GLORYS12"}
@@ -99,6 +117,25 @@ class ClimatologyArtifacts:
     salinity_path: Path
     summary_path: Path
     summary: dict[str, Any]
+
+
+def _method_label(method: str, method_labels: dict[str, str] | None = None) -> str:
+    """Return the display label for one metric method."""
+    labels = method_labels or METHOD_LABELS
+    return str(labels.get(str(method), METHOD_LABELS.get(str(method), str(method))))
+
+
+def _ordered_methods(
+    methods: Iterable[str],
+    *,
+    preferred_order: Sequence[str] | None = None,
+) -> list[str]:
+    """Return methods in preferred order with unknown methods appended."""
+    method_list = [str(method) for method in methods]
+    order = list(preferred_order or DEFAULT_PAPER_METHOD_ORDER)
+    ordered = [method for method in order if method in method_list]
+    ordered.extend(method for method in method_list if method not in ordered)
+    return ordered
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -601,6 +638,8 @@ def resolve_climatology_artifacts(path: Path) -> ClimatologyArtifacts:
 
 def load_method_runs(
     method_run_dirs: dict[str, Path],
+    *,
+    method_labels: dict[str, str] | None = None,
 ) -> dict[str, dict[str, VariableRun]]:
     """Discover single-variable run summaries for each requested method."""
     runs_by_method: dict[str, dict[str, VariableRun]] = {}
@@ -610,7 +649,7 @@ def load_method_runs(
         missing = sorted(set(VARIABLES) - set(by_variable))
         if missing:
             raise RuntimeError(
-                f"{METHOD_LABELS[method]} run is missing variable runs: {missing}."
+                f"{_method_label(method, method_labels)} run is missing variable runs: {missing}."
             )
         runs_by_method[method] = by_variable
     return runs_by_method
@@ -642,7 +681,10 @@ def _validate_requested_week(date_value: int, *, year: int, iso_week: int) -> No
 
 
 def prediction_specs_by_method(
-    runs_by_method: dict[str, dict[str, VariableRun]], *, depth_count: int
+    runs_by_method: dict[str, dict[str, VariableRun]],
+    *,
+    depth_count: int,
+    method_labels: dict[str, str] | None = None,
 ) -> dict[str, dict[str, dict[int, DepthLayerSpec]]]:
     """Return prediction raster specs keyed by method, variable, and depth channel."""
     out: dict[str, dict[str, dict[int, DepthLayerSpec]]] = {}
@@ -658,7 +700,7 @@ def prediction_specs_by_method(
             missing = sorted(required - set(specs))
             if missing:
                 raise RuntimeError(
-                    f"{METHOD_LABELS[method]} {variable} run must contain all "
+                    f"{_method_label(method, method_labels)} {variable} run must contain all "
                     f"{int(depth_count)} native depth prediction rasters; "
                     f"missing channel indices {missing[:10]}."
                 )
@@ -692,11 +734,12 @@ def _stats_record(
     depth_index: int,
     depth_m: float,
     stats: MetricStats,
+    method_labels: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return one serializable metric row."""
     return {
         "method": method,
-        "method_label": METHOD_LABELS[method],
+        "method_label": _method_label(method, method_labels),
         "target": target,
         "target_label": TARGET_LABELS[target],
         "variable": variable,
@@ -824,6 +867,74 @@ def _load_holdout_profiles(
     raise ValueError(f"Unsupported variable: {variable}")
 
 
+def write_en4_holdout_profiles_csv(
+    *,
+    context: DatasetContext,
+    holdout_df: pd.DataFrame,
+    output_path: Path,
+) -> Path:
+    """Write held-out EN4/ARGO profile values as a tidy metrics CSV."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    depth_axis = np.asarray(context.depth_axis_m, dtype=np.float64)
+    rows: list[dict[str, Any]] = []
+    for variable in VARIABLES:
+        profiles = _load_holdout_profiles(
+            context=context,
+            holdout_df=holdout_df,
+            variable=variable,
+        )
+        for profile_row, (_, holdout_row) in enumerate(holdout_df.iterrows()):
+            for channel_index, depth_m in enumerate(depth_axis.tolist()):
+                rows.append(
+                    {
+                        "date": int(holdout_row["date"]),
+                        "grid_row": int(holdout_row["grid_row"]),
+                        "grid_col": int(holdout_row["grid_col"]),
+                        "profile_index": int(holdout_row["profile_index"]),
+                        "variable": variable,
+                        "channel_index": int(channel_index),
+                        "depth_m": float(depth_m),
+                        "value": float(profiles[int(profile_row), int(channel_index)]),
+                    }
+                )
+    pd.DataFrame.from_records(rows).to_csv(output_path, index=False)
+    return output_path
+
+
+def _profiles_from_holdout_csv(
+    *,
+    holdout_df: pd.DataFrame,
+    profiles_df: pd.DataFrame,
+    variable: str,
+    depth_count: int,
+) -> np.ndarray:
+    """Return a profile matrix from a tidy held-out EN4 profile CSV."""
+    subset = profiles_df[profiles_df["variable"] == str(variable)]
+    if subset.empty:
+        raise RuntimeError(f"Holdout profile CSV has no rows for {variable}.")
+    matrix = np.full((len(holdout_df), int(depth_count)), np.nan, dtype=np.float32)
+    key_to_row = {
+        int(profile_index): row_idx
+        for row_idx, profile_index in enumerate(
+            holdout_df["profile_index"].to_numpy(dtype=np.int64).tolist()
+        )
+    }
+    for row in subset.itertuples(index=False):
+        profile_index = int(getattr(row, "profile_index"))
+        channel_index = int(getattr(row, "channel_index"))
+        if (
+            profile_index not in key_to_row
+            or channel_index < 0
+            or channel_index >= depth_count
+        ):
+            continue
+        matrix[key_to_row[profile_index], channel_index] = np.float32(
+            getattr(row, "value")
+        )
+    return matrix
+
+
 def _prediction_array_for_method(
     *,
     method: str,
@@ -850,31 +961,66 @@ def _prediction_array_for_method(
     )
 
 
+def _glorys_reference_array(
+    *,
+    context: DatasetContext,
+    selected_date: int,
+    variable: str,
+    depth_index: int,
+    glorys_reference_specs: dict[str, dict[int, DepthLayerSpec]] | None = None,
+) -> np.ndarray:
+    """Read one dense GLORYS reference field from bundle refs or dataset rasters."""
+    if glorys_reference_specs is not None:
+        variable_specs = glorys_reference_specs.get(variable, {})
+        reference_spec = variable_specs.get(int(depth_index))
+        if reference_spec is None:
+            raise RuntimeError(
+                f"Paper bundle is missing persisted GLORYS {variable} "
+                f"reference raster for native depth channel {int(depth_index)}."
+            )
+        return read_raster_band_physical(
+            reference_spec.path,
+            variable=variable,
+            band_index=int(reference_spec.band_index),
+        )
+
+    source_path = _manifest_source_raster_path(
+        context, variable=variable, date_value=int(selected_date)
+    )
+    stretch_name = "temperature_kelvin" if variable == "temperature" else "salinity"
+    stretch = context.manifest.get("stretch", {}).get(stretch_name)
+    return read_raster_band_physical(
+        source_path,
+        variable=variable,
+        band_index=int(depth_index) + 1,
+        manifest_stretch=stretch,
+    )
+
+
 def compute_glorys_metrics(
     *,
     context: DatasetContext,
     selected_date: int,
     specs: dict[str, dict[str, dict[int, DepthLayerSpec]]],
     climatology: ClimatologyArtifacts,
+    method_order: Sequence[str] = METHOD_ORDER,
+    method_labels: dict[str, str] | None = None,
+    glorys_reference_specs: dict[str, dict[int, DepthLayerSpec]] | None = None,
 ) -> pd.DataFrame:
     """Compute dense-field metrics against GLORYS12 source rasters."""
     rows: list[dict[str, Any]] = []
     depth_axis = np.asarray(context.depth_axis_m, dtype=np.float64)
     for variable in VARIABLES:
-        source_path = _manifest_source_raster_path(
-            context, variable=variable, date_value=int(selected_date)
-        )
-        stretch_name = "temperature_kelvin" if variable == "temperature" else "salinity"
-        stretch = context.manifest.get("stretch", {}).get(stretch_name)
         for depth_index, depth_m in enumerate(depth_axis.tolist()):
-            reference = read_raster_band_physical(
-                source_path,
+            reference = _glorys_reference_array(
+                context=context,
+                selected_date=int(selected_date),
                 variable=variable,
-                band_index=int(depth_index) + 1,
-                manifest_stretch=stretch,
+                depth_index=int(depth_index),
+                glorys_reference_specs=glorys_reference_specs,
             )
             reference = np.where(context.ocean_mask, reference, np.nan)
-            for method in METHOD_ORDER:
+            for method in method_order:
                 prediction = _prediction_array_for_method(
                     method=method,
                     variable=variable,
@@ -891,6 +1037,7 @@ def compute_glorys_metrics(
                         depth_index=int(depth_index),
                         depth_m=float(depth_m),
                         stats=_metric_stats(prediction, reference),
+                        method_labels=method_labels,
                     )
                 )
     return pd.DataFrame.from_records(rows)
@@ -902,6 +1049,9 @@ def compute_en4_holdout_metrics(
     holdout_df: pd.DataFrame,
     specs: dict[str, dict[str, dict[int, DepthLayerSpec]]],
     climatology: ClimatologyArtifacts,
+    method_order: Sequence[str] = METHOD_ORDER,
+    method_labels: dict[str, str] | None = None,
+    holdout_profiles_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute held-out EN4 profile metrics by method, variable, and depth."""
     rows: list[dict[str, Any]] = []
@@ -909,14 +1059,22 @@ def compute_en4_holdout_metrics(
     grid_cols = holdout_df["grid_col"].to_numpy(dtype=np.int64)
     depth_axis = np.asarray(context.depth_axis_m, dtype=np.float64)
     for variable in VARIABLES:
-        profiles = _load_holdout_profiles(
-            context=context,
-            holdout_df=holdout_df,
-            variable=variable,
-        )
+        if holdout_profiles_df is None:
+            profiles = _load_holdout_profiles(
+                context=context,
+                holdout_df=holdout_df,
+                variable=variable,
+            )
+        else:
+            profiles = _profiles_from_holdout_csv(
+                holdout_df=holdout_df,
+                profiles_df=holdout_profiles_df,
+                variable=variable,
+                depth_count=int(depth_axis.size),
+            )
         for depth_index, depth_m in enumerate(depth_axis.tolist()):
             reference = profiles[:, int(depth_index)]
-            for method in METHOD_ORDER:
+            for method in method_order:
                 prediction_raster = _prediction_array_for_method(
                     method=method,
                     variable=variable,
@@ -942,6 +1100,7 @@ def compute_en4_holdout_metrics(
                         depth_index=int(depth_index),
                         depth_m=float(depth_m),
                         stats=_metric_stats(prediction, reference),
+                        method_labels=method_labels,
                     )
                 )
     return pd.DataFrame.from_records(rows)
@@ -977,8 +1136,17 @@ def _format_metric(value: Any) -> str:
     return f"{float(value):.3f}"
 
 
-def write_latex_table(summary: pd.DataFrame, output_path: Path) -> Path:
+def write_latex_table(
+    summary: pd.DataFrame,
+    output_path: Path,
+    *,
+    method_order: Sequence[str] | None = None,
+) -> Path:
     """Write a LaTeX table matching the paper reconstruction layout."""
+    ordered_methods = _ordered_methods(
+        summary["method"].dropna().astype(str).unique().tolist(),
+        preferred_order=method_order,
+    )
     best: dict[tuple[str, str, str], str] = {}
     for target in TARGET_ORDER:
         for variable in VARIABLES:
@@ -1025,27 +1193,156 @@ def write_latex_table(summary: pd.DataFrame, output_path: Path) -> Path:
         r"\textbf{Method} & RMSE & MAE & $R^2$ & RMSE & MAE & $R^2$ & RMSE & MAE & $R^2$ & RMSE & MAE & $R^2$ \\",
         r"\midrule",
     ]
-    for method in METHOD_ORDER:
+    for method in ordered_methods:
+        label_rows = summary[summary["method"] == method]["method_label"].dropna()
+        method_label = (
+            str(label_rows.iloc[0]) if not label_rows.empty else _method_label(method)
+        )
         row_values = []
         for target in TARGET_ORDER:
             for variable in VARIABLES:
                 for metric in METRIC_ORDER:
                     row_values.append(cell(method, target, variable, metric))
-        lines.append(f"{METHOD_LABELS[method]} & " + " & ".join(row_values) + r" \\")
+        lines.append(f"{method_label} & " + " & ".join(row_values) + r" \\")
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_path
 
 
+def _resolve_manifest_artifact(root: Path, raw_path: Any) -> Path | None:
+    """Resolve a paper-week manifest artifact path."""
+    if raw_path is None:
+        return None
+    text = str(raw_path).strip()
+    if text == "" or text.lower() == "none":
+        return None
+    path = Path(text)
+    return path if path.is_absolute() else Path(root) / path
+
+
+def _load_paper_week_bundle(paper_run_dir: Path) -> dict[str, Any]:
+    """Load a paper-week inference bundle manifest."""
+    root = Path(paper_run_dir)
+    manifest_path = root / "paper_week_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Paper-week manifest not found: {manifest_path}")
+    manifest = _load_json(manifest_path)
+    methods = manifest.get("methods", {})
+    if not isinstance(methods, dict) or not methods:
+        raise RuntimeError(f"Paper-week manifest has no methods: {manifest_path}")
+    method_order = [str(method) for method in manifest.get("method_order", [])]
+    if not method_order:
+        method_order = list(methods)
+    method_labels = {
+        str(method): str(meta.get("label", _method_label(str(method))))
+        for method, meta in methods.items()
+        if isinstance(meta, dict)
+    }
+    method_run_dirs: dict[str, Path] = {}
+    for method in method_order:
+        meta = methods.get(method, {})
+        if not isinstance(meta, dict):
+            continue
+        if str(meta.get("kind", "model")) == "climatology":
+            continue
+        run_dir = _resolve_manifest_artifact(root, meta.get("run_dir"))
+        if run_dir is not None:
+            method_run_dirs[method] = run_dir
+
+    references = manifest.get("references", {})
+    if not isinstance(references, dict):
+        references = {}
+    climatology_path = None
+    climatology_meta = methods.get("climatology", {})
+    if isinstance(climatology_meta, dict):
+        climatology_path = _resolve_manifest_artifact(
+            root,
+            climatology_meta.get("climatology_summary_json")
+            or climatology_meta.get("summary_path"),
+        )
+    if climatology_path is None:
+        climatology_path = _resolve_manifest_artifact(
+            root, references.get("climatology_summary_json")
+        )
+
+    holdout_locations_path = _resolve_manifest_artifact(
+        root, references.get("en4_holdout_locations_csv")
+    )
+    holdout_profiles_path = _resolve_manifest_artifact(
+        root, references.get("en4_holdout_profiles_csv")
+    )
+
+    glorys_reference_specs: dict[str, dict[int, DepthLayerSpec]] = {}
+    glorys_refs = references.get("glorys", {})
+    if isinstance(glorys_refs, dict):
+        for variable, variable_refs in glorys_refs.items():
+            exports = (
+                variable_refs.get("depth_exports", [])
+                if isinstance(variable_refs, dict)
+                else []
+            )
+            variable_specs: dict[int, DepthLayerSpec] = {}
+            for raw_export in exports:
+                if not isinstance(raw_export, dict):
+                    continue
+                path = _resolve_manifest_artifact(root, raw_export.get("path"))
+                if path is None:
+                    continue
+                channel_index = int(raw_export.get("channel_index", 0))
+                variable_specs[channel_index] = DepthLayerSpec(
+                    variable=str(variable),
+                    layer="glorys",
+                    suffix=str(raw_export.get("suffix", f"depth_{channel_index:03d}")),
+                    label=str(raw_export.get("label", f"Depth {channel_index}")),
+                    requested_depth_m=float(
+                        raw_export.get("requested_depth_m", np.nan)
+                    ),
+                    actual_depth_m=float(raw_export.get("actual_depth_m", np.nan)),
+                    channel_index=channel_index,
+                    path=path,
+                    band_index=int(raw_export.get("band_index", 1)),
+                )
+            if variable_specs:
+                glorys_reference_specs[str(variable)] = variable_specs
+
+    return {
+        "root": root,
+        "manifest": manifest,
+        "method_order": method_order,
+        "method_labels": method_labels,
+        "method_run_dirs": method_run_dirs,
+        "climatology_path": climatology_path,
+        "holdout_locations_path": holdout_locations_path,
+        "holdout_profiles_path": holdout_profiles_path,
+        "glorys_reference_specs": glorys_reference_specs,
+    }
+
+
+def _context_from_bundle_or_runs(
+    *,
+    bundle: dict[str, Any] | None,
+    runs_by_method: dict[str, dict[str, VariableRun]],
+) -> DatasetContext:
+    """Resolve dataset context from a paper bundle or method run summaries."""
+    if bundle is not None:
+        dataset_root = bundle["manifest"].get("dataset_root")
+        if dataset_root is not None:
+            root = _resolve_manifest_artifact(bundle["root"], dataset_root)
+            if root is not None:
+                return load_dataset_context(root)
+    return load_dataset_context(_dataset_root_from_runs(runs_by_method))
+
+
 def export_paper_metrics(
     *,
-    year: int,
-    iso_week: int,
     output_dir: Path,
-    idw_run_dir: Path,
-    lstm_run_dir: Path,
-    unet_run_dir: Path,
+    year: int | None = None,
+    iso_week: int | None = None,
+    paper_run_dir: Path | None = None,
+    idw_run_dir: Path | None = None,
+    lstm_run_dir: Path | None = None,
+    unet_run_dir: Path | None = None,
     climatology_path: Path | None = None,
     en4_holdout_fraction: float = 0.2,
     seed: int = 7,
@@ -1060,12 +1357,73 @@ def export_paper_metrics(
     """Export paper metrics and table artifacts for one standard week."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    bundle = _load_paper_week_bundle(Path(paper_run_dir)) if paper_run_dir else None
+
+    if bundle is None:
+        missing = [
+            name
+            for name, value in {
+                "year": year,
+                "iso_week": iso_week,
+                "idw_run_dir": idw_run_dir,
+                "lstm_run_dir": lstm_run_dir,
+                "unet_run_dir": unet_run_dir,
+            }.items()
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "Legacy paper metrics mode requires: " + ", ".join(missing)
+            )
+        method_order = list(METHOD_ORDER)
+        method_labels = dict(METHOD_LABELS)
+        method_run_dirs = {
+            "idw": Path(idw_run_dir),
+            "lstm": Path(lstm_run_dir),
+            "unet": Path(unet_run_dir),
+        }
+        holdout_locations_path = None
+        holdout_profiles_df = None
+        glorys_reference_specs = None
+    else:
+        manifest = bundle["manifest"]
+        year = int(manifest.get("year", year)) if year is None else int(year)
+        iso_week = (
+            int(manifest.get("iso_week", iso_week))
+            if iso_week is None
+            else int(iso_week)
+        )
+        validation_year = int(manifest.get("validation_year", validation_year))
+        en4_holdout_fraction = float(
+            manifest.get("en4_holdout_fraction", en4_holdout_fraction)
+        )
+        seed = int(manifest.get("seed", seed))
+        method_labels = dict(bundle["method_labels"])
+        method_order = _ordered_methods(
+            bundle["method_order"], preferred_order=bundle["method_order"]
+        )
+        method_run_dirs = dict(bundle["method_run_dirs"])
+        if climatology_path is None:
+            climatology_path = bundle["climatology_path"]
+        holdout_locations_path = bundle["holdout_locations_path"]
+        holdout_profiles_path = bundle["holdout_profiles_path"]
+        holdout_profiles_df = (
+            None
+            if holdout_profiles_path is None
+            else pd.read_csv(holdout_profiles_path)
+        )
+        glorys_reference_specs = bundle["glorys_reference_specs"] or None
+
     runs_by_method = load_method_runs(
-        {"idw": idw_run_dir, "lstm": lstm_run_dir, "unet": unet_run_dir}
+        method_run_dirs,
+        method_labels=method_labels,
     )
     selected_date = selected_date_from_runs(runs_by_method)
+    if bundle is not None and bundle["manifest"].get("selected_date") is not None:
+        selected_date = int(bundle["manifest"]["selected_date"])
     _validate_requested_week(selected_date, year=int(year), iso_week=int(iso_week))
-    context = load_dataset_context(_dataset_root_from_runs(runs_by_method))
+    context = _context_from_bundle_or_runs(bundle=bundle, runs_by_method=runs_by_method)
+
     if climatology_path is None:
         climatology = build_climatology_artifacts(
             context=context,
@@ -1080,28 +1438,47 @@ def export_paper_metrics(
         )
     else:
         climatology = resolve_climatology_artifacts(Path(climatology_path))
+
     specs = prediction_specs_by_method(
-        runs_by_method, depth_count=int(context.depth_axis_m.size)
+        runs_by_method,
+        depth_count=int(context.depth_axis_m.size),
+        method_labels=method_labels,
     )
-    holdout_df = select_en4_holdout_locations(
-        context=context,
-        date_value=int(selected_date),
-        fraction=float(en4_holdout_fraction),
-        seed=int(seed),
-    )
+    if "climatology" in method_order:
+        specs["climatology"] = {}
+    method_order = [
+        method for method in method_order if method == "climatology" or method in specs
+    ]
+
+    if holdout_locations_path is not None:
+        holdout_df = pd.read_csv(holdout_locations_path)
+    else:
+        holdout_df = select_en4_holdout_locations(
+            context=context,
+            date_value=int(selected_date),
+            fraction=float(en4_holdout_fraction),
+            seed=int(seed),
+        )
     holdout_path = output_dir / "en4_holdout_locations.csv"
     holdout_df.to_csv(holdout_path, index=False)
+
     glorys_metrics = compute_glorys_metrics(
         context=context,
         selected_date=int(selected_date),
         specs=specs,
         climatology=climatology,
+        method_order=method_order,
+        method_labels=method_labels,
+        glorys_reference_specs=glorys_reference_specs,
     )
     en4_metrics = compute_en4_holdout_metrics(
         context=context,
         holdout_df=holdout_df,
         specs=specs,
         climatology=climatology,
+        method_order=method_order,
+        method_labels=method_labels,
+        holdout_profiles_df=holdout_profiles_df,
     )
     glorys_path = output_dir / "glorys_field_metrics.csv"
     en4_path = output_dir / "en4_holdout_metrics.csv"
@@ -1113,10 +1490,15 @@ def export_paper_metrics(
     by_depth.to_csv(by_depth_path, index=False)
     summary = summarize_equal_depth_metrics(by_depth)
     summary.to_csv(summary_path, index=False)
-    table_path = write_latex_table(summary, output_dir / "recon_results_table.tex")
+    table_path = write_latex_table(
+        summary,
+        output_dir / "recon_results_table.tex",
+        method_order=method_order,
+    )
     manifest = {
         "schema_version": 1,
         "kind": "paper_reconstruction_metrics",
+        "paper_run_dir": None if paper_run_dir is None else str(paper_run_dir),
         "year": int(year),
         "iso_week": int(iso_week),
         "selected_date": int(selected_date),
@@ -1124,11 +1506,11 @@ def export_paper_metrics(
         "en4_holdout_fraction": float(en4_holdout_fraction),
         "seed": int(seed),
         "depth_averaging": "equal_depth_mean",
-        "run_dirs": {
-            "idw": str(idw_run_dir),
-            "lstm": str(lstm_run_dir),
-            "unet": str(unet_run_dir),
+        "method_order": list(method_order),
+        "method_labels": {
+            method: _method_label(method, method_labels) for method in method_order
         },
+        "run_dirs": {method: str(path) for method, path in method_run_dirs.items()},
         "artifacts": {
             "paper_metrics_summary_csv": summary_path.name,
             "paper_metrics_by_depth_csv": by_depth_path.name,
@@ -1154,14 +1536,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Export paper-ready reconstruction metrics for one standard week."
     )
-    parser.add_argument("--year", type=int, required=True, help="ISO year to evaluate.")
     parser.add_argument(
-        "--iso-week", type=int, required=True, help="ISO week to evaluate."
+        "--paper-run-dir",
+        type=Path,
+        default=None,
+        help="Paper-week inference bundle directory with paper_week_manifest.json.",
+    )
+    parser.add_argument("--year", type=int, default=None, help="ISO year to evaluate.")
+    parser.add_argument(
+        "--iso-week", type=int, default=None, help="ISO week to evaluate."
     )
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--idw-run-dir", type=Path, required=True)
-    parser.add_argument("--lstm-run-dir", type=Path, required=True)
-    parser.add_argument("--unet-run-dir", type=Path, required=True)
+    parser.add_argument("--idw-run-dir", type=Path, default=None)
+    parser.add_argument("--lstm-run-dir", type=Path, default=None)
+    parser.add_argument("--unet-run-dir", type=Path, default=None)
     parser.add_argument(
         "--climatology-path",
         type=Path,
@@ -1209,6 +1597,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Run the paper metrics CLI."""
     args = _build_parser().parse_args(argv)
     manifest = export_paper_metrics(
+        paper_run_dir=args.paper_run_dir,
         year=args.year,
         iso_week=args.iso_week,
         output_dir=args.output_dir,

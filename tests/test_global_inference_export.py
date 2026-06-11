@@ -49,6 +49,7 @@ from depth_recon.inference.export_global import (
     build_global_mosaic,
     global_inference_dataset_overrides,
     resolve_depth_export_levels,
+    resolve_depth_export_levels_for_mode,
     select_export_indices,
     write_absolute_error_geotiff,
     write_global_top_band_geotiff,
@@ -362,6 +363,17 @@ class TestGlobalInferenceExport(unittest.TestCase):
     def test_default_export_gaussian_blur_sigma_is_zero(self) -> None:
         self.assertEqual(DEFAULT_EXPORT_GAUSSIAN_BLUR_SIGMA, 0.0)
 
+    def test_native_depth_export_mode_returns_all_depth_channels(self) -> None:
+        depth_axis = np.asarray([0.5, 10.0, 20.0], dtype=np.float32)
+
+        levels = resolve_depth_export_levels_for_mode(depth_axis, mode="native")
+
+        self.assertEqual(
+            [level.suffix for level in levels], ["depth_000", "depth_001", "depth_002"]
+        )
+        self.assertEqual([level.channel_index for level in levels], [0, 1, 2])
+        self.assertEqual([level.actual_depth_m for level in levels], [0.5, 10.0, 20.0])
+
     def test_inference_loader_defaults_are_parallel_prefetch(self) -> None:
         parser = _build_parser()
 
@@ -380,6 +392,25 @@ class TestGlobalInferenceExport(unittest.TestCase):
         self.assertEqual(args.uncertainty_num_samples, DEFAULT_UNCERTAINTY_NUM_SAMPLES)
         self.assertFalse(args.uncertainty_collapse_depth)
         self.assertEqual(args.full_sample_count, DEFAULT_FULL_SAMPLE_COUNT)
+
+    def test_parser_defaults_to_display_depth_export_mode(self) -> None:
+        args = _build_parser().parse_args(["--year", "2026", "--iso-week", "2"])
+
+        self.assertEqual(args.depth_export_mode, "default")
+
+    def test_parser_accepts_native_depth_export_mode(self) -> None:
+        args = _build_parser().parse_args(
+            [
+                "--year",
+                "2026",
+                "--iso-week",
+                "2",
+                "--depth-export-mode",
+                "native",
+            ]
+        )
+
+        self.assertEqual(args.depth_export_mode, "native")
 
     def test_parser_accepts_ddim_sampler_options(self) -> None:
         args = _build_parser().parse_args(
