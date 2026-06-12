@@ -49,6 +49,8 @@ data:  # dataset, split, and loader inputs
       require_argo_for_train: true  # keep train rows with ARGO
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
+      filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
+      accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     synthetic:  # synthetic sparse-input mode
       enabled: false  # sample x from y instead of ARGO
       pixel_count: 250  # synthetic observed pixels

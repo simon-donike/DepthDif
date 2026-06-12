@@ -164,8 +164,11 @@ Contents:
 - Source inputs: compact ARGO profile zarr, OSTIA SST rasters, and SSS `sos` rasters
 - Temperature strategy: SST plus IDW-interpolated ARGO vertical temperature deltas from each profile's shallowest valid level
 - Salinity strategy: SSS surface salinity plus IDW-interpolated ARGO vertical salinity deltas from each profile's shallowest valid level
+- Robust profile filtering: each date/depth/variable trims the outer 25% of profile deltas when there is enough support before IDW interpolation
+- Vertical gap fill: missing per-profile delta depths are linearly interpolated from available ARGO depths, with nearest-edge values held beyond observed depths
 - Nodata strategy: synthetic valid pixels are copied from same-date GLORYS `thetao`/`so` masks after synthesis
-- Final smoothing: none through 200 m, then only light depth-dependent smoothing below 200 m
+- Smoothing: no Gaussian smoothing is applied in the current robust-delta experiment
+- IDW backend: Single-pass CUDA blockwise top-k IDW is used for the full temperature/salinity depth stack when available, with CPU KD-tree fallback
 - Stored physical units: Kelvin for `thetao`, PSU for `so`
 - File structure: one multiband GeoTIFF per weekly date
 - Storage contract: the same `uint8` stretches, nodata code, CRS, transform, band descriptions, and decode formula as `rasters/glorys/thetao` and `rasters/glorys/so`
@@ -175,14 +178,16 @@ Create the synthetic target rasters in place with:
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.synthetic_dataset_creation.synthetic_pretraining_geotiff \
   --geotiff-root-dir /work/data/OceanVariableReconstruction \
-  --workers 4 \
+  --workers 1 \
   --overwrite-synthetic
 ```
 
 The exporter preserves the original `rasters.glorys` manifest entries and adds
 `rasters.synthetic`. Training still uses GLORYS by default; set
 `data.dataset.sampling.target_source: synthetic` to train against the synthetic
-pretraining targets.
+pretraining targets. The exporter trims 25% total delta outliers, fills missing
+profile delta depths vertically, uses single-pass CUDA stack IDW when available, applies no Gaussian
+smoothing, and records those parameters in the manifest.
 
 When uploading with `huggingface_hub`, pass `ignore_patterns=["rasters/synthetic/**", "manifest.yaml.synthetic_backup_*"]`; the packaged dataset root also writes a `.gitignore` for Git-based HF repo updates.
 
@@ -357,7 +362,7 @@ Run from the repository root:
   --start-date 20100101 \
   --end-date 20240731 \
   --surface-aggregate-days 7 \
-  --workers 4 \
+  --workers 1 \
   --rasters-only \
   --overwrite
 ```

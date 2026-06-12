@@ -50,6 +50,8 @@ def _minimal_super_config(
                     "require_argo_for_train": True,
                     "require_argo_for_val": True,
                     "require_argo_for_all": False,
+                    "filter_bad_argo_quality": True,
+                    "accepted_argo_qc_flags": [1, 2],
                 },
                 "synthetic": {"enabled": False, "pixel_count": 1},
                 "output": {

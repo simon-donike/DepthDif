@@ -2,7 +2,7 @@
 Example:
  /work/envs/depth/bin/python -m depth_recon.data.synthetic_dataset_creation.synthetic_pretraining_geotiff \
    --geotiff-root-dir /work/data/OceanVariableReconstruction \
-   --workers 4 \
+   --workers 1 \
    --overwrite-synthetic
 
 Create SST/SSS-guided synthetic pretraining target rasters beside a packaged
@@ -23,6 +23,7 @@ import numpy as np
 import rasterio
 from scipy import ndimage as ndi
 from scipy.spatial import cKDTree
+import torch
 from tqdm import tqdm
 import yaml
 
@@ -52,8 +53,10 @@ NODATA_CODE = 255
 DEFAULT_IDW_K = 8
 DEFAULT_IDW_POWER = 2.0
 DEFAULT_IDW_BLOCK_ROWS = 128
-DEFAULT_SALINITY_SURFACE_SMOOTHING_SIGMA = 0.0
-STRATEGY_NAME = "vertical_delta_sss_v4"
+DEFAULT_IDW_QUERY_CHUNK_SIZE = 16384
+DELTA_OUTLIER_TRIM_FRACTION = 0.25
+MIN_DELTA_TRIM_SUPPORT = 4
+STRATEGY_NAME = "robust_vertical_delta_sss_v6"
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,21 @@ class SyntheticDateResult:
     date: int
     thetao: dict[str, Any] | None
     so: dict[str, Any] | None
+    skipped: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class SyntheticFieldResult:
+    """Physical synthetic fields and masks for one date before GeoTIFF writing."""
+
+    date: int
+    temperature: np.ndarray | None
+    salinity: np.ndarray | None
+    thetao_valid_mask: np.ndarray | None
+    so_valid_mask: np.ndarray | None
+    depth_axis_m: np.ndarray
+    grid: TargetGrid
+    profile_count: int
     skipped: dict[str, Any] | None
 
 
@@ -86,41 +104,6 @@ def _read_raster_band(
         np.float32,
         copy=False,
     )
-
-
-def _read_ocean_mask(path: Path) -> np.ndarray:
-    """Read a land-mask GeoTIFF as a boolean ocean mask."""
-    with rasterio.open(path) as src:
-        values = src.read(1)
-    return np.asarray(values <= 0, dtype=bool)
-
-
-def _nan_gaussian_filter(values: np.ndarray, sigma: float) -> np.ndarray:
-    """Apply a Gaussian filter while ignoring NaN values."""
-    arr = np.asarray(values, dtype=np.float32)
-    if float(sigma) <= 0.0:
-        return arr.copy()
-    valid = np.isfinite(arr)
-    filled = np.where(valid, arr, 0.0).astype(np.float32, copy=False)
-    weights = valid.astype(np.float32, copy=False)
-    smooth_values = ndi.gaussian_filter(filled, sigma=float(sigma), mode="nearest")
-    smooth_weights = ndi.gaussian_filter(weights, sigma=float(sigma), mode="nearest")
-    out = np.full(arr.shape, np.nan, dtype=np.float32)
-    keep = smooth_weights > np.float32(1.0e-6)
-    out[keep] = smooth_values[keep] / smooth_weights[keep]
-    return out
-
-
-def _depth_smoothing_sigma(depth_m: float) -> float:
-    """Return final synthetic-field smoothing sigma for one depth."""
-    depth = float(depth_m)
-    if depth <= 200.0:
-        return 0.0
-    if depth <= 700.0:
-        return 0.5
-    if depth <= 1500.0:
-        return 1.0
-    return 1.5
 
 
 def _read_glorys_valid_mask(
@@ -169,7 +152,63 @@ def _profile_surface_values(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]
     return surface, has_valid
 
 
-def _idw_interpolate_grid(
+def _profile_vertical_deltas(
+    values: np.ndarray,
+    depth_axis_m: np.ndarray,
+) -> np.ndarray:
+    """Build profile deltas from the shallowest value and fill missing depths."""
+    arr = np.asarray(values, dtype=np.float32)
+    depth_axis = np.asarray(depth_axis_m, dtype=np.float32).reshape(-1)
+    surface, has_valid = _profile_surface_values(arr)
+    deltas = arr - surface[:, None]
+    filled = np.full_like(deltas, np.nan, dtype=np.float32)
+
+    for profile_idx in np.flatnonzero(has_valid).tolist():
+        valid = np.isfinite(deltas[profile_idx])
+        if int(valid.sum()) == 1:
+            filled[profile_idx, :] = deltas[profile_idx, valid][0]
+            continue
+        if int(valid.sum()) > 1:
+            # Use the observed vertical delta shape for the whole 50-level axis.
+            # np.interp holds the nearest edge value beyond observed depths, which
+            # avoids losing deep levels when ARGO ends above the target depth.
+            filled[profile_idx, :] = np.interp(
+                depth_axis,
+                depth_axis[valid],
+                deltas[profile_idx, valid],
+            ).astype(np.float32, copy=False)
+    return filled
+
+
+def _trim_delta_outliers(
+    values: np.ndarray,
+    *,
+    trim_fraction: float,
+    min_support: int,
+) -> np.ndarray:
+    """Drop the most extreme profile deltas before IDW interpolation."""
+    arr = np.asarray(values, dtype=np.float32).copy()
+    finite = np.isfinite(arr)
+    support = int(finite.sum())
+    fraction = max(0.0, min(float(trim_fraction), 0.95))
+    if fraction <= 0.0 or support < max(1, int(min_support)):
+        return arr
+
+    tail_percent = 50.0 * fraction
+    low, high = np.nanpercentile(arr[finite], [tail_percent, 100.0 - tail_percent])
+    keep = finite & (arr >= np.float32(low)) & (arr <= np.float32(high))
+    if not np.any(keep):
+        return arr
+    arr[finite & ~keep] = np.nan
+    return arr
+
+
+def _idw_candidate_count(k: int, point_count: int) -> int:
+    """Return the shared neighbor count used for stacked IDW."""
+    return max(1, min(max(int(k) * 8, 64), int(point_count)))
+
+
+def _idw_interpolate_stack_cpu(
     *,
     point_rows: np.ndarray,
     point_cols: np.ndarray,
@@ -179,22 +218,27 @@ def _idw_interpolate_grid(
     power: float,
     block_rows: int,
 ) -> np.ndarray:
-    """Interpolate point values to a full raster grid with inverse-distance weights."""
+    """Interpolate multiple depth columns on CPU with one neighbor search."""
     rows = np.asarray(point_rows, dtype=np.float64).reshape(-1)
     cols = np.asarray(point_cols, dtype=np.float64).reshape(-1)
-    values = np.asarray(point_values, dtype=np.float32).reshape(-1)
-    valid = np.isfinite(rows) & np.isfinite(cols) & np.isfinite(values)
+    values = np.asarray(point_values, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError(f"Expected point_values shaped (N,D), got {values.shape}.")
+    valid = np.isfinite(rows) & np.isfinite(cols) & np.any(np.isfinite(values), axis=1)
+    depth_count = int(values.shape[1])
     if not np.any(valid):
-        return np.full(shape, np.nan, dtype=np.float32)
+        return np.full((depth_count, *shape), np.nan, dtype=np.float32)
 
     rows = rows[valid]
     cols = cols[valid]
     values = values[valid]
     tree = cKDTree(np.column_stack([rows, cols]))
-    k_eff = max(1, min(int(k), int(values.size)))
-    out = np.full(shape, np.nan, dtype=np.float32)
+    k_eff = _idw_candidate_count(k, int(values.shape[0]))
     height, width = int(shape[0]), int(shape[1])
-    block_size = max(1, int(block_rows))
+    total = height * width
+    out = np.empty((depth_count, total), dtype=np.float32)
+    max_rows_by_chunk = max(1, DEFAULT_IDW_QUERY_CHUNK_SIZE // max(1, width))
+    block_size = max(1, min(int(block_rows), max_rows_by_chunk))
     eps = np.finfo(np.float32).eps
 
     for y0 in range(0, height, block_size):
@@ -206,18 +250,120 @@ def _idw_interpolate_grid(
             distances = distances[:, None]
             indices = indices[:, None]
         neighbor_values = values[indices]
-        zero_distance = distances <= eps
-        weights = np.power(np.maximum(distances, eps), -float(power))
-        weighted = np.sum(weights * neighbor_values, axis=1) / np.sum(weights, axis=1)
-        exact_rows = np.any(zero_distance, axis=1)
-        if np.any(exact_rows):
-            exact_indices = np.argmax(zero_distance[exact_rows], axis=1)
-            weighted[exact_rows] = neighbor_values[exact_rows, exact_indices]
-        out[y0:y1, :] = weighted.reshape(y1 - y0, width).astype(
-            np.float32,
-            copy=False,
+        finite = np.isfinite(neighbor_values)
+        weights = np.power(np.maximum(distances, eps), -float(power))[:, :, None]
+        safe_values = np.where(finite, neighbor_values, 0.0)
+        safe_weights = np.where(finite, weights, 0.0)
+        numerator = np.sum(safe_weights * safe_values, axis=1)
+        denominator = np.sum(safe_weights, axis=1)
+        weighted = np.full(numerator.shape, np.nan, dtype=np.float32)
+        keep = denominator > eps
+        weighted[keep] = (numerator[keep] / denominator[keep]).astype(
+            np.float32, copy=False
         )
-    return out
+        start = y0 * width
+        stop = y1 * width
+        out[:, start:stop] = weighted.T
+    return out.reshape(depth_count, height, width)
+
+
+def _idw_interpolate_stack_cuda(
+    *,
+    point_rows: np.ndarray,
+    point_cols: np.ndarray,
+    point_values: np.ndarray,
+    shape: tuple[int, int],
+    k: int,
+    power: float,
+    query_chunk_size: int,
+) -> np.ndarray:
+    """Interpolate multiple depth columns on CUDA with one neighbor search."""
+    rows = np.asarray(point_rows, dtype=np.float32).reshape(-1)
+    cols = np.asarray(point_cols, dtype=np.float32).reshape(-1)
+    values = np.asarray(point_values, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError(f"Expected point_values shaped (N,D), got {values.shape}.")
+    valid = np.isfinite(rows) & np.isfinite(cols) & np.any(np.isfinite(values), axis=1)
+    depth_count = int(values.shape[1])
+    if not np.any(valid):
+        return np.full((depth_count, *shape), np.nan, dtype=np.float32)
+
+    device = torch.device("cuda")
+    points = torch.as_tensor(
+        np.column_stack([rows[valid], cols[valid]]),
+        dtype=torch.float32,
+        device=device,
+    )
+    point_values_t = torch.as_tensor(values[valid], dtype=torch.float32, device=device)
+    k_eff = _idw_candidate_count(k, int(point_values_t.shape[0]))
+    height, width = int(shape[0]), int(shape[1])
+    total = height * width
+    out = np.empty((depth_count, total), dtype=np.float32)
+    chunk_size = max(1024, int(query_chunk_size))
+    eps = torch.finfo(torch.float32).eps
+
+    for start in range(0, total, chunk_size):
+        stop = min(total, start + chunk_size)
+        linear = torch.arange(start, stop, dtype=torch.float32, device=device)
+        query = torch.stack(
+            [torch.floor(linear / float(width)), torch.remainder(linear, float(width))],
+            dim=1,
+        )
+        diff = query[:, None, :] - points[None, :, :]
+        dist2 = torch.sum(diff * diff, dim=2)
+        nearest_dist2, nearest_idx = torch.topk(
+            dist2, k=k_eff, dim=1, largest=False, sorted=False
+        )
+        neighbor_values = point_values_t[nearest_idx]
+        finite = torch.isfinite(neighbor_values)
+        weights = torch.pow(torch.clamp(nearest_dist2, min=eps), -0.5 * float(power))
+        safe_values = torch.where(
+            finite, neighbor_values, torch.zeros_like(neighbor_values)
+        )
+        safe_weights = weights[:, :, None] * finite.to(dtype=torch.float32)
+        numerator = torch.sum(safe_weights * safe_values, dim=1)
+        denominator = torch.sum(safe_weights, dim=1)
+        weighted = numerator / denominator.clamp_min(eps)
+        weighted = torch.where(
+            denominator > eps, weighted, torch.full_like(weighted, torch.nan)
+        )
+        out[:, start:stop] = weighted.detach().cpu().numpy().T
+    return out.reshape(depth_count, height, width)
+
+
+def _idw_interpolate_stack(
+    *,
+    point_rows: np.ndarray,
+    point_cols: np.ndarray,
+    point_values: np.ndarray,
+    shape: tuple[int, int],
+    k: int,
+    power: float,
+    block_rows: int,
+) -> np.ndarray:
+    """Interpolate a full depth stack with shared IDW neighbor geometry."""
+    if torch.cuda.is_available():
+        try:
+            return _idw_interpolate_stack_cuda(
+                point_rows=point_rows,
+                point_cols=point_cols,
+                point_values=point_values,
+                shape=shape,
+                k=k,
+                power=power,
+                query_chunk_size=DEFAULT_IDW_QUERY_CHUNK_SIZE,
+            )
+        except RuntimeError:
+            torch.cuda.empty_cache()
+    return _idw_interpolate_stack_cpu(
+        point_rows=point_rows,
+        point_cols=point_cols,
+        point_values=point_values,
+        shape=shape,
+        k=k,
+        power=power,
+        block_rows=block_rows,
+    )
 
 
 def _profile_indices_for_date(
@@ -317,25 +463,30 @@ def _write_synthetic_multiband_raster(
     }
 
 
-def _export_synthetic_date(task: dict[str, Any]) -> dict[str, Any]:
-    """Generate and write synthetic temperature/salinity rasters for one date."""
+def _build_synthetic_fields(task: dict[str, Any]) -> SyntheticFieldResult:
+    """Generate physical synthetic fields for one date without writing rasters."""
     root_dir = Path(task["geotiff_root_dir"])
     manifest = task["manifest"]
     date_value = int(task["date"])
     grid = _load_target_grid(Path(task["land_mask_path"]))
-    ocean_mask = _read_ocean_mask(Path(task["land_mask_path"]))
     depth_axis = np.asarray(task["depth_axis_m"], dtype=np.float32).reshape(-1)
+
     argo_path = _resolve_manifest_path(root_dir, manifest["argo"]["path"])
     profile_store = ArgoGeoTIFFProfileStore(argo_path, include_salinity=True)
     try:
         indices = _profile_indices_for_date(profile_store, date_value)
         if indices.size == 0:
-            return SyntheticDateResult(
+            return SyntheticFieldResult(
                 date=date_value,
-                thetao=None,
-                so=None,
+                temperature=None,
+                salinity=None,
+                thetao_valid_mask=None,
+                so_valid_mask=None,
+                depth_axis_m=depth_axis,
+                grid=grid,
+                profile_count=0,
                 skipped={"reason": "no_argo_profiles", "argo_profile_count": 0},
-            ).__dict__
+            )
 
         rows = profile_store.grid_row[indices].astype(np.int64, copy=False)
         cols = profile_store.grid_col[indices].astype(np.int64, copy=False)
@@ -359,115 +510,125 @@ def _export_synthetic_date(task: dict[str, Any]) -> dict[str, Any]:
             band_count=int(depth_axis.size),
             grid=grid,
         )
-        sst = _fill_missing_nearest(sst, ocean_mask & thetao_valid_mask.any(axis=0))
-        sss = _fill_missing_nearest(sss, ocean_mask & so_valid_mask.any(axis=0))
+        sst = _fill_missing_nearest(sst, thetao_valid_mask.any(axis=0))
+        sss = _fill_missing_nearest(sss, so_valid_mask.any(axis=0))
 
-        temperature = np.full(
-            (int(depth_axis.size), int(grid.height), int(grid.width)),
-            np.nan,
-            dtype=np.float32,
-        )
-        salinity_out = np.full_like(temperature, np.nan)
-
-        temp_surface, temp_profile_valid = _profile_surface_values(temp_kelvin)
-        sal_surface, sal_profile_valid = _profile_surface_values(salinity)
-        _ = temp_profile_valid
-        _ = sal_profile_valid
-
-        sal_surface_prior = _nan_gaussian_filter(
-            sss,
-            float(task["salinity_surface_smoothing_sigma"]),
-        )
-
-        for depth_idx, depth_value in enumerate(depth_axis.tolist()):
-            temp_delta = temp_kelvin[:, depth_idx] - temp_surface
-            if np.any(np.isfinite(temp_delta)):
-                temp_delta_field = _idw_interpolate_grid(
-                    point_rows=rows,
-                    point_cols=cols,
-                    point_values=temp_delta,
-                    shape=(int(grid.height), int(grid.width)),
-                    k=int(task["idw_k"]),
-                    power=float(task["idw_power"]),
-                    block_rows=int(task["idw_block_rows"]),
-                )
-            else:
-                temp_delta_field = np.zeros(
-                    (int(grid.height), int(grid.width)), dtype=np.float32
-                )
-            temp_field = sst + temp_delta_field
-            temp_field = _nan_gaussian_filter(
-                temp_field,
-                _depth_smoothing_sigma(float(depth_value)),
+        temp_delta_profiles = _profile_vertical_deltas(temp_kelvin, depth_axis)
+        sal_delta_profiles = _profile_vertical_deltas(salinity, depth_axis)
+        sal_surface_prior = sss
+        trim_fraction = float(
+            task.get(
+                "delta_outlier_trim_fraction",
+                DELTA_OUTLIER_TRIM_FRACTION,
             )
-            temp_mask = thetao_valid_mask[depth_idx]
-            temperature[depth_idx][temp_mask & np.isfinite(temp_field)] = temp_field[
-                temp_mask & np.isfinite(temp_field)
-            ]
+        )
+        min_trim_support = int(
+            task.get("min_delta_trim_support", MIN_DELTA_TRIM_SUPPORT)
+        )
 
-            sal_delta = salinity[:, depth_idx] - sal_surface
-            if np.any(np.isfinite(sal_delta)):
-                sal_delta_field = _idw_interpolate_grid(
-                    point_rows=rows,
-                    point_cols=cols,
-                    point_values=sal_delta,
-                    shape=(int(grid.height), int(grid.width)),
-                    k=int(task["idw_k"]),
-                    power=float(task["idw_power"]),
-                    block_rows=int(task["idw_block_rows"]),
-                )
-            else:
-                sal_delta_field = np.zeros(
-                    (int(grid.height), int(grid.width)), dtype=np.float32
-                )
-            sal_field = sal_surface_prior + sal_delta_field
-            sal_field = _nan_gaussian_filter(
-                sal_field,
-                _depth_smoothing_sigma(float(depth_value)),
+        for depth_idx in range(int(depth_axis.size)):
+            temp_delta_profiles[:, depth_idx] = _trim_delta_outliers(
+                temp_delta_profiles[:, depth_idx],
+                trim_fraction=trim_fraction,
+                min_support=min_trim_support,
             )
-            sal_mask = so_valid_mask[depth_idx]
-            salinity_out[depth_idx][sal_mask & np.isfinite(sal_field)] = sal_field[
-                sal_mask & np.isfinite(sal_field)
-            ]
+            sal_delta_profiles[:, depth_idx] = _trim_delta_outliers(
+                sal_delta_profiles[:, depth_idx],
+                trim_fraction=trim_fraction,
+                min_support=min_trim_support,
+            )
 
-        thetao_path = (
-            root_dir / "rasters" / "synthetic" / "thetao" / f"thetao_{date_value}.tif"
+        combined_delta_profiles = np.concatenate(
+            [temp_delta_profiles, sal_delta_profiles], axis=1
         )
-        so_path = root_dir / "rasters" / "synthetic" / "so" / f"so_{date_value}.tif"
-        thetao_result = _write_synthetic_multiband_raster(
-            path=thetao_path,
-            output_dir=root_dir,
-            values=temperature,
-            date_value=date_value,
-            grid=grid,
-            variable="thetao",
-            stretch_name=TEMPERATURE_KELVIN_STRETCH,
-            depth_axis_m=depth_axis,
-            overwrite_synthetic=bool(task["overwrite_synthetic"]),
-            skip_existing=bool(task["skip_existing"]),
+        del temp_delta_profiles, sal_delta_profiles
+        combined_delta_fields = _idw_interpolate_stack(
+            point_rows=rows,
+            point_cols=cols,
+            point_values=combined_delta_profiles,
+            shape=(int(grid.height), int(grid.width)),
+            k=int(task["idw_k"]),
+            power=float(task["idw_power"]),
+            block_rows=int(task["idw_block_rows"]),
         )
-        so_result = _write_synthetic_multiband_raster(
-            path=so_path,
-            output_dir=root_dir,
-            values=salinity_out,
-            date_value=date_value,
-            grid=grid,
-            variable="so",
-            stretch_name=SALINITY_STRETCH,
-            depth_axis_m=depth_axis,
-            overwrite_synthetic=bool(task["overwrite_synthetic"]),
-            skip_existing=bool(task["skip_existing"]),
-        )
-        result = SyntheticDateResult(
+        del combined_delta_profiles
+        depth_count = int(depth_axis.size)
+        temperature = combined_delta_fields[:depth_count].copy()
+        salinity_out = combined_delta_fields[depth_count:].copy()
+        del combined_delta_fields
+
+        temperature += sst[None, :, :]
+        salinity_out += sal_surface_prior[None, :, :]
+        temperature[~thetao_valid_mask | ~np.isfinite(temperature)] = np.nan
+        salinity_out[~so_valid_mask | ~np.isfinite(salinity_out)] = np.nan
+
+        return SyntheticFieldResult(
             date=date_value,
-            thetao=thetao_result,
-            so=so_result,
+            temperature=temperature,
+            salinity=salinity_out,
+            thetao_valid_mask=thetao_valid_mask,
+            so_valid_mask=so_valid_mask,
+            depth_axis_m=depth_axis,
+            grid=grid,
+            profile_count=int(indices.size),
             skipped=None,
-        ).__dict__
-        result["profile_count"] = int(indices.size)
-        return result
+        )
     finally:
         profile_store.close()
+
+
+def _export_synthetic_date(task: dict[str, Any]) -> dict[str, Any]:
+    """Generate and write synthetic temperature/salinity rasters for one date."""
+    root_dir = Path(task["geotiff_root_dir"])
+    field_result = _build_synthetic_fields(task)
+    if field_result.skipped is not None:
+        return SyntheticDateResult(
+            date=field_result.date,
+            thetao=None,
+            so=None,
+            skipped=field_result.skipped,
+        ).__dict__
+
+    thetao_path = (
+        root_dir
+        / "rasters"
+        / "synthetic"
+        / "thetao"
+        / f"thetao_{field_result.date}.tif"
+    )
+    so_path = root_dir / "rasters" / "synthetic" / "so" / f"so_{field_result.date}.tif"
+    thetao_result = _write_synthetic_multiband_raster(
+        path=thetao_path,
+        output_dir=root_dir,
+        values=field_result.temperature,
+        date_value=field_result.date,
+        grid=field_result.grid,
+        variable="thetao",
+        stretch_name=TEMPERATURE_KELVIN_STRETCH,
+        depth_axis_m=field_result.depth_axis_m,
+        overwrite_synthetic=bool(task["overwrite_synthetic"]),
+        skip_existing=bool(task["skip_existing"]),
+    )
+    so_result = _write_synthetic_multiband_raster(
+        path=so_path,
+        output_dir=root_dir,
+        values=field_result.salinity,
+        date_value=field_result.date,
+        grid=field_result.grid,
+        variable="so",
+        stretch_name=SALINITY_STRETCH,
+        depth_axis_m=field_result.depth_axis_m,
+        overwrite_synthetic=bool(task["overwrite_synthetic"]),
+        skip_existing=bool(task["skip_existing"]),
+    )
+    result = SyntheticDateResult(
+        date=field_result.date,
+        thetao=thetao_result,
+        so=so_result,
+        skipped=None,
+    ).__dict__
+    result["profile_count"] = int(field_result.profile_count)
+    return result
 
 
 def _copy_manifest_backup(manifest_path: Path) -> Path:
@@ -487,7 +648,6 @@ def export_synthetic_pretraining_geotiff_dataset(
     idw_k: int = DEFAULT_IDW_K,
     idw_power: float = DEFAULT_IDW_POWER,
     idw_block_rows: int = DEFAULT_IDW_BLOCK_ROWS,
-    salinity_surface_smoothing_sigma: float = DEFAULT_SALINITY_SURFACE_SMOOTHING_SIGMA,
     workers: int = 1,
     overwrite_synthetic: bool = False,
     skip_existing: bool = False,
@@ -540,7 +700,12 @@ def export_synthetic_pretraining_geotiff_dataset(
     missing_guides = [
         int(date_value)
         for date_value in requested_dates
-        if (date_value not in ostia_paths or date_value not in sss_paths)
+        if (
+            date_value not in ostia_paths
+            or date_value not in sss_paths
+            or date_value not in glorys_thetao_paths
+            or date_value not in glorys_so_paths
+        )
     ]
     if not runnable_dates:
         raise RuntimeError(
@@ -563,7 +728,8 @@ def export_synthetic_pretraining_geotiff_dataset(
             "idw_k": int(idw_k),
             "idw_power": float(idw_power),
             "idw_block_rows": int(idw_block_rows),
-            "salinity_surface_smoothing_sigma": float(salinity_surface_smoothing_sigma),
+            "delta_outlier_trim_fraction": float(DELTA_OUTLIER_TRIM_FRACTION),
+            "min_delta_trim_support": int(MIN_DELTA_TRIM_SUPPORT),
             "overwrite_synthetic": bool(overwrite_synthetic),
             "skip_existing": bool(skip_existing),
         }
@@ -636,13 +802,11 @@ def export_synthetic_pretraining_geotiff_dataset(
             "idw_power": float(idw_power),
             "idw_block_rows": int(idw_block_rows),
             "strategy": STRATEGY_NAME,
-            "salinity_surface_smoothing_sigma": float(salinity_surface_smoothing_sigma),
-            "depth_smoothing_schedule": {
-                "0-200m": 0.0,
-                "200-700m": 0.5,
-                "700-1500m": 1.0,
-                ">1500m": 1.5,
-            },
+            "delta_outlier_trim_fraction": float(DELTA_OUTLIER_TRIM_FRACTION),
+            "min_delta_trim_support": int(MIN_DELTA_TRIM_SUPPORT),
+            "smoothing_applies_to": None,
+            "vertical_delta_gap_fill": "linear_depth_interpolation_with_edge_hold",
+            "idw_backend": "single_pass_stack_cuda_if_available_else_cpu",
         },
         "generated_dates": [int(entry["date"]) for entry in thetao_entries],
         "skipped_dates": skipped_dates,
@@ -667,11 +831,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idw-k", type=int, default=DEFAULT_IDW_K)
     parser.add_argument("--idw-power", type=float, default=DEFAULT_IDW_POWER)
     parser.add_argument("--idw-block-rows", type=int, default=DEFAULT_IDW_BLOCK_ROWS)
-    parser.add_argument(
-        "--salinity-surface-smoothing-sigma",
-        type=float,
-        default=DEFAULT_SALINITY_SURFACE_SMOOTHING_SIGMA,
-    )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--overwrite-synthetic", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
@@ -688,7 +847,6 @@ def main() -> None:
         idw_k=args.idw_k,
         idw_power=args.idw_power,
         idw_block_rows=args.idw_block_rows,
-        salinity_surface_smoothing_sigma=args.salinity_surface_smoothing_sigma,
         workers=args.workers,
         overwrite_synthetic=args.overwrite_synthetic,
         skip_existing=args.skip_existing,

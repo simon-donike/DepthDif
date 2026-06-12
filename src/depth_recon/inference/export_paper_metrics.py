@@ -943,6 +943,10 @@ def select_en4_holdout_locations(
             ),
             dtype=bool,
         )
+        # Keep EN4 holdout selection aligned with dataloader QC filtering.
+        if store.filter_bad_quality:
+            temp_valid &= store._quality_mask_for_variable("temp", indices=all_indices)
+            sal_valid &= store._quality_mask_for_variable("psal", indices=all_indices)
         temp_counts = temp_valid.sum(axis=1).astype(np.int64)
         sal_counts = sal_valid.sum(axis=1).astype(np.int64)
         usable = (temp_counts > 0) | (sal_counts > 0)

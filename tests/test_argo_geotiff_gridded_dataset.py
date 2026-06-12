@@ -149,21 +149,55 @@ def _write_enriched_argo_zarr(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     ds = xr.Dataset(
         {
-            "profile_date": (("profile",), np.asarray([20240108], dtype=np.int32)),
-            "profile_idx": (("profile",), np.asarray([7], dtype=np.int32)),
-            "latitude": (("profile",), np.asarray([1.5], dtype=np.float32)),
-            "longitude": (("profile",), np.asarray([10.5], dtype=np.float32)),
+            "profile_date": (
+                ("profile",),
+                np.asarray([20240108, 20240108], dtype=np.int32),
+            ),
+            "profile_idx": (("profile",), np.asarray([7, 8], dtype=np.int32)),
+            "latitude": (
+                ("profile",),
+                np.asarray([1.5, 1.5], dtype=np.float32),
+            ),
+            "longitude": (
+                ("profile",),
+                np.asarray([10.5, 10.5], dtype=np.float32),
+            ),
             "argo_temp_on_glorys_depth": (
                 ("profile", "glorys_depth"),
-                np.asarray([[10.0, 20.0]], dtype=np.float32),
+                np.asarray([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
             ),
             "argo_psal_on_glorys_depth": (
                 ("profile", "glorys_depth"),
-                np.asarray([[35.0, 36.0]], dtype=np.float32),
+                np.asarray([[35.0, 36.0], [37.0, 38.0]], dtype=np.float32),
+            ),
+            "argo_depth_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 1], [1, 1]], dtype=np.int8),
+            ),
+            "argo_temp_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [4, 4]], dtype=np.int8),
+            ),
+            "argo_psal_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [4, 4]], dtype=np.int8),
+            ),
+            "argo_juld_qc": (("profile",), np.asarray([1, 1], dtype=np.int8)),
+            "argo_position_qc": (
+                ("profile",),
+                np.asarray([1, 1], dtype=np.int8),
+            ),
+            "argo_profile_depth_qc": (
+                ("profile",),
+                np.asarray([1, 1], dtype=np.int8),
+            ),
+            "argo_profile_psal_qc": (
+                ("profile",),
+                np.asarray([1, 1], dtype=np.int8),
             ),
         },
         coords={
-            "profile": np.asarray([0], dtype=np.int64),
+            "profile": np.asarray([0, 1], dtype=np.int64),
             "glorys_depth": np.asarray([0.0, 10.0], dtype=np.float32),
         },
     )
@@ -236,6 +270,8 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             )
 
             self.assertEqual(len(dataset), 1)
+            self.assertEqual(int(dataset.rows[0]["argo_profile_count"]), 1)
+            self.assertIn("argo_temp_qc_on_glorys_depth", dataset.argo_store.ds)
             sample = dataset[0]
 
             self.assertEqual(sample["eo"].shape, (1, 2, 2))
@@ -306,12 +342,10 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
             before_manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
             before_glorys = before_manifest["rasters"]["glorys"]
-
             export_synthetic_pretraining_geotiff_dataset(
                 geotiff_root_dir=output_dir,
                 workers=1,
                 overwrite_synthetic=True,
-                salinity_surface_smoothing_sigma=0.0,
                 show_progress=False,
             )
 
@@ -323,7 +357,8 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                 manifest["synthetic_pretraining"]["generated_dates"], [20240108]
             )
             self.assertEqual(
-                manifest["synthetic_pretraining"]["strategy"], "vertical_delta_sss_v4"
+                manifest["synthetic_pretraining"]["strategy"],
+                "robust_vertical_delta_sss_v6",
             )
             self.assertEqual(
                 manifest["synthetic_pretraining"]["source_groups"]["sss"],
@@ -332,6 +367,25 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(
                 manifest["synthetic_pretraining"]["source_groups"]["target_masks"],
                 "rasters.glorys.thetao and rasters.glorys.so",
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["parameters"][
+                    "delta_outlier_trim_fraction"
+                ],
+                0.25,
+            )
+            self.assertIsNone(
+                manifest["synthetic_pretraining"]["parameters"]["smoothing_applies_to"]
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["parameters"][
+                    "vertical_delta_gap_fill"
+                ],
+                "linear_depth_interpolation_with_edge_hold",
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["parameters"]["idw_backend"],
+                "single_pass_stack_cuda_if_available_else_cpu",
             )
             self.assertTrue(
                 (
@@ -889,6 +943,9 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             [region["name"] for region in grid["force_include_regions"]],
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
+        selection = payload["data"]["dataset"]["selection"]
+        self.assertTrue(selection["filter_bad_argo_quality"])
+        self.assertEqual(selection["accepted_argo_qc_flags"], [1, 2])
         finetune = payload["data"]["dataset"]["finetune_sampling"]
         self.assertTrue(finetune["enabled"])
         self.assertAlmostEqual(float(finetune["hard_fraction"]), 0.5)

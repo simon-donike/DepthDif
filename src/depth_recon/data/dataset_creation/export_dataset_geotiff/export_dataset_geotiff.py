@@ -49,6 +49,8 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
+    ARGO_LEVEL_QC_VARS,
+    ARGO_PROFILE_QC_VARS,
     date_to_days_since_1950,
     filter_argo_files_by_date_range,
     scan_timed_files,
@@ -1329,6 +1331,16 @@ def _write_argo_profile_store(
     col_parts: list[np.ndarray] = []
     source_index_parts: list[np.ndarray] = []
     source_file_parts: list[np.ndarray] = []
+    level_qc_names = tuple(
+        f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS
+    )
+    profile_qc_names = tuple(f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS)
+    level_qc_parts: dict[str, list[np.ndarray]] = {
+        name: [] for name in level_qc_names if name in input_ds
+    }
+    profile_qc_parts: dict[str, list[np.ndarray]] = {
+        name: [] for name in profile_qc_names if name in input_ds
+    }
     temp_stats: list[EncodeStats] = []
     salinity_stats: list[EncodeStats] = []
 
@@ -1337,6 +1349,8 @@ def _write_argo_profile_store(
         optional_names["source_file"] = source_file_name
     if source_index_name is not None and source_index_name in input_ds:
         optional_names["source_index"] = source_index_name
+    for name in tuple(level_qc_parts) + tuple(profile_qc_parts):
+        optional_names[name] = name
 
     profile_progress = tqdm(
         total=int(profile_count),
@@ -1402,6 +1416,14 @@ def _write_argo_profile_store(
             )
         if "source_file" in chunk:
             source_file_parts.append(np.asarray(chunk["source_file"]).reshape(-1)[keep])
+        for name in level_qc_parts:
+            level_qc_parts[name].append(
+                np.asarray(chunk[name], dtype=np.int8)[keep].astype(np.int8, copy=False)
+            )
+        for name in profile_qc_parts:
+            profile_qc_parts[name].append(
+                np.asarray(chunk[name], dtype=np.int8).reshape(-1)[keep]
+            )
     profile_progress.close()
 
     if temp_encoded_parts:
@@ -1428,23 +1450,47 @@ def _write_argo_profile_store(
         rows_all = np.zeros((0,), dtype=np.int32)
         cols_all = np.zeros((0,), dtype=np.int32)
 
+    depth_size = int(np.asarray(depth_axis).size)
+    level_qc_all = {
+        name: (
+            np.concatenate(parts, axis=0).astype(np.int8, copy=False)
+            if parts
+            else np.zeros((0, depth_size), dtype=np.int8)
+        )
+        for name, parts in level_qc_parts.items()
+    }
+    profile_qc_all = {
+        name: (
+            np.concatenate(parts, axis=0).astype(np.int8, copy=False)
+            if parts
+            else np.zeros((0,), dtype=np.int8)
+        )
+        for name, parts in profile_qc_parts.items()
+    }
+
     profile_axis = np.arange(int(profile_dates_all.size), dtype=np.int64)
+    data_vars = {
+        "profile_date": (("profile",), profile_dates_all),
+        "target_date": (("profile",), target_dates_all),
+        "latitude": (("profile",), lat_all),
+        "longitude": (("profile",), lon_all),
+        "grid_row": (("profile",), rows_all),
+        "grid_col": (("profile",), cols_all),
+        "argo_temp_kelvin_uint8": (
+            ("profile", "glorys_depth"),
+            temp_encoded_all,
+        ),
+        "argo_psal_uint8": (("profile", "glorys_depth"), salinity_encoded_all),
+        "argo_temp_valid": (("profile", "glorys_depth"), temp_valid_all),
+        "argo_psal_valid": (("profile", "glorys_depth"), salinity_valid_all),
+    }
+    for name, values in level_qc_all.items():
+        data_vars[name] = (("profile", "glorys_depth"), values)
+    for name, values in profile_qc_all.items():
+        data_vars[name] = (("profile",), values)
+
     ds = xr.Dataset(
-        data_vars={
-            "profile_date": (("profile",), profile_dates_all),
-            "target_date": (("profile",), target_dates_all),
-            "latitude": (("profile",), lat_all),
-            "longitude": (("profile",), lon_all),
-            "grid_row": (("profile",), rows_all),
-            "grid_col": (("profile",), cols_all),
-            "argo_temp_kelvin_uint8": (
-                ("profile", "glorys_depth"),
-                temp_encoded_all,
-            ),
-            "argo_psal_uint8": (("profile", "glorys_depth"), salinity_encoded_all),
-            "argo_temp_valid": (("profile", "glorys_depth"), temp_valid_all),
-            "argo_psal_valid": (("profile", "glorys_depth"), salinity_valid_all),
-        },
+        data_vars=data_vars,
         coords={
             "profile": profile_axis,
             "glorys_depth": np.asarray(depth_axis, dtype=np.float32),
@@ -1492,6 +1538,7 @@ def _write_argo_profile_store(
         "argo_psal_uint8",
         "argo_temp_valid",
         "argo_psal_valid",
+        *level_qc_all,
     ):
         encoding[name] = {
             "chunks": (

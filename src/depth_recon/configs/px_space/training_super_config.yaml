@@ -50,6 +50,8 @@ data:  # dataset, split, and loader inputs
       require_argo_for_train: false  # keep train rows with ARGO
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
+      filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
+      accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     synthetic:  # synthetic sparse-input mode
       enabled: false  # sample x from y instead of ARGO
       pixel_count: 250  # synthetic observed pixels
@@ -178,7 +180,7 @@ model:  # pixel diffusion model settings
   clamp_known_pixels: false  # clamp known pixels while sampling
   mask_loss_with_valid_pixels: true  # mask loss to valid support
   coastal_loss:  # emphasize supervised ocean pixels near land
-    enabled: true  # enable distance-to-land loss weighting
+    enabled: false  # enable distance-to-land loss weighting
     radius_px: 5  # ocean-pixel radius around land to upweight
     weight: 3.0  # maximum loss multiplier for land-adjacent ocean pixels
     ramp: linear  # distance falloff for coastal weights
