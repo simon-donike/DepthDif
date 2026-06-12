@@ -266,6 +266,11 @@ methods:
     model_type: unet_baseline
     temperature_checkpoint: logs/<unet-temp>/best.ckpt
     salinity_checkpoint: logs/<unet-sal>/best.ckpt
+  unet2d:
+    label: U-Net 2D
+    model_type: unet2d_baseline
+    temperature_checkpoint: logs/<unet2d-temp>/best.ckpt
+    salinity_checkpoint: logs/<unet2d-sal>/best.ckpt
   depthdif:
     label: DepthDif
     model_type: cond_px_dif

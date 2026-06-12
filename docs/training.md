@@ -75,13 +75,20 @@ Start from scratch or from a checkpoint trained with the same architecture; temp
 
 ## Important Config Notes
 - `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.
-- `model.model_type="cond_px_dif"` runs pixel-space diffusion; `lstm_baseline`, `cnn_baseline`, and `unet_baseline` train baseline models on the same dataloaders.
+- `model.model_type="cond_px_dif"` runs pixel-space diffusion; `lstm_baseline`, `cnn_baseline`, `unet_baseline`, and `unet2d_baseline` train baseline models on the same dataloaders.
 - Example profile-CNN baseline run; the CNN loss is evaluated only at ARGO-supported profile columns:
 
 ```bash
 /work/envs/depth/bin/python train.py --scenario temperature \
   --set model.model_type=cnn_baseline \
   --set training.wandb.run_name=cnn_baseline_temperature
+```
+
+- Example 2D U-Net comparison run:
+
+```bash
+src/depth_recon/scripts/train_unet2d_baseline.sh --scenario temperature \
+  --run-name unet2d_baseline_temperature
 ```
 
 - `train.py` super-config workflow is pixel-space only; latent diffusion still uses the latent config files documented below.

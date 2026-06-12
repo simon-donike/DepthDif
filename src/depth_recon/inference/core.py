@@ -15,6 +15,7 @@ from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
     ProfileCNNInfillingBaseline,
+    UNet2DInfillingBaseline,
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import PixelDiffusionConditional
@@ -30,6 +31,7 @@ MODEL_TYPES = (
     "lstm_baseline",
     "cnn_baseline",
     "unet_baseline",
+    "unet2d_baseline",
 )
 CHECKPOINT_FREE_MODEL_TYPES = {"idw_baseline"}
 
@@ -208,6 +210,7 @@ def build_model(
     | PointwiseLSTMBaseline
     | ProfileCNNInfillingBaseline
     | UNetInfillingBaseline
+    | UNet2DInfillingBaseline
 ):
     """Build and return model."""
     model_type = resolve_model_type(model_cfg)
@@ -234,6 +237,13 @@ def build_model(
         )
     if model_type == "unet_baseline":
         return UNetInfillingBaseline.from_config(
+            model_config_path=model_config_path,
+            data_config_path=data_config_path,
+            training_config_path=training_config_path,
+            datamodule=datamodule,
+        )
+    if model_type == "unet2d_baseline":
+        return UNet2DInfillingBaseline.from_config(
             model_config_path=model_config_path,
             data_config_path=data_config_path,
             training_config_path=training_config_path,

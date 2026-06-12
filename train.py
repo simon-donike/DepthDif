@@ -34,6 +34,7 @@ from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
     ProfileCNNInfillingBaseline,
+    UNet2DInfillingBaseline,
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
@@ -308,6 +309,7 @@ def resolve_model_type(model_cfg: dict[str, Any]) -> str:
         "lstm_baseline",
         "cnn_baseline",
         "unet_baseline",
+        "unet2d_baseline",
     )
     if model_type in supported_model_types:
         return model_type
@@ -553,6 +555,13 @@ def main(
             training_config_path=effective_training_config_path,
             datamodule=datamodule,
         )
+    elif model_type == "unet2d_baseline":
+        model = UNet2DInfillingBaseline.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
     elif model_type == "cond_px_dif":
         # Instantiate the pixel model from the effective super-config materialization.
         model = PixelDiffusionConditional.from_config(
@@ -564,7 +573,7 @@ def main(
     else:
         raise ValueError(
             "train.py supports model_type='cond_px_dif', 'idw_baseline', "
-            "'lstm_baseline', 'cnn_baseline', or 'unet_baseline'."
+            "'lstm_baseline', 'cnn_baseline', 'unet_baseline', or 'unet2d_baseline'."
         )
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
@@ -609,6 +618,7 @@ def main(
         "lstm_baseline",
         "cnn_baseline",
         "unet_baseline",
+        "unet2d_baseline",
     }
     ema_callback = (
         None if model_type in baseline_model_types else build_ema_callback(model_cfg)

@@ -145,12 +145,12 @@ def override_key_set(overrides: list[str] | None) -> set[str]:
 def apply_unet_baseline_condition_contract(
     model_cfg: dict[str, Any], override_keys: set[str]
 ) -> None:
-    """Derive 3D U-Net baseline condition channels after scenario overrides."""
+    """Derive U-Net baseline condition channels after scenario overrides."""
     model_section = model_cfg.get("model", {})
     if not isinstance(model_section, dict):
         return
     model_type = str(model_section.get("model_type", "cond_px_dif")).strip()
-    if model_type != "unet_baseline":
+    if model_type not in {"unet_baseline", "unet2d_baseline"}:
         return
 
     generated_channels = int(model_section.get("generated_channels", 1))
@@ -165,7 +165,7 @@ def apply_unet_baseline_condition_contract(
     if generated_channels % field_channels != 0:
         raise ValueError(
             "model.generated_channels must be divisible by the active output "
-            "field count for unet_baseline."
+            "field count for U-Net baselines."
         )
 
     unet_cfg = model_section.get("unet_baseline", {})
@@ -176,15 +176,24 @@ def apply_unet_baseline_condition_contract(
 
     use_valid_mask = bool(model_section.get("condition_use_valid_mask", True))
     per_channel_valid_mask = bool(unet_cfg.get("per_channel_valid_mask", True))
+    if model_type == "unet2d_baseline":
+        # The 2D comparison model flattens depth into channels. Per-channel masks
+        # therefore need one channel per generated field/depth band.
+        per_channel_count = generated_channels
+        condition_channels = generated_channels
+    else:
+        # The 3D U-Net keeps depth as a convolution axis, so condition channels
+        # count field streams rather than every depth band.
+        per_channel_count = field_channels
+        condition_channels = field_channels
+
     if use_valid_mask and per_channel_valid_mask:
-        default_mask_channels = field_channels
+        default_mask_channels = per_channel_count
     elif use_valid_mask:
         default_mask_channels = int(model_section.get("condition_mask_channels", 1))
     else:
         default_mask_channels = 0
 
-    # The 3D U-Net keeps depth as a convolution axis, so condition channels count
-    # field streams plus optional surface/mask inputs, not every depth band.
     if "model.condition_mask_channels" not in override_keys:
         model_section["condition_mask_channels"] = default_mask_channels
 
@@ -193,7 +202,6 @@ def apply_unet_baseline_condition_contract(
         if use_valid_mask
         else 0
     )
-    condition_channels = field_channels
     if bool(model_section.get("condition_include_eo", False)):
         condition_channels += 1
     condition_channels += mask_channels

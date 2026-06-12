@@ -20,6 +20,7 @@ from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
     ProfileCNNInfillingBaseline,
+    UNet2DInfillingBaseline,
 )
 from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from depth_recon.models.latent.Autoencoder import (
@@ -740,6 +741,77 @@ class TestModelDryRuns(unittest.TestCase):
         )
         self.assertIn("y_hat_temperature_denorm", pred)
         self.assertIn("y_hat_salinity_denorm", pred)
+
+    def test_unet2d_baseline_predict_step_returns_contract(self) -> None:
+        model = UNet2DInfillingBaseline(
+            generated_channels=2,
+            base_channels=4,
+            channel_mults=(1,),
+            output_fields=("temperature",),
+        )
+        batch = _make_pixel_batch()
+        batch["eo"] = torch.full((1, 1, 8, 8), 0.25, dtype=torch.float32)
+
+        condition, _model_batch = model._build_condition(batch, include_y=False)
+        pred = model.predict_step(batch, batch_idx=0)
+
+        self.assertEqual(model.condition_channels, 6)
+        self.assertEqual(tuple(condition.shape), (1, 6, 8, 8))
+        self.assertEqual(tuple(pred["y_hat"].shape), tuple(batch["x"].shape))
+        self.assertEqual(tuple(pred["y_hat_denorm"].shape), tuple(batch["x"].shape))
+        self.assertEqual(
+            tuple(pred["y_hat_temperature_denorm"].shape), tuple(batch["x"].shape)
+        )
+        self.assertEqual(pred["denoise_samples"], [])
+        self.assertEqual(pred["x0_denoise_samples"], [])
+        self.assertIsNone(pred["sampler"])
+        self.assertIsNone(pred["further_valid_mask"])
+
+    def test_unet2d_baseline_from_factory_requires_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            model_config_path = tmp_path / "model.yaml"
+            data_config_path = tmp_path / "data.yaml"
+            training_config_path = tmp_path / "training.yaml"
+            model_cfg = {
+                "model": {
+                    "model_type": "unet2d_baseline",
+                    "generated_channels": 2,
+                    "output_fields": ["temperature"],
+                    "scenario": "temperature",
+                    "condition_include_eo": True,
+                    "condition_use_valid_mask": True,
+                    "condition_use_land_mask": True,
+                    "unet_baseline": {"base_channels": 4, "channel_mults": [1]},
+                }
+            }
+            _write_yaml(model_config_path, model_cfg)
+            _write_yaml(data_config_path, {"dataset": {}})
+            _write_yaml(training_config_path, {"training": {"lr": 2.0e-3}})
+
+            model = build_model(
+                model_config_path=str(model_config_path),
+                data_config_path=str(data_config_path),
+                training_config_path=str(training_config_path),
+                model_cfg=model_cfg,
+                datamodule=_make_datamodule(include_eo=True),
+            )
+
+        self.assertIsInstance(model, UNet2DInfillingBaseline)
+        self.assertEqual(model.lr, 2.0e-3)
+        self.assertTrue(model_requires_checkpoint(model_cfg))
+
+    def test_unet2d_baseline_trainer_fit_completes_one_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model = UNet2DInfillingBaseline(
+                generated_channels=2,
+                base_channels=4,
+                channel_mults=(1,),
+                output_fields=("temperature",),
+            )
+            trainer = pl.Trainer(**_trainer_kwargs(Path(tmpdir)))
+
+            trainer.fit(model, datamodule=_make_datamodule(include_eo=True))
 
     def test_lstm_validation_epoch_logs_temperature_image_grid(self) -> None:
         model = PointwiseLSTMBaseline(

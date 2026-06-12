@@ -67,7 +67,7 @@ data:  # dataset, split, and loader inputs
     val_shuffle: true  # intentionally shuffle validation
 
 model:  # pixel diffusion model settings
-  model_type: cond_px_dif  # model factory selector
+  model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
@@ -118,7 +118,7 @@ model:  # pixel diffusion model settings
     include_valid_mask: true  # include depth-wise ARGO support in the profile vector
     include_eo: null  # null follows model.condition_include_eo
     include_land_mask: null  # null follows model.condition_use_land_mask
-  unet_baseline:  # direct trainable 3D U-Net baseline
+  unet_baseline:  # direct trainable U-Net baseline settings for 3D and 2D variants
     base_channels: 32  # base channel width for the baseline U-Net
     channel_mults:  # encoder/decoder width multipliers
     - 1  # first stage multiplier
@@ -129,7 +129,7 @@ model:  # pixel diffusion model settings
     dropout: 0.0  # dropout after each double-conv block
     lr: null  # null falls back to training.training.lr
     weight_decay: 0.0001  # AdamW weight decay
-    per_channel_valid_mask: true  # use one ARGO mask volume per output field
+    per_channel_valid_mask: true  # 3D masks per field; 2D masks per field/depth band
   unet:  # denoiser architecture
     dim: 64  # base channel width
     dim_mults:  # U-Net width multipliers

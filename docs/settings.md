@@ -96,7 +96,7 @@ These keys live under top-level `model` in both pixel super-configs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, checkpoint-free `idw_baseline`, or trainable `lstm_baseline`, `cnn_baseline`, `unet_baseline`. |
+| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, checkpoint-free `idw_baseline`, or trainable `lstm_baseline`, `cnn_baseline`, `unet_baseline`, `unet2d_baseline`. |
 | `model.depth_channels` | `50` | Depth channels per active output field. Used by scenario derivation. |
 | `model.resume_checkpoint` | `false` | `false`/`null` starts from scratch; a path resumes or warm-starts from that checkpoint. |
 | `model.load_checkpoint_only` | `false` | When true, loads model weights only and reinitializes optimizer/trainer state. |
@@ -116,6 +116,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.lstm.*` | `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `bidirectional=true`, `weight_decay=0.0` | Point-wise LSTM baseline controls used when `model.model_type=lstm_baseline`; each pixel is modeled as an independent vertical profile and no-ARGO patches can still predict from EO/surface conditioning. |
 | `model.cnn_baseline.*` | `hidden_channels=64`, `seed_length=8`, `conv_layers=3`, `activation=selu`, `weight_decay=0.0001` | Point-wise profile CNN baseline controls used when `model.model_type=cnn_baseline`; supervised loss is evaluated only at ARGO profile locations, while dense inference can run from EO/surface input with zero ARGO masks. |
 | `model.unet_baseline.*` | `base_channels=32`, `channel_mults=[1,2,4,8]`, `norm_groups=8`, `weight_decay=0.0001` | 3D U-Net baseline controls used when `model.model_type=unet_baseline`; depth is treated as a 3D convolution axis. |
+| `model.unet_baseline.*` with `model.model_type=unet2d_baseline` | same defaults | 2D U-Net comparison controls; depth bands are flattened into channels and the same knobs are reused. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
 | `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |

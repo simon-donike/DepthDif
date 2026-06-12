@@ -10,6 +10,7 @@ The currently supported baseline selectors are:
 | `lstm_baseline` | `PointwiseLSTMBaseline` | Yes | Yes |
 | `cnn_baseline` | `ProfileCNNInfillingBaseline` | Yes | Yes |
 | `unet_baseline` | `UNetInfillingBaseline` | Yes | Yes |
+| `unet2d_baseline` | `UNet2DInfillingBaseline` | Yes | Yes |
 
 ## Shared Batch Contract
 
@@ -159,6 +160,10 @@ The default initializer is LeCun normal and the default activation is SELU. Trai
 
 `UNetInfillingBaseline` is selected with `model.model_type: unet_baseline`. It keeps depth as a 3D convolution axis, uses sparse fields plus optional EO, valid-mask, and land-mask condition volumes, and predicts dense normalized patches directly. Unlike the LSTM and profile CNN, it can use local spatial context inside the patch.
 
+## 2D U-Net Baseline
+
+`UNet2DInfillingBaseline` is selected with `model.model_type: unet2d_baseline`. It uses the same `model.unet_baseline` settings, loss, validation logging, prediction contract, and no-ARGO behavior as the 3D U-Net. The difference is the tensor layout: depth bands stay flattened in `(B, C, H, W)` and are treated as 2D channels instead of a 3D convolution axis.
+
 ## LSTM Training Step
 
 One training step uses the existing dataloader batch directly:
@@ -207,7 +212,7 @@ For IDW:
 - A depth band with observations is interpolated from those observations.
 - A depth band with no observations emits `NaN`.
 
-For the U-Net:
+For the U-Net baselines:
 
 - A pixel with no observed profile can still predict if the patch has ARGO support elsewhere. Its sparse value feature is zero, its observed-mask feature is all zeros, and enabled auxiliary features remain available.
 - A whole patch/sample with no ARGO support for a field emits `NaN` for that field.
@@ -247,10 +252,10 @@ uncertainty_stat: deterministic_zero
 
 Inference uses the same model factory and export path as the diffusion model:
 
-1. Set `model.model_type` to `idw_baseline`, `lstm_baseline`, `cnn_baseline`, or `unet_baseline`.
+1. Set `model.model_type` to `idw_baseline`, `lstm_baseline`, `cnn_baseline`, `unet_baseline`, or `unet2d_baseline`.
 2. Keep the same data config and datamodule setup.
 3. For `idw_baseline`, no checkpoint is loaded.
-4. For `lstm_baseline`, `cnn_baseline`, or `unet_baseline`, provide a trained Lightning checkpoint.
+4. For `lstm_baseline`, `cnn_baseline`, `unet_baseline`, or `unet2d_baseline`, provide a trained Lightning checkpoint.
 5. The exporter calls `predict_step` and consumes the same normalized, denormalized, and field-specific keys.
 
 For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. IDW/U-Net no-ARGO patches become nodata; the LSTM and profile CNN keep surface-conditioned predictions available.
