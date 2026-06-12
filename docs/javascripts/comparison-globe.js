@@ -18,14 +18,20 @@
     { key: "glorys", label: "GLORYS", toggleId: "globe-toggle-glorys" },
     { key: "depthdif", label: "DepthDif", toggleId: "globe-toggle-depthdif" },
     { key: "idw", label: "IDW", toggleId: "globe-toggle-idw" },
+    { key: "climatology", label: "Climatology", toggleId: "globe-toggle-climatology" },
     { key: "lstm", label: "LSTM", toggleId: "globe-toggle-lstm" },
+    { key: "cnn", label: "CNN", toggleId: "globe-toggle-cnn" },
+    { key: "unet", label: "U-Net", toggleId: "globe-toggle-unet" },
   ];
 
   const RASTER_LAYER_FIELD_ALIASES = {
     glorys: ["glorys_tiles_url", "ground_truth_tiles_url", "target_tiles_url"],
     depthdif: ["depthdif_tiles_url", "prediction_tiles_url"],
     idw: ["idw_tiles_url", "idw_prediction_tiles_url"],
+    climatology: ["climatology_tiles_url", "climatology_prediction_tiles_url"],
     lstm: ["lstm_tiles_url", "lstm_prediction_tiles_url"],
+    cnn: ["cnn_tiles_url", "cnn_prediction_tiles_url"],
+    unet: ["unet_tiles_url", "unet_prediction_tiles_url"],
   };
 
   const TEMPERATURE_EXPORT_COLOR_STOPS = [
@@ -244,7 +250,10 @@
         glorys_tiles_url: config ? config.glorys_tiles_url || config.ground_truth_tiles_url : null,
         depthdif_tiles_url: config ? config.depthdif_tiles_url || config.prediction_tiles_url : null,
         idw_tiles_url: config ? config.idw_tiles_url : null,
+        climatology_tiles_url: config ? config.climatology_tiles_url : null,
         lstm_tiles_url: config ? config.lstm_tiles_url : null,
+        cnn_tiles_url: config ? config.cnn_tiles_url : null,
+        unet_tiles_url: config ? config.unet_tiles_url : null,
       },
     ];
   }
@@ -406,7 +415,7 @@
       return;
     }
 
-    const preferredKeys = ["depthdif", "glorys", "idw", "lstm"];
+    const preferredKeys = ["depthdif", "glorys", "idw", "climatology", "lstm", "cnn", "unet"];
     for (let index = 0; index < preferredKeys.length; index += 1) {
       const toggle = state.elements.layerToggles[preferredKeys[index]];
       if (toggle && !toggle.disabled) {

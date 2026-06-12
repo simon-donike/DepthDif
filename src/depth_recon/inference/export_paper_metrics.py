@@ -615,6 +615,166 @@ def build_climatology_artifacts(
     )
 
 
+def build_week_climatology_artifacts(
+    *,
+    context: DatasetContext,
+    output_dir: Path,
+    date_value: int,
+    holdout_df: pd.DataFrame | None = None,
+    idw_power: float = DEFAULT_CLIMATOLOGY_IDW_POWER,
+    idw_eps: float = DEFAULT_CLIMATOLOGY_IDW_EPS,
+    idw_neighbors: int = DEFAULT_CLIMATOLOGY_IDW_NEIGHBORS,
+    idw_chunk_size: int = DEFAULT_CLIMATOLOGY_IDW_CHUNK_SIZE,
+    profile_chunk_size: int = DEFAULT_PROFILE_CHUNK_SIZE,
+    overwrite: bool = False,
+) -> ClimatologyArtifacts:
+    """Build or load a same-week EN4/ARGO IDW baseline excluding held-out locations."""
+    out_dir = Path(output_dir)
+    temperature_path = out_dir / "climatology_temperature.tif"
+    salinity_path = out_dir / "climatology_salinity.tif"
+    summary_path = out_dir / "climatology_summary.json"
+    if (
+        not bool(overwrite)
+        and temperature_path.exists()
+        and salinity_path.exists()
+        and summary_path.exists()
+    ):
+        summary = _load_json(summary_path)
+        if summary.get("kind") == "en4_same_week_visible_argo_idw" and int(
+            summary.get("date_value", -1)
+        ) == int(date_value):
+            return ClimatologyArtifacts(
+                temperature_path=temperature_path,
+                salinity_path=salinity_path,
+                summary_path=summary_path,
+                summary=summary,
+            )
+
+    holdout_keys: set[tuple[int, int, int]] = set()
+    if holdout_df is not None and not holdout_df.empty:
+        for row in holdout_df.itertuples(index=False):
+            holdout_keys.add(
+                (
+                    int(getattr(row, "date")),
+                    int(getattr(row, "grid_row")),
+                    int(getattr(row, "grid_col")),
+                )
+            )
+
+    store = ArgoGeoTIFFProfileStore(_manifest_argo_path(context), include_salinity=True)
+    try:
+        same_date_indices = np.flatnonzero(
+            np.asarray(store.target_date, dtype=np.int32) == int(date_value)
+        ).astype(np.int64)
+        if same_date_indices.size == 0:
+            raise RuntimeError(
+                f"No EN4/ARGO profiles found for date {int(date_value)}."
+            )
+        if holdout_keys:
+            rows = np.asarray(store.grid_row[same_date_indices], dtype=np.int64)
+            cols = np.asarray(store.grid_col[same_date_indices], dtype=np.int64)
+            keep = np.asarray(
+                [
+                    (int(date_value), int(row), int(col)) not in holdout_keys
+                    for row, col in zip(rows.tolist(), cols.tolist(), strict=True)
+                ],
+                dtype=bool,
+            )
+            profile_indices = same_date_indices[keep]
+        else:
+            profile_indices = same_date_indices
+        if profile_indices.size == 0:
+            raise RuntimeError(
+                "No same-week EN4/ARGO profiles remain after excluding held-out locations."
+            )
+
+        depth_axis = np.asarray(context.depth_axis_m, dtype=np.float64)
+        valid_counts: dict[str, list[int]] = {"temperature": [], "salinity": []}
+        paths = {"temperature": temperature_path, "salinity": salinity_path}
+        for variable in VARIABLES:
+            with _write_float_multiband_tif(
+                paths[variable], context=context, band_count=int(depth_axis.size)
+            ) as dst:
+                dst.update_tags(
+                    baseline="en4_same_week_visible_argo_idw",
+                    date_value=int(date_value),
+                    heldout_location_count=int(len(holdout_keys)),
+                    idw_power=float(idw_power),
+                    idw_eps=float(idw_eps),
+                    idw_neighbors=int(idw_neighbors),
+                )
+                for depth_idx, depth_m in enumerate(
+                    tqdm(
+                        depth_axis.tolist(),
+                        desc=f"Building {variable} same-week baseline",
+                        unit="depth",
+                    )
+                ):
+                    sparse, count = _average_profile_band_to_grid(
+                        store=store,
+                        variable=variable,
+                        profile_indices=profile_indices,
+                        depth_index=int(depth_idx),
+                        height=context.height,
+                        width=context.width,
+                        profile_chunk_size=int(profile_chunk_size),
+                    )
+                    valid_counts[variable].append(int(count))
+                    filled = idw_fill_2d(
+                        sparse,
+                        target_mask=context.ocean_mask,
+                        power=float(idw_power),
+                        eps=float(idw_eps),
+                        neighbors=int(idw_neighbors),
+                        chunk_size=int(idw_chunk_size),
+                    )
+                    write_array = np.where(
+                        np.isfinite(filled), filled, np.float32(DEFAULT_NODATA)
+                    )
+                    dst.write(write_array.astype(np.float32, copy=False), depth_idx + 1)
+                    dst.set_band_description(
+                        depth_idx + 1,
+                        f"{variable}_same_week_baseline_{float(depth_m):.3f}m",
+                    )
+                    dst.update_tags(
+                        depth_idx + 1,
+                        actual_depth_m=f"{float(depth_m):.6f}",
+                        channel_index=int(depth_idx),
+                    )
+        summary = {
+            "schema_version": 1,
+            "kind": "en4_same_week_visible_argo_idw",
+            "dataset_root": str(context.root),
+            "date_value": int(date_value),
+            "same_date_profile_count": int(same_date_indices.size),
+            "used_profile_count": int(profile_indices.size),
+            "heldout_location_count": int(len(holdout_keys)),
+            "depth_axis_m": [float(value) for value in depth_axis.tolist()],
+            "idw": {
+                "power": float(idw_power),
+                "eps": float(idw_eps),
+                "neighbors": int(idw_neighbors),
+                "chunk_size": int(idw_chunk_size),
+            },
+            "valid_observation_counts_by_depth": valid_counts,
+            "artifacts": {
+                "temperature": temperature_path.name,
+                "salinity": salinity_path.name,
+            },
+        }
+        with summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+            f.write("\n")
+    finally:
+        store.close()
+    return ClimatologyArtifacts(
+        temperature_path=temperature_path,
+        salinity_path=salinity_path,
+        summary_path=summary_path,
+        summary=summary,
+    )
+
+
 def resolve_climatology_artifacts(path: Path) -> ClimatologyArtifacts:
     """Resolve climatology artifact paths from a directory or summary JSON file."""
     raw_path = Path(path)

@@ -280,7 +280,7 @@ class TestPaperWeekExport(unittest.TestCase):
                     side_effect=fake_profiles_csv,
                 ),
                 patch(
-                    "depth_recon.inference.export_paper_week.build_climatology_artifacts",
+                    "depth_recon.inference.export_paper_week.build_week_climatology_artifacts",
                     side_effect=fake_climatology,
                 ),
             ):

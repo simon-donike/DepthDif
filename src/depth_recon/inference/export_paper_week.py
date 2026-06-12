@@ -53,7 +53,7 @@ from depth_recon.inference.export_paper_metrics import (
     DEFAULT_PROFILE_CHUNK_SIZE,
     DEFAULT_VALIDATION_YEAR,
     VARIABLES,
-    build_climatology_artifacts,
+    build_week_climatology_artifacts,
     load_dataset_context,
     select_en4_holdout_locations,
     write_en4_holdout_profiles_csv,
@@ -357,10 +357,11 @@ def export_paper_week(
         output_path=references_dir / "en4_holdout_profiles.csv",
     )
 
-    climatology = build_climatology_artifacts(
+    climatology = build_week_climatology_artifacts(
         context=context,
         output_dir=output_dir / "methods" / "climatology",
-        excluded_year=int(args.validation_year),
+        date_value=int(selected_date),
+        holdout_df=holdout_df,
         idw_power=float(args.climatology_idw_power),
         idw_eps=float(args.climatology_idw_eps),
         idw_neighbors=int(args.climatology_idw_neighbors),

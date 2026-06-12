@@ -444,7 +444,7 @@ Raw GeoTIFFs stay in the run directory and are not copied into `globe/` for buck
 When serving from a bucket, enable CORS for the docs origin so the standalone static globe page can fetch the tiled layers and GeoJSON. Make sure `.webp` files are served as `image/webp`.
 
 ## Workflow 1h: Host the Comparison Globe
-The standalone comparison viewer lives at `docs/comparison-globe/index.html`. It uses the same Cesium styling and controls as the spatial globe, but its raster selector compares `GLORYS`, `DepthDif`, `IDW`, and `LSTM` layers. By default it fetches `https://globe-assets.hyperalislabs.com/inference_production/comparison-globe/comparison-globe-config.json`; append `?config=<url>` to test another hosted manifest.
+The standalone comparison viewer lives at `docs/comparison-globe/index.html`. It uses the same Cesium styling and controls as the spatial globe, but its raster selector compares `GLORYS`, `DepthDif`, `IDW`, `Climatology`, `LSTM`, `CNN`, and `U-Net` layers. By default it fetches `https://globe-assets.hyperalislabs.com/inference_production/comparison-globe/comparison-globe-config.json`; append `?config=<url>` to test another hosted manifest.
 
 The comparison manifest follows the same variable/depth shape as `globe-config.json`, with model tiles grouped per depth level:
 
@@ -466,7 +466,10 @@ The comparison manifest follows the same variable/depth shape as `globe-config.j
             "glorys": { "tiles_url": "../globe/ground_truth_tiles_10m/" },
             "depthdif": { "tiles_url": "../globe/prediction_tiles_10m/" },
             "idw": { "tiles_url": "../baselines/idw/prediction_tiles_10m/" },
-            "lstm": { "tiles_url": "../baselines/lstm/prediction_tiles_10m/" }
+            "climatology": { "tiles_url": "../baselines/climatology/prediction_tiles_10m/" },
+            "lstm": { "tiles_url": "../baselines/lstm/prediction_tiles_10m/" },
+            "cnn": { "tiles_url": "../baselines/cnn/prediction_tiles_10m/" },
+            "unet": { "tiles_url": "../baselines/unet/prediction_tiles_10m/" }
           }
         }
       ]
@@ -475,7 +478,7 @@ The comparison manifest follows the same variable/depth shape as `globe-config.j
 }
 ```
 
-For convenience, each depth level also accepts direct URL fields: `glorys_tiles_url` or `ground_truth_tiles_url`, `depthdif_tiles_url` or `prediction_tiles_url`, `idw_tiles_url`, and `lstm_tiles_url`. Optional `argo_sample_locations_url` and `patch_splits_url` can be placed either at the root or inside each variable config.
+For convenience, each depth level also accepts direct URL fields: `glorys_tiles_url` or `ground_truth_tiles_url`, `depthdif_tiles_url` or `prediction_tiles_url`, `idw_tiles_url`, `climatology_tiles_url`, `lstm_tiles_url`, `cnn_tiles_url`, and `unet_tiles_url`. Optional `argo_sample_locations_url` and `patch_splits_url` can be placed either at the root or inside each variable config.
 
 ## Workflow 2: Direct `predict_step`
 The model inference entry points are:
