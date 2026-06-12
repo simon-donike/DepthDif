@@ -972,6 +972,50 @@ def _json_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
+def _dashboard_available_depths(aggregated: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return depth selector metadata for dashboard configs."""
+    required = {
+        "variable",
+        "layer",
+        "depth_suffix",
+        "depth_label",
+        "requested_depth_m",
+        "actual_depth_m",
+        "channel_index",
+    }
+    if aggregated.empty or not required.issubset(set(aggregated.columns)):
+        return []
+
+    depth_rows = aggregated[aggregated["layer"] != "surface_observation"]
+    depth_rows = depth_rows[
+        [
+            "variable",
+            "depth_suffix",
+            "depth_label",
+            "requested_depth_m",
+            "actual_depth_m",
+            "channel_index",
+        ]
+    ].drop_duplicates()
+    depth_rows = depth_rows.sort_values(
+        ["variable", "actual_depth_m", "channel_index", "depth_suffix"],
+        kind="mergesort",
+    )
+    depths: list[dict[str, Any]] = []
+    for record in depth_rows.to_dict(orient="records"):
+        depths.append(
+            {
+                "variable": str(record["variable"]),
+                "suffix": str(record["depth_suffix"]),
+                "label": str(record["depth_label"]),
+                "requested_depth_m": float(record["requested_depth_m"]),
+                "actual_depth_m": float(record["actual_depth_m"]),
+                "channel_index": int(record["channel_index"]),
+            }
+        )
+    return depths
+
+
 def _spectral_basin_map_payload() -> dict[str, Any]:
     """Return authoritative ocean-region polygons for spectral basin selection."""
     return {
@@ -1028,9 +1072,21 @@ def write_spectral_dashboard_assets(
     wavelength_edges: np.ndarray,
     wavelength_centers: np.ndarray,
     summary: dict[str, Any],
+    layer_labels: dict[str, str] | None = None,
+    layer_order: Sequence[str] | None = None,
+    line_styles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Write compact JSON and static files for the spectral dashboard."""
     output_path = Path(output_dir)
+    resolved_layer_labels = dict(LAYER_LABELS if layer_labels is None else layer_labels)
+    resolved_layer_order = (
+        [key for key in ("prediction", "glorys", "surface_observation")]
+        if layer_order is None
+        else [str(layer) for layer in layer_order]
+    )
+    resolved_line_styles = dict(
+        LAYER_LINESTYLES if line_styles is None else line_styles
+    )
     basin_dir = output_path / SPECTRAL_DASHBOARD_BASIN_DIR_NAME
     basin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1095,16 +1151,16 @@ def write_spectral_dashboard_assets(
         period_types = sorted(
             str(value) for value in aggregated["period_type"].dropna().unique()
         )
-    layer_order = [key for key in ("prediction", "glorys", "surface_observation")]
     config = {
         "schema_version": 1,
         "kind": "wavenumber_spectral_dashboard",
         "available_variables": variables,
         "default_variable": default_variable,
         "period_types": period_types,
-        "layers": LAYER_LABELS,
-        "layer_order": layer_order,
-        "line_styles": LAYER_LINESTYLES,
+        "available_depths": _dashboard_available_depths(aggregated),
+        "layers": resolved_layer_labels,
+        "layer_order": resolved_layer_order,
+        "line_styles": resolved_line_styles,
         "wavelength_bin_edges_km": [
             float(value) for value in wavelength_edges.tolist()
         ],
@@ -1139,9 +1195,15 @@ def write_spectral_dashboard_assets(
     }
 
 
-def _spectrum_line_label(layer: str, depth_label: str) -> str:
+def _spectrum_line_label(
+    layer: str,
+    depth_label: str,
+    *,
+    layer_labels: dict[str, str] | None = None,
+) -> str:
     """Return a compact legend label for one plotted spectrum."""
-    layer_label = LAYER_LABELS.get(str(layer), str(layer))
+    labels = LAYER_LABELS if layer_labels is None else layer_labels
+    layer_label = labels.get(str(layer), str(layer))
     depth_text = str(depth_label)
     if str(layer) == "surface_observation" or depth_text.lower() == layer_label.lower():
         return layer_label
@@ -1161,10 +1223,14 @@ def write_spectrum_plots(
     aggregated: pd.DataFrame,
     *,
     output_dir: Path,
+    layer_labels: dict[str, str] | None = None,
+    line_styles: dict[str, str] | None = None,
 ) -> list[Path]:
     """Write default log-log spectra plots from aggregated spectra."""
     if aggregated.empty:
         return []
+    labels = LAYER_LABELS if layer_labels is None else layer_labels
+    styles = LAYER_LINESTYLES if line_styles is None else line_styles
     plot_dir = Path(output_dir) / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -1202,10 +1268,14 @@ def write_spectrum_plots(
             ax.loglog(
                 x[valid],
                 y[valid],
-                linestyle=LAYER_LINESTYLES.get(str(layer), "-"),
+                linestyle=styles.get(str(layer), "-"),
                 color=cmap(float(np.clip(color_value, 0.0, 1.0))),
                 linewidth=1.6,
-                label=_spectrum_line_label(str(layer), str(depth_label)),
+                label=_spectrum_line_label(
+                    str(layer),
+                    str(depth_label),
+                    layer_labels=labels,
+                ),
             )
 
         if not ax.lines:

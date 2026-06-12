@@ -205,7 +205,11 @@
 
   function firstFiniteNumber(values, fallback) {
     for (let index = 0; index < values.length; index += 1) {
-      const value = Number(values[index]);
+      const rawValue = values[index];
+      if (rawValue === null || typeof rawValue === "undefined" || rawValue === "") {
+        continue;
+      }
+      const value = Number(rawValue);
       if (Number.isFinite(value)) {
         return value;
       }
@@ -852,9 +856,16 @@
     if (!Number.isFinite(numericValue)) {
       return unit === "PSU" ? "0 PSU" : "0°C";
     }
-    const rounded = Math.abs(numericValue - Math.round(numericValue)) < 0.05
-      ? String(Math.round(numericValue))
-      : String(Number(numericValue.toFixed(1)));
+    const absValue = Math.abs(numericValue);
+    let rounded;
+    if (absValue > 0.0 && absValue < 0.1) {
+      // Low uncertainty values need extra precision or the legend collapses to 0.
+      rounded = numericValue.toPrecision(2).replace(/\.?0+$/, "");
+    } else {
+      rounded = Math.abs(numericValue - Math.round(numericValue)) < 0.05
+        ? String(Math.round(numericValue))
+        : String(Number(numericValue.toFixed(1)));
+    }
     return unit === "PSU" ? rounded + " PSU" : rounded + "°C";
   }
 

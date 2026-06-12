@@ -313,6 +313,24 @@ The older direct metrics mode remains available for existing runs:
   --output-dir inference/outputs/paper_metrics_2018_W25
 ```
 
+### All-Week Baseline Spectral Comparison Bundle
+Use `depth_recon.inference.export_spectral_comparison_bundle` when the spectral dashboard should include every requested ISO week, every native depth level, and every method from the paper-week model config. The script creates one parent output folder, runs or reuses `export_paper_week` under `weeks/<YYYY>_W<WW>/`, reads each `paper_week_manifest.json`, computes wavenumber spectra for GLORYS, DepthDif, climatology, IDW, LSTM, CNN, and U-Net layers across all exported depth levels, writes one combined dashboard under `wavenumber_spectra/`, and optionally uploads either the whole bundle or just the spectral dashboard assets. DepthDif is emitted as the dashboard `prediction` layer; pass `--sampler ddpm` to keep the DDPM sampling path for its inference runs.
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.inference.export_spectral_comparison_bundle \
+  --config src/depth_recon/inference/inference_config.yaml \
+  --models-config configs/paper_week_models.yaml \
+  --year 2018 --all-weeks \
+  --output-dir inference/outputs/spectral_comparison_2018 \
+  --device cuda --sampler ddpm --batch-size 1 \
+  --wavenumber-output-name wavenumber_spectra \
+  --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe/wavenumber_spectra \
+  --rclone-remote r2:depth-data/inference_production/globe/wavenumber_spectra \
+  --upload-scope spectral
+```
+
+By default, existing weekly `paper_week_manifest.json` files are reused so interrupted all-week exports can resume, and no depth filter is applied. Add `--depth-index` or `--depth-suffix` only for intentional reduced exports. Add `--rerun-existing` to rebuild weekly inference folders, or use `--iso-week`, `--week-start`, and `--week-end` for smaller batches. Use `--upload-scope bundle` when the raw weekly inference folders should be uploaded together with the dashboard.
+
 ## Workflow 1c: Export One Pooled Validation Error Summary
 Use `src/depth_recon/inference/export_validation_error_summary.py` when you want one depth-vs-error summary across the whole dataset split instead of one map export or one sampled batch. The script:
 - loads the configured checkpoint and the explicit dataset split selected by `--split` (`val` by default)

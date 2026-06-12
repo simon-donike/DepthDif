@@ -44,6 +44,7 @@ from depth_recon.inference.export_cesium_globe_assets import (
     _run_variable_metadata,
     _rewrite_geojson,
     _sync_with_rclone,
+    _uncertainty_legend_bounds,
     _validate_raster_transparency_contract,
     _write_absolute_error_color_ramp,
     build_globe_config,
@@ -1212,6 +1213,21 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("34 197 94", ramp_text)
         self.assertIn("220 38 38", ramp_text)
         self.assertIn("nv   0 0 0 0", ramp_text)
+
+    def test_uncertainty_legend_bounds_use_valid_range_for_low_values(self) -> None:
+        scale = {
+            "valid_min_c": 0.012,
+            "valid_max_c": 0.046,
+            "color_scale_min_c": 0.014,
+            "color_scale_max_c": 0.041,
+            "legend_min_c": 0.0,
+            "legend_max_c": 0,
+        }
+
+        legend_min, legend_max = _uncertainty_legend_bounds(scale)
+
+        self.assertAlmostEqual(legend_min, 0.012)
+        self.assertAlmostEqual(legend_max, 0.046)
 
     def test_estimate_native_zoom_level_matches_global_point_one_degree_raster(
         self,

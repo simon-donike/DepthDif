@@ -168,6 +168,22 @@
   }
 
   function lineDash(layer) {
+    const configured = state.config.line_styles && state.config.line_styles[layer];
+    if (configured) {
+      const value = String(configured);
+      if (value === ":" || value === "dot") {
+        return "dot";
+      }
+      if (value === "--" || value === "dash") {
+        return "dash";
+      }
+      if (value === "-." || value === "dashdot") {
+        return "dashdot";
+      }
+      if (value === "-" || value === "solid") {
+        return "solid";
+      }
+    }
     if (layer === "glorys") {
       return "dot";
     }
@@ -250,7 +266,39 @@
     );
   }
 
+  function sortDepthEntries(entries) {
+    return entries.sort((left, right) => {
+      const leftDepth = Number(left[0].split("|")[2]);
+      const rightDepth = Number(right[0].split("|")[2]);
+      return (Number.isFinite(leftDepth) ? leftDepth : 0) - (Number.isFinite(rightDepth) ? rightDepth : 0);
+    });
+  }
+
+  function configuredDepths() {
+    const configured = Array.isArray(state.config.available_depths) ? state.config.available_depths : [];
+    if (configured.length === 0) {
+      return null;
+    }
+    const depthMap = new Map();
+    configured.forEach((depth) => {
+      if (depth.variable && depth.variable !== state.activeVariable) {
+        return;
+      }
+      const row = {
+        depth_suffix: depth.suffix || depth.depth_suffix,
+        depth_label: depth.label || depth.depth_label,
+        actual_depth_m: depth.actual_depth_m,
+      };
+      depthMap.set(depthKey(row), row.depth_label || depthKey(row));
+    });
+    return sortDepthEntries(Array.from(depthMap.entries()));
+  }
+
   function availableDepths() {
+    const configured = configuredDepths();
+    if (configured && configured.length > 0) {
+      return configured;
+    }
     const rows = filteredRows({ includeDepth: false });
     const depthMap = new Map();
     rows.forEach((row) => {
@@ -259,11 +307,7 @@
       }
       depthMap.set(depthKey(row), row.depth_label || depthKey(row));
     });
-    return Array.from(depthMap.entries()).sort((left, right) => {
-      const leftDepth = Number(left[0].split("|")[2]);
-      const rightDepth = Number(right[0].split("|")[2]);
-      return (Number.isFinite(leftDepth) ? leftDepth : 0) - (Number.isFinite(rightDepth) ? rightDepth : 0);
-    });
+    return sortDepthEntries(Array.from(depthMap.entries()));
   }
 
   function setRunLabel() {
@@ -320,7 +364,8 @@
       state.activeDepthKey = "__all__";
     }
     const depthSelect = $("spectral-depth-select");
-    depthSelect.innerHTML = [`<option value="__all__">All depths</option>`]
+    const allDepthsLabel = depths.length > 0 ? `All depths (${depths.length})` : "All depths";
+    depthSelect.innerHTML = [`<option value="__all__">${escapeHtml(allDepthsLabel)}</option>`]
       .concat(depths.map(([key, label]) => `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`))
       .join("");
     depthSelect.value = state.activeDepthKey;
