@@ -41,7 +41,8 @@ data:  # dataset, split, and loader inputs
         max_land_fraction: 0.95  # region land cap
     sampling:  # time and variable selection
       temporal_window_days: 7  # ARGO/EO date window
-      glorys_var_name: thetao  # GLORYS temperature variable
+      glorys_var_name: thetao  # GLORYS-compatible temperature target variable
+      target_source: glorys  # dense target raster group: glorys or synthetic
       ostia_var_name: analysed_sst  # legacy OSTIA SST variable key
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable

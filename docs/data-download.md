@@ -168,11 +168,10 @@ URLs are configured in
 `src/depth_recon/data/dataset_creation/data_download_packaged/dataset_links.yaml`.  
 
 Use packaged downloads when you want the prepared DepthDif artifacts directly
-instead of reconstructing them from the raw upstream products. The aligned ARGO
-downloader downloads Hugging Face package files into `--output-dir`, reusing
-existing files unless `--force-download` is passed. Pass `--overwrite` when
-existing package files should be replaced. Legacy zip links are still extracted
-into `--output-dir`.
+instead of reconstructing them from the raw upstream products. The downloaders
+mirror files from the official Hugging Face dataset repository into
+`--output-dir`, reusing existing files unless `--force-download` is passed. Pass
+`--overwrite` when existing package files should be replaced.
 
 ### Aligned ARGO Zarr  
 
@@ -199,11 +198,11 @@ dataset from the packaged copy.
 ### Exported GeoTIFF Training Dataset  
 
 Role: exported DepthDif training dataset with aligned dense rasters and gridded  
-ARGO profile data, packaged as a zip archive.  
+ARGO profile data, packaged in the official Hugging Face repository.  
 
 Configured link key: `depthdif_training`.  
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_exported_geotiff_dataset \
-  --output-dir /work/data/depthdif/geotiff_export
+  --output-dir /work/data/OceanVariableReconstruction
 ```

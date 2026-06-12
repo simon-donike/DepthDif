@@ -150,6 +150,42 @@ Contents:
 - Bands: one band per GLORYS depth level
 - Band metadata: `depth_m`, stretch information, clipped counts, nodata counts
 
+### Synthetic Pretraining Targets
+
+Path:
+
+```text
+rasters/synthetic/thetao/thetao_YYYYMMDD.tif
+rasters/synthetic/so/so_YYYYMMDD.tif
+```
+
+Contents:
+
+- Source inputs: compact ARGO profile zarr, OSTIA SST rasters, and SSS `sos` rasters
+- Temperature strategy: SST plus IDW-interpolated ARGO vertical temperature deltas from each profile's shallowest valid level
+- Salinity strategy: SSS surface salinity plus IDW-interpolated ARGO vertical salinity deltas from each profile's shallowest valid level
+- Nodata strategy: synthetic valid pixels are copied from same-date GLORYS `thetao`/`so` masks after synthesis
+- Final smoothing: none through 200 m, then only light depth-dependent smoothing below 200 m
+- Stored physical units: Kelvin for `thetao`, PSU for `so`
+- File structure: one multiband GeoTIFF per weekly date
+- Storage contract: the same `uint8` stretches, nodata code, CRS, transform, band descriptions, and decode formula as `rasters/glorys/thetao` and `rasters/glorys/so`
+
+Create the synthetic target rasters in place with:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.synthetic_dataset_creation.synthetic_pretraining_geotiff \
+  --geotiff-root-dir /work/data/OceanVariableReconstruction \
+  --workers 4 \
+  --overwrite-synthetic
+```
+
+The exporter preserves the original `rasters.glorys` manifest entries and adds
+`rasters.synthetic`. Training still uses GLORYS by default; set
+`data.dataset.sampling.target_source: synthetic` to train against the synthetic
+pretraining targets.
+
+When uploading with `huggingface_hub`, pass `ignore_patterns=["rasters/synthetic/**", "manifest.yaml.synthetic_backup_*"]`; the packaged dataset root also writes a `.gitignore` for Git-based HF repo updates.
+
 ### OSTIA Surface Temperature
 
 Path:

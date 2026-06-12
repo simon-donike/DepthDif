@@ -15,6 +15,15 @@ from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatc
 from depth_recon.data.dataset_creation.export_dataset_geotiff import (
     export_training_geotiff_dataset,
 )
+from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
+    SALINITY_STRETCH,
+    STRETCH_SPECS,
+    TEMPERATURE_KELVIN_STRETCH,
+    decode_stretched_uint8,
+)
+from depth_recon.data.synthetic_dataset_creation import (
+    export_synthetic_pretraining_geotiff_dataset,
+)
 from depth_recon.paths import config_path as packaged_config_path
 from train import build_dataset
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
@@ -291,6 +300,154 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertFalse(bool(sample["y_valid_mask"][0, 1, 1].item()))
             self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
+
+    def test_synthetic_pretraining_rasters_match_glorys_storage_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            before_manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
+            before_glorys = before_manifest["rasters"]["glorys"]
+
+            export_synthetic_pretraining_geotiff_dataset(
+                geotiff_root_dir=output_dir,
+                workers=1,
+                overwrite_synthetic=True,
+                salinity_surface_smoothing_sigma=0.0,
+                show_progress=False,
+            )
+
+            manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())
+            self.assertEqual(manifest["rasters"]["glorys"], before_glorys)
+            self.assertIn("synthetic", manifest["rasters"])
+            self.assertIn("synthetic_pretraining", manifest)
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["generated_dates"], [20240108]
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["strategy"], "vertical_delta_sss_v4"
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["source_groups"]["sss"],
+                "rasters.sss.sos",
+            )
+            self.assertEqual(
+                manifest["synthetic_pretraining"]["source_groups"]["target_masks"],
+                "rasters.glorys.thetao and rasters.glorys.so",
+            )
+            self.assertTrue(
+                (
+                    output_dir / manifest["synthetic_pretraining"]["manifest_backup"]
+                ).exists()
+            )
+
+            thetao_path = output_dir / "rasters/synthetic/thetao/thetao_20240108.tif"
+            so_path = output_dir / "rasters/synthetic/so/so_20240108.tif"
+            glorys_thetao_path = (
+                output_dir / "rasters/glorys/thetao/thetao_20240108.tif"
+            )
+            glorys_so_path = output_dir / "rasters/glorys/so/so_20240108.tif"
+            with (
+                rasterio.open(thetao_path) as thetao,
+                rasterio.open(so_path) as salinity,
+                rasterio.open(glorys_thetao_path) as glorys,
+                rasterio.open(glorys_so_path) as glorys_salinity,
+            ):
+                self.assertEqual(thetao.dtypes, glorys.dtypes)
+                self.assertEqual(salinity.dtypes, glorys_salinity.dtypes)
+                self.assertEqual(thetao.nodata, 255.0)
+                self.assertEqual(salinity.nodata, 255.0)
+                self.assertEqual(thetao.count, glorys.count)
+                self.assertEqual(salinity.count, glorys_salinity.count)
+                self.assertEqual(thetao.transform, glorys.transform)
+                self.assertEqual(salinity.transform, glorys_salinity.transform)
+                self.assertEqual(thetao.crs, glorys.crs)
+                self.assertEqual(salinity.crs, glorys_salinity.crs)
+                self.assertEqual(thetao.descriptions[0], "depth_0_m")
+                self.assertEqual(thetao.tags()["storage_dtype"], "uint8")
+                self.assertEqual(
+                    thetao.tags()["stretch_name"], TEMPERATURE_KELVIN_STRETCH
+                )
+                self.assertEqual(salinity.tags()["stretch_name"], SALINITY_STRETCH)
+
+                temp_k = decode_stretched_uint8(
+                    thetao.read(1),
+                    STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH],
+                )
+                salinity_psu = decode_stretched_uint8(
+                    salinity.read(1),
+                    STRETCH_SPECS[SALINITY_STRETCH],
+                )
+                self.assertAlmostEqual(float(temp_k[0, 0]), 292.0, delta=0.2)
+                self.assertAlmostEqual(float(salinity_psu[0, 0]), 35.2, delta=0.05)
+                self.assertNotAlmostEqual(float(salinity_psu[0, 0]), 35.0, delta=0.02)
+                np.testing.assert_array_equal(
+                    thetao.read() != 255, glorys.read() != 255
+                )
+                np.testing.assert_array_equal(
+                    salinity.read() != 255, glorys_salinity.read() != 255
+                )
+
+            default_dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+                include_salinity=True,
+            )
+            synthetic_dataset = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+                include_salinity=True,
+                target_source="synthetic",
+                return_info=True,
+            )
+
+            default_y_c = temperature_normalize(
+                mode="denorm", tensor=default_dataset[0]["y"]
+            )
+            synthetic_sample = synthetic_dataset[0]
+            synthetic_y_c = temperature_normalize(
+                mode="denorm",
+                tensor=synthetic_sample["y"],
+            )
+            synthetic_salinity_psu = salinity_normalize(
+                mode="denorm",
+                tensor=synthetic_sample["y_salinity"],
+            )
+            self.assertEqual(default_dataset.target_source, "glorys")
+            self.assertEqual(synthetic_dataset.target_source, "synthetic")
+            self.assertAlmostEqual(float(default_y_c[0, 0, 0]), 12.0, delta=0.25)
+            self.assertAlmostEqual(float(synthetic_y_c[0, 0, 0]), 18.85, delta=0.25)
+            self.assertAlmostEqual(float(synthetic_y_c[1, 0, 0]), 28.85, delta=0.25)
+            self.assertAlmostEqual(
+                float(synthetic_salinity_psu[0, 0, 0]), 35.2, delta=0.05
+            )
+            self.assertAlmostEqual(
+                float(synthetic_salinity_psu[1, 0, 0]), 36.2, delta=0.05
+            )
+            self.assertNotAlmostEqual(
+                float(synthetic_salinity_psu[0, 0, 0]), 35.0, delta=0.02
+            )
+            source_text = Path(
+                "src/depth_recon/data/synthetic_dataset_creation/synthetic_pretraining_geotiff.py"
+            ).read_text()
+            self.assertNotIn("profile_sst", source_text)
+            self.assertNotIn("ARGO_T(depth) - SST", source_text)
+            self.assertNotIn("histogram_match", source_text)
+            self.assertEqual(synthetic_sample["info"]["target_source"], "synthetic")
 
     def test_salinity_only_output_fields_skip_temperature_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -762,4 +919,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             ],
         )
         self.assertNotIn("include_salinity", payload["data"]["dataset"]["output"])
+        self.assertEqual(
+            payload["data"]["dataset"]["sampling"]["target_source"], "glorys"
+        )
         self.assertEqual(payload["data"]["split"]["val_year"], 2018)

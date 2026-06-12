@@ -136,6 +136,9 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
             self.assertTrue((package_dir / "examples/open_with_xarray.py").exists())
             self.assertTrue((package_dir / "metadata/stac-item.json").exists())
             self.assertTrue((package_dir / "LICENSE").exists())
+            gitignore_text = (package_dir / ".gitignore").read_text()
+            self.assertIn("rasters/synthetic/", gitignore_text)
+            self.assertIn("manifest.yaml.synthetic_backup_*", gitignore_text)
 
     def test_package_can_assemble_full_depthdif_upload_layout(self) -> None:
         """The package builder can stage the complete upload root without links."""

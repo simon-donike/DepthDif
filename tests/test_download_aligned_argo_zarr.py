@@ -82,6 +82,61 @@ class TestDownloadAlignedArgoZarr(unittest.TestCase):
             self.assertFalse((output_dir / "unrelated.bin").exists())
             self.assertFalse(any(path.endswith("unrelated.bin") for path in downloaded))
 
+    def test_download_hf_package_can_mirror_full_depthdif_layout(self) -> None:
+        repo_files = [
+            "README.md",
+            "data/argo_glors_ostia_ssh.zarr/.zgroup",
+            "argo/argo_profiles_on_grid.zarr/.zgroup",
+            "rasters/sss/sos/sos_20240102.tif",
+            "masks/world_land_mask_glorys_0p1.tif",
+            "manifest.yaml",
+            "unrelated.bin",
+        ]
+
+        def fake_download(
+            url: str,
+            output_path: Path,
+            *,
+            force: bool,
+            timeout_seconds: int,
+            chunk_size_mb: int,
+            token: str | None,
+        ) -> Path:
+            _ = (url, force, timeout_seconds, chunk_size_mb, token)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"data")
+            return output_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "OceanVariableReconstruction"
+            with (
+                patch.object(
+                    downloader,
+                    "list_hf_dataset_files",
+                    return_value=(
+                        "https://huggingface.co",
+                        "org/name",
+                        "main",
+                        repo_files,
+                    ),
+                ),
+                patch.object(downloader, "download_file", side_effect=fake_download),
+            ):
+                written_paths = downloader.download_hf_package(
+                    "https://huggingface.co/datasets/org/name",
+                    output_dir,
+                    package_prefixes=downloader.HF_FULL_PACKAGE_PREFIXES,
+                )
+
+            self.assertEqual(len(written_paths), 6)
+            self.assertTrue((output_dir / "rasters/sss/sos/sos_20240102.tif").exists())
+            self.assertTrue((output_dir / "argo/argo_profiles_on_grid.zarr").exists())
+            self.assertTrue(
+                (output_dir / "masks/world_land_mask_glorys_0p1.tif").exists()
+            )
+            self.assertTrue((output_dir / "manifest.yaml").exists())
+            self.assertFalse((output_dir / "unrelated.bin").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -582,6 +582,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         finetune_sampling: dict[str, Any] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
+        target_source: str = "glorys",
         ostia_var_name: str = "analysed_sst",
         eo_source: str = "ostia",
         eo_var_name: str | None = None,
@@ -637,6 +638,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         }
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
+        self.target_source = self._normalize_target_source(target_source)
         self.ostia_var_name = str(ostia_var_name)
         self.eo_source, self.eo_var_name = self._normalize_eo_selection(
             eo_source=eo_source,
@@ -730,6 +732,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self._rows = rows
 
     @staticmethod
+    def _normalize_target_source(target_source: str) -> str:
+        """Resolve the dense target raster group used as model supervision."""
+        source = str(target_source or "glorys").strip().lower()
+        if source not in {"glorys", "synthetic"}:
+            raise ValueError("target_source must be one of: 'glorys', 'synthetic'")
+        return source
+
+    @staticmethod
     def _normalize_eo_selection(
         *,
         eo_source: str,
@@ -792,20 +802,21 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "GeoTIFF manifest is missing EO stretch "
                 f"{self.eo_stretch_name!r} for {self.eo_source}/{self.eo_var_name}."
             )
-        glorys_rasters = rasters.get("glorys", {})
-        glorys_entries = (
-            glorys_rasters.get(self.glorys_var_name, [])
-            if isinstance(glorys_rasters, dict)
+        target_rasters = rasters.get(self.target_source, {})
+        target_entries = (
+            target_rasters.get(self.glorys_var_name, [])
+            if isinstance(target_rasters, dict)
             else []
         )
         eo_rasters = rasters.get(self.eo_source, {})
         eo_entries = (
             eo_rasters.get(self.eo_var_name, []) if isinstance(eo_rasters, dict) else []
         )
-        if not glorys_entries or not eo_entries:
+        if not target_entries or not eo_entries:
             raise RuntimeError(
-                "GeoTIFF manifest is missing GLORYS/EO raster entries for "
-                f"{self.glorys_var_name!r}/{self.eo_source}/{self.eo_var_name}."
+                "GeoTIFF manifest is missing target/EO raster entries for "
+                f"{self.target_source}/{self.glorys_var_name!r}/"
+                f"{self.eo_source}/{self.eo_var_name}."
             )
         salinity_store = None
         if self.include_salinity:
@@ -813,11 +824,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             if not isinstance(salinity_stretch, dict):
                 raise RuntimeError("GeoTIFF manifest is missing salinity stretch.")
             salinity_entries = (
-                glorys_rasters.get("so", []) if isinstance(glorys_rasters, dict) else []
+                target_rasters.get("so", []) if isinstance(target_rasters, dict) else []
             )
             if not salinity_entries:
                 raise RuntimeError(
-                    "GeoTIFF manifest is missing GLORYS salinity 'so' raster entries."
+                    "GeoTIFF manifest is missing target salinity 'so' raster entries "
+                    f"for source {self.target_source!r}."
                 )
             salinity_store = GeoTIFFRasterStore(
                 paths_by_date=_records_by_date(salinity_entries, self.root_dir),
@@ -827,7 +839,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return (
             GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(glorys_entries, self.root_dir),
+                paths_by_date=_records_by_date(target_entries, self.root_dir),
                 stretch=temp_stretch,
                 cache=self.raster_cache,
                 kelvin_temperature=True,
@@ -972,6 +984,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "sampling.glorys_var_name",
                     "glorys_var_name",
                     default="thetao",
+                )
+            ),
+            target_source=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.target_source",
+                    "target_source",
+                    default="glorys",
                 )
             ),
             ostia_var_name=str(
@@ -1721,6 +1741,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         if self.return_info:
             info = dict(row)
+            info["target_source"] = self.target_source
             info["x_source"] = "glorys_synthetic" if self.synthetic_mode else "argo"
             info["synthetic_pixel_count"] = (
                 int(self.synthetic_pixel_count) if self.synthetic_mode else 0

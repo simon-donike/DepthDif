@@ -15,17 +15,13 @@ import argparse
 import json
 import os
 from pathlib import Path, PurePosixPath
-import shutil
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
-import zipfile
-
 from depth_recon.data.dataset_creation.data_download_packaged._dataset_links import (
     load_dataset_url,
 )
 
 DATASET_LINK_KEY = "argo_aligned"
-DEFAULT_ARCHIVE_NAME = "aligned_argo_zarr.zip"
 DEFAULT_OUTPUT_DIR = Path(
     "/data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh"
 )
@@ -42,6 +38,13 @@ HF_PACKAGE_PREFIXES = (
     "README.md",
     "LICENSE",
     "LICENSE.md",
+)
+HF_FULL_PACKAGE_PREFIXES = HF_PACKAGE_PREFIXES + (
+    "argo/",
+    "assets/",
+    "manifest.yaml",
+    "masks/",
+    "rasters/",
 )
 
 
@@ -95,60 +98,6 @@ def download_file(
     with _open_url(url, timeout_seconds=timeout_seconds, token=token) as response:
         _write_response(response, output_path, chunk_size_bytes=chunk_size_bytes)
     return output_path
-
-
-def _safe_member_path(output_dir: Path, member: zipfile.ZipInfo) -> Path:
-    """Return the target path for a zip member after path traversal validation."""
-    output_root = output_dir.resolve()
-    target_path = (output_root / member.filename).resolve()
-    try:
-        target_path.relative_to(output_root)
-    except ValueError as exc:
-        raise RuntimeError(f"Unsafe zip member path: {member.filename}") from exc
-    return target_path
-
-
-def extract_archive(
-    archive_path: Path,
-    output_dir: Path,
-    *,
-    overwrite: bool = False,
-) -> list[Path]:
-    """Extract ``archive_path`` into ``output_dir`` and return written paths."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    written_paths: list[Path] = []
-
-    with zipfile.ZipFile(archive_path) as zf:
-        for member in zf.infolist():
-            target_path = _safe_member_path(output_dir, member)
-            if member.is_dir():
-                target_path.mkdir(parents=True, exist_ok=True)
-                continue
-
-            if target_path.exists() and not overwrite:
-                raise FileExistsError(
-                    f"Refusing to overwrite existing file: {target_path}. "
-                    "Pass --overwrite to replace extracted files."
-                )
-
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            # Avoid ZipFile.extractall so archive paths are validated before writes.
-            with zf.open(member) as src, target_path.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-            written_paths.append(target_path)
-
-    if not written_paths:
-        raise RuntimeError(f"No files were extracted from: {archive_path}")
-    return written_paths
-
-
-def _looks_like_zip_url(url: str) -> bool:
-    """Return whether the configured URL should use the legacy zip downloader."""
-    parsed = urlparse(url)
-    return parsed.path.lower().endswith(".zip") or (
-        "/resolve/" in parsed.path and parsed.path.lower().endswith(".zip")
-    )
 
 
 def _parse_hf_dataset_url(
@@ -253,11 +202,9 @@ def list_hf_dataset_files(
     return endpoint, repo_id, active_revision, files
 
 
-def _is_package_file(path: str) -> bool:
-    """Return whether a repo path belongs to the aligned ARGO HF package layout."""
-    return any(
-        path == prefix or path.startswith(prefix) for prefix in HF_PACKAGE_PREFIXES
-    )
+def _is_package_file(path: str, package_prefixes: tuple[str, ...]) -> bool:
+    """Return whether a repo path belongs to the requested HF package layout."""
+    return any(path == prefix or path.startswith(prefix) for prefix in package_prefixes)
 
 
 def _safe_repo_target(output_dir: Path, repo_path: str) -> Path:
@@ -285,6 +232,7 @@ def download_hf_package(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     chunk_size_mb: int = DEFAULT_CHUNK_SIZE_MB,
     token: str | None = None,
+    package_prefixes: tuple[str, ...] = HF_PACKAGE_PREFIXES,
 ) -> list[Path]:
     """Download the Hugging Face aligned ARGO package folder into ``output_dir``."""
     output_dir = Path(output_dir)
@@ -295,7 +243,7 @@ def download_hf_package(
         token=token,
         timeout_seconds=timeout_seconds,
     )
-    package_files = [path for path in files if _is_package_file(path)]
+    package_files = [path for path in files if _is_package_file(path, package_prefixes)]
     if not package_files:
         raise RuntimeError(
             f"No aligned ARGO package files found in Hugging Face dataset repo: {repo_id}"
@@ -328,10 +276,7 @@ def download_hf_package(
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the command-line parser for aligned ARGO package downloads."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Download the Hugging Face packaged aligned ARGO dataset folder. "
-            "Legacy .zip links are still supported."
-        )
+        description="Download the Hugging Face packaged aligned ARGO dataset folder."
     )
     parser.add_argument(
         "--output-dir",
@@ -349,11 +294,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_ZARR_PATH,
         help="Expected package-relative Zarr path used for post-download validation.",
-    )
-    parser.add_argument(
-        "--archive-name",
-        default=DEFAULT_ARCHIVE_NAME,
-        help="Local archive filename for legacy .zip links only.",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -375,7 +315,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite package files that already exist during download or zip extraction.",
+        help="Overwrite package files that already exist during download.",
     )
     parser.add_argument(
         "--hf-token",
@@ -396,36 +336,18 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     source_url = load_dataset_url(DATASET_LINK_KEY)
-    if _looks_like_zip_url(source_url):
-        archive_path = output_dir / str(args.archive_name)
-        downloaded_path = download_file(
-            source_url,
-            archive_path,
-            force=bool(args.force_download),
-            timeout_seconds=int(args.timeout_seconds),
-            chunk_size_mb=int(args.chunk_size_mb),
-            token=args.hf_token,
-        )
-        written_paths = extract_archive(
-            downloaded_path,
-            output_dir,
-            overwrite=bool(args.overwrite),
-        )
-        print(f"Downloaded archive: {downloaded_path}")
-        print(f"Extracted files: {len(written_paths)}")
-    else:
-        written_paths = download_hf_package(
-            source_url,
-            output_dir,
-            revision=str(args.revision),
-            zarr_path=Path(args.zarr_path),
-            force=bool(args.force_download),
-            overwrite=bool(args.overwrite),
-            timeout_seconds=int(args.timeout_seconds),
-            chunk_size_mb=int(args.chunk_size_mb),
-            token=args.hf_token,
-        )
-        print(f"Downloaded Hugging Face package files: {len(written_paths)}")
+    written_paths = download_hf_package(
+        source_url,
+        output_dir,
+        revision=str(args.revision),
+        zarr_path=Path(args.zarr_path),
+        force=bool(args.force_download),
+        overwrite=bool(args.overwrite),
+        timeout_seconds=int(args.timeout_seconds),
+        chunk_size_mb=int(args.chunk_size_mb),
+        token=args.hf_token,
+    )
+    print(f"Downloaded Hugging Face package files: {len(written_paths)}")
     print(f"Output folder: {output_dir}")
     print(f"Aligned ARGO Zarr: {output_dir / Path(args.zarr_path)}")
 
