@@ -56,6 +56,7 @@ DEFAULT_PAPER_METHOD_ORDER = (
     "lstm",
     "cnn",
     "unet",
+    "unet2d",
     "depthdif",
 )
 METHOD_LABELS = {
@@ -64,6 +65,7 @@ METHOD_LABELS = {
     "lstm": "LSTM",
     "cnn": "CNN",
     "unet": "U-Net",
+    "unet2d": "U-Net 2D",
     "depthdif": "DepthDif",
 }
 TARGET_ORDER = ("en4", "glorys")
@@ -82,6 +84,7 @@ DEFAULT_CLIMATOLOGY_IDW_EPS = 1.0e-6
 DEFAULT_CLIMATOLOGY_IDW_CHUNK_SIZE = 250_000
 DEFAULT_PROFILE_CHUNK_SIZE = 100_000
 DEFAULT_VALIDATION_YEAR = 2018
+DEFAULT_METRICS_MAX_DEPTH_M = 2000.0
 
 
 @dataclass(frozen=True)
@@ -227,6 +230,32 @@ def load_dataset_context(dataset_root: Path) -> DatasetContext:
         height=height,
         width=width,
         ocean_mask=ocean_mask,
+    )
+
+
+def limit_dataset_context_depth(
+    context: DatasetContext, max_depth_m: float | None
+) -> DatasetContext:
+    """Return a context restricted to depths no deeper than max_depth_m."""
+    if max_depth_m is None:
+        return context
+    limit = float(max_depth_m)
+    if limit <= 0.0:
+        raise ValueError("max_depth_m must be positive when provided.")
+    depth_axis = np.asarray(context.depth_axis_m, dtype=np.float64)
+    keep = depth_axis <= limit
+    if not np.any(keep):
+        raise RuntimeError(f"No dataset depth levels are <= {limit:.3f} m.")
+    return DatasetContext(
+        root=context.root,
+        manifest=context.manifest,
+        depth_axis_m=depth_axis[keep],
+        land_mask_path=context.land_mask_path,
+        transform=context.transform,
+        crs=context.crs,
+        height=context.height,
+        width=context.width,
+        ocean_mask=context.ocean_mask,
     )
 
 
@@ -1305,6 +1334,7 @@ def write_latex_table(
     output_path: Path,
     *,
     method_order: Sequence[str] | None = None,
+    max_depth_m: float | None = DEFAULT_METRICS_MAX_DEPTH_M,
 ) -> Path:
     """Write a LaTeX table matching the paper reconstruction layout."""
     ordered_methods = _ordered_methods(
@@ -1341,10 +1371,15 @@ def write_latex_table(
             return rf"\textbf{{{text}}}"
         return text
 
+    depth_phrase = (
+        "averaged across depth levels"
+        if max_depth_m is None
+        else f"averaged across native depth levels no deeper than {float(max_depth_m):.0f} m"
+    )
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{\textbf{Subsurface reconstruction results} (evaluation year 2018). Performance is reported for temperature and salinity against two reference targets: dense GLORYS12 fields and held-out EN4 profiles, averaged across depth levels. Best values highlighted in bold.}",
+        rf"\caption{{\textbf{{Subsurface reconstruction results}} (evaluation year 2018). Performance is reported for temperature and salinity against two reference targets: dense GLORYS12 fields and held-out EN4 profiles, {depth_phrase}. Best values highlighted in bold.}}",
         r"\label{tab:recon_results}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{3.5pt}",
@@ -1517,6 +1552,7 @@ def export_paper_metrics(
     climatology_idw_chunk_size: int = DEFAULT_CLIMATOLOGY_IDW_CHUNK_SIZE,
     profile_chunk_size: int = DEFAULT_PROFILE_CHUNK_SIZE,
     overwrite_climatology: bool = False,
+    max_depth_m: float | None = DEFAULT_METRICS_MAX_DEPTH_M,
 ) -> dict[str, Any]:
     """Export paper metrics and table artifacts for one standard week."""
     output_dir = Path(output_dir)
@@ -1587,6 +1623,7 @@ def export_paper_metrics(
         selected_date = int(bundle["manifest"]["selected_date"])
     _validate_requested_week(selected_date, year=int(year), iso_week=int(iso_week))
     context = _context_from_bundle_or_runs(bundle=bundle, runs_by_method=runs_by_method)
+    context = limit_dataset_context_depth(context, max_depth_m)
 
     if climatology_path is None:
         climatology = build_climatology_artifacts(
@@ -1658,6 +1695,7 @@ def export_paper_metrics(
         summary,
         output_dir / "recon_results_table.tex",
         method_order=method_order,
+        max_depth_m=max_depth_m,
     )
     manifest = {
         "schema_version": 1,
@@ -1670,6 +1708,10 @@ def export_paper_metrics(
         "en4_holdout_fraction": float(en4_holdout_fraction),
         "seed": int(seed),
         "depth_averaging": "equal_depth_mean",
+        "max_depth_m": None if max_depth_m is None else float(max_depth_m),
+        "evaluated_depth_count": int(context.depth_axis_m.size),
+        "evaluated_depth_min_m": float(np.min(context.depth_axis_m)),
+        "evaluated_depth_max_m": float(np.max(context.depth_axis_m)),
         "method_order": list(method_order),
         "method_labels": {
             method: _method_label(method, method_labels) for method in method_order
@@ -1729,6 +1771,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--validation-year", type=int, default=DEFAULT_VALIDATION_YEAR)
     parser.add_argument(
+        "--max-depth-m",
+        type=float,
+        default=DEFAULT_METRICS_MAX_DEPTH_M,
+        help="Maximum native depth in meters included in metrics.",
+    )
+    parser.add_argument(
         "--climatology-idw-power",
         type=float,
         default=DEFAULT_CLIMATOLOGY_IDW_POWER,
@@ -1778,6 +1826,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         climatology_idw_chunk_size=args.climatology_idw_chunk_size,
         profile_chunk_size=args.profile_chunk_size,
         overwrite_climatology=bool(args.overwrite_climatology),
+        max_depth_m=args.max_depth_m,
     )
     print(
         "Wrote paper metrics: "

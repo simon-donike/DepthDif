@@ -81,11 +81,19 @@ DEFAULT_RASTER_WORKERS = max(1, min(4, os.cpu_count() or 1))
 RASTER_DTYPE = "uint8"
 VALID_CODE_MIN = 0
 NODATA_CODE = np.uint8(255)
+MISSING_QC_FLAG = np.int8(-1)
 VALID_CODE_MAX = np.float32(254.0)
 TEMPERATURE_KELVIN_STRETCH = "temperature_kelvin"
 SALINITY_STRETCH = "salinity"
 SEA_HEIGHT_STRETCH = "sea_height"
 DENSITY_STRETCH = "density"
+COMPACT_LEVEL_QC_NAMES = (
+    "argo_depth_qc_on_glorys_depth",
+    "argo_temp_qc_on_glorys_depth",
+    "argo_psal_qc_on_glorys_depth",
+)
+COMPACT_TEMP_PROFILE_QC_NAME = "argo_temp_profile_qc"
+COMPACT_PSAL_PROFILE_QC_NAME = "argo_psal_profile_qc"
 
 
 @dataclass(frozen=True)
@@ -1060,6 +1068,36 @@ def _read_argo_chunk(
     }
 
 
+def _worst_profile_qc_code(
+    *,
+    observed: np.ndarray,
+    level_qc: Sequence[np.ndarray],
+    profile_qc: Sequence[np.ndarray],
+) -> np.ndarray:
+    """Collapse available QC values to one worst non-missing code per profile."""
+    observed_mask = np.asarray(observed, dtype=bool)
+    if observed_mask.ndim != 2:
+        raise ValueError("observed must have shape profile x depth.")
+    profile_count = int(observed_mask.shape[0])
+    worst = np.full(profile_count, int(MISSING_QC_FLAG), dtype=np.int16)
+    for values in profile_qc:
+        qc = np.asarray(values, dtype=np.int16).reshape(-1)
+        if int(qc.size) != profile_count:
+            raise ValueError("profile QC length does not match observed profiles.")
+        present = qc >= 0
+        worst[present] = np.maximum(worst[present], qc[present])
+    for values in level_qc:
+        qc = np.asarray(values, dtype=np.int16)
+        if qc.shape != observed_mask.shape:
+            raise ValueError("level QC shape does not match observed profiles.")
+        # Only observed depths should influence the profile-level worst code.
+        present = observed_mask & (qc >= 0)
+        if np.any(present):
+            masked = np.where(present, qc, int(MISSING_QC_FLAG))
+            worst = np.maximum(worst, masked.max(axis=1))
+    return worst.astype(np.int8, copy=False)
+
+
 def _align_profile_values_to_depths(
     values: np.ndarray,
     depths: np.ndarray,
@@ -1331,9 +1369,7 @@ def _write_argo_profile_store(
     col_parts: list[np.ndarray] = []
     source_index_parts: list[np.ndarray] = []
     source_file_parts: list[np.ndarray] = []
-    level_qc_names = tuple(
-        f"argo_{name}_qc_on_glorys_depth" for name in ARGO_LEVEL_QC_VARS
-    )
+    level_qc_names = COMPACT_LEVEL_QC_NAMES
     profile_qc_names = tuple(f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS)
     level_qc_parts: dict[str, list[np.ndarray]] = {
         name: [] for name in level_qc_names if name in input_ds
@@ -1341,6 +1377,8 @@ def _write_argo_profile_store(
     profile_qc_parts: dict[str, list[np.ndarray]] = {
         name: [] for name in profile_qc_names if name in input_ds
     }
+    temp_profile_qc_parts: list[np.ndarray] = []
+    salinity_profile_qc_parts: list[np.ndarray] = []
     temp_stats: list[EncodeStats] = []
     salinity_stats: list[EncodeStats] = []
 
@@ -1420,10 +1458,61 @@ def _write_argo_profile_store(
             level_qc_parts[name].append(
                 np.asarray(chunk[name], dtype=np.int8)[keep].astype(np.int8, copy=False)
             )
-        for name in profile_qc_parts:
-            profile_qc_parts[name].append(
-                np.asarray(chunk[name], dtype=np.int8).reshape(-1)[keep]
+        level_depth_qc = (
+            [np.asarray(chunk["argo_depth_qc_on_glorys_depth"], dtype=np.int8)[keep]]
+            if "argo_depth_qc_on_glorys_depth" in chunk
+            else []
+        )
+        profile_common_qc = [
+            np.asarray(chunk[name], dtype=np.int8).reshape(-1)[keep]
+            for name in (
+                "argo_juld_qc",
+                "argo_position_qc",
+                "argo_profile_depth_qc",
             )
+            if name in chunk
+        ]
+        temp_profile_qc_parts.append(
+            _worst_profile_qc_code(
+                observed=np.isfinite(temp_kelvin[keep]),
+                level_qc=level_depth_qc
+                + (
+                    [
+                        np.asarray(
+                            chunk["argo_temp_qc_on_glorys_depth"], dtype=np.int8
+                        )[keep]
+                    ]
+                    if "argo_temp_qc_on_glorys_depth" in chunk
+                    else []
+                ),
+                profile_qc=profile_common_qc,
+            )
+        )
+        salinity_profile_qc_parts.append(
+            _worst_profile_qc_code(
+                observed=np.isfinite(salinity[keep]),
+                level_qc=level_depth_qc
+                + (
+                    [
+                        np.asarray(
+                            chunk["argo_psal_qc_on_glorys_depth"], dtype=np.int8
+                        )[keep]
+                    ]
+                    if "argo_psal_qc_on_glorys_depth" in chunk
+                    else []
+                ),
+                profile_qc=profile_common_qc
+                + (
+                    [
+                        np.asarray(
+                            chunk["argo_profile_psal_qc"], dtype=np.int8
+                        ).reshape(-1)[keep]
+                    ]
+                    if "argo_profile_psal_qc" in chunk
+                    else []
+                ),
+            )
+        )
     profile_progress.close()
 
     if temp_encoded_parts:
@@ -1437,6 +1526,8 @@ def _write_argo_profile_store(
         lon_all = np.concatenate(longitude_parts, axis=0)
         rows_all = np.concatenate(row_parts, axis=0)
         cols_all = np.concatenate(col_parts, axis=0)
+        temp_profile_qc_all = np.concatenate(temp_profile_qc_parts, axis=0)
+        salinity_profile_qc_all = np.concatenate(salinity_profile_qc_parts, axis=0)
     else:
         depth_size = int(np.asarray(depth_axis).size)
         temp_encoded_all = np.zeros((0, depth_size), dtype=np.uint8)
@@ -1449,6 +1540,8 @@ def _write_argo_profile_store(
         lon_all = np.zeros((0,), dtype=np.float32)
         rows_all = np.zeros((0,), dtype=np.int32)
         cols_all = np.zeros((0,), dtype=np.int32)
+        temp_profile_qc_all = np.zeros((0,), dtype=np.int8)
+        salinity_profile_qc_all = np.zeros((0,), dtype=np.int8)
 
     depth_size = int(np.asarray(depth_axis).size)
     level_qc_all = {
@@ -1459,15 +1552,6 @@ def _write_argo_profile_store(
         )
         for name, parts in level_qc_parts.items()
     }
-    profile_qc_all = {
-        name: (
-            np.concatenate(parts, axis=0).astype(np.int8, copy=False)
-            if parts
-            else np.zeros((0,), dtype=np.int8)
-        )
-        for name, parts in profile_qc_parts.items()
-    }
-
     profile_axis = np.arange(int(profile_dates_all.size), dtype=np.int64)
     data_vars = {
         "profile_date": (("profile",), profile_dates_all),
@@ -1483,11 +1567,11 @@ def _write_argo_profile_store(
         "argo_psal_uint8": (("profile", "glorys_depth"), salinity_encoded_all),
         "argo_temp_valid": (("profile", "glorys_depth"), temp_valid_all),
         "argo_psal_valid": (("profile", "glorys_depth"), salinity_valid_all),
+        COMPACT_TEMP_PROFILE_QC_NAME: (("profile",), temp_profile_qc_all),
+        COMPACT_PSAL_PROFILE_QC_NAME: (("profile",), salinity_profile_qc_all),
     }
     for name, values in level_qc_all.items():
         data_vars[name] = (("profile", "glorys_depth"), values)
-    for name, values in profile_qc_all.items():
-        data_vars[name] = (("profile",), values)
 
     ds = xr.Dataset(
         data_vars=data_vars,

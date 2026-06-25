@@ -304,7 +304,7 @@ Run metrics from the saved bundle:
   --output-dir inference/outputs/paper_2018_W25/metrics
 ```
 
-Metrics read the manifest dynamically, including CNN and DepthDif when present, and compute RMSE, MAE, and R² by method, variable, target, and depth against the held-out EN4/ARGO profile CSV and the persisted dense GLORYS reference rasters. Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and `paper_metrics_manifest.json`.
+Metrics read the manifest dynamically, including CNN, U-Net 2D, and DepthDif when present, and compute RMSE, MAE, and R² by method, variable, target, and depth against the held-out EN4/ARGO profile CSV and the persisted dense GLORYS reference rasters. By default, metrics are evaluated only at native depth levels no deeper than 2000 m; override with `--max-depth-m` only for intentional comparisons with a different cutoff. Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and `paper_metrics_manifest.json`.
 
 The older direct metrics mode remains available for existing runs:
 

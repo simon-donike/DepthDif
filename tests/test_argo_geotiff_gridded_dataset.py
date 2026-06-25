@@ -272,6 +272,12 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(len(dataset), 1)
             self.assertEqual(int(dataset.rows[0]["argo_profile_count"]), 1)
             self.assertIn("argo_temp_qc_on_glorys_depth", dataset.argo_store.ds)
+            self.assertIn("argo_temp_profile_qc", dataset.argo_store.ds)
+            np.testing.assert_array_equal(
+                dataset.argo_store.ds["argo_temp_profile_qc"].values,
+                np.asarray([2, 4], dtype=np.int8),
+            )
+            self.assertNotIn("argo_juld_qc", dataset.argo_store.ds)
             sample = dataset[0]
 
             self.assertEqual(sample["eo"].shape, (1, 2, 2))
@@ -336,6 +342,43 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertFalse(bool(sample["y_valid_mask"][0, 1, 1].item()))
             self.assertTrue(bool(sample["y_salinity_valid_mask"][0, 1, 1].item()))
             self.assertEqual(sample["info"]["x_source"], "argo")
+
+    def test_accepted_argo_qc_flags_filter_compact_profile_worst_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            strict = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+                include_salinity=True,
+                accepted_argo_qc_flags=(1, 2),
+            )
+            permissive = ArgoGeoTIFFGriddedPatchDataset(
+                geotiff_root_dir=output_dir,
+                metadata_cache_dir=cache_dir,
+                split="train",
+                tile_size=2,
+                resolution_deg=1.0,
+                land_mask_path=land_mask_path,
+                patch_stride=2,
+                max_land_fraction=1.0,
+                val_year=2018,
+                require_argo_for_train=True,
+                include_salinity=True,
+                accepted_argo_qc_flags=(1, 2, 4),
+            )
+
+            self.assertEqual(int(strict.rows[0]["argo_profile_count"]), 1)
+            self.assertEqual(int(permissive.rows[0]["argo_profile_count"]), 2)
+            strict.argo_store.close()
+            permissive.argo_store.close()
 
     def test_synthetic_pretraining_rasters_match_glorys_storage_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

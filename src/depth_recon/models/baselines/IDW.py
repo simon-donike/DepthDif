@@ -528,6 +528,47 @@ class IDWInterpolationBaseline(pl.LightningModule):
         outputs["y_hat_denorm_for_plot"] = denorm_for_plot_by_field[alias_field]
         return outputs
 
+    def _apply_no_argo_nodata(
+        self,
+        outputs: dict[str, Any],
+        batch: dict[str, Any],
+        model_batch: dict[str, torch.Tensor],
+    ) -> dict[str, Any]:
+        """Set sample/field predictions without ARGO support to NaN."""
+        mask_by_field = self._split_output_tensor(model_batch["x_valid_mask"], batch)
+
+        def mask_field_tensor(tensor: torch.Tensor, field: str) -> torch.Tensor:
+            has_argo = (mask_by_field[field] > 0.5).flatten(1).any(dim=1)
+            keep_shape = [int(has_argo.size(0))] + [1] * (int(tensor.ndim) - 1)
+            keep = has_argo.to(device=tensor.device).reshape(keep_shape)
+            return torch.where(keep, tensor, torch.full_like(tensor, float("nan")))
+
+        def mask_stacked_tensor(tensor: torch.Tensor) -> torch.Tensor:
+            tensor_by_field = self._split_output_tensor(tensor, batch)
+            cleaned = [
+                mask_field_tensor(tensor_by_field[field], field)
+                for field in self.output_fields
+            ]
+            return torch.cat(cleaned, dim=1) if len(cleaned) > 1 else cleaned[0]
+
+        masked = dict(outputs)
+        if torch.is_tensor(masked.get("y_hat")):
+            masked["y_hat"] = mask_stacked_tensor(masked["y_hat"])
+        for field in self.output_fields:
+            for suffix in ("", "_denorm", "_denorm_for_plot"):
+                key = f"y_hat_{field}{suffix}"
+                if torch.is_tensor(masked.get(key)):
+                    masked[key] = mask_field_tensor(masked[key], field)
+        alias_field = (
+            "temperature"
+            if "temperature" in self.output_fields
+            else self.output_fields[0]
+        )
+        for key in ("y_hat_denorm", "y_hat_denorm_for_plot"):
+            if torch.is_tensor(masked.get(key)):
+                masked[key] = mask_field_tensor(masked[key], alias_field)
+        return masked
+
     @torch.no_grad()
     def predict_step(
         self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
@@ -543,6 +584,7 @@ class IDWInterpolationBaseline(pl.LightningModule):
             land_mask=batch.get("land_mask"),
             output_land_mask=batch.get("output_land_mask"),
         )
+        outputs = self._apply_no_argo_nodata(outputs, batch, model_batch)
         outputs.update(
             {
                 "denoise_samples": [],

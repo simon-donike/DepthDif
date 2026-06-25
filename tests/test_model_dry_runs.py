@@ -487,7 +487,7 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.allclose(pred[:, :, 0, 0], pred[:, :, 1, 1]))
 
-    def test_lstm_baseline_surface_only_inference_without_argo_is_finite(self) -> None:
+    def test_lstm_baseline_surface_only_inference_without_argo_is_nodata(self) -> None:
         model = PointwiseLSTMBaseline(
             hidden_size=4,
             num_layers=1,
@@ -502,8 +502,8 @@ class TestModelDryRuns(unittest.TestCase):
 
         pred = model.predict_step(batch, batch_idx=0)
 
-        self.assertTrue(torch.isfinite(pred["y_hat"]).all())
-        self.assertTrue(torch.isfinite(pred["y_hat_denorm"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
 
     def test_lstm_baseline_from_factory_requires_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -618,7 +618,7 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.allclose(pred[:, :, 0, 0], pred[:, :, 1, 1]))
 
-    def test_cnn_baseline_surface_only_inference_without_argo_is_finite(self) -> None:
+    def test_cnn_baseline_surface_only_inference_without_argo_is_nodata(self) -> None:
         model = ProfileCNNInfillingBaseline(
             generated_channels=2,
             hidden_channels=4,
@@ -633,8 +633,8 @@ class TestModelDryRuns(unittest.TestCase):
 
         pred = model.predict_step(batch, batch_idx=0)
 
-        self.assertTrue(torch.isfinite(pred["y_hat"]).all())
-        self.assertTrue(torch.isfinite(pred["y_hat_denorm"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat"]).all())
+        self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
 
     def test_cnn_baseline_sparse_loss_decodes_only_argo_profiles(self) -> None:
         model = ProfileCNNInfillingBaseline(

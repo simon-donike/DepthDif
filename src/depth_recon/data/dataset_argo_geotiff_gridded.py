@@ -53,6 +53,10 @@ ARGO_PROFILE_QC_VARS = {
     "profile_potm": "argo_profile_potm_qc",
     "profile_psal": "argo_profile_psal_qc",
 }
+COMPACT_PROFILE_QC_VARS = {
+    "temp": "argo_temp_profile_qc",
+    "psal": "argo_psal_profile_qc",
+}
 
 
 def _decode_stretched_uint8(values: np.ndarray, stretch: dict[str, Any]) -> np.ndarray:
@@ -333,6 +337,10 @@ class ArgoGeoTIFFProfileStore:
             )
             indexer = selected
         ds = self._ensure_current_process()
+        compact_name = COMPACT_PROFILE_QC_VARS.get(variable)
+        if compact_name in ds:
+            qc = np.asarray(ds[compact_name].isel(profile=indexer).values).reshape(-1)
+            return mask & self._accepted_qc_mask(qc)[:, None]
         for name in self._level_qc_names_for_variable(variable):
             if name not in ds:
                 continue
@@ -473,6 +481,16 @@ class ArgoGeoTIFFProfileStore:
         salinity[~valid] = np.nan
         return salinity.astype(np.float32, copy=False)
 
+    def quality_cache_signature(self) -> str:
+        """Return the ARGO quality-filter settings that affect support counts."""
+        marker_text = "markers-" + "-".join(
+            name for name in COMPACT_PROFILE_QC_VARS.values() if name in self.ds
+        )
+        flags_text = "-".join(str(value) for value in self.accepted_qc_flags)
+        return _sanitize_cache_text(
+            f"filter{int(self.filter_bad_quality)}_flags{flags_text}_{marker_text}"
+        )
+
     def close(self) -> None:
         """Close the opened zarr dataset."""
         self.ds.close()
@@ -481,7 +499,7 @@ class ArgoGeoTIFFProfileStore:
 class GeoTIFFPatchIndex:
     """Build compact patch/date metadata rows for GeoTIFF training stores."""
 
-    CACHE_VERSION = 2
+    CACHE_VERSION = 3
 
     def __init__(
         self,
@@ -561,13 +579,18 @@ class GeoTIFFPatchIndex:
             if self.grid_params.val_year is not None
             else "patchsplit"
         )
+        argo_quality_text = (
+            "noargo"
+            if self.argo_store is None
+            else self.argo_store.quality_cache_signature()
+        )
         name = (
             f"argo_geotiff_gridded_v{self.CACHE_VERSION}_root{root_hash}_"
             f"dates{_date_signature(self.dates)}_"
             f"tile{int(self.grid_params.tile_size)}_res{res_text}_"
             f"stride{int(self.grid_params.effective_patch_stride)}_"
             f"grid{grid_source}_land{land_text}_mask{mask_hash}_"
-            f"force{force_hash}_{split_text}.csv"
+            f"force{force_hash}_{split_text}_argo{argo_quality_text}.csv"
         )
         return self.cache_dir / name
 
@@ -1004,7 +1027,9 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         with resolve_config_path(config_path).open("r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
-        ds_cfg = cfg.get("data", cfg).get("dataset", {})
+        data_cfg = cfg.get("data", cfg)
+        ds_cfg = data_cfg.get("dataset", {})
+        split_cfg = data_cfg.get("split", cfg.get("split", {}))
         if dataset_overrides:
             ds_cfg = _deep_update_config(ds_cfg, dataset_overrides)
         return cls(
@@ -1117,8 +1142,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "eo_var_name",
                 default=None,
             ),
-            val_fraction=float(cfg.get("split", {}).get("val_fraction", 0.2)),
-            val_year=cls._optional_int(cfg.get("split", {}).get("val_year", None)),
+            val_fraction=float(split_cfg.get("val_fraction", 0.2)),
+            val_year=cls._optional_int(split_cfg.get("val_year", None)),
             require_argo_for_train=bool(
                 cls._cfg_get(
                     ds_cfg,

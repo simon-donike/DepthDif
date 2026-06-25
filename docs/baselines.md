@@ -154,7 +154,7 @@ For one field with shape `(B, C, H, W)`, the model reshapes internally:
 -> (B, C, H, W)
 ```
 
-The default initializer is LeCun normal and the default activation is SELU. Training and validation loss are computed only at spatial columns with ARGO observations, comparing the decoded profile to the matching GLORYS profile at that location. Dense `predict_step` still runs over the full patch and can use EO/surface input when ARGO support is absent at inference time.
+The default initializer is LeCun normal and the default activation is SELU. Training and validation loss are computed only at spatial columns with ARGO observations, comparing the decoded profile to the matching GLORYS profile at that location. Dense `predict_step` still runs over the full patch, and sample/field outputs with no ARGO support are emitted as nodata to match the other baselines.
 
 ## 3D U-Net Baseline
 
@@ -258,4 +258,4 @@ Inference uses the same model factory and export path as the diffusion model:
 4. For `lstm_baseline`, `cnn_baseline`, `unet_baseline`, or `unet2d_baseline`, provide a trained Lightning checkpoint.
 5. The exporter calls `predict_step` and consumes the same normalized, denormalized, and field-specific keys.
 
-For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. IDW/U-Net no-ARGO patches become nodata; the LSTM and profile CNN keep surface-conditioned predictions available.
+For whole-world export, the existing patch inference flow can therefore run any baseline. IDW is checkpoint-free and deterministic. The trainable neural baselines require trained weights but otherwise follow the same output path. For all baselines, sample/field predictions with no ARGO support become nodata.

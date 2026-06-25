@@ -426,6 +426,9 @@ class TestPaperMetricsExport(unittest.TestCase):
             ) as f:
                 manifest_json = json.load(f)
             self.assertEqual(manifest_json["depth_averaging"], "equal_depth_mean")
+            self.assertEqual(manifest_json["max_depth_m"], 2000.0)
+            self.assertEqual(manifest_json["evaluated_depth_count"], 2)
+            self.assertIn("no deeper than 2000 m", table)
 
     def test_bundle_metrics_reads_dynamic_methods_and_disk_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -469,6 +472,8 @@ class TestPaperMetricsExport(unittest.TestCase):
             labels = set(summary["method_label"].tolist())
 
             self.assertEqual(manifest["method_order"], methods)
+            self.assertEqual(manifest["max_depth_m"], 2000.0)
+            self.assertEqual(manifest["evaluated_depth_count"], 2)
             self.assertEqual(len(summary), 12)
             self.assertEqual(len(by_depth), 24)
             self.assertIn("CNN", labels)
