@@ -77,6 +77,7 @@ nav:
       - Sampling Diagnostics: sampling-diagnostics.md
       - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
+      - Losses: losses.md
       - Date + Time Injection: data-coordinate-injection.md
       - Model Settings: settings.md
       - Autoencoder + Latent Diffusion: autoencoder.md

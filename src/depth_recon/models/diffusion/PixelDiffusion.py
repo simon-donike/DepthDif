@@ -17,6 +17,7 @@ from .DenoisingDiffusionProcess import (
     DenoisingDiffusionConditionalProcess,
 )
 from depth_recon.configs.config_resolver_pixel import load_pixel_training_config
+from depth_recon.losses import AmbientOceanLoss
 from depth_recon.paths import resolve_config_path
 from depth_recon.utils.normalizations import (
     PLOT_CMAP,
@@ -110,6 +111,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         wandb_verbose: bool = True,
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
+        losses_config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize PixelDiffusionConditional with configured parameters.
 
@@ -181,6 +183,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             wandb_verbose (bool): Boolean flag controlling behavior.
             log_stats_every_n_steps (int): Step or timestep value.
             log_images_every_n_steps (int): Step or timestep value.
+            losses_config (dict[str, Any] | None): Optional auxiliary loss config.
 
         Returns:
             None: No value is returned.
@@ -276,6 +279,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.output_fields = normalized_output_fields
         self.variable_scenario = variable_scenario
         self.predicts_salinity = "salinity" in self.output_fields
+        self.ocean_loss = AmbientOceanLoss(losses_config)
+        if len(self.output_fields) > 1 and self.ocean_loss.any_extra_enabled():
+            raise ValueError(
+                "model.losses auxiliary terms require separate scalar-field training. "
+                "Disable them for joint output or train temperature/salinity separately."
+            )
         self.wandb_verbose = wandb_verbose
         self.log_stats_every_n_steps = max(1, int(log_stats_every_n_steps))
         self.log_images_every_n_steps = max(1, int(log_images_every_n_steps))
@@ -475,6 +484,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             wandb_verbose=bool(w.get("verbose", True)),
             log_stats_every_n_steps=int(w.get("log_stats_every_n_steps", 1)),
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 200)),
+            losses_config=m.get("losses", {}),
         )
 
     @staticmethod
@@ -1658,6 +1668,42 @@ class PixelDiffusionConditional(pl.LightningModule):
             sync_dist=True,
             batch_size=batch_size,
         )
+
+    def _combine_and_log_ocean_losses(
+        self,
+        *,
+        prefix: str,
+        loss_ambient: torch.Tensor,
+        diffusion_context: dict[str, torch.Tensor] | None,
+        target: torch.Tensor,
+        model_batch: dict[str, torch.Tensor],
+        land_mask: torch.Tensor | None,
+        on_step: bool,
+        on_epoch: bool,
+    ) -> torch.Tensor:
+        """Combine configured ocean losses and log each component."""
+        x0_pred = target if diffusion_context is None else diffusion_context["x0_pred"]
+        total_loss, components = self.ocean_loss(
+            loss_ambient=loss_ambient,
+            x0_pred=x0_pred,
+            obs_grid=model_batch.get("x"),
+            obs_mask_grid=model_batch.get("x_valid_mask"),
+            valid_mask=model_batch.get("y_valid_mask"),
+            land_mask=land_mask,
+        )
+        batch_size = int(target.size(0))
+        for name, value in components.items():
+            self.log(
+                f"{prefix}/{name}",
+                value,
+                on_step=on_step,
+                on_epoch=on_epoch,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+        return total_loss
 
     def _prepare_condition_for_model(
         self,
@@ -3168,7 +3214,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             batch_size=int(target.size(0)),
         )
         # Conditional p_loss uses x as context while learning selected denoising target.
-        loss = self.model.p_loss(
+        loss_result = self.model.p_loss(
             target_t,
             model_condition,
             loss_mask=loss_mask,
@@ -3179,6 +3225,22 @@ class PixelDiffusionConditional(pl.LightningModule):
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
             coord=coords,
             date=date,
+            return_context=self.ocean_loss.any_extra_enabled(),
+        )
+        if isinstance(loss_result, tuple):
+            loss_ambient, diffusion_context = loss_result
+        else:
+            loss_ambient = loss_result
+            diffusion_context = None
+        loss = self._combine_and_log_ocean_losses(
+            prefix="train",
+            loss_ambient=loss_ambient,
+            diffusion_context=diffusion_context,
+            target=target_t,
+            model_batch=model_batch,
+            land_mask=land_mask,
+            on_step=True,
+            on_epoch=True,
         )
 
         self.log(
@@ -3344,7 +3406,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         # Same training objective for validation; full reverse-chain recon is logged once
         # at validation end.
-        loss = self.model.p_loss(
+        loss_result = self.model.p_loss(
             target_t,
             model_condition,
             loss_mask=loss_mask,
@@ -3355,6 +3417,22 @@ class PixelDiffusionConditional(pl.LightningModule):
             apply_further_corruption_to_noisy_branch=apply_further_corruption_to_noisy_branch,
             coord=coords,
             date=date,
+            return_context=self.ocean_loss.any_extra_enabled(),
+        )
+        if isinstance(loss_result, tuple):
+            loss_ambient, diffusion_context = loss_result
+        else:
+            loss_ambient = loss_result
+            diffusion_context = None
+        loss = self._combine_and_log_ocean_losses(
+            prefix="val",
+            loss_ambient=loss_ambient,
+            diffusion_context=diffusion_context,
+            target=target_t,
+            model_batch=model_batch,
+            land_mask=land_mask,
+            on_step=False,
+            on_epoch=True,
         )
 
         self.log(

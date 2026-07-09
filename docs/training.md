@@ -57,6 +57,8 @@ See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full d
 Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask ∩ land_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask ∩ land_mask`. `x_valid_mask` is ARGO observation support; `land_mask` is GLORYS spatial support.
 For CLI overrides, the corresponding path is `model.ambient_occlusion.enabled=false`.
 
+Auxiliary ambient-ocean losses are configured under `model.losses.*` in the pixel super-config. All are disabled by default while retaining the intended weights: sparse observation `1.0`, increment `0.5`, structure-function prior `0.1`, spectral floor `0.05`, and reserved feature-Gram prior `0.01`. Enable sparse terms with CLI overrides such as `--set model.losses.increment.enabled=true`; GLORYS prior terms additionally require a reference `.pt` path and fail fast if it is missing. These priors are statistical only and must not supervise against the paired dense GLORYS target for the same sample.
+
 ## Temperature, Salinity, And Joint Training
 
 The scenario selector supports three pixel-space contracts and applies the coupled data/model settings together:

@@ -119,6 +119,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.unet_baseline.*` with `model.model_type=unet2d_baseline` | same defaults | 2D U-Net comparison controls; depth bands are flattened into channels and the same knobs are reused. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
 | `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
+| `model.losses.*` | disabled by default | Auxiliary ambient-ocean loss stack. Sparse observation and increment terms use ARGO `x`/`x_valid_mask`; GLORYS structure-function and spectral floor terms require precomputed statistical `.pt` references and never paired dense GLORYS supervision. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |
 | `model.coord_conditioning.*` | enabled, date included | Coordinate/date FiLM conditioning controls. |
 | `model.unet.*` | `dim=64`, `dim_mults=[1,2,4,8]` | ConvNeXt U-Net width/depth and output behavior. |

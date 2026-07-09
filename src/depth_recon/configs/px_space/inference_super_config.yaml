@@ -95,6 +95,42 @@ model:  # pixel diffusion model settings
     shared_spatial_mask: true  # share mask across channels
     min_kept_observed_pixels: 50  # minimum kept observations
     require_x0_parameterization: true  # require x0 objective
+  losses:  # optional auxiliary ocean losses for ambient diffusion training
+    ambient:  # existing diffusion objective weight
+      weight: 1.0  # base ambient/diffusion loss multiplier
+    sparse_observation:  # Charbonnier consistency on sparse ARGO observations
+      enabled: false  # keep default training behavior unchanged
+      weight: 1.0  # sparse observation loss multiplier
+      eps: 1.0e-3  # Charbonnier epsilon
+    increment:  # sparse pairwise increment loss on observed ARGO profiles
+      enabled: false  # enable to penalize over-smoothed sparse-profile increments
+      weight: 0.5  # increment loss multiplier
+      eps: 1.0e-3  # Charbonnier epsilon
+      max_pairs_per_sample: 4096  # cap sampled pair count per sample
+      vertical_pairs: true  # adjacent-depth pairs at observed horizontal locations
+      horizontal_pairs: false  # optional same-depth neighbor pairs
+      horizontal_max_distance: null  # reserved for future distance-limited pairs
+    structure_function_prior:  # GLORYS distributional variogram prior
+      enabled: false  # requires reference_path when enabled
+      weight: 0.1  # structure-function prior multiplier
+      reference_path: null  # .pt with distance_bins and s2_ref
+      num_pairs: 8192  # random same-depth pairs sampled per batch
+      eps: 1.0e-6  # log comparison epsilon
+      per_depth: true  # compare per-depth reference stats when provided
+    spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
+      enabled: false  # requires reference_path when enabled
+      weight: 0.05  # spectral floor prior multiplier
+      reference_path: null  # .pt with radial band energy reference
+      eps: 1.0e-8  # log-energy epsilon
+      margin: 0.0  # hinge margin in log-energy units
+      min_band: 1  # skip DC by default
+      max_band: null  # null uses all available reference bands
+      per_depth: true  # compare per-depth reference spectra when provided
+    feature_gram_prior:  # reserved GLORYS feature-stat prior
+      enabled: false  # not implemented in this pass
+      weight: 0.01  # reserved feature prior multiplier
+      encoder_checkpoint: null  # reserved frozen encoder checkpoint path
+      reference_path: null  # reserved feature-stat reference path
   post_process:  # prediction post-processing
     gaussian_blur:  # optional output blur
       enabled: false  # enable Gaussian blur

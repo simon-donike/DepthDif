@@ -61,6 +61,10 @@ Loss options:
   - standard mode: over `y_valid_mask` intersected with GLORYS `land_mask` on the full `y` target
   - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` and GLORYS `land_mask` on the degraded `x` target
   - the common on-disk mask is not loaded by train/validation dataloaders; optional `output_land_mask` is only final prediction cleanup support
+  - optional `model.losses.*` terms add sparse ARGO Charbonnier consistency, sparse increments, GLORYS structure-function statistics, and a GLORYS spectral lower-bound prior
+  - GLORYS prior losses consume precomputed reference statistics only and do not compare a prediction to its paired dense GLORYS sample
+
+GLORYS prior reference files are PyTorch `.pt` mappings. `structure_function_prior.reference_path` expects `distance_bins` plus `s2_ref` shaped `[num_bins]` or `[C,num_bins]`. `spectral_energy_floor.reference_path` expects one radial-band tensor under `power_ref`, `energy_ref`, `band_energy_ref`, or `spectral_energy_ref`, shaped `[bands]` or `[C,bands]`.
 
 Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):
 - sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)
