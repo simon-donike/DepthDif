@@ -98,6 +98,14 @@ model:  # pixel diffusion model settings
   losses:  # optional auxiliary ocean losses for ambient diffusion training
     ambient:  # existing diffusion objective weight
       weight: 1.0  # base ambient/diffusion loss multiplier
+    aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
+      enabled: false  # keep default auxiliary weighting unchanged
+      mode: snr  # snr or linear
+      min_weight: 0.0  # lower clamp for aux multiplier
+      max_weight: 1.0  # upper clamp for aux multiplier
+      snr_gamma: 5.0  # SNR cap for normalized min-SNR weighting
+      linear_start_weight: 0.0  # linear weight at noisiest timestep
+      linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
       enabled: false  # keep default training behavior unchanged
       weight: 1.0  # sparse observation loss multiplier

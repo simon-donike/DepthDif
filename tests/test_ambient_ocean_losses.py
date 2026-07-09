@@ -13,6 +13,7 @@ from depth_recon.losses import (
     SpectralEnergyFloorLoss,
     StructureFunctionPriorLoss,
     sparse_increment_loss,
+    aux_timestep_weight,
     sparse_observation_loss,
 )
 from depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess import (
@@ -133,6 +134,140 @@ class TestAmbientOceanLosses(unittest.TestCase):
             AmbientOceanLoss(
                 {"structure_function_prior": {"enabled": True, "reference_path": None}}
             )
+
+    def test_aux_timestep_weight_disabled_returns_one(self) -> None:
+        weight = aux_timestep_weight(
+            {"enabled": False},
+            t=None,
+            alphas_cumprod=None,
+            reference=torch.tensor(2.0),
+        )
+
+        self.assertTrue(torch.isclose(weight, torch.tensor(1.0)))
+
+    def test_aux_timestep_weight_linear_prefers_clean_timesteps(self) -> None:
+        alphas = torch.linspace(1.0, 0.1, 5)
+        clean = aux_timestep_weight(
+            {
+                "enabled": True,
+                "mode": "linear",
+                "linear_start_weight": 0.0,
+                "linear_end_weight": 1.0,
+            },
+            t=torch.tensor([0]),
+            alphas_cumprod=alphas,
+            reference=torch.tensor(0.0),
+        )
+        noisy = aux_timestep_weight(
+            {
+                "enabled": True,
+                "mode": "linear",
+                "linear_start_weight": 0.0,
+                "linear_end_weight": 1.0,
+            },
+            t=torch.tensor([4]),
+            alphas_cumprod=alphas,
+            reference=torch.tensor(0.0),
+        )
+
+        self.assertTrue(torch.isclose(clean, torch.tensor(1.0)))
+        self.assertTrue(torch.isclose(noisy, torch.tensor(0.0)))
+
+    def test_aux_timestep_weight_snr_uses_gamma_and_clamps(self) -> None:
+        weight = aux_timestep_weight(
+            {
+                "enabled": True,
+                "mode": "snr",
+                "snr_gamma": 5.0,
+                "min_weight": 0.2,
+                "max_weight": 0.8,
+            },
+            t=torch.tensor([0]),
+            alphas_cumprod=torch.tensor([0.9, 0.5, 0.01]),
+            reference=torch.tensor(0.0),
+        )
+
+        self.assertTrue(torch.isclose(weight, torch.tensor(0.8)))
+
+    def test_ambient_ocean_loss_weights_only_auxiliary_terms_by_timestep(self) -> None:
+        loss_fn = AmbientOceanLoss(
+            {
+                "ambient": {"weight": 2.0},
+                "aux_timestep_weighting": {
+                    "enabled": True,
+                    "mode": "linear",
+                    "linear_start_weight": 0.0,
+                    "linear_end_weight": 1.0,
+                },
+                "sparse_observation": {
+                    "enabled": True,
+                    "weight": 3.0,
+                    "eps": 0.0,
+                },
+            }
+        )
+        total, components = loss_fn(
+            loss_ambient=torch.tensor(5.0),
+            x0_pred=torch.ones(1, 1, 1, 1) * 2.0,
+            obs_grid=torch.zeros(1, 1, 1, 1),
+            obs_mask_grid=torch.ones(1, 1, 1, 1, dtype=torch.bool),
+            t=torch.tensor([1]),
+            alphas_cumprod=torch.tensor([1.0, 0.5]),
+        )
+
+        self.assertTrue(
+            torch.isclose(components["loss_aux_timestep_weight"], torch.tensor(0.0))
+        )
+        self.assertTrue(torch.isclose(total, torch.tensor(10.0)))
+
+    def test_pixel_diffusion_forwards_timestep_context_to_ocean_loss(self) -> None:
+        model = PixelDiffusionConditional(
+            generated_channels=1,
+            condition_channels=1,
+            condition_include_eo=False,
+            condition_use_valid_mask=False,
+            parameterization="x0",
+            num_timesteps=2,
+            unet_dim=8,
+            unet_dim_mults=(1,),
+            wandb_verbose=False,
+            losses_config={"sparse_observation": {"enabled": True}},
+        )
+        captured: dict[str, torch.Tensor | None] = {}
+
+        class _CapturingOceanLoss(nn.Module):
+            def forward(self, **kwargs):
+                captured["t"] = kwargs.get("t")
+                captured["alphas_cumprod"] = kwargs.get("alphas_cumprod")
+                loss = kwargs["loss_ambient"]
+                return loss, {
+                    "loss_total": loss,
+                    "loss_aux_timestep_weight": torch.ones_like(loss),
+                }
+
+        model.ocean_loss = _CapturingOceanLoss()
+        model.log = lambda *args, **kwargs: None
+        loss = model._combine_and_log_ocean_losses(
+            prefix="train",
+            loss_ambient=torch.tensor(1.0),
+            diffusion_context={
+                "x0_pred": torch.zeros(1, 1, 1, 1),
+                "t": torch.tensor([1]),
+            },
+            target=torch.zeros(1, 1, 1, 1),
+            model_batch={"x": torch.zeros(1, 1, 1, 1)},
+            land_mask=None,
+            on_step=True,
+            on_epoch=True,
+        )
+
+        self.assertTrue(torch.isclose(loss, torch.tensor(1.0)))
+        self.assertTrue(torch.equal(captured["t"], torch.tensor([1])))
+        self.assertTrue(
+            torch.equal(
+                captured["alphas_cumprod"], model.model.forward_process.alphas_cumprod
+            )
+        )
 
     def test_p_loss_return_context_preserves_default_scalar_behavior(self) -> None:
         process = DenoisingDiffusionConditionalProcess(

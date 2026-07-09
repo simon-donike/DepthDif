@@ -50,6 +50,61 @@ The shipped defaults keep all auxiliary terms disabled while retaining their int
 
 `train/loss` and `val/loss` are the total loss. Component logs are emitted as `*/loss_ambient`, `*/loss_obs`, `*/loss_increment`, `*/loss_s2_glorys`, `*/loss_spectral_glorys`, and `*/loss_total`.
 
+## Auxiliary Timestep Weighting
+
+Clean-field auxiliary losses act on \(\hat{x}_0\). At very noisy timesteps, \(\hat{x}_0\) can be a weak or unstable estimate even when the diffusion loss is still meaningful. `model.losses.aux_timestep_weighting` therefore optionally multiplies only the auxiliary part of the objective by a scalar derived from the sampled training timestep. The base diffusion or ambient loss is not changed.
+
+The implemented objective is:
+
+\[
+\mathcal{L}_{\text{total}}
+=
+\lambda_{\text{amb}}\mathcal{L}_{\text{amb}}
++
+\bar{w}_{\text{aux}}(t)
+\left(
+\lambda_{\text{obs}}\mathcal{L}_{\text{obs}}
++
+\lambda_{\text{inc}}\mathcal{L}_{\text{inc}}
++
+\lambda_{\text{S2}}\mathcal{L}_{\text{S2}}
++
+\lambda_{\text{spec}}\mathcal{L}_{\text{spec}}
+\right).
+\]
+
+Because the current auxiliary losses reduce over the whole batch, the implementation uses the batch mean of per-sample timestep weights:
+
+\[
+\bar{w}_{\text{aux}}=\frac{1}{B}\sum_b w_{\text{aux}}(t_b).
+\]
+
+Two modes are available. `linear` uses the forward-diffusion convention that `t=0` is clean/high-SNR and `t=T-1` is noisy/low-SNR:
+
+\[
+u(t)=1-\frac{t}{T-1},
+\]
+
+\[
+w_{\text{linear}}(t)=w_{\text{start}}+u(t)(w_{\text{end}}-w_{\text{start}}).
+\]
+
+With the default linear endpoints, auxiliary losses are strongest near clean timesteps and weakest at the noisiest timesteps.
+
+`snr` computes:
+
+\[
+\mathrm{SNR}(t)=\frac{\bar{\alpha}_t}{1-\bar{\alpha}_t}
+\]
+
+and applies bounded normalized Min-SNR-style weighting:
+
+\[
+w_{\text{snr}}(t)=\frac{\min(\mathrm{SNR}(t),\gamma)}{\gamma}.
+\]
+
+The final scalar is clamped to `[min_weight, max_weight]`. This suppresses very noisy low-SNR steps while preventing high-SNR steps from receiving unbounded auxiliary weight. The logged key is `*/loss_aux_timestep_weight`.
+
 ## Base Diffusion And Ambient Loss
 
 The base term is the existing diffusion training loss. It is unchanged by the auxiliary loss stack.

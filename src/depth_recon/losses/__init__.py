@@ -6,6 +6,7 @@ from .robust import charbonnier_loss, masked_mean
 from .sparse_observation import sparse_observation_loss
 from .spectral import SpectralEnergyFloorLoss
 from .structure_function import StructureFunctionPriorLoss
+from .timestep_weighting import aux_timestep_weight
 
 __all__ = [
     "AmbientOceanLoss",
@@ -15,4 +16,5 @@ __all__ = [
     "masked_mean",
     "sparse_observation_loss",
     "sparse_increment_loss",
+    "aux_timestep_weight",
 ]

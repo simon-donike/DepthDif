@@ -12,6 +12,7 @@ from .increments import sparse_increment_loss
 from .sparse_observation import sparse_observation_loss
 from .spectral import SpectralEnergyFloorLoss
 from .structure_function import StructureFunctionPriorLoss
+from .timestep_weighting import aux_timestep_weight
 
 
 class AmbientOceanLoss(nn.Module):
@@ -27,6 +28,9 @@ class AmbientOceanLoss(nn.Module):
         self.s2_cfg = dict(self.config.get("structure_function_prior", {}))
         self.spectral_cfg = dict(self.config.get("spectral_energy_floor", {}))
         self.feature_cfg = dict(self.config.get("feature_gram_prior", {}))
+        self.aux_timestep_weighting_cfg = dict(
+            self.config.get("aux_timestep_weighting", {})
+        )
         if self._enabled(self.feature_cfg):
             raise NotImplementedError(
                 "model.losses.feature_gram_prior is reserved but not implemented."
@@ -101,15 +105,29 @@ class AmbientOceanLoss(nn.Module):
         obs_mask_grid: torch.Tensor | None = None,
         valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
+        t: torch.Tensor | None = None,
+        alphas_cumprod: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute total loss and detached component dictionary."""
         total = loss_ambient * self._weight(self.ambient_cfg, 1.0)
+        aux_total = torch.zeros_like(loss_ambient)
+        aux_weight = (
+            aux_timestep_weight(
+                self.aux_timestep_weighting_cfg,
+                t=t,
+                alphas_cumprod=alphas_cumprod,
+                reference=loss_ambient,
+            )
+            if self.any_extra_enabled()
+            else torch.ones_like(loss_ambient)
+        )
         components = {
             "loss_ambient": loss_ambient,
             "loss_obs": torch.zeros_like(loss_ambient),
             "loss_increment": torch.zeros_like(loss_ambient),
             "loss_s2_glorys": torch.zeros_like(loss_ambient),
             "loss_spectral_glorys": torch.zeros_like(loss_ambient),
+            "loss_aux_timestep_weight": aux_weight,
         }
 
         if self._enabled(self.obs_cfg):
@@ -120,7 +138,7 @@ class AmbientOceanLoss(nn.Module):
                 eps=float(self.obs_cfg.get("eps", 1e-3)),
             )
             components["loss_obs"] = obs_loss
-            total = total + self._weight(self.obs_cfg, 1.0) * obs_loss
+            aux_total = aux_total + self._weight(self.obs_cfg, 1.0) * obs_loss
 
         if self._enabled(self.increment_cfg):
             inc_loss = sparse_increment_loss(
@@ -140,7 +158,7 @@ class AmbientOceanLoss(nn.Module):
                 ),
             )
             components["loss_increment"] = inc_loss
-            total = total + self._weight(self.increment_cfg, 0.5) * inc_loss
+            aux_total = aux_total + self._weight(self.increment_cfg, 0.5) * inc_loss
 
         support_mask = valid_mask
         if land_mask is not None:
@@ -150,12 +168,15 @@ class AmbientOceanLoss(nn.Module):
         if self.structure_function is not None:
             s2_loss = self.structure_function(x0_pred, valid_mask=support_mask)
             components["loss_s2_glorys"] = s2_loss
-            total = total + self._weight(self.s2_cfg, 0.1) * s2_loss
+            aux_total = aux_total + self._weight(self.s2_cfg, 0.1) * s2_loss
 
         if self.spectral_floor is not None:
             spectral_loss = self.spectral_floor(x0_pred)
             components["loss_spectral_glorys"] = spectral_loss
-            total = total + self._weight(self.spectral_cfg, 0.05) * spectral_loss
+            aux_total = (
+                aux_total + self._weight(self.spectral_cfg, 0.05) * spectral_loss
+            )
 
+        total = total + aux_weight * aux_total
         components["loss_total"] = total
         return total, components

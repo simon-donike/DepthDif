@@ -120,6 +120,7 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
 | `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
 | `model.losses.*` | disabled by default | Auxiliary ambient-ocean loss stack. Sparse observation and increment terms use ARGO `x`/`x_valid_mask`; GLORYS structure-function and spectral floor terms require precomputed statistical `.pt` references and never paired dense GLORYS supervision. |
+| `model.losses.aux_timestep_weighting.*` | disabled by default | Optional SNR or linear multiplier applied only to auxiliary losses by sampled diffusion timestep; the base diffusion/ambient loss is unchanged. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |
 | `model.coord_conditioning.*` | enabled, date included | Coordinate/date FiLM conditioning controls. |
 | `model.unet.*` | `dim=64`, `dim_mults=[1,2,4,8]` | ConvNeXt U-Net width/depth and output behavior. |
