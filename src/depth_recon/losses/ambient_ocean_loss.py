@@ -109,7 +109,8 @@ class AmbientOceanLoss(nn.Module):
         alphas_cumprod: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute total loss and detached component dictionary."""
-        total = loss_ambient * self._weight(self.ambient_cfg, 1.0)
+        ambient_weighted = loss_ambient * self._weight(self.ambient_cfg, 1.0)
+        total = ambient_weighted
         aux_total = torch.zeros_like(loss_ambient)
         aux_weight = (
             aux_timestep_weight(
@@ -123,11 +124,18 @@ class AmbientOceanLoss(nn.Module):
         )
         components = {
             "loss_ambient": loss_ambient,
+            "loss_ambient_weighted": ambient_weighted,
             "loss_obs": torch.zeros_like(loss_ambient),
+            "loss_obs_weighted": torch.zeros_like(loss_ambient),
             "loss_increment": torch.zeros_like(loss_ambient),
+            "loss_increment_weighted": torch.zeros_like(loss_ambient),
             "loss_s2_glorys": torch.zeros_like(loss_ambient),
+            "loss_s2_glorys_weighted": torch.zeros_like(loss_ambient),
             "loss_spectral_glorys": torch.zeros_like(loss_ambient),
+            "loss_spectral_glorys_weighted": torch.zeros_like(loss_ambient),
             "loss_aux_timestep_weight": aux_weight,
+            "loss_aux_static_weighted": torch.zeros_like(loss_ambient),
+            "loss_aux_timestep_weighted": torch.zeros_like(loss_ambient),
         }
 
         if self._enabled(self.obs_cfg):
@@ -138,7 +146,9 @@ class AmbientOceanLoss(nn.Module):
                 eps=float(self.obs_cfg.get("eps", 1e-3)),
             )
             components["loss_obs"] = obs_loss
-            aux_total = aux_total + self._weight(self.obs_cfg, 1.0) * obs_loss
+            obs_weighted = self._weight(self.obs_cfg, 1.0) * obs_loss
+            components["loss_obs_weighted"] = obs_weighted
+            aux_total = aux_total + obs_weighted
 
         if self._enabled(self.increment_cfg):
             inc_loss = sparse_increment_loss(
@@ -158,7 +168,9 @@ class AmbientOceanLoss(nn.Module):
                 ),
             )
             components["loss_increment"] = inc_loss
-            aux_total = aux_total + self._weight(self.increment_cfg, 0.5) * inc_loss
+            inc_weighted = self._weight(self.increment_cfg, 0.5) * inc_loss
+            components["loss_increment_weighted"] = inc_weighted
+            aux_total = aux_total + inc_weighted
 
         support_mask = valid_mask
         if land_mask is not None:
@@ -168,15 +180,20 @@ class AmbientOceanLoss(nn.Module):
         if self.structure_function is not None:
             s2_loss = self.structure_function(x0_pred, valid_mask=support_mask)
             components["loss_s2_glorys"] = s2_loss
-            aux_total = aux_total + self._weight(self.s2_cfg, 0.1) * s2_loss
+            s2_weighted = self._weight(self.s2_cfg, 0.1) * s2_loss
+            components["loss_s2_glorys_weighted"] = s2_weighted
+            aux_total = aux_total + s2_weighted
 
         if self.spectral_floor is not None:
             spectral_loss = self.spectral_floor(x0_pred)
             components["loss_spectral_glorys"] = spectral_loss
-            aux_total = (
-                aux_total + self._weight(self.spectral_cfg, 0.05) * spectral_loss
-            )
+            spectral_weighted = self._weight(self.spectral_cfg, 0.05) * spectral_loss
+            components["loss_spectral_glorys_weighted"] = spectral_weighted
+            aux_total = aux_total + spectral_weighted
 
-        total = total + aux_weight * aux_total
+        aux_timestep_weighted = aux_weight * aux_total
+        total = total + aux_timestep_weighted
+        components["loss_aux_static_weighted"] = aux_total
+        components["loss_aux_timestep_weighted"] = aux_timestep_weighted
         components["loss_total"] = total
         return total, components

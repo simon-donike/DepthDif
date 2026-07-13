@@ -86,7 +86,7 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
 | `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
 | `data.split.val_fraction` | `0.2` | Fallback validation fraction when no validation year is set. |
-| `data.dataloader.num_workers` | `6` | Dataset-side dataloader worker default used by helper paths. |
+| `data.dataloader.num_workers` | `8` | Dataset-side dataloader worker default used by helper paths. |
 | `data.dataloader.prefetch_factor` | `2` | Prefetched batches per worker when workers are enabled. |
 | `data.dataloader.val_shuffle` | `true` | Validation loader shuffle remains enabled intentionally. |
 
@@ -132,7 +132,6 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `training.training.lr` | `1.0e-4` | Optimizer learning rate. |
-| `training.training.batch_size` | mirrors `training.dataloader.batch_size` | Legacy model metadata synchronized from the dataloader train batch size during config resolution. |
 | `training.training.noise.num_timesteps` | `1000` | Diffusion training timesteps. |
 | `training.training.noise.schedule` | `cosine` | Noise schedule: `linear`, `cosine`, `quadratic`, or `sigmoid`. |
 | `training.training.noise.beta_start` | `1.0e-4` | First-step beta for schedules that use explicit endpoints. |
@@ -150,10 +149,11 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.trainer.limit_val_batches` | `64` | Validation batches per validation run. |
 | `training.trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold. |
 | `training.wandb.*` | project/run/logging defaults | W&B project, run naming, watch, scalar, and image logging controls. |
-| `training.dataloader.batch_size` | `48` | Training dataloader batch size. |
+| `training.dataloader.batch_size` | `32` | Training dataloader batch size. |
 | `training.dataloader.val_batch_size` | `6` | Validation dataloader batch size. |
-| `training.dataloader.num_workers` | `6` | Training dataloader workers. |
+| `training.dataloader.num_workers` | `8` | Training dataloader workers per rank. |
 | `training.dataloader.val_num_workers` | `0` | Validation dataloader workers. |
+| `training.dataloader.multiprocessing_context` | `spawn` | Worker start method for training dataloaders. |
 | `training.dataloader.shuffle` | `true` | Training shuffle. |
 | `training.dataloader.val_shuffle` | `true` | Validation shuffle. This is intended behavior. |
 | `training.dataloader.pin_memory` | `true` | Enables pinned host memory. |

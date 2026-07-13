@@ -120,6 +120,9 @@ class DepthTileDataModule(pl.LightningDataModule):
         # prefetch_factor is only valid when worker processes are enabled.
         if num_workers > 0 and prefetch_factor is not None:
             kwargs["prefetch_factor"] = int(prefetch_factor)
+        multiprocessing_context = cfg.get("multiprocessing_context")
+        if num_workers > 0 and multiprocessing_context:
+            kwargs["multiprocessing_context"] = str(multiprocessing_context)
         return DataLoader(**kwargs)
 
     def train_dataloader(self) -> DataLoader:

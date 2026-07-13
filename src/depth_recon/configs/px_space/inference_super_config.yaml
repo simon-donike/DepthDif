@@ -64,8 +64,8 @@ data:  # dataset, split, and loader inputs
     val_year: 2018  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
-    num_workers: 6  # worker process count
-    prefetch_factor: 2  # batches prefetched per worker
+    num_workers: 0  # worker process count; keep DDP startup fork-safe by default
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     val_shuffle: true  # intentionally shuffle validation
 
 model:  # pixel diffusion model settings
@@ -190,7 +190,6 @@ model:  # pixel diffusion model settings
 training:  # optimizer, trainer, and logging
   training:  # diffusion training hyperparameters
     lr: 0.0001  # optimizer learning rate
-    batch_size: 4  # informational batch size
     noise:  # diffusion noise schedule
       num_timesteps: 1000  # training diffusion steps
       schedule: cosine  # beta schedule type
@@ -237,11 +236,11 @@ training:  # optimizer, trainer, and logging
   dataloader:  # Lightning dataloader settings
     batch_size: 4  # train batch size
     val_batch_size: 2  # validation batch size
-    num_workers: 6  # train loader workers
+    num_workers: 0  # train loader workers
     val_num_workers: 0  # validation loader workers
-    persistent_workers: true  # keep train workers alive
+    persistent_workers: false  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive
-    prefetch_factor: 2  # batches prefetched per worker
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     shuffle: true  # shuffle train loader
     val_shuffle: true  # intentionally shuffle validation
     pin_memory: true  # use pinned host memory
@@ -277,4 +276,4 @@ inference:  # inference-only overrides
   dataloader:  # prediction loader settings
     batch_size: 64  # prediction batch size
     num_workers: 6  # prediction workers
-    prefetch_factor: 2  # batches prefetched per worker
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled

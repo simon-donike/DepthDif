@@ -218,6 +218,18 @@ class TestAmbientOceanLosses(unittest.TestCase):
         self.assertTrue(
             torch.isclose(components["loss_aux_timestep_weight"], torch.tensor(0.0))
         )
+        self.assertTrue(
+            torch.isclose(components["loss_ambient_weighted"], torch.tensor(10.0))
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_obs_weighted"], torch.tensor(6.0))
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_aux_static_weighted"], torch.tensor(6.0))
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_aux_timestep_weighted"], torch.tensor(0.0))
+        )
         self.assertTrue(torch.isclose(total, torch.tensor(10.0)))
 
     def test_pixel_diffusion_forwards_timestep_context_to_ocean_loss(self) -> None:

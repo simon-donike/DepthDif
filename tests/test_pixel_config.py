@@ -96,7 +96,6 @@ def _minimal_super_config(
         "training": {
             "training": {
                 "lr": 1.0e-4,
-                "batch_size": 1,
                 "noise": {
                     "num_timesteps": 2,
                     "schedule": "linear",
@@ -225,39 +224,31 @@ class TestPixelConfig(unittest.TestCase):
         )
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 12)
 
-    def test_training_batch_size_follows_dataloader_batch_size(self) -> None:
+    def test_model_batch_size_falls_back_to_dataloader_batch_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             config = _minimal_super_config(tmp_path, scenario="temperature")
-            config["training"]["training"]["batch_size"] = 4
             config["training"]["dataloader"]["batch_size"] = 7
             config_path = tmp_path / "super.yaml"
             _write_yaml(config_path, config)
 
-            training_bundle = load_pixel_training_config(
+            bundle = load_pixel_training_config(
                 config_path_value=config_path,
                 overrides=["training.dataloader.batch_size=11"],
-                runtime_config_dir=tmp_path / "training_runtime",
+                runtime_config_dir=tmp_path / "runtime",
                 write_snapshots=False,
             )
-            inference_bundle = load_pixel_inference_config(
-                config_path_value=config_path,
-                overrides=["training.dataloader.batch_size=13"],
-                runtime_config_dir=tmp_path / "inference_runtime",
-                write_snapshots=False,
+            effective_training = load_yaml(bundle.effective_training_config_path)
+            model = PixelDiffusionConditional.from_config(
+                bundle.effective_model_config_path,
+                bundle.effective_data_config_path,
+                bundle.effective_training_config_path,
             )
 
-            effective_training = load_yaml(
-                training_bundle.effective_training_config_path
-            )
-            effective_inference_training = load_yaml(
-                inference_bundle.effective_training_config_path
-            )
-
-        self.assertEqual(training_bundle.training_cfg["training"]["batch_size"], 11)
-        self.assertEqual(effective_training["training"]["batch_size"], 11)
-        self.assertEqual(inference_bundle.training_cfg["training"]["batch_size"], 13)
-        self.assertEqual(effective_inference_training["training"]["batch_size"], 13)
+        self.assertNotIn("batch_size", bundle.training_cfg["training"])
+        self.assertNotIn("batch_size", effective_training["training"])
+        self.assertEqual(bundle.training_cfg["dataloader"]["batch_size"], 11)
+        self.assertEqual(model.batch_size, 11)
 
     def test_selected_scenarios_materialize_expected_training_and_inference_settings(
         self,

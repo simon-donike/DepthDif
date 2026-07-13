@@ -164,8 +164,8 @@ data:  # dataset, split, and loader inputs
     val_year: 2018  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
-    num_workers: 6  # worker process count
-    prefetch_factor: 2  # batches prefetched per worker
+    num_workers: 8  # worker process count
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     val_shuffle: true  # intentionally shuffle validation
 
 model:  # pixel diffusion model settings
@@ -295,7 +295,6 @@ model:  # pixel diffusion model settings
 training:  # optimizer, trainer, and logging
   training:  # diffusion training hyperparameters
     lr: 0.0001  # optimizer learning rate
-    batch_size: 4  # informational batch size
     noise:  # diffusion noise schedule
       num_timesteps: 1000  # training diffusion steps
       schedule: cosine  # beta schedule type
@@ -340,13 +339,14 @@ training:  # optimizer, trainer, and logging
     log_stats_every_n_steps: 200  # scalar stats cadence
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
-    batch_size: 48  # train batch size
+    batch_size: 32  # train batch size
     val_batch_size: 6  # validation batch size
-    num_workers: 6  # train loader workers
+    num_workers: 8  # train loader workers
     val_num_workers: 0  # validation loader workers
-    persistent_workers: true  # keep train workers alive
+    persistent_workers: false  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive
-    prefetch_factor: 2  # batches prefetched per worker
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
+    multiprocessing_context: spawn  # start train workers with spawn for native handle safety
     shuffle: true  # shuffle train loader
     val_shuffle: true  # intentionally shuffle validation
     pin_memory: true  # use pinned host memory

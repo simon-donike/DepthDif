@@ -369,21 +369,6 @@ def _split_inference_super_config(
     return data_cfg, model_cfg, training_cfg, {"inference": inference_cfg}
 
 
-def sync_effective_training_batch_size(training_cfg: dict[str, Any]) -> None:
-    """Mirror the dataloader batch size into legacy training metadata."""
-    training_section = training_cfg.setdefault("training", {})
-    dataloader_section = training_cfg.get("dataloader", {})
-    if not isinstance(training_section, dict):
-        raise ValueError("training.training must be a mapping.")
-    if not isinstance(dataloader_section, dict):
-        raise ValueError("training.dataloader must be a mapping.")
-    if "batch_size" not in dataloader_section:
-        return
-
-    # Keep the legacy model-facing field dependent on the actual DataLoader size.
-    training_section["batch_size"] = int(dataloader_section["batch_size"])
-
-
 def _materialize_effective_configs(
     *,
     data_cfg: dict[str, Any],
@@ -442,8 +427,6 @@ def load_pixel_training_config(
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
-    sync_effective_training_batch_size(training_cfg)
-
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
             data_cfg=data_cfg,
@@ -517,8 +500,6 @@ def load_pixel_inference_config(
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
-    sync_effective_training_batch_size(training_cfg)
-
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
             data_cfg=data_cfg,
