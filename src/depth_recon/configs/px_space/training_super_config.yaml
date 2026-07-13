@@ -194,8 +194,8 @@ model:  # pixel diffusion model settings
     save_ema_weights_in_callback_state: true  # save EMA in checkpoints
     evaluate_ema_weights_instead: true  # validate using EMA weights
   ambient_occlusion:  # ambient objective controls
-    enabled: false  # enable occlusion objective
-    further_drop_prob: 0.1  # additional observed-pixel drop
+    enabled: true  # train with the ambient sparse-observation objective
+    further_drop_prob: 0.25  # hide a moderate share of observed pixels
     apply_to_noisy_branch: true  # mask noisy target branch
     shared_spatial_mask: true  # share mask across channels
     min_kept_observed_pixels: 50  # minimum kept observations
@@ -204,20 +204,20 @@ model:  # pixel diffusion model settings
     ambient:  # existing diffusion objective weight
       weight: 1.0  # base ambient/diffusion loss multiplier
     aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
-      enabled: false  # keep default auxiliary weighting unchanged
+      enabled: true  # downweight clean-field auxiliaries at very noisy timesteps
       mode: snr  # snr or linear
-      min_weight: 0.0  # lower clamp for aux multiplier
+      min_weight: 0.1  # keep a small auxiliary signal at low SNR
       max_weight: 1.0  # upper clamp for aux multiplier
       snr_gamma: 5.0  # SNR cap for normalized min-SNR weighting
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: false  # keep default training behavior unchanged
-      weight: 1.0  # sparse observation loss multiplier
+      enabled: true  # softly anchor x0 predictions to observed ARGO values
+      weight: 0.25  # modest extra weight because the base ambient loss already uses x
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: false  # enable to penalize over-smoothed sparse-profile increments
-      weight: 0.5  # increment loss multiplier
+      enabled: true  # penalize over-smoothed sparse-profile increments
+      weight: 0.1  # conservative profile-shape regularizer
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
       vertical_pairs: true  # adjacent-depth pairs at observed horizontal locations

@@ -37,13 +37,13 @@ The total optimized loss is:
 \lambda_{\text{spec}}\mathcal{L}_{\text{spec}}.
 \]
 
-The shipped defaults keep all auxiliary terms disabled while retaining their intended weights:
+The scalar-field training preset enables conservative ARGO-only auxiliary terms and keeps GLORYS priors disabled until reference statistics are provided:
 
 | Term | Config key | Default enabled | Default weight |
 | --- | --- | --- | ---: |
 | Base diffusion / ambient loss | `model.losses.ambient` | always present | `1.0` |
-| Sparse observation consistency | `model.losses.sparse_observation` | `false` | `1.0` |
-| Sparse increment consistency | `model.losses.increment` | `false` | `0.5` |
+| Sparse observation consistency | `model.losses.sparse_observation` | `true` | `0.25` |
+| Sparse increment consistency | `model.losses.increment` | `true` | `0.1` |
 | GLORYS structure-function prior | `model.losses.structure_function_prior` | `false` | `0.1` |
 | GLORYS spectral energy floor | `model.losses.spectral_energy_floor` | `false` | `0.05` |
 | Feature Gram prior | `model.losses.feature_gram_prior` | `false` | `0.01` reserved, not implemented |

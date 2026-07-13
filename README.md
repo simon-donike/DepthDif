@@ -87,7 +87,7 @@ DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fi
 
 Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
-Auxiliary ambient-ocean losses live under `model.losses.*` and are disabled by default. They can add Charbonnier sparse ARGO consistency, sparse profile-increment consistency, a GLORYS structure-function prior, and a GLORYS spectral-energy floor. GLORYS priors use precomputed distributional reference `.pt` files only; they must not compare a prediction to the paired dense GLORYS field for the same sample. Temperature and salinity auxiliary-loss training is scalar-field only, so enable these terms for `--scenario temperature` or `--scenario salinity`, not `joint`.
+Auxiliary ambient-ocean losses live under `model.losses.*`. The active scalar-field training preset enables conservative ARGO-only sparse observation and sparse profile-increment terms, plus SNR-based auxiliary timestep weighting. GLORYS priors remain disabled until precomputed distributional reference `.pt` files are supplied; they must not compare a prediction to the paired dense GLORYS field for the same sample. Temperature and salinity auxiliary-loss training is scalar-field only, so disable these terms for `--scenario joint`.
 ![depthdif_schema](docs/assets/figures/depthdif_schema.webp)
 
 ## Data Example
@@ -105,7 +105,9 @@ Pixel-space GeoTIFF training uses `src/depth_recon/configs/px_space/training_sup
 ```bash
 /work/envs/depth/bin/python train.py --scenario temperature
 /work/envs/depth/bin/python train.py --scenario salinity
-/work/envs/depth/bin/python train.py --scenario joint
+/work/envs/depth/bin/python train.py --scenario joint \
+  --set model.losses.sparse_observation.enabled=false \
+  --set model.losses.increment.enabled=false
 ```
 
 Ambient-occlusion objective example:
@@ -113,8 +115,6 @@ Ambient-occlusion objective example:
 ```bash
 /work/envs/depth/bin/python train.py \
   --scenario temperature \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.25 \
   --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
 ```
 

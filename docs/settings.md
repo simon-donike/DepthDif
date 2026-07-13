@@ -118,9 +118,9 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.unet_baseline.*` | `base_channels=32`, `channel_mults=[1,2,4,8]`, `norm_groups=8`, `weight_decay=0.0001` | 3D U-Net baseline controls used when `model.model_type=unet_baseline`; depth is treated as a 3D convolution axis. |
 | `model.unet_baseline.*` with `model.model_type=unet2d_baseline` | same defaults | 2D U-Net comparison controls; depth bands are flattened into channels and the same knobs are reused. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
-| `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
-| `model.losses.*` | disabled by default | Auxiliary ambient-ocean loss stack. Sparse observation and increment terms use ARGO `x`/`x_valid_mask`; GLORYS structure-function and spectral floor terms require precomputed statistical `.pt` references and never paired dense GLORYS supervision. |
-| `model.losses.aux_timestep_weighting.*` | disabled by default | Optional SNR or linear multiplier applied only to auxiliary losses by sampled diffusion timestep; the base diffusion/ambient loss is unchanged. |
+| `model.ambient_occlusion.*` | training enabled; inference disabled | Self-supervised occlusion objective controls for scalar-field training. |
+| `model.losses.*` | training sparse terms enabled; inference disabled | Auxiliary ambient-ocean loss stack. Sparse observation and increment terms use ARGO `x`/`x_valid_mask`; GLORYS structure-function and spectral floor terms require precomputed statistical `.pt` references and never paired dense GLORYS supervision. |
+| `model.losses.aux_timestep_weighting.*` | training enabled; inference disabled | SNR or linear multiplier applied only to auxiliary losses by sampled diffusion timestep; the base diffusion/ambient loss is unchanged. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |
 | `model.coord_conditioning.*` | enabled, date included | Coordinate/date FiLM conditioning controls. |
 | `model.unet.*` | `dim=64`, `dim_mults=[1,2,4,8]` | ConvNeXt U-Net width/depth and output behavior. |

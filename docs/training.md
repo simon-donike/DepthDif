@@ -7,7 +7,9 @@ Use `--scenario` for pixel-space GeoTIFF training so the data/model channel cont
 ```bash
 /work/envs/depth/bin/python train.py --scenario temperature
 /work/envs/depth/bin/python train.py --scenario salinity
-/work/envs/depth/bin/python train.py --scenario joint
+/work/envs/depth/bin/python train.py --scenario joint \
+  --set model.losses.sparse_observation.enabled=false \
+  --set model.losses.increment.enabled=false
 ```
 
 CLI controls:
@@ -36,13 +38,11 @@ Hard-area finetuning example:
 
 This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only. The model can also emphasize coastal supervised pixels with `model.coastal_loss.*`; see [Coastal Loss Weighting For Finetuning](model.md#coastal-loss-weighting-for-finetuning).
 
-Ambient-occlusion objective example (self-supervised on `x`):
+Ambient-occlusion objective example (self-supervised on `x`; now the scalar-field training preset):
 
 ```bash
 /work/envs/depth/bin/python train.py \
   --scenario temperature \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.25 \
   --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
 ```
 
@@ -57,7 +57,7 @@ See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full d
 Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask ∩ land_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask ∩ land_mask`. `x_valid_mask` is ARGO observation support; `land_mask` is GLORYS spatial support.
 For CLI overrides, the corresponding path is `model.ambient_occlusion.enabled=false`.
 
-Auxiliary ambient-ocean losses are configured under `model.losses.*` in the pixel super-config. All are disabled by default while retaining the intended weights: sparse observation `1.0`, increment `0.5`, structure-function prior `0.1`, spectral floor `0.05`, and reserved feature-Gram prior `0.01`. Enable sparse terms with CLI overrides such as `--set model.losses.increment.enabled=true`; GLORYS prior terms additionally require a reference `.pt` path and fail fast if it is missing. These priors are statistical only and must not supervise against the paired dense GLORYS target for the same sample.
+Auxiliary ambient-ocean losses are configured under `model.losses.*` in the pixel super-config. The scalar-field training preset enables sparse observation consistency at `0.25`, sparse increment consistency at `0.1`, and SNR-based auxiliary timestep weighting with `min_weight=0.1`, `max_weight=1.0`, and `snr_gamma=5.0`. GLORYS prior terms remain disabled because they require scenario-specific reference `.pt` files and fail fast if paths are missing. These priors are statistical only and must not supervise against the paired dense GLORYS target for the same sample.
 
 ## Temperature, Salinity, And Joint Training
 
