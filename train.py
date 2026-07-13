@@ -177,10 +177,12 @@ def build_wandb_logger(
     """
     wandb_cfg = training_cfg.get("wandb", {})
     logger = WandbLogger(
+        offline=wandb_cfg.get("offline", False),
         project=wandb_cfg.get("project", "DepthDif"),
         entity=wandb_cfg.get("entity"),
         name=wandb_cfg.get("run_name"),
         log_model=wandb_cfg.get("log_model", "all"),
+        config=training_cfg,
     )
 
     # Only attach wandb.watch when watch_mode resolves to a valid mode.
