@@ -132,16 +132,16 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `training.training.lr` | `1.0e-4` | Optimizer learning rate. |
-| `training.training.batch_size` | `4` | Informational batch size; `training.dataloader.batch_size` is the dataloader source of truth. |
+| `training.training.batch_size` | mirrors `training.dataloader.batch_size` | Legacy model metadata synchronized from the dataloader train batch size during config resolution. |
 | `training.training.noise.num_timesteps` | `1000` | Diffusion training timesteps. |
 | `training.training.noise.schedule` | `cosine` | Noise schedule: `linear`, `cosine`, `quadratic`, or `sigmoid`. |
 | `training.training.noise.beta_start` | `1.0e-4` | First-step beta for schedules that use explicit endpoints. |
 | `training.training.noise.beta_end` | `2.0e-2` | Final beta for schedules that use explicit endpoints. |
-| `training.training.validation_sampling.sampler` | `ddpm` | Validation reconstruction sampler. |
+| `training.training.validation_sampling.sampler` | `ddim` | Validation reconstruction sampler. |
 | `training.training.validation_sampling.ddim_num_timesteps` | `100` | DDIM step count when the sampler is `ddim`. |
 | `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
 | `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
-| `training.training.validation_sampling.max_full_reconstruction_samples` | `5` | Cap for expensive full-reconstruction validation examples. |
+| `training.training.validation_sampling.max_full_reconstruction_samples` | `1` | Cap for expensive full-reconstruction validation examples. |
 | `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
 | `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
 | `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |
@@ -150,8 +150,8 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.trainer.limit_val_batches` | `64` | Validation batches per validation run. |
 | `training.trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold. |
 | `training.wandb.*` | project/run/logging defaults | W&B project, run naming, watch, scalar, and image logging controls. |
-| `training.dataloader.batch_size` | `4` | Training dataloader batch size. |
-| `training.dataloader.val_batch_size` | `2` | Validation dataloader batch size. |
+| `training.dataloader.batch_size` | `48` | Training dataloader batch size. |
+| `training.dataloader.val_batch_size` | `6` | Validation dataloader batch size. |
 | `training.dataloader.num_workers` | `6` | Training dataloader workers. |
 | `training.dataloader.val_num_workers` | `0` | Validation dataloader workers. |
 | `training.dataloader.shuffle` | `true` | Training shuffle. |

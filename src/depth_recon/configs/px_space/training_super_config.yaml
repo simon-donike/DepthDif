@@ -302,17 +302,17 @@ training:  # optimizer, trainer, and logging
       beta_start: 0.0001  # starting beta
       beta_end: 0.02  # ending beta
     validation_sampling:  # validation sampler settings
-      sampler: ddpm  # validation sampler type
+      sampler: ddim  # faster validation reconstruction sampler
       ddim_num_timesteps: 100  # DDIM validation steps
       ddim_eta: 0.0  # DDIM stochasticity
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      max_full_reconstruction_samples: 5  # max full recon samples
+      max_full_reconstruction_samples: 1  # keep validation diagnostics lightweight
   trainer:  # PyTorch Lightning trainer
     max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection
-    devices: auto  # device selection
+    devices: auto  # use all visible devices by default
     num_gpus: null  # legacy GPU count override
     strategy: auto  # distributed strategy
     precision: 16-mixed  # numeric precision

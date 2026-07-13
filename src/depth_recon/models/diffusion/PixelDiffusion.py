@@ -3133,6 +3133,14 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             None: No value is returned.
         """
+        if (
+            self.trainer is not None
+            and self.trainer.sanity_checking
+            and self.skip_full_reconstruction_in_sanity_check
+        ):
+            self._log_full_reconstruction_placeholders()
+            self._cached_val_example = None
+            return
         self._run_single_image_full_reconstruction_and_log()
         self._cached_val_example = None
 
