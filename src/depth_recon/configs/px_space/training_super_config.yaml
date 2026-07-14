@@ -171,7 +171,7 @@ data:  # dataset, split, and loader inputs
 model:  # pixel diffusion model settings
   model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
-  resume_checkpoint: false  # checkpoint path or false
+  resume_checkpoint: logs/2026-07-14_10-07-19/last.ckpt  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
   condition_mask_channels: 1  # valid-mask condition channels
   condition_include_eo: true  # add scenario-selected EO channel
@@ -307,7 +307,7 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      max_full_reconstruction_samples: 1  # keep validation diagnostics lightweight
+      max_full_reconstruction_samples: 6  # log the full shuffled validation batch
   trainer:  # PyTorch Lightning trainer
     max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection

@@ -44,6 +44,7 @@ class DepthTileDataModule(pl.LightningDataModule):
             dataset if val_dataset is not None else None
         )
         self._train_val_split_done = val_dataset is not None
+        self._val_generator = torch.Generator().manual_seed(self.seed)
 
     def setup(self, stage: str | None = None) -> None:
         # Reuse existing split when a dedicated val_dataset was provided.
@@ -117,6 +118,9 @@ class DepthTileDataModule(pl.LightningDataModule):
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
         )
+        if is_val and shuffle:
+            # Keep validation shuffled while advancing the order across validation runs.
+            kwargs["generator"] = self._val_generator
         # prefetch_factor is only valid when worker processes are enabled.
         if num_workers > 0 and prefetch_factor is not None:
             kwargs["prefetch_factor"] = int(prefetch_factor)
