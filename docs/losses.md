@@ -2,7 +2,7 @@
 
 This page documents the optional loss stack under `model.losses.*` for pixel-space ambient ocean reconstruction. These terms are designed for sparse ARGO-conditioned diffusion training where temperature and salinity are trained as separate scalar fields.
 
-The central constraint is that GLORYS is not used as paired dense supervision for these auxiliary losses. GLORYS may provide distributional, spectral, or statistical reference values, but the model must not minimize a direct same-sample error such as `mse(x0_pred, glorys_same_time_location)` or `mse(phi(x0_pred), phi(glorys_same_sample))`.
+By default, GLORYS auxiliary terms are disabled and the historical `target: reference` mode uses precomputed distributional, spectral, or statistical reference values. For explicit experiments, `target: paired_glorys` computes structure-function and spectral auxiliary losses between `x0_pred` and the paired dense GLORYS target `y`; this remains opt-in and does not add direct dense pixel MSE/L1 supervision.
 
 ## Notation
 
@@ -37,13 +37,13 @@ The total optimized loss is:
 \lambda_{\text{spec}}\mathcal{L}_{\text{spec}}.
 \]
 
-The scalar-field training preset enables conservative ARGO-only auxiliary terms and keeps GLORYS priors disabled until reference statistics are provided:
+The scalar-field training preset keeps all optional auxiliary terms disabled by default. The configured weights are used only when a term is explicitly enabled:
 
 | Term | Config key | Default enabled | Default weight |
 | --- | --- | --- | ---: |
 | Base diffusion / ambient loss | `model.losses.ambient` | always present | `1.0` |
-| Sparse observation consistency | `model.losses.sparse_observation` | `true` | `0.25` |
-| Sparse increment consistency | `model.losses.increment` | `true` | `0.1` |
+| Sparse observation consistency | `model.losses.sparse_observation` | `false` | `0.25` |
+| Sparse increment consistency | `model.losses.increment` | `false` | `0.1` |
 | GLORYS structure-function prior | `model.losses.structure_function_prior` | `false` | `0.1` |
 | GLORYS spectral energy floor | `model.losses.spectral_energy_floor` | `false` | `0.05` |
 | Feature Gram prior | `model.losses.feature_gram_prior` | `false` | `0.01` reserved, not implemented |
@@ -203,9 +203,9 @@ Why we assume it helps: smoothing often preserves coarse values while shrinking 
 
 What it does not do: it does not invent a dense target gradient from GLORYS. It only uses observed sparse ARGO increments unless future explicit pair indices are provided by the batch.
 
-## GLORYS Structure-Function Prior
+## GLORYS Structure-Function Loss
 
-The structure-function prior is distributional. It compares generated field increment statistics to precomputed GLORYS reference statistics for a class such as variable, region, month, or depth. It does not compare a generated field to the same sample's GLORYS field.
+The structure-function loss supports two target modes. In `target: reference` mode, it compares generated field increment statistics to precomputed GLORYS reference statistics for a class such as variable, region, month, or depth. In `target: paired_glorys` mode, it compares the same binned increment statistics from `x0_pred` and the paired dense GLORYS target `y` on `y_valid_mask ∩ land_mask`.
 
 For a spatial displacement vector \(r\), the second-order structure function is:
 
@@ -251,13 +251,13 @@ Reference file format:
 
 If `per_depth: true`, a `[C, num_bins]` reference compares each depth channel to its corresponding reference row. Empty sampled bins are skipped.
 
-Why we assume it helps: ocean textures are scale-dependent. Over-smoothed predictions usually have too little variance at short and intermediate separations, even if their large-scale mean looks plausible. Structure functions summarize how roughness grows with spatial scale, so matching them nudges the generated distribution toward realistic multiscale variability without requiring paired GLORYS supervision.
+Why we assume it helps: ocean textures are scale-dependent. Over-smoothed predictions usually have too little variance at short and intermediate separations, even if their large-scale mean looks plausible. Structure functions summarize how roughness grows with spatial scale, so matching them nudges the generated distribution toward realistic multiscale variability. In paired mode, the matched statistics come from the same GLORYS sample rather than an archive-level reference file.
 
 Why log space: ocean variance can differ by orders of magnitude across distances and depths. Log comparison makes the loss care about relative scale errors instead of letting high-energy bins dominate everything.
 
 ## GLORYS Spectral Energy Floor
 
-The spectral prior is also distributional. It prevents generated fields from becoming too smooth by enforcing a lower bound on radial Fourier-band energy.
+The spectral loss also supports `target: reference` and `target: paired_glorys`. In reference mode, it prevents generated fields from becoming too smooth by enforcing a lower bound on precomputed radial Fourier-band energy. In paired mode, the lower bound is computed from the paired dense GLORYS target `y` for the same batch.
 
 For each depth slice, the model computes a 2D Fourier power spectrum:
 
@@ -302,7 +302,24 @@ The tensor may be shaped `[bands]` or `[C, bands]`. `min_band: 1` skips the DC b
 
 Why we assume it helps: averaged reconstructions lose high-frequency energy. An exact spectral match would be too restrictive because each generated sample need not reproduce a particular GLORYS spectrum. The hinge only penalizes missing energy below the GLORYS reference floor, so it pushes against excessive smoothness while still allowing the model to produce more energetic fields when observations and conditioning support it.
 
-Current limitation: the FFT path does not apply an irregular land/ocean mask before transforming. The loss relies on the generated patch tensor and radial bins. If masked FFTs become necessary, they should be added deliberately with windowing or inpainting choices documented, because naive masks can introduce spectral artifacts.
+Current limitation: the reference FFT path does not apply an irregular land/ocean mask before transforming. The paired FFT path applies the same `y_valid_mask ∩ land_mask` support to prediction and GLORYS before radial spectra are computed, which keeps the two spectra comparable but can still introduce mask-edge energy.
+
+
+### Paired GLORYS Structure/Spectral Experiment
+
+The paired GLORYS auxiliaries are opt-in. They keep the base ambient objective unchanged and add structure/spectral losses between `x0_pred` and the paired dense GLORYS target `y`:
+
+```bash
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set model.losses.structure_function_prior.enabled=true \
+  --set model.losses.structure_function_prior.target=paired_glorys \
+  --set model.losses.structure_function_prior.weight=0.1 \
+  --set model.losses.spectral_energy_floor.enabled=true \
+  --set model.losses.spectral_energy_floor.target=paired_glorys \
+  --set model.losses.spectral_energy_floor.weight=0.05
+```
+
+`reference_path` is required only for `target: reference`; paired mode uses the batch `y` tensor directly.
 
 ## Feature Gram Prior
 
@@ -320,27 +337,27 @@ This would still be distributional: \(G^{\text{ref}}\) must be precomputed for a
 
 ## Reference Statistics And Class Conditioning
 
-The implementation loads one reference file per enabled prior. The meaning of that reference file is controlled outside the loss by how the file was built. For example, a valid reference could represent:
+Reference files are used only by GLORYS terms with `target: reference`. The meaning of a reference file is controlled outside the loss by how the file was built. For example, a valid reference could represent:
 
 - temperature, North Atlantic, winter, all depths;
 - salinity, Mediterranean, monthly bin, per depth;
 - global temperature, per-depth climatological statistics.
 
-The loss does not currently select different reference rows by date/region metadata at runtime. If multiple classes are needed, the recommended extension is to precompute separate files and select the desired file in the training config for that run.
+The loss does not currently select different reference rows by date/region metadata at runtime. If multiple classes are needed in reference mode, the recommended extension is to precompute separate files and select the desired file in the training config for that run. With `target: paired_glorys`, no reference file is loaded; the same-batch dense `y` target supplies the structure-function or spectral comparison statistics.
 
 ## Why These Losses Are Compatible With Ambient Diffusion
 
-Ambient diffusion learns from corrupted observations by supervising only what is legitimately observed under the measurement process. In this repository, sparse ARGO terms use actual observed values, and GLORYS terms use aggregate distributional statistics. This preserves the distinction between:
+Ambient diffusion learns from corrupted observations by supervising the observed support under the measurement process. In this repository, optional auxiliary terms keep that base objective intact:
 
-- measurement consistency: match sparse ARGO where measurements exist;
-- distributional realism: match GLORYS-derived statistics across classes;
-- forbidden dense supervision: match the paired GLORYS field at the same time and location.
+- measurement consistency: sparse ARGO terms match actual observed values or observed vertical increments;
+- reference realism: `target: reference` GLORYS terms match archive-level structure or spectral statistics;
+- paired statistical guidance: `target: paired_glorys` GLORYS terms match same-sample structure or spectral statistics from dense `y` without adding direct pixel-wise GLORYS MSE/L1.
 
-That distinction matters because direct dense GLORYS losses would turn training into paired reconstruction against reanalysis, while the goal here is sparse observation reconstruction regularized by realistic ocean-field statistics.
+That distinction matters because direct dense GLORYS pixel losses would turn training into paired reconstruction against reanalysis. The paired statistical losses can still make outputs more GLORYS-like in roughness or frequency content, but they do not force pointwise equality to `y`.
 
 ## Practical Tuning
 
-Start with the base ambient objective and enable sparse terms first:
+Start with the base ambient objective. Enable sparse ARGO terms only when you want extra measurement anchoring:
 
 ```bash
 /work/envs/depth/bin/python train.py \
@@ -355,6 +372,6 @@ Then raise anti-smoothing terms gradually:
 - Increase `model.losses.increment.weight` when observed vertical profiles look too flat.
 - Increase `model.losses.structure_function_prior.weight` when spatial roughness is too weak across distance scales.
 - Increase `model.losses.spectral_energy_floor.weight` when mid/high-frequency texture is underpowered.
-- Keep GLORYS-prior weights smaller than sparse-observation weights unless the reference statistics are well matched to the training subset.
+- Keep GLORYS-prior weights conservative unless the reference statistics or paired-GLORYS behavior are well matched to the training subset.
 
-For salinity, use `--scenario salinity` and salinity-specific reference statistics. Do not enable auxiliary losses for `--scenario joint`; temperature and salinity are intentionally trained as separate scalar-field models for this loss stack.
+For salinity, use `--scenario salinity` and salinity-specific reference statistics or paired targets. Do not enable auxiliary losses for `--scenario joint`; temperature and salinity are intentionally trained as separate scalar-field models for this loss stack.

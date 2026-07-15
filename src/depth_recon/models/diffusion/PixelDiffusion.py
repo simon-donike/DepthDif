@@ -1690,6 +1690,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             obs_mask_grid=model_batch.get("x_valid_mask"),
             valid_mask=model_batch.get("y_valid_mask"),
             land_mask=land_mask,
+            target_grid=model_batch.get("y"),
+            target_mask_grid=model_batch.get("y_valid_mask"),
             t=None if diffusion_context is None else diffusion_context.get("t"),
             alphas_cumprod=self.model.forward_process.alphas_cumprod,
         )

@@ -10,8 +10,8 @@ from torch import nn
 
 from .increments import sparse_increment_loss
 from .sparse_observation import sparse_observation_loss
-from .spectral import SpectralEnergyFloorLoss
-from .structure_function import StructureFunctionPriorLoss
+from .spectral import PairedSpectralEnergyFloorLoss, SpectralEnergyFloorLoss
+from .structure_function import PairedStructureFunctionLoss, StructureFunctionPriorLoss
 from .timestep_weighting import aux_timestep_weight
 
 
@@ -48,15 +48,35 @@ class AmbientOceanLoss(nn.Module):
         """Return a scalar component weight."""
         return float(cfg.get("weight", default))
 
-    def _build_structure_loss(self) -> StructureFunctionPriorLoss | None:
-        """Build the optional structure-function prior."""
+    @staticmethod
+    def _target_mode(cfg: dict[str, Any]) -> str:
+        """Return the auxiliary target mode."""
+        mode = str(cfg.get("target", "reference")).strip().lower()
+        if mode not in {"reference", "paired_glorys"}:
+            raise ValueError(
+                "model.losses.*.target must be one of {'reference', 'paired_glorys'} "
+                f"(got {mode!r})."
+            )
+        return mode
+
+    def _build_structure_loss(
+        self,
+    ) -> StructureFunctionPriorLoss | PairedStructureFunctionLoss | None:
+        """Build the optional structure-function loss."""
         if not self._enabled(self.s2_cfg):
             return None
+        if self._target_mode(self.s2_cfg) == "paired_glorys":
+            return PairedStructureFunctionLoss(
+                num_pairs=int(self.s2_cfg.get("num_pairs", 8192)),
+                num_bins=int(self.s2_cfg.get("num_bins", 16)),
+                eps=float(self.s2_cfg.get("eps", 1e-6)),
+                per_depth=bool(self.s2_cfg.get("per_depth", True)),
+            )
         reference_path = self.s2_cfg.get("reference_path")
         if reference_path is None or str(reference_path).strip() == "":
             raise ValueError(
                 "model.losses.structure_function_prior.reference_path is required "
-                "when the prior is enabled."
+                "when the prior is enabled in reference mode."
             )
         return StructureFunctionPriorLoss(
             reference_path=Path(str(reference_path)),
@@ -65,15 +85,25 @@ class AmbientOceanLoss(nn.Module):
             per_depth=bool(self.s2_cfg.get("per_depth", True)),
         )
 
-    def _build_spectral_loss(self) -> SpectralEnergyFloorLoss | None:
-        """Build the optional spectral floor prior."""
+    def _build_spectral_loss(
+        self,
+    ) -> SpectralEnergyFloorLoss | PairedSpectralEnergyFloorLoss | None:
+        """Build the optional spectral floor loss."""
         if not self._enabled(self.spectral_cfg):
             return None
+        if self._target_mode(self.spectral_cfg) == "paired_glorys":
+            return PairedSpectralEnergyFloorLoss(
+                eps=float(self.spectral_cfg.get("eps", 1e-8)),
+                margin=float(self.spectral_cfg.get("margin", 0.0)),
+                min_band=int(self.spectral_cfg.get("min_band", 1)),
+                max_band=self.spectral_cfg.get("max_band", None),
+                per_depth=bool(self.spectral_cfg.get("per_depth", True)),
+            )
         reference_path = self.spectral_cfg.get("reference_path")
         if reference_path is None or str(reference_path).strip() == "":
             raise ValueError(
                 "model.losses.spectral_energy_floor.reference_path is required "
-                "when the prior is enabled."
+                "when the prior is enabled in reference mode."
             )
         return SpectralEnergyFloorLoss(
             reference_path=Path(str(reference_path)),
@@ -105,6 +135,8 @@ class AmbientOceanLoss(nn.Module):
         obs_mask_grid: torch.Tensor | None = None,
         valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
+        target_grid: torch.Tensor | None = None,
+        target_mask_grid: torch.Tensor | None = None,
         t: torch.Tensor | None = None,
         alphas_cumprod: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -172,20 +204,44 @@ class AmbientOceanLoss(nn.Module):
             components["loss_increment_weighted"] = inc_weighted
             aux_total = aux_total + inc_weighted
 
-        support_mask = valid_mask
+        support_mask = target_mask_grid if target_mask_grid is not None else valid_mask
+        if support_mask is not None:
+            support_mask = support_mask.to(device=x0_pred.device) > 0
+            if support_mask.ndim == 3:
+                support_mask = support_mask.unsqueeze(1)
         if land_mask is not None:
             land = land_mask.to(device=x0_pred.device) > 0
-            support_mask = land if support_mask is None else ((support_mask > 0) & land)
+            if land.ndim == 3:
+                land = land.unsqueeze(1)
+            support_mask = land if support_mask is None else (support_mask & land)
 
         if self.structure_function is not None:
-            s2_loss = self.structure_function(x0_pred, valid_mask=support_mask)
+            if self._target_mode(self.s2_cfg) == "paired_glorys":
+                if target_grid is None:
+                    raise RuntimeError(
+                        "paired_glorys structure loss requires target_grid."
+                    )
+                s2_loss = self.structure_function(
+                    x0_pred, target_grid=target_grid, valid_mask=support_mask
+                )
+            else:
+                s2_loss = self.structure_function(x0_pred, valid_mask=support_mask)
             components["loss_s2_glorys"] = s2_loss
             s2_weighted = self._weight(self.s2_cfg, 0.1) * s2_loss
             components["loss_s2_glorys_weighted"] = s2_weighted
             aux_total = aux_total + s2_weighted
 
         if self.spectral_floor is not None:
-            spectral_loss = self.spectral_floor(x0_pred)
+            if self._target_mode(self.spectral_cfg) == "paired_glorys":
+                if target_grid is None:
+                    raise RuntimeError(
+                        "paired_glorys spectral loss requires target_grid."
+                    )
+                spectral_loss = self.spectral_floor(
+                    x0_pred, target_grid=target_grid, valid_mask=support_mask
+                )
+            else:
+                spectral_loss = self.spectral_floor(x0_pred)
             components["loss_spectral_glorys"] = spectral_loss
             spectral_weighted = self._weight(self.spectral_cfg, 0.05) * spectral_loss
             components["loss_spectral_glorys_weighted"] = spectral_weighted

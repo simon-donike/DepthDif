@@ -164,15 +164,15 @@ data:  # dataset, split, and loader inputs
     val_year: 2018  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
-    num_workers: 8  # worker process count
+    num_workers: 4  # worker process count
     prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     val_shuffle: true  # intentionally shuffle validation
 
 model:  # pixel diffusion model settings
   model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
-  resume_checkpoint: logs/2026-07-14_10-07-19/last.ckpt  # checkpoint path or false
-  load_checkpoint_only: false  # weights-only checkpoint load
+  resume_checkpoint: logs/2026-06-17_16-35-38/last.ckpt  # checkpoint path or false
+  load_checkpoint_only: true  # weights-only checkpoint load
   condition_mask_channels: 1  # valid-mask condition channels
   condition_include_eo: true  # add scenario-selected EO channel
   condition_use_valid_mask: true  # add ARGO support mask
@@ -212,28 +212,31 @@ model:  # pixel diffusion model settings
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: true  # softly anchor x0 predictions to observed ARGO values
-      weight: 0.25  # modest extra weight because the base ambient loss already uses x
+      enabled: false  # opt-in anchor from x0 predictions to observed ARGO values
+      weight: 0.25  # conservative weight when this auxiliary term is enabled
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: true  # penalize over-smoothed sparse-profile increments
-      weight: 0.1  # conservative profile-shape regularizer
+      enabled: false  # opt-in penalty for over-smoothed sparse-profile increments
+      weight: 0.1  # conservative profile-shape regularizer when enabled
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
       vertical_pairs: true  # adjacent-depth pairs at observed horizontal locations
       horizontal_pairs: false  # optional same-depth neighbor pairs
       horizontal_max_distance: null  # reserved for future distance-limited pairs
     structure_function_prior:  # GLORYS distributional variogram prior
-      enabled: false  # requires reference_path when enabled
+      enabled: false  # requires reference_path in reference mode
+      target: reference  # reference or paired_glorys
       weight: 0.1  # structure-function prior multiplier
-      reference_path: null  # .pt with distance_bins and s2_ref
+      reference_path: null  # .pt with distance_bins and s2_ref for reference mode
       num_pairs: 8192  # random same-depth pairs sampled per batch
+      num_bins: 16  # dynamic distance bins for paired_glorys mode
       eps: 1.0e-6  # log comparison epsilon
       per_depth: true  # compare per-depth reference stats when provided
     spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
-      enabled: false  # requires reference_path when enabled
+      enabled: false  # requires reference_path in reference mode
+      target: reference  # reference or paired_glorys
       weight: 0.05  # spectral floor prior multiplier
-      reference_path: null  # .pt with radial band energy reference
+      reference_path: null  # .pt with radial band energy reference for reference mode
       eps: 1.0e-8  # log-energy epsilon
       margin: 0.0  # hinge margin in log-energy units
       min_band: 1  # skip DC by default
@@ -311,7 +314,7 @@ training:  # optimizer, trainer, and logging
   trainer:  # PyTorch Lightning trainer
     max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection
-    devices: auto  # use all visible devices by default
+    devices: 2  # use both local GPUs with reduced worker fan-out
     num_gpus: null  # legacy GPU count override
     strategy: auto  # distributed strategy
     precision: 16-mixed  # numeric precision
@@ -341,7 +344,7 @@ training:  # optimizer, trainer, and logging
   dataloader:  # Lightning dataloader settings
     batch_size: 32  # train batch size
     val_batch_size: 6  # validation batch size
-    num_workers: 8  # train loader workers
+    num_workers: 2  # train loader workers
     val_num_workers: 0  # validation loader workers
     persistent_workers: false  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive

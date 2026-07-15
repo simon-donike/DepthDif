@@ -10,6 +10,8 @@ from torch import nn
 
 from depth_recon.losses import (
     AmbientOceanLoss,
+    PairedSpectralEnergyFloorLoss,
+    PairedStructureFunctionLoss,
     SpectralEnergyFloorLoss,
     StructureFunctionPriorLoss,
     sparse_increment_loss,
@@ -128,6 +130,112 @@ class TestAmbientOceanLosses(unittest.TestCase):
 
             self.assertTrue(torch.isfinite(loss))
             self.assertGreater(float(loss), 0.0)
+
+    def test_paired_structure_loss_matches_identical_glorys(self) -> None:
+        loss_fn = PairedStructureFunctionLoss(num_pairs=256, num_bins=4)
+        field = torch.randn(1, 2, 6, 6)
+
+        loss = loss_fn(
+            field, target_grid=field.clone(), valid_mask=torch.ones(1, 1, 6, 6)
+        )
+
+        self.assertTrue(torch.isclose(loss, torch.tensor(0.0), atol=1.0e-6))
+
+    def test_paired_structure_loss_penalizes_different_glorys(self) -> None:
+        loss_fn = PairedStructureFunctionLoss(num_pairs=512, num_bins=4)
+        pred = torch.zeros(1, 1, 6, 6)
+        target = torch.arange(36, dtype=torch.float32).view(1, 1, 6, 6)
+
+        loss = loss_fn(pred, target_grid=target, valid_mask=torch.ones(1, 1, 6, 6))
+
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreater(float(loss), 0.0)
+
+    def test_paired_structure_loss_respects_support_mask(self) -> None:
+        loss_fn = PairedStructureFunctionLoss(num_pairs=128, num_bins=4)
+        pred = torch.zeros(1, 1, 4, 4)
+        target = torch.zeros_like(pred)
+        target[:, :, 2:, 2:] = 10.0
+        mask = torch.zeros(1, 1, 4, 4, dtype=torch.bool)
+        mask[:, :, :2, :2] = True
+
+        loss = loss_fn(pred, target_grid=target, valid_mask=mask)
+
+        self.assertTrue(torch.isclose(loss, torch.tensor(0.0), atol=1.0e-6))
+
+    def test_paired_spectral_loss_matches_identical_glorys(self) -> None:
+        loss_fn = PairedSpectralEnergyFloorLoss(min_band=0)
+        field = torch.randn(1, 2, 8, 8)
+
+        loss = loss_fn(
+            field, target_grid=field.clone(), valid_mask=torch.ones(1, 1, 8, 8)
+        )
+
+        self.assertTrue(torch.isclose(loss, torch.tensor(0.0), atol=1.0e-6))
+
+    def test_paired_spectral_loss_penalizes_smoother_prediction(self) -> None:
+        loss_fn = PairedSpectralEnergyFloorLoss(min_band=1)
+        pred = torch.zeros(1, 1, 8, 8)
+        target = torch.zeros_like(pred)
+        target[:, :, ::2, ::2] = 1.0
+
+        loss = loss_fn(pred, target_grid=target, valid_mask=torch.ones(1, 1, 8, 8))
+
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreater(float(loss), 0.0)
+
+    def test_ambient_ocean_loss_includes_paired_glorys_auxiliaries(self) -> None:
+        loss_fn = AmbientOceanLoss(
+            {
+                "ambient": {"weight": 2.0},
+                "aux_timestep_weighting": {
+                    "enabled": True,
+                    "mode": "linear",
+                    "linear_start_weight": 0.0,
+                    "linear_end_weight": 1.0,
+                },
+                "structure_function_prior": {
+                    "enabled": True,
+                    "target": "paired_glorys",
+                    "weight": 0.5,
+                    "num_pairs": 512,
+                    "num_bins": 4,
+                },
+                "spectral_energy_floor": {
+                    "enabled": True,
+                    "target": "paired_glorys",
+                    "weight": 0.25,
+                    "min_band": 1,
+                },
+            }
+        )
+        pred = torch.zeros(1, 1, 8, 8)
+        target = torch.zeros_like(pred)
+        target[:, :, ::2, ::2] = 1.0
+
+        total, components = loss_fn(
+            loss_ambient=torch.tensor(5.0),
+            x0_pred=pred,
+            target_grid=target,
+            target_mask_grid=torch.ones(1, 1, 8, 8, dtype=torch.bool),
+            t=torch.tensor([0]),
+            alphas_cumprod=torch.tensor([1.0, 0.5]),
+        )
+
+        expected_aux = (
+            components["loss_s2_glorys_weighted"]
+            + components["loss_spectral_glorys_weighted"]
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_ambient_weighted"], torch.tensor(10.0))
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_aux_static_weighted"], expected_aux)
+        )
+        self.assertTrue(
+            torch.isclose(components["loss_aux_timestep_weighted"], expected_aux)
+        )
+        self.assertTrue(torch.isclose(total, torch.tensor(10.0) + expected_aux))
 
     def test_enabled_glorys_prior_requires_reference_path(self) -> None:
         with self.assertRaises(ValueError):
@@ -251,6 +359,8 @@ class TestAmbientOceanLosses(unittest.TestCase):
             def forward(self, **kwargs):
                 captured["t"] = kwargs.get("t")
                 captured["alphas_cumprod"] = kwargs.get("alphas_cumprod")
+                captured["target_grid"] = kwargs.get("target_grid")
+                captured["target_mask_grid"] = kwargs.get("target_mask_grid")
                 loss = kwargs["loss_ambient"]
                 return loss, {
                     "loss_total": loss,
@@ -267,7 +377,11 @@ class TestAmbientOceanLosses(unittest.TestCase):
                 "t": torch.tensor([1]),
             },
             target=torch.zeros(1, 1, 1, 1),
-            model_batch={"x": torch.zeros(1, 1, 1, 1)},
+            model_batch={
+                "x": torch.zeros(1, 1, 1, 1),
+                "y": torch.ones(1, 1, 1, 1),
+                "y_valid_mask": torch.ones(1, 1, 1, 1, dtype=torch.bool),
+            },
             land_mask=None,
             on_step=True,
             on_epoch=True,
@@ -278,6 +392,13 @@ class TestAmbientOceanLosses(unittest.TestCase):
         self.assertTrue(
             torch.equal(
                 captured["alphas_cumprod"], model.model.forward_process.alphas_cumprod
+            )
+        )
+        self.assertTrue(torch.equal(captured["target_grid"], torch.ones(1, 1, 1, 1)))
+        self.assertTrue(
+            torch.equal(
+                captured["target_mask_grid"],
+                torch.ones(1, 1, 1, 1, dtype=torch.bool),
             )
         )
 
