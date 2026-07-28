@@ -16,6 +16,11 @@ CLI controls:
 - `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`) after scenario resolution; inference helpers also accept `inference.*` overrides
 - because the super-config has top-level `data`, `model`, and `training` sections, model overrides use `model.*` paths
 
+The default config mirrors `training_super_config_standard.yaml`. For SpaceHPC,
+use `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`;
+that preset selects the Lustre dataset paths, offline W&B logging, and larger
+batch/worker values.
+
 Override example:
 
 ```bash

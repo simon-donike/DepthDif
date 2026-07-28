@@ -80,6 +80,8 @@ publishing credentials.
 - Optional dataset ablation: `dataset.synthetic.enabled=true` builds sparse `x` from random GLORYS `y` pixels, controlled by `dataset.synthetic.pixel_count`.
 - Config layout:
   - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
+  - `src/depth_recon/configs/px_space/training_super_config_standard.yaml`: explicit standard-resource training preset
+  - `src/depth_recon/configs/px_space/training_super_config_hpc.yaml`: SpaceHPC paths, offline W&B, and high-throughput loader preset
   - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
   - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
@@ -118,6 +120,7 @@ Ambient-occlusion objective example:
 
 Notes:
 - Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
+- SpaceHPC runs can pass `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`; the explicit standard preset is `training_super_config_standard.yaml`.
 - `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `data.dataset.sampling.eo_source`/`eo_var_name`, `model.generated_channels`, and `model.condition_channels`.
 - `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
