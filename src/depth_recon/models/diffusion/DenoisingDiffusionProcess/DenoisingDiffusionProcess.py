@@ -558,6 +558,24 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         one_minus_alpha_sqrt = torch.clamp(1.0 - alpha_cumprod, min=1e-20).sqrt()
         return (x_t - one_minus_alpha_sqrt * prediction) / alpha_cumprod_sqrt
 
+    def _training_prediction_to_x0(
+        self,
+        *,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        prediction: torch.Tensor,
+    ) -> torch.Tensor:
+        """Convert a training-time denoiser prediction into a clean-sample estimate."""
+        if self.parameterization == "x0":
+            return prediction
+        if not hasattr(self.forward_process, "alphas_cumprod"):
+            return prediction
+        b = x_t.shape[0]
+        alpha_cumprod = self.forward_process.alphas_cumprod[t].view(b, 1, 1, 1)
+        alpha_cumprod_sqrt = torch.clamp(alpha_cumprod, min=1e-20).sqrt()
+        one_minus_alpha_sqrt = torch.clamp(1.0 - alpha_cumprod, min=1e-20).sqrt()
+        return (x_t - one_minus_alpha_sqrt * prediction) / alpha_cumprod_sqrt
+
     @staticmethod
     def _align_mask_to_reference(
         mask: torch.Tensor,
@@ -716,7 +734,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         apply_further_corruption_to_noisy_branch: bool = False,
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
-    ) -> torch.Tensor:
+        return_context: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the diffusion training loss for the current batch.
 
         Args:
@@ -733,9 +752,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             apply_further_corruption_to_noisy_branch (bool): Boolean flag controlling behavior.
             coord (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
+            return_context (bool): Return clean prediction context for auxiliary losses.
 
         Returns:
-            torch.Tensor: Tensor output produced by this call.
+            torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]: Loss, optionally
+                with tensors needed by auxiliary losses.
         """
 
         b, c, h, w = output.shape
@@ -762,35 +783,53 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         prediction = self.model(model_input, t, coord_emb=coord_emb)
         target = noise if self.parameterization == "epsilon" else output
 
-        # apply loss
+        loss: torch.Tensor
         if not mask_loss or loss_mask is None:
-            return self.loss_fn(target, prediction)
+            loss = self.loss_fn(target, prediction)
+        else:
+            generated_mask = self._build_valid_mask(loss_mask, target, mode="observed")
+            if generated_mask is None:
+                loss = self.loss_fn(target, prediction)
+            else:
+                ocean_mask = self._build_land_mask(land_mask, target)
+                if ocean_mask is not None:
+                    generated_mask = generated_mask * ocean_mask
 
-        generated_mask = self._build_valid_mask(loss_mask, target, mode="observed")
-        if generated_mask is None:
-            return self.loss_fn(target, prediction)
-        ocean_mask = self._build_land_mask(land_mask, target)
-        if ocean_mask is not None:
-            generated_mask = generated_mask * ocean_mask
+                # Manually computes MSE loss over masked pixels so auxiliary weighting
+                # can share the existing task support exactly.
+                diff = (target - prediction) ** 2
+                coastal_weights = self._build_coastal_loss_weights(
+                    land_mask,
+                    target,
+                    enabled=coastal_loss_enabled,
+                    radius_px=coastal_loss_radius_px,
+                    weight=coastal_loss_weight,
+                    ramp=coastal_loss_ramp,
+                )
+                weighted_mask = generated_mask
+                if coastal_weights is not None:
+                    weighted_mask = weighted_mask * coastal_weights
+                masked_diff = diff * weighted_mask
+                denom = weighted_mask.sum()
+                if denom.item() <= 0:
+                    loss = torch.zeros((), device=diff.device, dtype=diff.dtype)
+                else:
+                    loss = masked_diff.sum() / denom
 
-        # manually computes MSE loss over masked pixels
-        diff = (target - prediction) ** 2
-        coastal_weights = self._build_coastal_loss_weights(
-            land_mask,
-            target,
-            enabled=coastal_loss_enabled,
-            radius_px=coastal_loss_radius_px,
-            weight=coastal_loss_weight,
-            ramp=coastal_loss_ramp,
-        )
-        weighted_mask = generated_mask
-        if coastal_weights is not None:
-            weighted_mask = weighted_mask * coastal_weights
-        masked_diff = diff * weighted_mask
-        denom = weighted_mask.sum()
-        if denom.item() <= 0:
-            return torch.zeros((), device=diff.device, dtype=diff.dtype)
-        return masked_diff.sum() / denom
+        if not return_context:
+            return loss
+        context = {
+            "x_t": output_noisy,
+            "t": t,
+            "prediction": prediction,
+            "target": target,
+            "x0_pred": self._training_prediction_to_x0(
+                x_t=output_noisy,
+                t=t,
+                prediction=prediction,
+            ),
+        }
+        return loss, context
 
     @staticmethod
     def _coord_encoding_dim(encoding: str) -> int:

@@ -427,7 +427,6 @@ def load_pixel_training_config(
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
-
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
             data_cfg=data_cfg,
@@ -501,7 +500,6 @@ def load_pixel_inference_config(
     )
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
-
     effective_data, effective_model, effective_training = (
         _materialize_effective_configs(
             data_cfg=data_cfg,

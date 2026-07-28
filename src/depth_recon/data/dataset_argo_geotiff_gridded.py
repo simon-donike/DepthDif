@@ -522,11 +522,11 @@ class GeoTIFFPatchIndex:
                 "GeoTIFF datasets require grid.patch_grid_source='land_mask'."
             )
 
-    def load_rows(self) -> list[dict[str, Any]]:
+    def load_frame(self) -> pd.DataFrame:
         """Load cached rows or build a fresh patch/date registry."""
         cache_path = self._cache_path()
         if cache_path is not None and cache_path.exists():
-            return pd.read_csv(cache_path).to_dict(orient="records")
+            return self._compact_rows_frame(pd.read_csv(cache_path, low_memory=False))
 
         patch_df = _build_land_mask_patch_table(self.grid_params)
         if self.grid_params.val_year is None:
@@ -562,7 +562,50 @@ class GeoTIFFPatchIndex:
         if cache_path is not None:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             pd.DataFrame.from_records(rows).to_csv(cache_path, index=False)
-        return rows
+        return self._compact_rows_frame(pd.DataFrame.from_records(rows))
+
+    def load_rows(self) -> list[dict[str, Any]]:
+        """Load rows as dictionaries for legacy callers."""
+        return self.load_frame().to_dict(orient="records")
+
+    @staticmethod
+    def _compact_rows_frame(rows: pd.DataFrame) -> pd.DataFrame:
+        """Return a compact typed row table loaded from the CSV cache."""
+        if rows.empty:
+            return rows
+        rows = rows.copy()
+        integer_columns = (
+            "patch_id",
+            "grid_y0",
+            "grid_x0",
+            "date",
+            "export_index",
+            "argo_profile_count",
+        )
+        float_columns = (
+            "lat0",
+            "lat1",
+            "lon0",
+            "lon1",
+            "lat_center",
+            "lon_center",
+            "land_fraction",
+            "ocean_fraction",
+            "invalid_fraction",
+        )
+        category_columns = ("split", "phase", "force_include_region")
+        for column in integer_columns:
+            if column in rows:
+                rows[column] = pd.to_numeric(rows[column], downcast="integer")
+        for column in float_columns:
+            if column in rows:
+                rows[column] = pd.to_numeric(rows[column], downcast="float")
+        for column in category_columns:
+            if column in rows:
+                rows[column] = rows[column].astype("category")
+        if "force_included" in rows:
+            rows["force_included"] = rows["force_included"].astype(bool)
+        return rows.reset_index(drop=True)
 
     def _cache_path(self) -> Path | None:
         """Return the metadata cache path for these index settings."""
@@ -785,6 +828,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.require_argo_for_all = bool(require_argo_for_all)
         self.synthetic_mode = bool(synthetic_mode)
         self.synthetic_pixel_count = int(synthetic_pixel_count)
+        self.cache_size = int(cache_size)
         if self.temporal_window_days < 1:
             raise ValueError("sampling.temporal_window_days must be >= 1.")
         if self.synthetic_pixel_count < 0:
@@ -846,12 +890,37 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             cache_dir=metadata_cache_dir,
             grid_params=grid_params,
         )
-        rows = index.load_rows()
+        rows = index.load_frame()
         rows = self._filter_rows(rows)
         rows = self._apply_finetune_sampling(rows)
-        if not rows:
+        rows = self._prune_rows_for_runtime(rows)
+        if rows.empty:
             raise RuntimeError("Dataset is empty after split/ARGO filtering.")
-        self._rows = rows
+        self._rows = rows.reset_index(drop=True)
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop native file handles before DataLoader worker serialization."""
+        state = dict(self.__dict__)
+        for key in (
+            "raster_cache",
+            "argo_store",
+            "glorys_store",
+            "salinity_store",
+            "eo_store",
+            "ostia_store",
+        ):
+            state[key] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Reopen native file handles after DataLoader worker deserialization."""
+        self.__dict__.update(state)
+        self.raster_cache = RasterDatasetCache(max_open=int(self.cache_size))
+        self.argo_store = self._open_argo_store()
+        self.glorys_store, self.salinity_store, self.eo_store = (
+            self._build_raster_stores()
+        )
+        self.ostia_store = self.eo_store
 
     @staticmethod
     def _normalize_target_source(target_source: str) -> str:
@@ -979,8 +1048,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     @property
     def rows(self) -> list[dict[str, Any]]:
-        """Return patch/date metadata rows."""
-        return self._rows
+        """Return patch/date metadata rows as dictionaries for compatibility."""
+        return self._rows.to_dict(orient="records")
 
     @property
     def depth_axis_m(self) -> np.ndarray:
@@ -1370,9 +1439,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return tuple(merged.values())
 
     @staticmethod
-    def _row_in_hard_region(
-        row: dict[str, Any], regions: Sequence[dict[str, Any]]
-    ) -> bool:
+    def _row_in_hard_region(row: pd.Series, regions: Sequence[dict[str, Any]]) -> bool:
         """Return whether a patch center falls inside any hard finetune box."""
         lat_center = float(row.get("lat_center", np.nan))
         lon_center = _normalize_lon(float(row.get("lon_center", np.nan)))
@@ -1387,9 +1454,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 return True
         return False
 
-    def _apply_finetune_sampling(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _apply_finetune_sampling(self, rows: pd.DataFrame) -> pd.DataFrame:
         """Apply deterministic hard/easy row filtering for finetuning runs."""
         if not self._finetune_applies_to_current_split():
             self.finetune_sampling_summary = {
@@ -1401,11 +1466,21 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             return rows
 
         regions = self.finetune_sampling["hard_regions"]
-        hard_indices = [
-            idx
-            for idx, row in enumerate(rows)
-            if self._row_in_hard_region(row, regions)
-        ]
+        lat_values = pd.to_numeric(rows["lat_center"], errors="coerce")
+        lon_values = pd.to_numeric(rows["lon_center"], errors="coerce").map(
+            _normalize_lon
+        )
+        hard_mask = np.zeros((len(rows),), dtype=bool)
+        for region in regions:
+            lat_min = min(float(region["lat_min"]), float(region["lat_max"]))
+            lat_max = max(float(region["lat_min"]), float(region["lat_max"]))
+            lon_min = min(float(region["lon_min"]), float(region["lon_max"]))
+            lon_max = max(float(region["lon_min"]), float(region["lon_max"]))
+            hard_mask |= (
+                lat_values.between(lat_min, lat_max).to_numpy()
+                & lon_values.between(lon_min, lon_max).to_numpy()
+            )
+        hard_indices = np.flatnonzero(hard_mask).astype(int).tolist()
         if not hard_indices:
             raise RuntimeError(
                 "Finetune hard-area sampling matched no rows for split "
@@ -1428,7 +1503,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
 
         selected_indices = sorted(hard_indices + selected_easy)
-        filtered_rows = [rows[idx] for idx in selected_indices]
+        filtered_rows = rows.iloc[selected_indices].reset_index(drop=True)
         actual_hard_fraction = len(hard_indices) / float(len(filtered_rows))
         self.finetune_sampling_summary = {
             "enabled": True,
@@ -1444,19 +1519,37 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         }
         return filtered_rows
 
-    def _filter_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _prune_rows_for_runtime(self, rows: pd.DataFrame) -> pd.DataFrame:
+        """Drop row metadata columns that training samples do not need."""
+        if self.split != "train" or self.return_info:
+            return rows
+        required_columns = (
+            "patch_id",
+            "grid_y0",
+            "grid_x0",
+            "date",
+            "lat0",
+            "lat1",
+            "lon0",
+            "lon1",
+        )
+        kept_columns = [column for column in required_columns if column in rows]
+        return rows.loc[:, kept_columns].copy()
+
+    def _filter_rows(self, rows: pd.DataFrame) -> pd.DataFrame:
         """Apply split and ARGO-support filters."""
         if self.split in {"train", "val"}:
-            rows = [
-                row
-                for row in rows
-                if str(row.get("split", row.get("phase", ""))).strip().lower()
-                == self.split
-            ]
+            phase_col = "split" if "split" in rows else "phase"
+            split_mask = (
+                rows[phase_col].astype(str).str.strip().str.lower() == self.split
+            )
+            rows = rows.loc[split_mask]
         require_argo = self._require_argo_for_current_split()
         if require_argo:
-            rows = [row for row in rows if int(row.get("argo_profile_count", 0)) > 0]
-        return rows
+            if "argo_profile_count" not in rows:
+                return rows.iloc[0:0].copy()
+            rows = rows.loc[rows["argo_profile_count"].astype(int) > 0]
+        return rows.reset_index(drop=True)
 
     def _require_argo_for_current_split(self) -> bool:
         """Return whether the current split requires sparse ARGO support."""
@@ -1470,7 +1563,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     def __len__(self) -> int:
         """Return dataset row count."""
-        return len(self._rows)
+        return int(len(self._rows))
 
     def _load_y_patch(self, row: dict[str, Any]) -> np.ndarray:
         """Load the dense GLORYS target patch."""
@@ -1774,7 +1867,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Return one model-ready training sample."""
-        row = self._rows[int(idx)]
+        row = self._rows.iloc[int(idx)]
         eo_np = self._load_eo_patch(row)
         temperature_payload: dict[str, torch.Tensor] | None = None
         salinity_payload: dict[str, torch.Tensor] | None = None

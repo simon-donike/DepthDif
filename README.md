@@ -87,6 +87,7 @@ DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fi
 
 Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
+Auxiliary ambient-ocean losses live under `model.losses.*`. The active scalar-field training preset keeps sparse ARGO observation, sparse profile-increment, and GLORYS structure/spectral terms disabled by default. These can be enabled explicitly for experiments, with GLORYS terms running against precomputed reference `.pt` files via `target: reference` or against the paired dense GLORYS target via `target: paired_glorys`. Temperature and salinity auxiliary-loss training is scalar-field only, so disable these terms for `--scenario joint`.
 ![depthdif_schema](docs/assets/figures/depthdif_schema.webp)
 
 ## Data Example
@@ -112,8 +113,6 @@ Ambient-occlusion objective example:
 ```bash
 /work/envs/depth/bin/python train.py \
   --scenario temperature \
-  --set model.ambient_occlusion.enabled=true \
-  --set model.ambient_occlusion.further_drop_prob=0.25 \
   --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
 ```
 
