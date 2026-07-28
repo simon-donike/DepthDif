@@ -1,4 +1,4 @@
-# Ambient Ocean Losses
+# Ambient Diffusion - Aux Losses
 
 This page documents the optional loss stack under `model.losses.*` for pixel-space ambient ocean reconstruction. These terms are designed for sparse ARGO-conditioned diffusion training where temperature and salinity are trained as separate scalar fields.
 
@@ -354,6 +354,236 @@ Ambient diffusion learns from corrupted observations by supervising the observed
 - paired statistical guidance: `target: paired_glorys` GLORYS terms match same-sample structure or spectral statistics from dense `y` without adding direct pixel-wise GLORYS MSE/L1.
 
 That distinction matters because direct dense GLORYS pixel losses would turn training into paired reconstruction against reanalysis. The paired statistical losses can still make outputs more GLORYS-like in roughness or frequency content, but they do not force pointwise equality to `y`.
+
+## Visual Guide: What Each Loss Sees
+
+The figures below use real 22 June 2018 North Atlantic GLORYS and DepthDif exports and a real exported ARGO temperature profile. Gaussian smoothing is used only as a controlled failure mode: it removes small-scale variation while keeping the source field recognizable.
+
+![Overview of the discrepancies inspected by the base, observation, increment, structure-function, and spectral losses](assets/figures/loss-signals-overview.png)
+
+This overview is arranged as six panels. Each panel shows a different question
+that can be asked about the same reconstruction:
+
+1. **Base: denoising target** shows the real GLORYS temperature field used as
+   the dense target in standard training. Color represents temperature. Fronts,
+   eddies, and narrow filaments are visible as curved bands and sharp color
+   transitions. In ambient mode the exact supervised target changes to the
+   original sparse observation tensor, but the underlying question remains the
+   same: did the denoiser recover the value expected by the base diffusion
+   objective?
+2. **Base: pixelwise discrepancy** shows the absolute difference between the
+   exported DepthDif prediction and GLORYS at every valid grid cell. Dark pixels
+   indicate close agreement; bright pixels indicate a larger local error. This
+   panel is deliberately location-sensitive: shifting a front by a few pixels
+   produces an error along the front even if the predicted front has a realistic
+   shape.
+3. **Observation: match ARGO points** shows one real exported vertical ARGO
+   temperature profile. Orange markers are observed ARGO values at valid
+   depths, while the blue curve is the prediction at the same horizontal
+   location. The observation loss looks only at depths containing orange
+   markers. It does not penalize the blue curve at unobserved depths.
+4. **Increment: preserve vertical changes** compares temperature changes
+   between consecutive observed depths. A point on the diagonal means that the
+   prediction reproduced the ARGO change exactly. A point away from the
+   diagonal means that the prediction changed too much, too little, or in the
+   wrong direction between those depths. This can reveal an overly flat profile
+   even when its absolute temperatures are approximately correct.
+5. **Structure: variance across distance** plots the second-order structure
+   function. The horizontal axis is separation in grid cells; the vertical axis
+   is the average squared temperature difference between points at that
+   separation. The smoothed field lies lower because nearby pixels have become
+   too similar. The structure-function loss therefore responds to missing
+   spatial roughness at particular distance scales rather than to the exact
+   placement of every feature.
+6. **Spectral: retain fine-scale energy** shows radial Fourier power against
+   spatial frequency. Moving right means looking at progressively smaller
+   spatial features. The orange shaded area is power present in GLORYS but
+   removed by smoothing. It visualizes the kind of missing-energy region that
+   activates the spectral energy-floor loss.
+
+The first four panels are tied to particular values or observations. The final
+two summarize statistical structure. That distinction is important: a field
+can have realistic roughness and spectral energy while placing an individual
+eddy differently, and it can have a small average pixel error while still
+being visibly too smooth.
+
+### Reading The ARGO Observation And Increment Figure
+
+![Real ARGO temperature observations showing pointwise observation discrepancies and adjacent-depth increment discrepancies](assets/figures/loss-argo-observation-increment.png)
+
+Both panels use the same real ARGO profile, but they expose two different kinds
+of disagreement.
+
+#### Left: Observation Consistency
+
+Depth increases downward on the vertical axis, matching the physical direction
+into the ocean. Temperature in degrees Celsius is on the horizontal axis:
+
+- Orange circles are actual ARGO observations. Gaps in the orange series mean
+  that no valid observation was available at that model depth.
+- The blue line is the DepthDif prediction at the profile location.
+- The green line is colocated GLORYS and is included only as context. The sparse
+  observation loss does not use it.
+- Each faint horizontal orange segment connects an observed value to the
+  prediction at the same depth. Its length is the pointwise residual inspected
+  by sparse observation consistency.
+
+Only orange-supported depths enter this auxiliary loss. It does not turn the
+task into dense GLORYS supervision, and it does not assume that the profile is
+observed continuously from the surface to the bottom.
+
+#### Right: Increment Consistency
+
+This panel first subtracts each observed temperature from the next observed
+temperature below it. The resulting value is an adjacent-depth increment:
+
+- Orange markers and line show increments calculated from ARGO.
+- Blue markers and line show increments calculated from the prediction at the
+  same pairs of depths.
+- The vertical coordinate is the midpoint depth of each pair.
+- The shaded horizontal gap between the lines is the increment error.
+- The vertical zero line separates warming with depth from cooling with depth.
+
+Suppose both predicted temperatures are 1 °C too warm. The left panel shows two
+pointwise errors, but their common bias cancels in the right panel. Conversely,
+a prediction can pass close to both observations while changing too gradually
+between them. The increment panel makes that loss of vertical sharpness much
+easier to see. This is why observation and increment consistency complement
+rather than duplicate one another.
+
+### Reading The Structure And Spectral Figures
+
+![A real GLORYS field and controlled smoothing degradation with the resulting structure-function and spectral discrepancies](assets/figures/loss-structure-spectral-smoothing.png)
+
+The upper row establishes the controlled experiment:
+
+- **Real GLORYS field** is a genuine North Atlantic temperature crop. Curved
+  fronts, filaments, and eddies provide structure over many spatial scales.
+- **Controlled Gaussian smoothing** is made from that exact field. It retains
+  the broad warm and cold regions but removes narrow fronts and small features.
+  It is not presented as a model output; it is a deliberately constructed
+  example of over-smoothing.
+
+The lower-left panel measures the effect in physical space. For each separation
+on the horizontal axis, pairs of pixels are sampled horizontally and vertically
+and their squared temperature differences are averaged. At very short
+separations, smoothing makes neighboring pixels more alike, so the purple curve
+falls below the green GLORYS curve. At larger separations, broad temperature
+contrasts survive and the curves become more similar. The structure-function
+loss sees the distance-dependent gap between these curves.
+
+The lower-right panel measures the same degradation in frequency space. The
+Fourier transform decomposes the field into broad and fine spatial variations:
+
+- The left side contains low spatial frequencies: basin-scale and broad frontal
+  patterns.
+- The right side contains high spatial frequencies: narrow fronts, filaments,
+  and small eddies.
+- Green is the energy measured in the original GLORYS crop.
+- Purple is the energy left after smoothing.
+- Orange shading marks frequency bands where the smoothed field falls below the
+  GLORYS energy.
+
+The spectral floor uses a one-sided hinge: missing energy is penalized, while
+energy already above the target floor is not forced downward. It therefore
+discourages an under-energetic, overly smooth result without requiring every
+Fourier coefficient—or every feature location—to match GLORYS.
+
+![Response of pixel, structure-function, and spectral discrepancies to increasing controlled smoothing of a real GLORYS field](assets/figures/loss-degradation-sensitivity.png)
+
+This figure repeats the smoothing experiment at five strengths. The horizontal
+axis is Gaussian blur standard deviation in pixels. At zero, the candidate and
+reference are identical. Moving right progressively removes smaller features.
+Each panel reports a different response:
+
+1. **Pixel MSE** averages squared value differences at corresponding grid
+   cells. It rises because smoothing changes temperatures near fronts and
+   extrema. This metric cares about exactly where values occur.
+2. **Structure-function discrepancy** compares the logarithms of the
+   distance-binned structure functions. It rises because the relative
+   temperature variance at short and intermediate separations is being removed.
+   It cares about how roughness grows with distance.
+3. **Missing spectral energy** averages only positive shortfalls between the
+   reference and candidate log spectra. It rises as progressively more Fourier
+   bands lose power. It cares about which spatial scales have become
+   under-energetic.
+
+The curves should not be compared by their raw vertical magnitudes because the
+three panels use different units and reductions. The meaningful comparison is
+their trend as degradation increases. The plot demonstrates why one loss
+cannot be treated as a numerical substitute for another: they all react to
+smoothing, but each describes the failure in a different representation.
+
+### Reading The Auxiliary Timestep-Weighting Figure
+
+![Linear and bounded-SNR auxiliary timestep weights compared with the unchanged base-loss weight](assets/figures/loss-timestep-weighting.png)
+
+The horizontal axis runs from the clean end of the forward diffusion process on
+the left to the noisiest timesteps on the right. The vertical axis is the scalar
+multiplier applied to a loss contribution:
+
+- The dashed gray line stays at `1.0`. It represents the base diffusion or
+  ambient loss, which is not changed by auxiliary timestep weighting.
+- The blue line is linear weighting. With the illustrated defaults, auxiliary
+  influence decreases steadily from `1.0` near clean timesteps to `0.1` near
+  the noisiest timestep.
+- The orange line is bounded SNR weighting. It remains strong while the
+  signal-to-noise ratio is useful, then drops more sharply and stops at the
+  configured minimum weight of `0.1`.
+- Orange shading emphasizes the amount of auxiliary contribution retained by
+  the SNR rule.
+
+The reason for this asymmetry is that observation, increment, structure, and
+spectral losses are evaluated on the recovered clean estimate
+\(\hat{x}_0\). At a very noisy timestep that estimate can be unstable even when
+the noise-prediction task remains valid. Reducing auxiliary influence prevents
+an unreliable clean estimate from dominating training. The implementation
+computes a weight for each sampled timestep and uses their batch mean because
+the current auxiliary losses have already reduced the batch to one scalar.
+
+### Reading The Reference And Paired-Target Figure
+
+![Reference mode using statistics across real-field patches compared with paired mode using the corresponding GLORYS field](assets/figures/loss-reference-vs-paired.png)
+
+Both panels show power against spatial frequency. The blue curve is the same
+candidate prediction in both panels; what changes is the source of the green
+target.
+
+#### Left: `target: reference`
+
+The green line is a representative statistic summarized across many real
+GLORYS patches. The translucent green band shows patch-to-patch spread. A
+precomputed `.pt` reference used in training plays this role: it describes the
+typical spectrum for a selected variable, region, month, or depth class. The
+prediction is therefore encouraged to resemble an archive-level distribution,
+not one particular GLORYS realization.
+
+This mode is useful when the intended question is “does the generated field
+have the normal amount of structure for this class?” It also means that the
+quality of the reference grouping matters. A winter North Atlantic reference,
+for example, may not be appropriate for a tropical summer sample.
+
+#### Right: `target: paired_glorys`
+
+The green curve comes from the dense GLORYS field paired with the current
+training sample. There is no archive spread because the comparison target is
+calculated from that specific field. The question becomes “does this prediction
+contain the same scale-dependent energy as its corresponding GLORYS target?”
+
+Paired mode is more sample-specific, but it is still not a direct pixel loss.
+The blue and green fields may place eddies differently and nevertheless have
+similar spectra or structure functions. Conversely, two fields can look
+broadly similar in a map while paired statistics reveal that one is missing
+fine-scale variability. The same reference-versus-paired distinction applies
+to the structure-function auxiliary loss.
+
+### Reproducing The Figures
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.utils.visualization.plot_loss_explanations \
+  --export-dir inference/outputs/global_variables_2018_W25_v2/temperature \
+  --output-dir docs/assets/figures
+```
 
 ## Practical Tuning
 
