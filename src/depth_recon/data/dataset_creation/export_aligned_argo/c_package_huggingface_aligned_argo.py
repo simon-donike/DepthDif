@@ -737,6 +737,20 @@ dataset license notice, not a replacement for upstream product licenses.
     )
 
 
+def _write_gitignore(output_dir: Path) -> None:
+    """Write local-only ignore rules for the Hugging Face dataset repo."""
+    (output_dir / ".gitignore").write_text(
+        """# Local upload/cache state.
+.cache/
+
+# Synthetic pretraining rasters are generated locally and are not part of the public dataset.
+rasters/synthetic/
+manifest.yaml.synthetic_backup_*
+""",
+        encoding="utf-8",
+    )
+
+
 def build_huggingface_aligned_argo_package(
     *,
     input_zarr: str | Path = DEFAULT_INPUT_ZARR,
@@ -800,6 +814,7 @@ def build_huggingface_aligned_argo_package(
             include_geotiff_assets=include_geotiff_assets,
         )
         _write_license(output_dir)
+        _write_gitignore(output_dir)
     finally:
         ds.close()
 

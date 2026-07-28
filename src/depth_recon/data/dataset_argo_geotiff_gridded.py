@@ -40,6 +40,23 @@ from depth_recon.utils.normalizations import (
 
 VALID_CODE_MAX = 254.0
 NODATA_CODE = 255
+DEFAULT_ACCEPTED_ARGO_QC_FLAGS = (1, 2)
+ARGO_LEVEL_QC_VARS = {
+    "depth": "argo_depth_qc_on_glorys_depth",
+    "temp": "argo_temp_qc_on_glorys_depth",
+    "psal": "argo_psal_qc_on_glorys_depth",
+}
+ARGO_PROFILE_QC_VARS = {
+    "juld": "argo_juld_qc",
+    "position": "argo_position_qc",
+    "profile_depth": "argo_profile_depth_qc",
+    "profile_potm": "argo_profile_potm_qc",
+    "profile_psal": "argo_profile_psal_qc",
+}
+COMPACT_PROFILE_QC_VARS = {
+    "temp": "argo_temp_profile_qc",
+    "psal": "argo_psal_profile_qc",
+}
 
 
 def _decode_stretched_uint8(values: np.ndarray, stretch: dict[str, Any]) -> np.ndarray:
@@ -186,15 +203,34 @@ class GeoTIFFRasterStore:
         return decoded.astype(np.float32, copy=False)
 
 
+def _normalize_accepted_qc_flags(values: Sequence[int] | None) -> tuple[int, ...]:
+    """Return accepted ARGO QC flags as small integer codes."""
+    if values is None:
+        return DEFAULT_ACCEPTED_ARGO_QC_FLAGS
+    flags = tuple(sorted({int(value) for value in values}))
+    if not flags:
+        raise ValueError("accepted_argo_qc_flags must contain at least one code.")
+    return flags
+
+
 class ArgoGeoTIFFProfileStore:
     """Profile-indexed ARGO zarr source exported with the GeoTIFF dataset."""
 
-    def __init__(self, path: str | Path, *, include_salinity: bool = False) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        include_salinity: bool = False,
+        filter_bad_quality: bool = True,
+        accepted_qc_flags: Sequence[int] | None = None,
+    ) -> None:
         """Open a compact ARGO profile zarr store."""
         self.path = Path(path)
         if not self.path.exists():
             raise FileNotFoundError(f"ARGO profile zarr does not exist: {self.path}")
         self.include_salinity = bool(include_salinity)
+        self.filter_bad_quality = bool(filter_bad_quality)
+        self.accepted_qc_flags = _normalize_accepted_qc_flags(accepted_qc_flags)
         self._pid = os.getpid()
         self.ds = self._open_dataset()
         self._zarr_pid = os.getpid()
@@ -220,6 +256,8 @@ class ArgoGeoTIFFProfileStore:
             self.ds["glorys_depth"].values, dtype=np.float32
         ).reshape(-1)
         temp_valid = np.asarray(self.ds["argo_temp_valid"].values, dtype=bool)
+        if self.filter_bad_quality:
+            temp_valid &= self._quality_mask_for_variable("temp")
         self._has_valid_temp = temp_valid.any(axis=1)
         (
             self._valid_profile_indices_by_date,
@@ -256,6 +294,65 @@ class ArgoGeoTIFFProfileStore:
             self._zarr_group = self._open_zarr_group()
             self._zarr_pid = pid
         return self._zarr_group
+
+    def _accepted_qc_mask(self, values: np.ndarray) -> np.ndarray:
+        """Return True where QC is missing or one of the accepted flags."""
+        qc = np.asarray(values, dtype=np.int16)
+        missing = qc < 0
+        accepted = np.isin(qc, np.asarray(self.accepted_qc_flags, dtype=np.int16))
+        return missing | accepted
+
+    def _profile_qc_names_for_variable(self, variable: str) -> tuple[str, ...]:
+        """Return profile-level QC variables relevant to one ARGO variable."""
+        names = ["juld", "position", "profile_depth"]
+        if variable == "psal":
+            names.append("profile_psal")
+        return tuple(ARGO_PROFILE_QC_VARS[name] for name in names)
+
+    def _level_qc_names_for_variable(self, variable: str) -> tuple[str, ...]:
+        """Return level-level QC variables relevant to one ARGO variable."""
+        if variable == "psal":
+            return (ARGO_LEVEL_QC_VARS["depth"], ARGO_LEVEL_QC_VARS["psal"])
+        return (ARGO_LEVEL_QC_VARS["depth"], ARGO_LEVEL_QC_VARS["temp"])
+
+    def _quality_mask_for_variable(
+        self,
+        variable: str,
+        *,
+        indices: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return a profile-depth quality mask for one compact ARGO variable."""
+        if indices is None:
+            profile_count = int(self.target_date.size)
+            mask = np.ones(
+                (profile_count, int(self.depth_axis_m.size)),
+                dtype=bool,
+            )
+            indexer: Any = slice(None)
+        else:
+            selected = np.asarray(indices, dtype=np.int64).reshape(-1)
+            mask = np.ones(
+                (int(selected.size), int(self.depth_axis_m.size)),
+                dtype=bool,
+            )
+            indexer = selected
+        ds = self._ensure_current_process()
+        compact_name = COMPACT_PROFILE_QC_VARS.get(variable)
+        if compact_name in ds:
+            qc = np.asarray(ds[compact_name].isel(profile=indexer).values).reshape(-1)
+            return mask & self._accepted_qc_mask(qc)[:, None]
+        for name in self._level_qc_names_for_variable(variable):
+            if name not in ds:
+                continue
+            qc = np.asarray(ds[name].isel(profile=indexer).values)
+            mask &= self._accepted_qc_mask(qc)
+        for name in self._profile_qc_names_for_variable(variable):
+            if name not in ds:
+                continue
+            qc = np.asarray(ds[name].isel(profile=indexer).values).reshape(-1)
+            # Profile-level QC rejects every depth for a bad date/position/profile.
+            mask &= self._accepted_qc_mask(qc)[:, None]
+        return mask
 
     def _build_valid_profile_index(
         self,
@@ -353,6 +450,8 @@ class ArgoGeoTIFFProfileStore:
             group["argo_temp_valid"].get_orthogonal_selection((indices, slice(None))),
             dtype=bool,
         )
+        if self.filter_bad_quality:
+            valid &= self._quality_mask_for_variable("temp", indices=indices)
         kelvin = _decode_stretched_uint8(encoded, self.temperature_stretch)
         kelvin[~valid] = np.nan
         return _kelvin_to_celsius(kelvin).astype(np.float32, copy=False)
@@ -376,9 +475,21 @@ class ArgoGeoTIFFProfileStore:
             group["argo_psal_valid"].get_orthogonal_selection((indices, slice(None))),
             dtype=bool,
         )
+        if self.filter_bad_quality:
+            valid &= self._quality_mask_for_variable("psal", indices=indices)
         salinity = _decode_stretched_uint8(encoded, self.salinity_stretch)
         salinity[~valid] = np.nan
         return salinity.astype(np.float32, copy=False)
+
+    def quality_cache_signature(self) -> str:
+        """Return the ARGO quality-filter settings that affect support counts."""
+        marker_text = "markers-" + "-".join(
+            name for name in COMPACT_PROFILE_QC_VARS.values() if name in self.ds
+        )
+        flags_text = "-".join(str(value) for value in self.accepted_qc_flags)
+        return _sanitize_cache_text(
+            f"filter{int(self.filter_bad_quality)}_flags{flags_text}_{marker_text}"
+        )
 
     def close(self) -> None:
         """Close the opened zarr dataset."""
@@ -388,7 +499,7 @@ class ArgoGeoTIFFProfileStore:
 class GeoTIFFPatchIndex:
     """Build compact patch/date metadata rows for GeoTIFF training stores."""
 
-    CACHE_VERSION = 1
+    CACHE_VERSION = 3
 
     def __init__(
         self,
@@ -411,11 +522,11 @@ class GeoTIFFPatchIndex:
                 "GeoTIFF datasets require grid.patch_grid_source='land_mask'."
             )
 
-    def load_rows(self) -> list[dict[str, Any]]:
+    def load_frame(self) -> pd.DataFrame:
         """Load cached rows or build a fresh patch/date registry."""
         cache_path = self._cache_path()
         if cache_path is not None and cache_path.exists():
-            return pd.read_csv(cache_path).to_dict(orient="records")
+            return self._compact_rows_frame(pd.read_csv(cache_path, low_memory=False))
 
         patch_df = _build_land_mask_patch_table(self.grid_params)
         if self.grid_params.val_year is None:
@@ -451,7 +562,50 @@ class GeoTIFFPatchIndex:
         if cache_path is not None:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             pd.DataFrame.from_records(rows).to_csv(cache_path, index=False)
-        return rows
+        return self._compact_rows_frame(pd.DataFrame.from_records(rows))
+
+    def load_rows(self) -> list[dict[str, Any]]:
+        """Load rows as dictionaries for legacy callers."""
+        return self.load_frame().to_dict(orient="records")
+
+    @staticmethod
+    def _compact_rows_frame(rows: pd.DataFrame) -> pd.DataFrame:
+        """Return a compact typed row table loaded from the CSV cache."""
+        if rows.empty:
+            return rows
+        rows = rows.copy()
+        integer_columns = (
+            "patch_id",
+            "grid_y0",
+            "grid_x0",
+            "date",
+            "export_index",
+            "argo_profile_count",
+        )
+        float_columns = (
+            "lat0",
+            "lat1",
+            "lon0",
+            "lon1",
+            "lat_center",
+            "lon_center",
+            "land_fraction",
+            "ocean_fraction",
+            "invalid_fraction",
+        )
+        category_columns = ("split", "phase", "force_include_region")
+        for column in integer_columns:
+            if column in rows:
+                rows[column] = pd.to_numeric(rows[column], downcast="integer")
+        for column in float_columns:
+            if column in rows:
+                rows[column] = pd.to_numeric(rows[column], downcast="float")
+        for column in category_columns:
+            if column in rows:
+                rows[column] = rows[column].astype("category")
+        if "force_included" in rows:
+            rows["force_included"] = rows["force_included"].astype(bool)
+        return rows.reset_index(drop=True)
 
     def _cache_path(self) -> Path | None:
         """Return the metadata cache path for these index settings."""
@@ -468,13 +622,18 @@ class GeoTIFFPatchIndex:
             if self.grid_params.val_year is not None
             else "patchsplit"
         )
+        argo_quality_text = (
+            "noargo"
+            if self.argo_store is None
+            else self.argo_store.quality_cache_signature()
+        )
         name = (
             f"argo_geotiff_gridded_v{self.CACHE_VERSION}_root{root_hash}_"
             f"dates{_date_signature(self.dates)}_"
             f"tile{int(self.grid_params.tile_size)}_res{res_text}_"
             f"stride{int(self.grid_params.effective_patch_stride)}_"
             f"grid{grid_source}_land{land_text}_mask{mask_hash}_"
-            f"force{force_hash}_{split_text}.csv"
+            f"force{force_hash}_{split_text}_argo{argo_quality_text}.csv"
         )
         return self.cache_dir / name
 
@@ -582,6 +741,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         finetune_sampling: dict[str, Any] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
+        target_source: str = "glorys",
         ostia_var_name: str = "analysed_sst",
         eo_source: str = "ostia",
         eo_var_name: str | None = None,
@@ -594,6 +754,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return_coords: bool = True,
         include_salinity: bool = False,
         output_fields: Sequence[str] | str | None = None,
+        filter_bad_argo_quality: bool = True,
+        accepted_argo_qc_flags: Sequence[int] | None = None,
         heldout_argo_locations: Sequence[tuple[int, int, int]] | None = None,
         random_seed: int = 7,
         cache_size: int = 8,
@@ -637,6 +799,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         }
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
+        self.target_source = self._normalize_target_source(target_source)
         self.ostia_var_name = str(ostia_var_name)
         self.eo_source, self.eo_var_name = self._normalize_eo_selection(
             eo_source=eo_source,
@@ -651,6 +814,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.output_fields = self._normalize_output_fields(
             output_fields, include_salinity=bool(include_salinity)
         )
+        self.filter_bad_argo_quality = bool(filter_bad_argo_quality)
+        self.accepted_argo_qc_flags = _normalize_accepted_qc_flags(
+            accepted_argo_qc_flags
+        )
         self.heldout_argo_location_keys: set[tuple[int, int, int]] = set()
         self.set_heldout_argo_locations(heldout_argo_locations)
         self.include_salinity = "salinity" in self.output_fields
@@ -661,6 +828,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.require_argo_for_all = bool(require_argo_for_all)
         self.synthetic_mode = bool(synthetic_mode)
         self.synthetic_pixel_count = int(synthetic_pixel_count)
+        self.cache_size = int(cache_size)
         if self.temporal_window_days < 1:
             raise ValueError("sampling.temporal_window_days must be >= 1.")
         if self.synthetic_pixel_count < 0:
@@ -722,12 +890,45 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             cache_dir=metadata_cache_dir,
             grid_params=grid_params,
         )
-        rows = index.load_rows()
+        rows = index.load_frame()
         rows = self._filter_rows(rows)
         rows = self._apply_finetune_sampling(rows)
-        if not rows:
+        rows = self._prune_rows_for_runtime(rows)
+        if rows.empty:
             raise RuntimeError("Dataset is empty after split/ARGO filtering.")
-        self._rows = rows
+        self._rows = rows.reset_index(drop=True)
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop native file handles before DataLoader worker serialization."""
+        state = dict(self.__dict__)
+        for key in (
+            "raster_cache",
+            "argo_store",
+            "glorys_store",
+            "salinity_store",
+            "eo_store",
+            "ostia_store",
+        ):
+            state[key] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Reopen native file handles after DataLoader worker deserialization."""
+        self.__dict__.update(state)
+        self.raster_cache = RasterDatasetCache(max_open=int(self.cache_size))
+        self.argo_store = self._open_argo_store()
+        self.glorys_store, self.salinity_store, self.eo_store = (
+            self._build_raster_stores()
+        )
+        self.ostia_store = self.eo_store
+
+    @staticmethod
+    def _normalize_target_source(target_source: str) -> str:
+        """Resolve the dense target raster group used as model supervision."""
+        source = str(target_source or "glorys").strip().lower()
+        if source not in {"glorys", "synthetic"}:
+            raise ValueError("target_source must be one of: 'glorys', 'synthetic'")
+        return source
 
     @staticmethod
     def _normalize_eo_selection(
@@ -773,6 +974,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return ArgoGeoTIFFProfileStore(
             _resolve_manifest_path(self.root_dir, raw_path),
             include_salinity=self.include_salinity,
+            filter_bad_quality=self.filter_bad_argo_quality,
+            accepted_qc_flags=self.accepted_argo_qc_flags,
         )
 
     def _build_raster_stores(
@@ -792,20 +995,21 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "GeoTIFF manifest is missing EO stretch "
                 f"{self.eo_stretch_name!r} for {self.eo_source}/{self.eo_var_name}."
             )
-        glorys_rasters = rasters.get("glorys", {})
-        glorys_entries = (
-            glorys_rasters.get(self.glorys_var_name, [])
-            if isinstance(glorys_rasters, dict)
+        target_rasters = rasters.get(self.target_source, {})
+        target_entries = (
+            target_rasters.get(self.glorys_var_name, [])
+            if isinstance(target_rasters, dict)
             else []
         )
         eo_rasters = rasters.get(self.eo_source, {})
         eo_entries = (
             eo_rasters.get(self.eo_var_name, []) if isinstance(eo_rasters, dict) else []
         )
-        if not glorys_entries or not eo_entries:
+        if not target_entries or not eo_entries:
             raise RuntimeError(
-                "GeoTIFF manifest is missing GLORYS/EO raster entries for "
-                f"{self.glorys_var_name!r}/{self.eo_source}/{self.eo_var_name}."
+                "GeoTIFF manifest is missing target/EO raster entries for "
+                f"{self.target_source}/{self.glorys_var_name!r}/"
+                f"{self.eo_source}/{self.eo_var_name}."
             )
         salinity_store = None
         if self.include_salinity:
@@ -813,11 +1017,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             if not isinstance(salinity_stretch, dict):
                 raise RuntimeError("GeoTIFF manifest is missing salinity stretch.")
             salinity_entries = (
-                glorys_rasters.get("so", []) if isinstance(glorys_rasters, dict) else []
+                target_rasters.get("so", []) if isinstance(target_rasters, dict) else []
             )
             if not salinity_entries:
                 raise RuntimeError(
-                    "GeoTIFF manifest is missing GLORYS salinity 'so' raster entries."
+                    "GeoTIFF manifest is missing target salinity 'so' raster entries "
+                    f"for source {self.target_source!r}."
                 )
             salinity_store = GeoTIFFRasterStore(
                 paths_by_date=_records_by_date(salinity_entries, self.root_dir),
@@ -827,7 +1032,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         return (
             GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(glorys_entries, self.root_dir),
+                paths_by_date=_records_by_date(target_entries, self.root_dir),
                 stretch=temp_stretch,
                 cache=self.raster_cache,
                 kelvin_temperature=True,
@@ -843,8 +1048,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     @property
     def rows(self) -> list[dict[str, Any]]:
-        """Return patch/date metadata rows."""
-        return self._rows
+        """Return patch/date metadata rows as dictionaries for compatibility."""
+        return self._rows.to_dict(orient="records")
 
     @property
     def depth_axis_m(self) -> np.ndarray:
@@ -891,7 +1096,9 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         with resolve_config_path(config_path).open("r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
 
-        ds_cfg = cfg.get("data", cfg).get("dataset", {})
+        data_cfg = cfg.get("data", cfg)
+        ds_cfg = data_cfg.get("dataset", {})
+        split_cfg = data_cfg.get("split", cfg.get("split", {}))
         if dataset_overrides:
             ds_cfg = _deep_update_config(ds_cfg, dataset_overrides)
         return cls(
@@ -974,6 +1181,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     default="thetao",
                 )
             ),
+            target_source=str(
+                cls._cfg_get(
+                    ds_cfg,
+                    "sampling.target_source",
+                    "target_source",
+                    default="glorys",
+                )
+            ),
             ostia_var_name=str(
                 cls._cfg_get(
                     ds_cfg,
@@ -996,8 +1211,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "eo_var_name",
                 default=None,
             ),
-            val_fraction=float(cfg.get("split", {}).get("val_fraction", 0.2)),
-            val_year=cls._optional_int(cfg.get("split", {}).get("val_year", None)),
+            val_fraction=float(split_cfg.get("val_fraction", 0.2)),
+            val_year=cls._optional_int(split_cfg.get("val_year", None)),
             require_argo_for_train=bool(
                 cls._cfg_get(
                     ds_cfg,
@@ -1021,6 +1236,20 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "require_argo_for_all",
                     default=False,
                 )
+            ),
+            filter_bad_argo_quality=bool(
+                cls._cfg_get(
+                    ds_cfg,
+                    "selection.filter_bad_argo_quality",
+                    "filter_bad_argo_quality",
+                    default=True,
+                )
+            ),
+            accepted_argo_qc_flags=cls._cfg_get(
+                ds_cfg,
+                "selection.accepted_argo_qc_flags",
+                "accepted_argo_qc_flags",
+                default=None,
             ),
             synthetic_mode=bool(
                 cls._cfg_get(
@@ -1210,9 +1439,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return tuple(merged.values())
 
     @staticmethod
-    def _row_in_hard_region(
-        row: dict[str, Any], regions: Sequence[dict[str, Any]]
-    ) -> bool:
+    def _row_in_hard_region(row: pd.Series, regions: Sequence[dict[str, Any]]) -> bool:
         """Return whether a patch center falls inside any hard finetune box."""
         lat_center = float(row.get("lat_center", np.nan))
         lon_center = _normalize_lon(float(row.get("lon_center", np.nan)))
@@ -1227,9 +1454,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 return True
         return False
 
-    def _apply_finetune_sampling(
-        self, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _apply_finetune_sampling(self, rows: pd.DataFrame) -> pd.DataFrame:
         """Apply deterministic hard/easy row filtering for finetuning runs."""
         if not self._finetune_applies_to_current_split():
             self.finetune_sampling_summary = {
@@ -1241,11 +1466,21 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             return rows
 
         regions = self.finetune_sampling["hard_regions"]
-        hard_indices = [
-            idx
-            for idx, row in enumerate(rows)
-            if self._row_in_hard_region(row, regions)
-        ]
+        lat_values = pd.to_numeric(rows["lat_center"], errors="coerce")
+        lon_values = pd.to_numeric(rows["lon_center"], errors="coerce").map(
+            _normalize_lon
+        )
+        hard_mask = np.zeros((len(rows),), dtype=bool)
+        for region in regions:
+            lat_min = min(float(region["lat_min"]), float(region["lat_max"]))
+            lat_max = max(float(region["lat_min"]), float(region["lat_max"]))
+            lon_min = min(float(region["lon_min"]), float(region["lon_max"]))
+            lon_max = max(float(region["lon_min"]), float(region["lon_max"]))
+            hard_mask |= (
+                lat_values.between(lat_min, lat_max).to_numpy()
+                & lon_values.between(lon_min, lon_max).to_numpy()
+            )
+        hard_indices = np.flatnonzero(hard_mask).astype(int).tolist()
         if not hard_indices:
             raise RuntimeError(
                 "Finetune hard-area sampling matched no rows for split "
@@ -1268,7 +1503,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
 
         selected_indices = sorted(hard_indices + selected_easy)
-        filtered_rows = [rows[idx] for idx in selected_indices]
+        filtered_rows = rows.iloc[selected_indices].reset_index(drop=True)
         actual_hard_fraction = len(hard_indices) / float(len(filtered_rows))
         self.finetune_sampling_summary = {
             "enabled": True,
@@ -1284,19 +1519,37 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         }
         return filtered_rows
 
-    def _filter_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _prune_rows_for_runtime(self, rows: pd.DataFrame) -> pd.DataFrame:
+        """Drop row metadata columns that training samples do not need."""
+        if self.split != "train" or self.return_info:
+            return rows
+        required_columns = (
+            "patch_id",
+            "grid_y0",
+            "grid_x0",
+            "date",
+            "lat0",
+            "lat1",
+            "lon0",
+            "lon1",
+        )
+        kept_columns = [column for column in required_columns if column in rows]
+        return rows.loc[:, kept_columns].copy()
+
+    def _filter_rows(self, rows: pd.DataFrame) -> pd.DataFrame:
         """Apply split and ARGO-support filters."""
         if self.split in {"train", "val"}:
-            rows = [
-                row
-                for row in rows
-                if str(row.get("split", row.get("phase", ""))).strip().lower()
-                == self.split
-            ]
+            phase_col = "split" if "split" in rows else "phase"
+            split_mask = (
+                rows[phase_col].astype(str).str.strip().str.lower() == self.split
+            )
+            rows = rows.loc[split_mask]
         require_argo = self._require_argo_for_current_split()
         if require_argo:
-            rows = [row for row in rows if int(row.get("argo_profile_count", 0)) > 0]
-        return rows
+            if "argo_profile_count" not in rows:
+                return rows.iloc[0:0].copy()
+            rows = rows.loc[rows["argo_profile_count"].astype(int) > 0]
+        return rows.reset_index(drop=True)
 
     def _require_argo_for_current_split(self) -> bool:
         """Return whether the current split requires sparse ARGO support."""
@@ -1310,7 +1563,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     def __len__(self) -> int:
         """Return dataset row count."""
-        return len(self._rows)
+        return int(len(self._rows))
 
     def _load_y_patch(self, row: dict[str, Any]) -> np.ndarray:
         """Load the dense GLORYS target patch."""
@@ -1614,7 +1867,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Return one model-ready training sample."""
-        row = self._rows[int(idx)]
+        row = self._rows.iloc[int(idx)]
         eo_np = self._load_eo_patch(row)
         temperature_payload: dict[str, torch.Tensor] | None = None
         salinity_payload: dict[str, torch.Tensor] | None = None
@@ -1721,6 +1974,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         if self.return_info:
             info = dict(row)
+            info["target_source"] = self.target_source
             info["x_source"] = "glorys_synthetic" if self.synthetic_mode else "argo"
             info["synthetic_pixel_count"] = (
                 int(self.synthetic_pixel_count) if self.synthetic_mode else 0

@@ -560,6 +560,18 @@ def _rounded_absolute_error_legend_max(value: float) -> int:
     return int(max(1, round(value)))
 
 
+def _uncertainty_legend_bounds(scale: dict[str, float | int]) -> tuple[float, float]:
+    """Return display legend bounds for an uncertainty raster scale."""
+    valid_min = float(scale["valid_min_c"])
+    valid_max = float(scale["valid_max_c"])
+    rounded_max = float(round(valid_max))
+    if rounded_max > DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C:
+        return DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C, rounded_max
+    # Very small uncertainty ranges can round to a useless 0-to-0 legend, so
+    # show the actual valid raster range instead.
+    return valid_min, valid_max
+
+
 def _absolute_error_color_scale(path: Path) -> dict[str, float | int]:
     """Compute robust color-scale metadata for an absolute-error raster."""
     values = _valid_raster_values(path)
@@ -1292,7 +1304,7 @@ def build_globe_config(
     uncertainty_color_scale_min: float | None = None,
     uncertainty_color_scale_max: float | None = None,
     uncertainty_legend_min: float = DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
-    uncertainty_legend_max: int | None = None,
+    uncertainty_legend_max: float | None = None,
     uncertainty_value_units: str | None = None,
     uncertainty_value_unit_label: str | None = None,
     base_map_tiles_url: str | None = None,
@@ -1338,7 +1350,9 @@ def build_globe_config(
             ),
             "uncertainty_legend_min": float(uncertainty_legend_min),
             "uncertainty_legend_max": (
-                None if uncertainty_legend_max is None else int(uncertainty_legend_max)
+                None
+                if uncertainty_legend_max is None
+                else float(uncertainty_legend_max)
             ),
             "depth_levels": depth_levels,
             "argo_sample_locations_url": argo_sample_locations_url,
@@ -1696,6 +1710,12 @@ def export_cesium_globe_assets(
                 uncertainty_tiles_dir = uncertainty_tiles_dir_for_depth
                 uncertainty_scale = uncertainty_scale_for_depth
 
+        uncertainty_legend_min, uncertainty_legend_max = (
+            (None, None)
+            if uncertainty_scale_for_depth is None
+            else _uncertainty_legend_bounds(uncertainty_scale_for_depth)
+        )
+
         config_depth_levels.append(
             {
                 "suffix": suffix,
@@ -1807,12 +1827,8 @@ def export_cesium_globe_assets(
                     if uncertainty_scale_for_depth is None
                     else float(uncertainty_scale_for_depth["color_scale_max_c"])
                 ),
-                "uncertainty_legend_min": DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C,
-                "uncertainty_legend_max": (
-                    None
-                    if uncertainty_scale_for_depth is None
-                    else int(uncertainty_scale_for_depth["legend_max_c"])
-                ),
+                "uncertainty_legend_min": uncertainty_legend_min,
+                "uncertainty_legend_max": uncertainty_legend_max,
             }
         )
 
@@ -2064,10 +2080,15 @@ def export_cesium_globe_assets(
             if uncertainty_scale is None
             else float(uncertainty_scale["color_scale_max_c"])
         ),
+        uncertainty_legend_min=(
+            DEFAULT_ABSOLUTE_ERROR_LEGEND_MIN_C
+            if uncertainty_scale is None
+            else _uncertainty_legend_bounds(uncertainty_scale)[0]
+        ),
         uncertainty_legend_max=(
             None
             if uncertainty_scale is None
-            else int(uncertainty_scale["legend_max_c"])
+            else _uncertainty_legend_bounds(uncertainty_scale)[1]
         ),
         base_map_tiles_url=base_map_tiles_url,
         base_map_credit=base_map_credit,

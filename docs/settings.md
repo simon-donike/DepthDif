@@ -6,6 +6,8 @@ This page maps the current config files to runtime behavior. Pixel-space trainin
 | File | Used by | Purpose |
 | --- | --- | --- |
 | `src/depth_recon/configs/px_space/training_super_config.yaml` | `train.py` | Pixel GeoTIFF training defaults. Contains top-level `scenario`, `data`, `model`, and `training` sections. |
+| `src/depth_recon/configs/px_space/training_super_config_standard.yaml` | `train.py --config ...` | Explicit copy of the standard-resource training preset. |
+| `src/depth_recon/configs/px_space/training_super_config_hpc.yaml` | `train.py --config ...` | SpaceHPC preset with Lustre paths, offline W&B logging, and increased batch/worker values. |
 | `src/depth_recon/configs/px_space/inference_super_config.yaml` | inference exporters and smoke scripts | Pixel GeoTIFF inference defaults. Contains top-level `scenario`, `data`, `model`, `training`, and `inference` sections. |
 
 Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config.yaml`, `training_config.yaml`, and `ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md).
@@ -86,7 +88,7 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
 | `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
 | `data.split.val_fraction` | `0.2` | Fallback validation fraction when no validation year is set. |
-| `data.dataloader.num_workers` | `6` | Dataset-side dataloader worker default used by helper paths. |
+| `data.dataloader.num_workers` | `8` | Dataset-side dataloader worker default used by helper paths. |
 | `data.dataloader.prefetch_factor` | `2` | Prefetched batches per worker when workers are enabled. |
 | `data.dataloader.val_shuffle` | `true` | Validation loader shuffle remains enabled intentionally. |
 
@@ -96,7 +98,7 @@ These keys live under top-level `model` in both pixel super-configs.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, checkpoint-free `idw_baseline`, or trainable `lstm_baseline`, `cnn_baseline`, `unet_baseline`. |
+| `model.model_type` | `cond_px_dif` | Model selector: `cond_px_dif`, `latent_cond_dif`, checkpoint-free `idw_baseline`, or trainable `lstm_baseline`, `cnn_baseline`, `unet_baseline`, `unet2d_baseline`. |
 | `model.depth_channels` | `50` | Depth channels per active output field. Used by scenario derivation. |
 | `model.resume_checkpoint` | `false` | `false`/`null` starts from scratch; a path resumes or warm-starts from that checkpoint. |
 | `model.load_checkpoint_only` | `false` | When true, loads model weights only and reinitializes optimizer/trainer state. |
@@ -113,11 +115,14 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.parameterization` | `x0` | Diffusion target, either `x0` or `epsilon`. |
 | `model.log_intermediates` | `false` | Captures reverse-process intermediates when enabled by the caller. |
 | `model.idw.*` | `power=2.0`, `eps=1e-6`, `chunk_size=4096` | IDW baseline controls used when `model.model_type=idw_baseline`; bands with no ARGO observations are emitted as nodata. |
-| `model.lstm.*` | `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `bidirectional=true`, `weight_decay=0.0` | Point-wise LSTM baseline controls used when `model.model_type=lstm_baseline`; each pixel is modeled as an independent vertical profile and no-ARGO patches can still predict from EO/surface conditioning. |
-| `model.cnn_baseline.*` | `hidden_channels=64`, `seed_length=8`, `conv_layers=3`, `activation=selu`, `weight_decay=0.0001` | Point-wise profile CNN baseline controls used when `model.model_type=cnn_baseline`; supervised loss is evaluated only at ARGO profile locations, while dense inference can run from EO/surface input with zero ARGO masks. |
+| `model.lstm.*` | `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `bidirectional=true`, `weight_decay=0.0` | Point-wise LSTM baseline controls used when `model.model_type=lstm_baseline`; each pixel is modeled as an independent vertical profile and no-ARGO sample/field outputs are emitted as nodata. |
+| `model.cnn_baseline.*` | `hidden_channels=64`, `seed_length=8`, `conv_layers=3`, `activation=selu`, `weight_decay=0.0001` | Point-wise profile CNN baseline controls used when `model.model_type=cnn_baseline`; supervised loss is evaluated only at ARGO profile locations, and no-ARGO sample/field outputs are emitted as nodata. |
 | `model.unet_baseline.*` | `base_channels=32`, `channel_mults=[1,2,4,8]`, `norm_groups=8`, `weight_decay=0.0001` | 3D U-Net baseline controls used when `model.model_type=unet_baseline`; depth is treated as a 3D convolution axis. |
+| `model.unet_baseline.*` with `model.model_type=unet2d_baseline` | same defaults | 2D U-Net comparison controls; depth bands are flattened into channels and the same knobs are reused. |
 | `model.ema.*` | enabled by default | Exponential moving average callback and validation-swap settings. |
-| `model.ambient_occlusion.*` | disabled by default | Self-supervised occlusion objective controls. |
+| `model.ambient_occlusion.*` | training enabled; inference disabled | Self-supervised occlusion objective controls for scalar-field training. |
+| `model.losses.*` | disabled by default except aux timestep config | Optional auxiliary ambient-ocean loss stack. Sparse observation and increment terms use ARGO `x`/`x_valid_mask`; GLORYS structure-function and spectral floor terms use either precomputed `.pt` references (`target: reference`) or same-batch GLORYS statistics (`target: paired_glorys`). |
+| `model.losses.aux_timestep_weighting.*` | training enabled; inference disabled | SNR or linear multiplier applied only to auxiliary losses by sampled diffusion timestep; the base diffusion/ambient loss is unchanged. |
 | `model.post_process.gaussian_blur.*` | disabled by default | Optional denormalized prediction blur. |
 | `model.coord_conditioning.*` | enabled, date included | Coordinate/date FiLM conditioning controls. |
 | `model.unet.*` | `dim=64`, `dim_mults=[1,2,4,8]` | ConvNeXt U-Net width/depth and output behavior. |
@@ -129,16 +134,15 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `training.training.lr` | `1.0e-4` | Optimizer learning rate. |
-| `training.training.batch_size` | `4` | Informational batch size; `training.dataloader.batch_size` is the dataloader source of truth. |
 | `training.training.noise.num_timesteps` | `1000` | Diffusion training timesteps. |
 | `training.training.noise.schedule` | `cosine` | Noise schedule: `linear`, `cosine`, `quadratic`, or `sigmoid`. |
 | `training.training.noise.beta_start` | `1.0e-4` | First-step beta for schedules that use explicit endpoints. |
 | `training.training.noise.beta_end` | `2.0e-2` | Final beta for schedules that use explicit endpoints. |
-| `training.training.validation_sampling.sampler` | `ddpm` | Validation reconstruction sampler. |
+| `training.training.validation_sampling.sampler` | `ddim` | Validation reconstruction sampler. |
 | `training.training.validation_sampling.ddim_num_timesteps` | `100` | DDIM step count when the sampler is `ddim`. |
 | `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
 | `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
-| `training.training.validation_sampling.max_full_reconstruction_samples` | `5` | Cap for expensive full-reconstruction validation examples. |
+| `training.training.validation_sampling.max_full_reconstruction_samples` | `1` | Cap for expensive full-reconstruction validation examples. |
 | `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
 | `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
 | `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |
@@ -147,10 +151,11 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.trainer.limit_val_batches` | `64` | Validation batches per validation run. |
 | `training.trainer.gradient_clip_val` | `1.0` | Gradient clipping threshold. |
 | `training.wandb.*` | project/run/logging defaults | W&B project, run naming, watch, scalar, and image logging controls. |
-| `training.dataloader.batch_size` | `4` | Training dataloader batch size. |
-| `training.dataloader.val_batch_size` | `2` | Validation dataloader batch size. |
-| `training.dataloader.num_workers` | `6` | Training dataloader workers. |
+| `training.dataloader.batch_size` | `32` | Training dataloader batch size. |
+| `training.dataloader.val_batch_size` | `6` | Validation dataloader batch size. |
+| `training.dataloader.num_workers` | `8` | Training dataloader workers per rank. |
 | `training.dataloader.val_num_workers` | `0` | Validation dataloader workers. |
+| `training.dataloader.multiprocessing_context` | `spawn` | Worker start method for training dataloaders. |
 | `training.dataloader.shuffle` | `true` | Training shuffle. |
 | `training.dataloader.val_shuffle` | `true` | Validation shuffle. This is intended behavior. |
 | `training.dataloader.pin_memory` | `true` | Enables pinned host memory. |

@@ -61,6 +61,47 @@ class _DoubleConvBlock(torch.nn.Module):
         return self.net(x)
 
 
+class _DoubleConvBlock2D(torch.nn.Module):
+    """Two 2D convolution, normalization, and activation layers."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        *,
+        norm_groups: int,
+        dropout: float,
+    ) -> None:
+        """Initialize the 2D convolution block."""
+        super().__init__()
+        layers: list[torch.nn.Module] = []
+        current_channels = int(in_channels)
+        for _ in range(2):
+            layers.extend(
+                [
+                    torch.nn.Conv2d(
+                        current_channels,
+                        int(out_channels),
+                        kernel_size=3,
+                        padding=1,
+                    ),
+                    torch.nn.GroupNorm(
+                        _group_count(int(out_channels), int(norm_groups)),
+                        int(out_channels),
+                    ),
+                    torch.nn.ReLU(inplace=True),
+                ]
+            )
+            current_channels = int(out_channels)
+        if float(dropout) > 0.0:
+            layers.append(torch.nn.Dropout2d(float(dropout)))
+        self.net = torch.nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the block forward pass."""
+        return self.net(x)
+
+
 class _PlainUNet3D(torch.nn.Module):
     """Standard 3D U-Net for depth-aware patch-to-patch regression."""
 
@@ -141,6 +182,93 @@ class _PlainUNet3D(torch.nn.Module):
                     h,
                     size=tuple(skip.shape[-3:]),
                     mode="trilinear",
+                    align_corners=False,
+                )
+            h = block(torch.cat([skip, h], dim=1))
+
+        return self.output(h)
+
+
+class _PlainUNet2D(torch.nn.Module):
+    """Standard 2D U-Net for flattened-depth patch-to-patch regression."""
+
+    def __init__(
+        self,
+        *,
+        in_channels: int,
+        out_channels: int,
+        base_channels: int,
+        channel_mults: Sequence[int],
+        norm_groups: int,
+        dropout: float,
+    ) -> None:
+        """Initialize the 2D U-Net."""
+        super().__init__()
+        widths = [int(base_channels) * int(mult) for mult in channel_mults]
+        if not widths:
+            raise ValueError("model.unet_baseline.channel_mults must not be empty.")
+
+        self.down_blocks = torch.nn.ModuleList()
+        current_channels = int(in_channels)
+        for width in widths:
+            self.down_blocks.append(
+                _DoubleConvBlock2D(
+                    current_channels,
+                    width,
+                    norm_groups=int(norm_groups),
+                    dropout=float(dropout),
+                )
+            )
+            current_channels = width
+
+        self.pool = torch.nn.MaxPool2d(kernel_size=2, stride=2)
+        self.up_transpose = torch.nn.ModuleList()
+        self.up_blocks = torch.nn.ModuleList()
+        for skip_width in reversed(widths[:-1]):
+            self.up_transpose.append(
+                torch.nn.ConvTranspose2d(
+                    current_channels,
+                    skip_width,
+                    kernel_size=2,
+                    stride=2,
+                )
+            )
+            self.up_blocks.append(
+                _DoubleConvBlock2D(
+                    skip_width * 2,
+                    skip_width,
+                    norm_groups=int(norm_groups),
+                    dropout=float(dropout),
+                )
+            )
+            current_channels = skip_width
+
+        self.output = torch.nn.Conv2d(
+            current_channels, int(out_channels), kernel_size=1
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run U-Net encoder, decoder, and final projection."""
+        skips: list[torch.Tensor] = []
+        h = x
+        for idx, block in enumerate(self.down_blocks):
+            h = block(h)
+            skips.append(h)
+            if idx != len(self.down_blocks) - 1:
+                h = self.pool(h)
+
+        for upsample, block, skip in zip(
+            self.up_transpose,
+            self.up_blocks,
+            reversed(skips[:-1]),
+        ):
+            h = upsample(h)
+            if tuple(h.shape[-2:]) != tuple(skip.shape[-2:]):
+                # Odd patch sizes can drift by one pixel through pooling.
+                h = F.interpolate(
+                    h,
+                    size=tuple(skip.shape[-2:]),
+                    mode="bilinear",
                     align_corners=False,
                 )
             h = block(torch.cat([skip, h], dim=1))
@@ -943,3 +1071,199 @@ class UNetInfillingBaseline(IDWInterpolationBaseline):
             sampler=sampler,
             collapse_channels=collapse_channels,
         )
+
+
+class UNet2DInfillingBaseline(UNetInfillingBaseline):
+    """Trainable 2D U-Net baseline for flattened-depth sparse infilling."""
+
+    def __init__(
+        self,
+        *,
+        generated_channels: int,
+        base_channels: int = 32,
+        channel_mults: Sequence[int] = (1, 2, 4, 8),
+        norm_groups: int = 8,
+        dropout: float = 0.0,
+        condition_include_eo: bool = True,
+        condition_use_valid_mask: bool = True,
+        condition_use_land_mask: bool = True,
+        condition_mask_channels: int | None = None,
+        per_channel_valid_mask: bool = True,
+        lr: float = 1.0e-3,
+        weight_decay: float = 1.0e-4,
+        output_fields: Sequence[str] | str | None = None,
+        variable_scenario: str | None = None,
+        datamodule: pl.LightningDataModule | None = None,
+        skip_full_reconstruction_in_sanity_check: bool = True,
+        max_full_reconstruction_samples: int = 1,
+        model_summary_input_size: int = 128,
+    ) -> None:
+        """Initialize the 2D U-Net infilling baseline."""
+        super().__init__(
+            generated_channels=generated_channels,
+            base_channels=base_channels,
+            channel_mults=channel_mults,
+            norm_groups=norm_groups,
+            dropout=dropout,
+            condition_include_eo=condition_include_eo,
+            condition_use_valid_mask=condition_use_valid_mask,
+            condition_use_land_mask=condition_use_land_mask,
+            condition_mask_channels=condition_mask_channels,
+            per_channel_valid_mask=per_channel_valid_mask,
+            lr=lr,
+            weight_decay=weight_decay,
+            output_fields=output_fields,
+            variable_scenario=variable_scenario,
+            datamodule=datamodule,
+            skip_full_reconstruction_in_sanity_check=(
+                skip_full_reconstruction_in_sanity_check
+            ),
+            max_full_reconstruction_samples=max_full_reconstruction_samples,
+            model_summary_input_size=model_summary_input_size,
+        )
+
+        if not self.condition_use_valid_mask:
+            mask_channels = 0
+        elif condition_mask_channels is None:
+            mask_channels = (
+                self.generated_channels if self.per_channel_valid_mask else 1
+            )
+        else:
+            mask_channels = max(0, int(condition_mask_channels))
+        self.condition_mask_channels = int(mask_channels)
+
+        input_channels = self.generated_channels
+        if self.condition_include_eo:
+            input_channels += 1
+        if self.condition_use_valid_mask:
+            input_channels += self.condition_mask_channels
+        if self.condition_use_land_mask:
+            input_channels += 1
+        self.condition_channels = int(input_channels)
+
+        self.net = _PlainUNet2D(
+            in_channels=self.condition_channels,
+            out_channels=self.generated_channels,
+            base_channels=self.base_channels,
+            channel_mults=self.channel_mults,
+            norm_groups=self.norm_groups,
+            dropout=self.dropout,
+        )
+        self.example_input_array = torch.zeros(
+            (
+                1,
+                self.condition_channels,
+                max(1, int(model_summary_input_size)),
+                max(1, int(model_summary_input_size)),
+            ),
+            dtype=torch.float32,
+        )
+
+    def forward(self, condition: torch.Tensor) -> torch.Tensor:
+        """Predict dense normalized output fields from a 2D condition image."""
+        if condition.ndim != 4:
+            raise RuntimeError(
+                "condition must be shaped (B,C,H,W), " f"got {tuple(condition.shape)}."
+            )
+        if int(condition.size(1)) != self.condition_channels:
+            raise RuntimeError(
+                "2D U-Net condition channel mismatch: "
+                f"got {int(condition.size(1))}, expected {self.condition_channels}."
+            )
+        return self.net(condition)
+
+    def _prepare_surface_condition(
+        self,
+        tensor: torch.Tensor | None,
+        reference: torch.Tensor,
+        *,
+        tensor_name: str,
+    ) -> torch.Tensor:
+        """Return one surface condition channel aligned to the 2D input."""
+        if tensor is None:
+            raise RuntimeError(
+                f"{tensor_name}=true requires the matching batch tensor."
+            )
+        surface = tensor.to(device=reference.device, dtype=reference.dtype)
+        if surface.ndim == 3:
+            surface = surface.unsqueeze(1)
+        if surface.ndim != 4:
+            raise RuntimeError(f"{tensor_name} must be shaped as (B,1,H,W) or (B,H,W).")
+        if int(surface.size(0)) != int(reference.size(0)):
+            raise RuntimeError(f"{tensor_name} batch size does not match x.")
+        if tuple(surface.shape[2:]) != tuple(reference.shape[2:]):
+            raise RuntimeError(f"{tensor_name} spatial shape does not match x.")
+        if int(surface.size(1)) != 1:
+            surface = surface.amax(dim=1, keepdim=True)
+        # Surface rasters stay 2D because depth is flattened into channels here.
+        return surface
+
+    def _prepare_valid_mask_condition(
+        self, valid_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Return ARGO support masks for the flattened-depth 2D condition tensor."""
+        if not self.condition_use_valid_mask or self.condition_mask_channels <= 0:
+            return None
+        if valid_mask is None:
+            raise RuntimeError(
+                "condition_use_valid_mask=true requires batch['x_valid_mask']."
+            )
+        mask = self._align_mask_to_reference(
+            valid_mask.to(device=reference.device),
+            reference,
+            mask_name="x_valid_mask",
+        ).to(dtype=reference.dtype)
+        expected_channels = int(self.condition_mask_channels)
+        if int(mask.size(1)) == expected_channels:
+            return mask
+        if expected_channels == 1:
+            return mask.amax(dim=1, keepdim=True)
+        if expected_channels == self.field_channels:
+            # Collapse depth while keeping one observation-support channel per field.
+            return self._flat_to_volume(mask, tensor_name="x_valid_mask").amax(dim=2)
+        if int(mask.size(1)) == 1 and expected_channels > 1:
+            return mask.expand(-1, expected_channels, -1, -1)
+        raise RuntimeError(
+            "Could not match x_valid_mask channels to condition_mask_channels "
+            f"(mask={int(mask.size(1))}, expected={expected_channels})."
+        )
+
+    def _build_condition(
+        self,
+        batch: dict[str, Any],
+        *,
+        include_y: bool,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build the 2D U-Net condition tensor and model-facing batch tensors."""
+        model_batch = self._prepare_model_batch_tensors(batch, include_y=include_y)
+        x = model_batch["x"]
+        valid_mask = model_batch["x_valid_mask"]
+        mask = self._align_mask_to_reference(
+            valid_mask.to(device=x.device), x, mask_name="x_valid_mask"
+        )
+        # Invalid sparse inputs are zeroed while explicit mask channels carry support.
+        sparse_x = torch.where(
+            (mask > 0.5) & torch.isfinite(x),
+            x,
+            torch.zeros_like(x),
+        )
+
+        parts: list[torch.Tensor] = []
+        eo_condition = self._prepare_eo_condition(batch.get("eo"), sparse_x)
+        if eo_condition is not None:
+            parts.append(eo_condition)
+        parts.append(sparse_x)
+        mask_condition = self._prepare_valid_mask_condition(valid_mask, sparse_x)
+        if mask_condition is not None:
+            parts.append(mask_condition)
+        land_condition = self._prepare_land_condition(batch.get("land_mask"), sparse_x)
+        if land_condition is not None:
+            parts.append(land_condition)
+
+        condition = torch.cat(parts, dim=1)
+        if int(condition.size(1)) != self.condition_channels:
+            raise RuntimeError(
+                "2D UNet condition channel mismatch: "
+                f"built={int(condition.size(1))}, expected={self.condition_channels}."
+            )
+        return condition, model_batch

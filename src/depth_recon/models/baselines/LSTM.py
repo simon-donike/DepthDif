@@ -832,9 +832,8 @@ class PointwiseLSTMBaseline(IDWInterpolationBaseline):
         batch: dict[str, Any],
         model_batch: dict[str, torch.Tensor],
     ) -> dict[str, Any]:
-        """Return predictions unchanged so EO-only inference remains available."""
-        _ = batch, model_batch
-        return outputs
+        """Apply the shared no-ARGO nodata policy."""
+        return super()._apply_no_argo_nodata(outputs, batch, model_batch)
 
     @torch.no_grad()
     def predict_step(

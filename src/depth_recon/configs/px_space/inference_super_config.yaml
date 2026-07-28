@@ -49,6 +49,8 @@ data:  # dataset, split, and loader inputs
       require_argo_for_train: true  # keep train rows with ARGO
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
+      filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
+      accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     synthetic:  # synthetic sparse-input mode
       enabled: false  # sample x from y instead of ARGO
       pixel_count: 250  # synthetic observed pixels
@@ -62,12 +64,12 @@ data:  # dataset, split, and loader inputs
     val_year: 2018  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
-    num_workers: 6  # worker process count
-    prefetch_factor: 2  # batches prefetched per worker
+    num_workers: 0  # worker process count; keep DDP startup fork-safe by default
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     val_shuffle: true  # intentionally shuffle validation
 
 model:  # pixel diffusion model settings
-  model_type: cond_px_dif  # model factory selector
+  model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
@@ -93,6 +95,50 @@ model:  # pixel diffusion model settings
     shared_spatial_mask: true  # share mask across channels
     min_kept_observed_pixels: 50  # minimum kept observations
     require_x0_parameterization: true  # require x0 objective
+  losses:  # optional auxiliary ocean losses for ambient diffusion training
+    ambient:  # existing diffusion objective weight
+      weight: 1.0  # base ambient/diffusion loss multiplier
+    aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
+      enabled: false  # keep default auxiliary weighting unchanged
+      mode: snr  # snr or linear
+      min_weight: 0.0  # lower clamp for aux multiplier
+      max_weight: 1.0  # upper clamp for aux multiplier
+      snr_gamma: 5.0  # SNR cap for normalized min-SNR weighting
+      linear_start_weight: 0.0  # linear weight at noisiest timestep
+      linear_end_weight: 1.0  # linear weight at cleanest timestep
+    sparse_observation:  # Charbonnier consistency on sparse ARGO observations
+      enabled: false  # keep default training behavior unchanged
+      weight: 1.0  # sparse observation loss multiplier
+      eps: 1.0e-3  # Charbonnier epsilon
+    increment:  # sparse pairwise increment loss on observed ARGO profiles
+      enabled: false  # enable to penalize over-smoothed sparse-profile increments
+      weight: 0.5  # increment loss multiplier
+      eps: 1.0e-3  # Charbonnier epsilon
+      max_pairs_per_sample: 4096  # cap sampled pair count per sample
+      vertical_pairs: true  # adjacent-depth pairs at observed horizontal locations
+      horizontal_pairs: false  # optional same-depth neighbor pairs
+      horizontal_max_distance: null  # reserved for future distance-limited pairs
+    structure_function_prior:  # GLORYS distributional variogram prior
+      enabled: false  # requires reference_path when enabled
+      weight: 0.1  # structure-function prior multiplier
+      reference_path: null  # .pt with distance_bins and s2_ref
+      num_pairs: 8192  # random same-depth pairs sampled per batch
+      eps: 1.0e-6  # log comparison epsilon
+      per_depth: true  # compare per-depth reference stats when provided
+    spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
+      enabled: false  # requires reference_path when enabled
+      weight: 0.05  # spectral floor prior multiplier
+      reference_path: null  # .pt with radial band energy reference
+      eps: 1.0e-8  # log-energy epsilon
+      margin: 0.0  # hinge margin in log-energy units
+      min_band: 1  # skip DC by default
+      max_band: null  # null uses all available reference bands
+      per_depth: true  # compare per-depth reference spectra when provided
+    feature_gram_prior:  # reserved GLORYS feature-stat prior
+      enabled: false  # not implemented in this pass
+      weight: 0.01  # reserved feature prior multiplier
+      encoder_checkpoint: null  # reserved frozen encoder checkpoint path
+      reference_path: null  # reserved feature-stat reference path
   post_process:  # prediction post-processing
     gaussian_blur:  # optional output blur
       enabled: false  # enable Gaussian blur
@@ -118,7 +164,7 @@ model:  # pixel diffusion model settings
     include_valid_mask: true  # include depth-wise ARGO support in the profile vector
     include_eo: null  # null follows model.condition_include_eo
     include_land_mask: null  # null follows model.condition_use_land_mask
-  unet_baseline:  # direct trainable 3D U-Net baseline
+  unet_baseline:  # direct trainable U-Net baseline settings for 3D and 2D variants
     base_channels: 32  # base channel width for the baseline U-Net
     channel_mults:  # encoder/decoder width multipliers
     - 1  # first stage multiplier
@@ -129,7 +175,7 @@ model:  # pixel diffusion model settings
     dropout: 0.0  # dropout after each double-conv block
     lr: null  # null falls back to training.training.lr
     weight_decay: 0.0001  # AdamW weight decay
-    per_channel_valid_mask: true  # use one ARGO mask volume per output field
+    per_channel_valid_mask: true  # 3D masks per field; 2D masks per field/depth band
   unet:  # denoiser architecture
     dim: 64  # base channel width
     dim_mults:  # U-Net width multipliers
@@ -144,7 +190,6 @@ model:  # pixel diffusion model settings
 training:  # optimizer, trainer, and logging
   training:  # diffusion training hyperparameters
     lr: 0.0001  # optimizer learning rate
-    batch_size: 4  # informational batch size
     noise:  # diffusion noise schedule
       num_timesteps: 1000  # training diffusion steps
       schedule: cosine  # beta schedule type
@@ -191,11 +236,11 @@ training:  # optimizer, trainer, and logging
   dataloader:  # Lightning dataloader settings
     batch_size: 4  # train batch size
     val_batch_size: 2  # validation batch size
-    num_workers: 6  # train loader workers
+    num_workers: 0  # train loader workers
     val_num_workers: 0  # validation loader workers
-    persistent_workers: true  # keep train workers alive
+    persistent_workers: false  # keep train workers alive
     val_persistent_workers: false  # keep val workers alive
-    prefetch_factor: 2  # batches prefetched per worker
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     shuffle: true  # shuffle train loader
     val_shuffle: true  # intentionally shuffle validation
     pin_memory: true  # use pinned host memory
@@ -231,4 +276,4 @@ inference:  # inference-only overrides
   dataloader:  # prediction loader settings
     batch_size: 64  # prediction batch size
     num_workers: 6  # prediction workers
-    prefetch_factor: 2  # batches prefetched per worker
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled

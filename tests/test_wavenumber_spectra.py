@@ -12,6 +12,9 @@ import rasterio
 from rasterio.transform import from_origin
 import yaml
 
+from depth_recon.inference.export_spectral_comparison_bundle import (
+    export_paper_method_wavenumber_spectra,
+)
 from depth_recon.inference.export_wavenumber_spectra import (
     ALL_OCEANS_BASIN,
     assign_patch_basin_by_overlap,
@@ -370,6 +373,8 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertEqual(config["kind"], "wavenumber_spectral_dashboard")
             self.assertEqual(config["available_variables"], ["temperature"])
             self.assertEqual(config["layers"]["surface_observation"], "OSTIA")
+            self.assertEqual(len(config["available_depths"]), 1)
+            self.assertEqual(config["available_depths"][0]["label"], "Surface")
             self.assertIn("horizontal_wavenumber_bin_centers_cpkm", config)
             self.assertIn(ALL_OCEANS_BASIN, config["basin_data_urls"])
             self.assertIn("Mediterranean Sea", config["basin_data_urls"])
@@ -382,6 +387,187 @@ class TestWavenumberSpectra(unittest.TestCase):
             self.assertGreater(len(all_oceans_payload["rows"]), 0)
             self.assertIn("stylesheets/spectral-dashboard.css", copied_html)
             self.assertIn("javascripts/spectral-dashboard.js", copied_html)
+
+    def test_export_paper_method_wavenumber_spectra_includes_baseline_layers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            paper_dir = root / "paper_2018_W25"
+            output_dir = root / "spectral"
+            transform = from_origin(-160.0, 30.0, 0.1, 0.1)
+            y, x = np.indices((4, 8), dtype=np.float64)
+            base = np.sin(2.0 * np.pi * x / 4.0) + 0.5 * np.cos(2.0 * np.pi * y / 4.0)
+
+            def write_method_run(method: str, offset: float) -> None:
+                run_dir = paper_dir / "methods" / method / "temperature"
+                run_dir.mkdir(parents=True)
+                self._write_float_raster(
+                    run_dir / "temperature_prediction_depth_000.tif",
+                    base + offset,
+                    transform=transform,
+                )
+                pd.DataFrame.from_records(
+                    [
+                        {
+                            "patch_id": "a",
+                            "grid_y0": 0,
+                            "grid_x0": 0,
+                            "lon0": -160.0,
+                            "lon1": -159.6,
+                            "lat0": 29.6,
+                            "lat1": 30.0,
+                        },
+                        {
+                            "patch_id": "b",
+                            "grid_y0": 0,
+                            "grid_x0": 4,
+                            "lon0": -159.6,
+                            "lon1": -159.2,
+                            "lat0": 29.6,
+                            "lat1": 30.0,
+                        },
+                    ]
+                ).to_csv(run_dir / "selected_patches.csv", index=False)
+                (run_dir / "run_summary.yaml").write_text(
+                    yaml.safe_dump(
+                        {
+                            "variable": "temperature",
+                            "selected_date": 20180620,
+                            "iso_year": 2018,
+                            "iso_week": 25,
+                            "depth_exports": [
+                                {
+                                    "suffix": "depth_000",
+                                    "label": "Surface",
+                                    "requested_depth_m": 0.0,
+                                    "actual_depth_m": 0.0,
+                                    "channel_index": 0,
+                                    "prediction_tif_path": "temperature_prediction_depth_000.tif",
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            write_method_run("depthdif", 0.0)
+            write_method_run("idw", 0.25)
+            glorys_path = (
+                paper_dir
+                / "methods"
+                / "idw"
+                / "temperature"
+                / "temperature_glorys_depth_000.tif"
+            )
+            self._write_float_raster(glorys_path, base + 0.5, transform=transform)
+            climatology_dir = paper_dir / "methods" / "climatology"
+            climatology_dir.mkdir(parents=True)
+            climatology_path = climatology_dir / "climatology_temperature.tif"
+            self._write_float_raster(climatology_path, base + 0.75, transform=transform)
+            (climatology_dir / "climatology_summary.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "test_climatology",
+                        "artifacts": {"temperature": "climatology_temperature.tif"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (paper_dir / "paper_week_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "kind": "paper_week_inference_bundle",
+                        "year": 2018,
+                        "iso_week": 25,
+                        "selected_date": 20180620,
+                        "variables": ["temperature"],
+                        "method_order": ["climatology", "idw", "depthdif"],
+                        "methods": {
+                            "climatology": {
+                                "kind": "climatology",
+                                "label": "Climatology",
+                                "climatology_summary_json": "methods/climatology/climatology_summary.json",
+                            },
+                            "idw": {
+                                "kind": "model",
+                                "label": "IDW",
+                                "variables": {
+                                    "temperature": {
+                                        "run_dir": "methods/idw/temperature",
+                                        "summary_path": "methods/idw/temperature/run_summary.yaml",
+                                    }
+                                },
+                            },
+                            "depthdif": {
+                                "kind": "model",
+                                "label": "DepthDif",
+                                "variables": {
+                                    "temperature": {
+                                        "run_dir": "methods/depthdif/temperature",
+                                        "summary_path": "methods/depthdif/temperature/run_summary.yaml",
+                                    }
+                                },
+                            },
+                        },
+                        "references": {
+                            "climatology_summary_json": "methods/climatology/climatology_summary.json",
+                            "glorys": {
+                                "temperature": {
+                                    "depth_exports": [
+                                        {
+                                            "suffix": "depth_000",
+                                            "label": "Surface",
+                                            "requested_depth_m": 0.0,
+                                            "actual_depth_m": 0.0,
+                                            "channel_index": 0,
+                                            "path": "methods/idw/temperature/temperature_glorys_depth_000.tif",
+                                            "band_index": 1,
+                                        }
+                                    ]
+                                }
+                            },
+                        },
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            summary = export_paper_method_wavenumber_spectra(
+                paper_run_dirs=[paper_dir],
+                output_dir=output_dir,
+                variables=["temperature"],
+                min_wavelength_km=20.0,
+                max_wavelength_km=200.0,
+                wavelength_bin_count=4,
+            )
+
+            records = pd.read_csv(output_dir / "patch_spectra_records.csv")
+            config = json.loads(
+                (output_dir / "spectral-config.json").read_text(encoding="utf-8")
+            )
+            all_oceans_payload = json.loads(
+                (output_dir / "basins" / "all_oceans.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(summary["kind"], "paper_method_wavenumber_spectra")
+            self.assertEqual(
+                set(records["layer"].tolist()),
+                {"glorys", "prediction", "idw", "climatology"},
+            )
+            self.assertEqual(config["layers"]["prediction"], "DepthDif")
+            self.assertEqual(config["layers"]["idw"], "IDW")
+            self.assertEqual(
+                config["layer_order"][:4],
+                ["glorys", "prediction", "climatology", "idw"],
+            )
+            self.assertEqual(config["line_styles"]["idw"], "-.")
+            self.assertEqual(len(config["available_depths"]), 1)
+            self.assertEqual(config["available_depths"][0]["suffix"], "depth_000")
+            self.assertGreater(len(all_oceans_payload["rows"]), 0)
 
     def test_export_wavenumber_spectra_can_skip_dashboard_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -495,6 +681,8 @@ class TestWavenumberSpectra(unittest.TestCase):
         self.assertIn('activeXAxisUnit: "cpkm"', script)
         self.assertIn("xAxisValue", script)
         self.assertIn("Wavelength [km]", script)
+        self.assertIn("available_depths", script)
+        self.assertIn("All depths (", script)
         self.assertIn("OSTIA", script)
         self.assertIn("surface_observation", script)
         self.assertNotIn('autorange: "reversed"', script)

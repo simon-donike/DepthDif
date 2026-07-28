@@ -50,6 +50,8 @@ def _minimal_super_config(
                     "require_argo_for_train": True,
                     "require_argo_for_val": True,
                     "require_argo_for_all": False,
+                    "filter_bad_argo_quality": True,
+                    "accepted_argo_qc_flags": [1, 2],
                 },
                 "synthetic": {"enabled": False, "pixel_count": 1},
                 "output": {
@@ -94,7 +96,6 @@ def _minimal_super_config(
         "training": {
             "training": {
                 "lr": 1.0e-4,
-                "batch_size": 1,
                 "noise": {
                     "num_timesteps": 2,
                     "schedule": "linear",
@@ -223,6 +224,32 @@ class TestPixelConfig(unittest.TestCase):
         )
         self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 12)
 
+    def test_model_batch_size_falls_back_to_dataloader_batch_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config = _minimal_super_config(tmp_path, scenario="temperature")
+            config["training"]["dataloader"]["batch_size"] = 7
+            config_path = tmp_path / "super.yaml"
+            _write_yaml(config_path, config)
+
+            bundle = load_pixel_training_config(
+                config_path_value=config_path,
+                overrides=["training.dataloader.batch_size=11"],
+                runtime_config_dir=tmp_path / "runtime",
+                write_snapshots=False,
+            )
+            effective_training = load_yaml(bundle.effective_training_config_path)
+            model = PixelDiffusionConditional.from_config(
+                bundle.effective_model_config_path,
+                bundle.effective_data_config_path,
+                bundle.effective_training_config_path,
+            )
+
+        self.assertNotIn("batch_size", bundle.training_cfg["training"])
+        self.assertNotIn("batch_size", effective_training["training"])
+        self.assertEqual(bundle.training_cfg["dataloader"]["batch_size"], 11)
+        self.assertEqual(model.batch_size, 11)
+
     def test_selected_scenarios_materialize_expected_training_and_inference_settings(
         self,
     ) -> None:
@@ -319,6 +346,26 @@ class TestPixelConfig(unittest.TestCase):
                 "include_eo": None,
                 "include_land_mask": None,
             }
+            config_path = tmp_path / "super.yaml"
+            _write_yaml(config_path, config)
+
+            bundle = load_pixel_training_config(
+                config_path_value=config_path,
+                runtime_config_dir=tmp_path / "runtime",
+                write_snapshots=False,
+            )
+
+        self.assertEqual(bundle.model_cfg["model"]["generated_channels"], 4)
+        self.assertEqual(bundle.model_cfg["model"]["condition_mask_channels"], 4)
+        self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 10)
+
+    def test_unet2d_baseline_derives_flattened_condition_channels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config = _minimal_super_config(tmp_path, scenario="temperature")
+            config["model"]["model_type"] = "unet2d_baseline"
+            config["model"]["depth_channels"] = 4
+            config["model"]["unet_baseline"] = {"per_channel_valid_mask": True}
             config_path = tmp_path / "super.yaml"
             _write_yaml(config_path, config)
 

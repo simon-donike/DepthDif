@@ -177,6 +177,28 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 ("profile", "glorys_depth"),
                 np.asarray([[35.0, 36.0], [35.5, 36.5]], dtype=np.float32),
             ),
+            "argo_depth_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [1, 1]], dtype=np.int8),
+            ),
+            "argo_temp_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 3], [1, 1]], dtype=np.int8),
+            ),
+            "argo_psal_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [1, 1]], dtype=np.int8),
+            ),
+            "argo_juld_qc": (("profile",), np.asarray([1, 1], dtype=np.int8)),
+            "argo_position_qc": (("profile",), np.asarray([1, 1], dtype=np.int8)),
+            "argo_profile_depth_qc": (
+                ("profile",),
+                np.asarray([1, 1], dtype=np.int8),
+            ),
+            "argo_profile_psal_qc": (
+                ("profile",),
+                np.asarray([4, 1], dtype=np.int8),
+            ),
         },
         coords={
             "profile": np.asarray([0, 1], dtype=np.int64),
@@ -332,6 +354,21 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
             self.assertAlmostEqual(float(argo_temp_k[0, 0]), 283.15, delta=0.2)
             self.assertAlmostEqual(float(argo_psal[0, 1]), 36.0, delta=0.05)
             self.assertTrue(bool(argo["argo_temp_valid"].values[0, 0]))
+            self.assertEqual(int(argo["argo_temp_profile_qc"].values[0]), 3)
+            self.assertEqual(int(argo["argo_psal_profile_qc"].values[0]), 4)
+            for name in (
+                "argo_depth_qc_on_glorys_depth",
+                "argo_temp_qc_on_glorys_depth",
+                "argo_psal_qc_on_glorys_depth",
+            ):
+                self.assertIn(name, argo)
+            for name in (
+                "argo_juld_qc",
+                "argo_position_qc",
+                "argo_profile_depth_qc",
+                "argo_profile_psal_qc",
+            ):
+                self.assertNotIn(name, argo)
             argo.close()
 
             manifest = yaml.safe_load((output_dir / "manifest.yaml").read_text())

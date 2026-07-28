@@ -75,7 +75,10 @@ The current pixel training path first exports these sources into the GeoTIFF sto
 The GeoTIFF workflow writes dense gridded fields as one uint8 raster per
 variable/date on the land-mask grid, and writes ARGO profiles as a compact
 profile-indexed zarr with precomputed target date, grid row/column, temperature,
-salinity, and validity masks. Temperature stretches decode to Kelvin.
+salinity, validity masks, and optional EN4/ARGO QC flags. When compact QC
+fields are present, the GeoTIFF dataloader keeps QC codes `1` and `2` by default
+and masks profile levels with bad QC before building sparse inputs. Temperature
+stretches decode to Kelvin.
 The GeoTIFF dataloader keeps temperature in the existing `x`/`y` keys. The pixel
 scenario resolver sets `output.fields`; `--scenario salinity` skips temperature and
 returns `x_salinity`, `y_salinity`, and their validity masks, while `--scenario joint`
