@@ -164,7 +164,9 @@ def resolve_wandb_watch_mode(wandb_cfg: dict[str, Any]) -> str | None:
 
 
 def build_wandb_logger(
-    training_cfg: dict[str, Any], model: pl.LightningModule
+    training_cfg: dict[str, Any],
+    model: pl.LightningModule,
+    run_config: dict[str, Any] | None = None,
 ) -> WandbLogger:
     # Build logger from config first; watch settings are attached conditionally below.
     """Build and return wandb logger.
@@ -172,6 +174,7 @@ def build_wandb_logger(
     Args:
         training_cfg (dict[str, Any]): Configuration dictionary or section.
         model (pl.LightningModule): Input value.
+        run_config (dict[str, Any] | None): Full resolved run configuration.
 
     Returns:
         WandbLogger: Computed output value.
@@ -183,7 +186,7 @@ def build_wandb_logger(
         entity=wandb_cfg.get("entity"),
         name=wandb_cfg.get("run_name"),
         log_model=wandb_cfg.get("log_model", "all"),
-        config=training_cfg,
+        config=run_config if run_config is not None else training_cfg,
     )
 
     # Only attach wandb.watch when watch_mode resolves to a valid mode.
@@ -585,7 +588,14 @@ def main(
         )
 
     # Set up experiment tracking and best-checkpoint saving.
-    logger = build_wandb_logger(training_cfg, model)
+    # Log the resolved super-config so W&B records scenario-derived and CLI values.
+    run_config = {
+        "scenario": config_bundle.scenario,
+        "data": data_cfg,
+        **model_cfg,
+        "training": training_cfg,
+    }
+    logger = build_wandb_logger(training_cfg, model, run_config=run_config)
     if is_global_zero:
         # Avoid duplicate uploads from DDP worker ranks.
         upload_configs_to_wandb(
