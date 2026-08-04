@@ -15,7 +15,7 @@
   <a href="https://depthdif.donike.net/experiments/">
     <img src="https://img.shields.io/badge/experiments-online-0f3f68?style=for-the-badge" alt="Check Experiments" />
   </a>
-  <a href="https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction/">
+  <a href="https://huggingface.co/datasets/ESA-philab/OceanVariableReconstruction/">
     <img src="https://img.shields.io/badge/Hugging%20Face-dataset-FFD21E?style=for-the-badge&logo=huggingface&logoColor=000000" alt="Hugging Face dataset" />
   </a>
   <a href="https://colab.research.google.com/github/simon-donike/DepthDif/blob/main/Colab_Demo.ipynb">
