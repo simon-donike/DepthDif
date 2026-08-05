@@ -126,6 +126,11 @@ def _run_variable_metadata(run_summary: dict[str, Any]) -> dict[str, Any]:
     defaults = VARIABLE_GLOBE_DEFAULTS.get(
         variable, VARIABLE_GLOBE_DEFAULTS["temperature"]
     )
+    color_palette = str(run_summary.get("color_palette", defaults["color_palette"]))
+    if color_palette in {"temperature_blue_red", "salinity_blue_green"}:
+        # Existing retained runs predate cmocean; their rasters are recolored with
+        # the current default ramp, so migrate the exported metadata as well.
+        color_palette = str(defaults["color_palette"])
     return {
         "name": variable,
         "label": str(run_summary.get("variable_label", defaults["label"])),
@@ -139,9 +144,7 @@ def _run_variable_metadata(run_summary: dict[str, Any]) -> dict[str, Any]:
         "color_scale_max": float(
             run_summary.get("color_scale_max", defaults["color_scale_max"])
         ),
-        "color_palette": str(
-            run_summary.get("color_palette", defaults["color_palette"])
-        ),
+        "color_palette": color_palette,
         "color_ramp_path": Path(defaults["color_ramp_path"]),
     }
 
