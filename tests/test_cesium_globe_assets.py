@@ -416,6 +416,17 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(metadata["color_palette"], "cmocean_haline")
         self.assertEqual(metadata["color_ramp_path"], DEFAULT_SALINITY_COLOR_RAMP_PATH)
 
+    def test_run_variable_metadata_migrates_legacy_palette_names(self) -> None:
+        temperature = _run_variable_metadata(
+            {"variable": "temperature", "color_palette": "temperature_blue_red"}
+        )
+        salinity = _run_variable_metadata(
+            {"variable": "salinity", "color_palette": "salinity_blue_green"}
+        )
+
+        self.assertEqual(temperature["color_palette"], "cmocean_thermal")
+        self.assertEqual(salinity["color_palette"], "cmocean_haline")
+
     def test_apply_alpha_mask_to_colorized_raster_hides_nodata(
         self,
     ) -> None:
