@@ -34,23 +34,24 @@
     unet: ["unet_tiles_url", "unet_prediction_tiles_url"],
   };
 
+  // Keep downloaded legend colors synchronized with the sampled cmocean export ramps.
   const TEMPERATURE_EXPORT_COLOR_STOPS = [
-    { offset: 0.0, rgb: [18, 38, 140] },
-    { offset: 0.13, rgb: [30, 86, 196] },
-    { offset: 0.27, rgb: [44, 140, 255] },
-    { offset: 0.4, rgb: [58, 212, 255] },
-    { offset: 0.53, rgb: [255, 238, 98] },
-    { offset: 0.67, rgb: [255, 172, 54] },
-    { offset: 0.8, rgb: [240, 84, 32] },
-    { offset: 1.0, rgb: [180, 16, 26] },
+    { offset: 0.0, rgb: [4, 35, 51] },
+    { offset: 0.13, rgb: [28, 52, 130] },
+    { offset: 0.27, rgb: [92, 62, 154] },
+    { offset: 0.4, rgb: [139, 83, 141] },
+    { offset: 0.53, rgb: [189, 99, 124] },
+    { offset: 0.67, rgb: [235, 121, 88] },
+    { offset: 0.8, rgb: [252, 166, 60] },
+    { offset: 1.0, rgb: [232, 250, 91] },
   ];
   const SALINITY_EXPORT_COLOR_STOPS = [
-    { offset: 0.0, rgb: [49, 54, 149] },
-    { offset: 0.2, rgb: [69, 117, 180] },
-    { offset: 0.4, rgb: [116, 173, 209] },
-    { offset: 0.6, rgb: [171, 221, 164] },
-    { offset: 0.8, rgb: [253, 224, 71] },
-    { offset: 1.0, rgb: [168, 85, 36] },
+    { offset: 0.0, rgb: [42, 24, 108] },
+    { offset: 0.2, rgb: [13, 78, 150] },
+    { offset: 0.4, rgb: [45, 124, 137] },
+    { offset: 0.6, rgb: [74, 170, 129] },
+    { offset: 0.8, rgb: [148, 211, 93] },
+    { offset: 1.0, rgb: [253, 239, 154] },
   ];
 
   const ARGO_POINT_MARKER_IMAGE = buildMarkerImage(

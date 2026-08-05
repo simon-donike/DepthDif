@@ -161,7 +161,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             full_sample_points_credit="Random full-depth profile locations",
             color_scale_min_c=0.0,
             color_scale_max_c=30.0,
-            color_palette="temperature_blue_red",
+            color_palette="cmocean_thermal",
             raster_transparency={
                 "nodata_value": -9999.0,
                 "land_mask_applied_value": -9999.0,
@@ -208,7 +208,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(config["north"], 4.0)
         self.assertEqual(config["color_scale_min_c"], 0.0)
         self.assertEqual(config["color_scale_max_c"], 30.0)
-        self.assertEqual(config["color_palette"], "temperature_blue_red")
+        self.assertEqual(config["color_palette"], "cmocean_thermal")
         self.assertEqual(config["raster_transparency"]["land_mask_alpha"], 0)
         self.assertEqual(config["raster_transparency"]["valid_alpha"], 255)
         self.assertEqual(config["credits"]["prediction"], "Prediction source")
@@ -283,7 +283,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
             full_sample_points_credit=None,
             color_scale_min_c=0.0,
             color_scale_max_c=30.0,
-            color_palette="temperature_blue_red",
+            color_palette="cmocean_thermal",
             raster_transparency={},
             template=template,
             variables=variables,
@@ -413,7 +413,19 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertEqual(metadata["value_unit_label"], "PSU")
         self.assertEqual(metadata["color_scale_min"], 30.0)
         self.assertEqual(metadata["color_scale_max"], 40.0)
+        self.assertEqual(metadata["color_palette"], "cmocean_haline")
         self.assertEqual(metadata["color_ramp_path"], DEFAULT_SALINITY_COLOR_RAMP_PATH)
+
+    def test_run_variable_metadata_migrates_legacy_palette_names(self) -> None:
+        temperature = _run_variable_metadata(
+            {"variable": "temperature", "color_palette": "temperature_blue_red"}
+        )
+        salinity = _run_variable_metadata(
+            {"variable": "salinity", "color_palette": "salinity_blue_green"}
+        )
+
+        self.assertEqual(temperature["color_palette"], "cmocean_thermal")
+        self.assertEqual(salinity["color_palette"], "cmocean_haline")
 
     def test_apply_alpha_mask_to_colorized_raster_hides_nodata(
         self,

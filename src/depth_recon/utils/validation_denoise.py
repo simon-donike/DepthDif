@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from depth_recon.utils.normalizations import (
+    PLOT_CMAP,
     salinity_normalize,
     salinity_to_plot_unit,
     temperature_normalize,
@@ -168,7 +169,7 @@ def log_wandb_denoise_timestep_grid(
     valid_mask: torch.Tensor | None = None,
     land_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
-    cmap: str = "turbo",
+    cmap: str = PLOT_CMAP,
     plot_unit: str = "temperature",
     nrows: int = 4,
     ncols: int = 4,
@@ -801,7 +802,7 @@ def log_wandb_conditional_reconstruction_grid(
     eo: torch.Tensor | None = None,
     prefix: str = "val_imgs",
     image_key: str = "x_y_full_reconstruction",
-    cmap: str = "turbo",
+    cmap: str = PLOT_CMAP,
     show_valid_mask_panel: bool = True,
     plot_unit: str = "temperature",
     error_metric_prefix: str = "val_absolute_band_error",
@@ -1133,7 +1134,7 @@ def log_wandb_depth_level_reconstruction_grid(
     image_key: str = "depth_level_reconstruction_grid",
     band_indices: tuple[int, ...] = (0, 1, 3),
     sample_idx: int = 0,
-    cmap: str = "turbo",
+    cmap: str = PLOT_CMAP,
 ) -> None:
     """Log wandb depth-level reconstruction grid for monitoring.
 

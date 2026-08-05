@@ -16,6 +16,8 @@ import numpy as np
 import rasterio
 from scipy.ndimage import gaussian_filter
 
+from depth_recon.utils.normalizations import PLOT_CMAP
+
 BLUE = "#176B9C"
 ORANGE = "#D95F02"
 GREEN = "#1B9E77"
@@ -127,7 +129,7 @@ def _plot_overview(
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8), constrained_layout=True)
     fig.suptitle("What each loss looks for", fontsize=20, fontweight="bold")
-    axes[0, 0].imshow(glorys, cmap="turbo", vmin=vmin, vmax=vmax)
+    axes[0, 0].imshow(glorys, cmap=PLOT_CMAP, vmin=vmin, vmax=vmax)
     axes[0, 0].set_title("Base: denoising target")
     axes[0, 0].axis("off")
     error = np.abs(prediction - glorys)
@@ -268,10 +270,10 @@ def _plot_structure_and_spectrum(field: np.ndarray, output: Path) -> None:
         fontsize=18,
         fontweight="bold",
     )
-    axes[0, 0].imshow(field, cmap="turbo", vmin=vmin, vmax=vmax)
+    axes[0, 0].imshow(field, cmap=PLOT_CMAP, vmin=vmin, vmax=vmax)
     axes[0, 0].set_title("Real GLORYS field")
     axes[0, 0].axis("off")
-    axes[0, 1].imshow(smooth, cmap="turbo", vmin=vmin, vmax=vmax)
+    axes[0, 1].imshow(smooth, cmap=PLOT_CMAP, vmin=vmin, vmax=vmax)
     axes[0, 1].set_title("Controlled Gaussian smoothing")
     axes[0, 1].axis("off")
     axes[1, 0].loglog(distances, original_s2, color=GREEN, label="GLORYS")
