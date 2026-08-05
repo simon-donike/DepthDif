@@ -13,23 +13,24 @@
   const CACHE_FRAME_OFFSETS = [0, 1, 2, -1];
   const FRAME_WARMUP_RENDER_COUNT = 2;
   const AUTOPLAY_DELAY_MS = 2000;
+  // Keep point/profile colors synchronized with the sampled cmocean export ramps.
   const TEMPERATURE_COLOR_STOPS = [
-    { value: 0.0, rgb: [18, 38, 140] },
-    { value: 4.0, rgb: [30, 86, 196] },
-    { value: 8.0, rgb: [44, 140, 255] },
-    { value: 12.0, rgb: [58, 212, 255] },
-    { value: 16.0, rgb: [255, 238, 98] },
-    { value: 20.0, rgb: [255, 172, 54] },
-    { value: 24.0, rgb: [240, 84, 32] },
-    { value: 30.0, rgb: [180, 16, 26] },
+    { value: 0.0, rgb: [4, 35, 51] },
+    { value: 4.0, rgb: [28, 52, 130] },
+    { value: 8.0, rgb: [92, 62, 154] },
+    { value: 12.0, rgb: [139, 83, 141] },
+    { value: 16.0, rgb: [189, 99, 124] },
+    { value: 20.0, rgb: [235, 121, 88] },
+    { value: 24.0, rgb: [252, 166, 60] },
+    { value: 30.0, rgb: [232, 250, 91] },
   ];
   const SALINITY_EXPORT_COLOR_STOPS = [
-    { offset: 0.0, rgb: [49, 54, 149] },
-    { offset: 0.2, rgb: [69, 117, 180] },
-    { offset: 0.4, rgb: [116, 173, 209] },
-    { offset: 0.6, rgb: [171, 221, 164] },
-    { offset: 0.8, rgb: [253, 224, 71] },
-    { offset: 1.0, rgb: [168, 85, 36] },
+    { offset: 0.0, rgb: [42, 24, 108] },
+    { offset: 0.2, rgb: [13, 78, 150] },
+    { offset: 0.4, rgb: [45, 124, 137] },
+    { offset: 0.6, rgb: [74, 170, 129] },
+    { offset: 0.8, rgb: [148, 211, 93] },
+    { offset: 1.0, rgb: [253, 239, 154] },
   ];
 
   function getTemporalGlobeElements() {

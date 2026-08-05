@@ -1606,7 +1606,7 @@ class TestModelDryRuns(unittest.TestCase):
         salinity_call = reconstruction_calls[1]
         self.assertEqual(salinity_call["prefix"], "val_salinity_imgs")
         self.assertEqual(salinity_call["image_key"], "salinity_full_reconstruction")
-        self.assertEqual(salinity_call["cmap"], "winter")
+        self.assertEqual(salinity_call["cmap"], "cmo.haline")
         self.assertEqual(salinity_call["plot_unit"], "salinity")
         self.assertEqual(
             salinity_call["error_metric_prefix"],
@@ -1662,7 +1662,7 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertEqual(len(reconstruction_calls), 1)
         salinity_call = reconstruction_calls[0]
-        self.assertEqual(salinity_call["cmap"], "winter")
+        self.assertEqual(salinity_call["cmap"], "cmo.haline")
         self.assertEqual(salinity_call["plot_unit"], "salinity")
         self.assertEqual(
             salinity_call["error_metric_prefix"],
@@ -1678,7 +1678,7 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertEqual(len(profile_calls), 1)
         self.assertEqual(profile_calls[0]["profile_x_label"], "Salinity (PSU)")
         self.assertEqual(len(denoise_calls), 1)
-        self.assertEqual(denoise_calls[0]["cmap"], "winter")
+        self.assertEqual(denoise_calls[0]["cmap"], "cmo.haline")
         self.assertEqual(denoise_calls[0]["plot_unit"], "salinity")
 
     def test_full_reconstruction_logs_salinity_scalar_metrics(self) -> None:

@@ -52,6 +52,8 @@ from PIL import Image
 import yaml
 import zarr
 
+from depth_recon.utils.normalizations import PLOT_CMAP, PLOT_SALINITY_CMAP
+
 CELSIUS_OFFSET = np.float32(273.15)
 DEFAULT_DATASET_ROOT = Path("/work/data/depthdif")
 DEFAULT_DATE = "20180622"
@@ -1317,8 +1319,8 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
     )
     temp_norm = Normalize(vmin=temp_vmin, vmax=temp_vmax)
     salinity_norm = Normalize(vmin=salinity_vmin, vmax=salinity_vmax)
-    temp_cmap = plt.get_cmap("turbo")
-    salinity_cmap = plt.get_cmap("YlGnBu_r")
+    temp_cmap = plt.get_cmap(PLOT_CMAP)
+    salinity_cmap = plt.get_cmap(PLOT_SALINITY_CMAP)
 
     plt.rcParams.update(
         {
@@ -1433,7 +1435,7 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
         land_mask_path=land_mask_path,
         bounds=region_bounds,
         title="OSTIA SST",
-        cmap_name="turbo",
+        cmap_name=PLOT_CMAP,
         colorbar_label="Temperature (deg C)",
         norm=temp_norm,
         tick_format="%.0f",
@@ -1475,7 +1477,7 @@ def create_header_image(args: argparse.Namespace) -> dict[str, Any]:
         land_mask_path=land_mask_path,
         bounds=region_bounds,
         title="SSS",
-        cmap_name="YlGnBu_r",
+        cmap_name=PLOT_SALINITY_CMAP,
         colorbar_label="Salinity (PSU)",
         norm=salinity_norm,
         tick_format="%.1f",

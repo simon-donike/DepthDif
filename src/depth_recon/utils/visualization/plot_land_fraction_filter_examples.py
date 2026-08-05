@@ -28,6 +28,8 @@ if str(SRC_ROOT) not in sys.path:
 from depth_recon.data.dataset_argo_geotiff_gridded import (  # noqa: E402
     ArgoGeoTIFFGriddedPatchDataset,
 )
+from depth_recon.utils.normalizations import PLOT_CMAP  # noqa: E402
+
 from depth_recon.data.dataset_grid_utils import (  # noqa: E402
     _GridParams,
     _center_lon_deg,
@@ -353,7 +355,7 @@ def _draw_panel(
     """Draw one labeled SST patch panel."""
     panel = panel_data.spec
     patch = np.ma.masked_where(~panel_data.ocean_mask, panel_data.sst)
-    cmap = plt.get_cmap("turbo").copy()
+    cmap = plt.get_cmap(PLOT_CMAP).copy()
     cmap.set_bad("#000000")
     ax.imshow(
         patch,

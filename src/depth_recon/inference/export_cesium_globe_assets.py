@@ -38,10 +38,10 @@ DEFAULT_TEMPLATE_PATH = (
     Path(__file__).resolve().parent / "transforms" / "globe-config.template.json"
 )
 DEFAULT_COLOR_RAMP_PATH = (
-    Path(__file__).resolve().parent / "transforms" / "temperature_blue_red_ramp.txt"
+    Path(__file__).resolve().parent / "transforms" / "cmocean_thermal_ramp.txt"
 )
 DEFAULT_SALINITY_COLOR_RAMP_PATH = (
-    Path(__file__).resolve().parent / "transforms" / "salinity_blue_green_ramp.txt"
+    Path(__file__).resolve().parent / "transforms" / "cmocean_haline_ramp.txt"
 )
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TRANSPARENT_ALPHA = 0
@@ -105,7 +105,7 @@ VARIABLE_GLOBE_DEFAULTS: dict[str, dict[str, Any]] = {
         "value_unit_label": "°C",
         "color_scale_min": DEFAULT_COLOR_SCALE_MIN_C,
         "color_scale_max": DEFAULT_COLOR_SCALE_MAX_C,
-        "color_palette": "temperature_blue_red",
+        "color_palette": "cmocean_thermal",
         "color_ramp_path": DEFAULT_COLOR_RAMP_PATH,
     },
     "salinity": {
@@ -114,7 +114,7 @@ VARIABLE_GLOBE_DEFAULTS: dict[str, dict[str, Any]] = {
         "value_unit_label": "PSU",
         "color_scale_min": DEFAULT_SALINITY_COLOR_SCALE_MIN,
         "color_scale_max": DEFAULT_SALINITY_COLOR_SCALE_MAX,
-        "color_palette": "salinity_blue_green",
+        "color_palette": "cmocean_haline",
         "color_ramp_path": DEFAULT_SALINITY_COLOR_RAMP_PATH,
     },
 }

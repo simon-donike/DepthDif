@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import cmocean  # noqa: F401  # Register cmocean colormap names with Matplotlib.
+
 import torch
 
 # Dataset-level statistics provided by user.
@@ -13,8 +15,8 @@ PLOT_TEMP_MIN = -10.740821939496481
 PLOT_TEMP_MAX = 43.92616549843217
 PLOT_SALINITY_MIN = 30.0
 PLOT_SALINITY_MAX = 40.0
-PLOT_CMAP = "turbo"
-PLOT_SALINITY_CMAP = "winter"
+PLOT_CMAP = "cmo.thermal"
+PLOT_SALINITY_CMAP = "cmo.haline"
 
 
 def temperature_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
