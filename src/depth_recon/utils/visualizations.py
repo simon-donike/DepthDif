@@ -9,6 +9,8 @@ import torch
 from matplotlib import cm
 from matplotlib.colors import Normalize
 
+from depth_recon.utils.normalizations import PLOT_CMAP
+
 VERTICAL_ASPECT_STRETCH = 1.4
 
 
@@ -118,7 +120,7 @@ def save_argo_profile_3d_plot(
         depth_axis_m=depth_axis_m,
         max_depth_levels=max_depth_levels,
     )
-    cmap = cm.get_cmap("viridis")
+    cmap = cm.get_cmap(PLOT_CMAP)
     point_colors = cmap(norm(valid_values))
 
     output_path = Path(output_path)
@@ -227,7 +229,7 @@ def save_argo_profile_3d_flyaround_gif(
         depth_axis_m=depth_axis_m,
         max_depth_levels=max_depth_levels,
     )
-    cmap = cm.get_cmap("viridis")
+    cmap = cm.get_cmap(PLOT_CMAP)
     point_colors = cmap(norm(valid_values))
 
     output_path = Path(output_path)

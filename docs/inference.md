@@ -428,7 +428,7 @@ Generated temporal globe output:
 ## Workflow 1g: Package One Run for the Cesium Globe
 The standard path is to let `src/depth_recon/inference/export_global.py` package and upload the globe assets by passing `--public-base-url` and `--rclone-remote`. `src/depth_recon/inference/export_cesium_globe_assets.py` remains available when you need to re-package an existing run directory without re-running model inference. The packaging step:
 - reads one completed `inference/outputs/<run_name>/` directory
-- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the variable color ramp (0-30 C for temperature, 30-40 PSU for salinity), then tiles them as Cesium TMS WebP q95 with fixed 256 px `gdal2tiles.py` tiles
+- colorizes every stitched prediction and ground-truth depth GeoTIFF, keeping GeoTIFF nodata transparent before applying the standard cmocean `thermal` ramp for temperature (0-30 C) or `haline` ramp for salinity (30-40 PSU), then tiles them as Cesium TMS WebP q95 with fixed 256 px `gdal2tiles.py` tiles
 - colorizes absolute-error GeoTIFFs with a green-to-red ramp stretched to each depth-specific 2nd-98th percentile range, then tiles them beside prediction and GLORYS as WebP q95
 - colorizes and tiles the optional 1-channel uncertainty GeoTIFF when the run summary contains `uncertainty_tif_path`
 - rewrites the hosted Argo points GeoJSON with rounded coordinates and no extra properties
