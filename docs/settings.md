@@ -47,6 +47,11 @@ The resolver writes effective split YAMLs whenever a run directory is available:
 
 Training stores these under `logs/<timestamp>/`. Inference exporters store them in the output run directory or a temporary runtime directory, depending on the caller.
 
+The same resolved training configuration (`scenario`, `data`, `model`, and
+`training`) is saved as the W&B run config. It appears on the run's
+**Overview** page under **Config**; the exact YAML snapshots remain available
+under the run's **Files** tab.
+
 ## Data Keys
 
 These keys live under top-level `data` in both pixel super-configs.

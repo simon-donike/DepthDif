@@ -171,8 +171,8 @@ data:  # dataset, split, and loader inputs
 model:  # pixel diffusion model settings
   model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
-  resume_checkpoint: logs/2026-06-17_16-35-38/last.ckpt  # checkpoint path or false
-  load_checkpoint_only: true  # weights-only checkpoint load
+  resume_checkpoint: false  # checkpoint path or false
+  load_checkpoint_only: false  # weights-only checkpoint load
   condition_mask_channels: 1  # valid-mask condition channels
   condition_include_eo: true  # add scenario-selected EO channel
   condition_use_valid_mask: true  # add ARGO support mask
@@ -212,11 +212,11 @@ model:  # pixel diffusion model settings
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: false  # opt-in anchor from x0 predictions to observed ARGO values
+      enabled: true  # opt-in anchor from x0 predictions to observed ARGO values
       weight: 0.25  # conservative weight when this auxiliary term is enabled
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: false  # opt-in penalty for over-smoothed sparse-profile increments
+      enabled: true  # opt-in penalty for over-smoothed sparse-profile increments
       weight: 0.1  # conservative profile-shape regularizer when enabled
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
@@ -224,7 +224,7 @@ model:  # pixel diffusion model settings
       horizontal_pairs: false  # optional same-depth neighbor pairs
       horizontal_max_distance: null  # reserved for future distance-limited pairs
     structure_function_prior:  # GLORYS distributional variogram prior
-      enabled: false  # requires reference_path in reference mode
+      enabled: true  # requires reference_path in reference mode
       target: reference  # reference or paired_glorys
       weight: 0.1  # structure-function prior multiplier
       reference_path: null  # .pt with distance_bins and s2_ref for reference mode
@@ -233,7 +233,7 @@ model:  # pixel diffusion model settings
       eps: 1.0e-6  # log comparison epsilon
       per_depth: true  # compare per-depth reference stats when provided
     spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
-      enabled: false  # requires reference_path in reference mode
+      enabled: true  # requires reference_path in reference mode
       target: reference  # reference or paired_glorys
       weight: 0.05  # spectral floor prior multiplier
       reference_path: null  # .pt with radial band energy reference for reference mode
@@ -243,7 +243,7 @@ model:  # pixel diffusion model settings
       max_band: null  # null uses all available reference bands
       per_depth: true  # compare per-depth reference spectra when provided
     feature_gram_prior:  # reserved GLORYS feature-stat prior
-      enabled: false  # not implemented in this pass
+      enabled: true  # not implemented in this pass
       weight: 0.01  # reserved feature prior multiplier
       encoder_checkpoint: null  # reserved frozen encoder checkpoint path
       reference_path: null  # reserved feature-stat reference path
@@ -343,7 +343,7 @@ training:  # optimizer, trainer, and logging
     log_stats_every_n_steps: 200  # scalar stats cadence
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
-    batch_size: 96  # train batch size
+    batch_size: 192  # train batch size
     val_batch_size: 6  # validation batch size
     num_workers: 48  # train loader workers
     val_num_workers: 16  # validation loader workers

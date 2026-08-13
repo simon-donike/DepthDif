@@ -1,3 +1,3 @@
 # Dataset Links
-argo_aligned: "https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction"
-depthdif_training: "https://huggingface.co/datasets/simon-donike/OceanVariableReconstruction"
+argo_aligned: "https://huggingface.co/datasets/ESA-philab/OceanVariableReconstruction"
+depthdif_training: "https://huggingface.co/datasets/ESA-philab/OceanVariableReconstruction"
