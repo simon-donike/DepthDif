@@ -212,11 +212,11 @@ model:  # pixel diffusion model settings
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: true  # opt-in anchor from x0 predictions to observed ARGO values
+      enabled: false  # opt-in anchor from x0 predictions to observed ARGO values
       weight: 0.25  # conservative weight when this auxiliary term is enabled
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: true  # opt-in penalty for over-smoothed sparse-profile increments
+      enabled: false  # opt-in penalty for over-smoothed sparse-profile increments
       weight: 0.1  # conservative profile-shape regularizer when enabled
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
@@ -224,7 +224,7 @@ model:  # pixel diffusion model settings
       horizontal_pairs: false  # optional same-depth neighbor pairs
       horizontal_max_distance: null  # reserved for future distance-limited pairs
     structure_function_prior:  # GLORYS distributional variogram prior
-      enabled: true  # requires reference_path in reference mode
+      enabled: false  # requires reference_path in reference mode
       target: reference  # reference or paired_glorys
       weight: 0.1  # structure-function prior multiplier
       reference_path: null  # .pt with distance_bins and s2_ref for reference mode
@@ -233,7 +233,7 @@ model:  # pixel diffusion model settings
       eps: 1.0e-6  # log comparison epsilon
       per_depth: true  # compare per-depth reference stats when provided
     spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
-      enabled: true  # requires reference_path in reference mode
+      enabled: false  # requires reference_path in reference mode
       target: reference  # reference or paired_glorys
       weight: 0.05  # spectral floor prior multiplier
       reference_path: null  # .pt with radial band energy reference for reference mode
@@ -243,7 +243,7 @@ model:  # pixel diffusion model settings
       max_band: null  # null uses all available reference bands
       per_depth: true  # compare per-depth reference spectra when provided
     feature_gram_prior:  # reserved GLORYS feature-stat prior
-      enabled: true  # not implemented in this pass
+      enabled: false  # not implemented in this pass
       weight: 0.01  # reserved feature prior multiplier
       encoder_checkpoint: null  # reserved frozen encoder checkpoint path
       reference_path: null  # reserved feature-stat reference path
