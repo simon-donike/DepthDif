@@ -268,7 +268,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                 require_argo_for_train=True,
                 include_salinity=True,
                 surface_conditioning={"sources": ["sst", "sss", "adt"]},
-                pretraining_prior={
+                synthetic_target={
                     "enabled": True,
                     "statistics_path": prior_path.name,
                     "bathymetry_reference_date": 20240108,
@@ -283,7 +283,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             eo_sst_c = temperature_normalize(mode="denorm", tensor=sample["eo"][0])
             eo_sss = salinity_normalize(mode="denorm", tensor=sample["eo"][1])
 
-            self.assertTrue(dataset.pretraining_prior_enabled)
+            self.assertTrue(dataset.synthetic_target_enabled)
             self.assertEqual(sample["eo"].shape, (3, 2, 2))
             self.assertEqual(sample["info"]["target_kind"], "vertical_offset_prior")
             self.assertNotIn("y_supervision_weight", sample)
@@ -631,7 +631,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                         "require_argo_for_val": False,
                         "require_argo_for_all": False,
                     },
-                    "pretraining_prior": {"enabled": False},
+                    "synthetic_target": {"enabled": False},
                     "output": {
                         "return_info": True,
                         "return_coords": False,
@@ -648,7 +648,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertIsInstance(dataset, ArgoGeoTIFFGriddedPatchDataset)
             self.assertTrue(dataset.return_info)
             self.assertFalse(dataset.return_coords)
-            self.assertFalse(dataset.pretraining_prior_enabled)
+            self.assertFalse(dataset.synthetic_target_enabled)
             self.assertTrue(dataset.include_salinity)
             self.assertIn("x_salinity", dataset[0])
             sample = dataset[0]

@@ -109,7 +109,7 @@ def _resolve_manifest_path(root_dir: Path, raw_path: str | Path) -> Path:
     return root_dir / path
 
 
-def _resolve_pretraining_prior_path(root_dir: Path, raw_path: str | Path) -> Path:
+def _resolve_synthetic_target_path(root_dir: Path, raw_path: str | Path) -> Path:
     """Resolve a repository-relative prior, then fall back to the dataset root."""
     path = Path(raw_path)
     if path.is_absolute() or path.is_file():
@@ -803,7 +803,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         require_argo_for_val: bool = True,
         require_argo_for_all: bool = False,
         surface_conditioning: dict[str, Any] | None = None,
-        pretraining_prior: dict[str, Any] | None = None,
+        synthetic_target: dict[str, Any] | None = None,
         return_info: bool = True,
         return_coords: bool = True,
         include_salinity: bool = False,
@@ -882,10 +882,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.surface_conditioning = self._normalize_surface_conditioning(
             surface_conditioning
         )
-        self.pretraining_prior_config = self._normalize_pretraining_prior(
-            pretraining_prior
+        self.synthetic_target_config = self._normalize_synthetic_target(
+            synthetic_target
         )
-        self.pretraining_prior_enabled = bool(self.pretraining_prior_config["enabled"])
+        self.synthetic_target_enabled = bool(self.synthetic_target_config["enabled"])
         self._train_prior_rng: np.random.Generator | None = None
         self.cache_size = int(cache_size)
         if self.temporal_window_days < 1:
@@ -912,17 +912,17 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         # Backward-compatible alias for callers that still inspect the old name.
         self.eo_store = next(iter(self.surface_stores.values()))
         self.ostia_store = self.surface_stores.get("sst", self.eo_store)
-        self.pretraining_prior = self._open_pretraining_prior()
+        self.synthetic_target = self._open_synthetic_target()
 
         available_dates = set(self.glorys_store.dates)
         for store in self.surface_stores.values():
             available_dates &= store.dates
-        if self.pretraining_prior_enabled:
+        if self.synthetic_target_enabled:
             available_dates = set.intersection(
                 *(store.dates for store in self.surface_stores.values())
             )
         self.available_dates = sorted(available_dates)
-        configured_reference_date = self.pretraining_prior_config.get(
+        configured_reference_date = self.synthetic_target_config.get(
             "bathymetry_reference_date"
         )
         self.bathymetry_reference_date = (
@@ -932,13 +932,13 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         )
         if self.bathymetry_reference_date not in self.glorys_store.dates:
             raise ValueError(
-                "pretraining_prior.bathymetry_reference_date is not available "
+                "synthetic_target.bathymetry_reference_date is not available "
                 "in the GLORYS mask store."
             )
 
         if not self.available_dates:
             raise RuntimeError("No overlapping GeoTIFF raster dates were found.")
-        if self.include_salinity and not self.pretraining_prior_enabled:
+        if self.include_salinity and not self.synthetic_target_enabled:
             if self.salinity_store is None:
                 raise RuntimeError("GeoTIFF salinity store was not initialized.")
             missing_salinity_dates = sorted(
@@ -989,7 +989,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             "salinity_store",
             "eo_store",
             "surface_stores",
-            "pretraining_prior",
+            "synthetic_target",
             "ostia_store",
         ):
             state[key] = None
@@ -1006,7 +1006,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         )
         self.eo_store = next(iter(self.surface_stores.values()))
         self.ostia_store = self.surface_stores.get("sst", self.eo_store)
-        self.pretraining_prior = self._open_pretraining_prior()
+        self.synthetic_target = self._open_synthetic_target()
 
     @staticmethod
     def _normalize_surface_conditioning(
@@ -1035,20 +1035,20 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         return {"sources": sources}
 
     @staticmethod
-    def _normalize_pretraining_prior(
+    def _normalize_synthetic_target(
         config: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Validate the optional deterministic vertical-offset pretraining prior."""
         if config is None:
             return {"enabled": False, "statistics_path": None}
         if not isinstance(config, dict):
-            raise ValueError("pretraining_prior must be a mapping.")
+            raise ValueError("synthetic_target must be a mapping.")
         normalized = dict(config)
         normalized["enabled"] = bool(normalized.get("enabled", False))
         statistics_path = normalized.get("statistics_path")
         normalized["statistics_path"] = statistics_path
         if normalized["enabled"] and not statistics_path:
-            raise ValueError("pretraining_prior.enabled=true requires statistics_path.")
+            raise ValueError("synthetic_target.enabled=true requires statistics_path.")
         return normalized
 
     @staticmethod
@@ -1099,18 +1099,18 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             accepted_qc_flags=self.accepted_argo_qc_flags,
         )
 
-    def _open_pretraining_prior(self) -> VerticalOffsetPrior | None:
+    def _open_synthetic_target(self) -> VerticalOffsetPrior | None:
         """Open the configured deterministic vertical-offset prior."""
-        if not self.pretraining_prior_enabled:
+        if not self.synthetic_target_enabled:
             return None
         required_sources = tuple(SURFACE_SOURCE_SPECS)
         if tuple(self.surface_conditioning["sources"] or ()) != required_sources:
             raise ValueError(
-                "pretraining_prior.enabled=true requires "
+                "synthetic_target.enabled=true requires "
                 "surface_conditioning.sources=[sst, sss, adt]."
             )
-        prior_path = _resolve_pretraining_prior_path(
-            self.root_dir, self.pretraining_prior_config["statistics_path"]
+        prior_path = _resolve_synthetic_target_path(
+            self.root_dir, self.synthetic_target_config["statistics_path"]
         )
         return VerticalOffsetPrior.from_npz(
             prior_path,
@@ -1386,10 +1386,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "surface_conditioning",
                 default=None,
             ),
-            pretraining_prior=cls._cfg_get(
+            synthetic_target=cls._cfg_get(
                 ds_cfg,
-                "pretraining_prior",
-                "pretraining_prior",
+                "synthetic_target",
+                "synthetic_target",
                 default=None,
             ),
             return_info=bool(
@@ -1984,8 +1984,8 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             else self._empty_sparse_patch()
         )
 
-        if self.pretraining_prior_enabled:
-            if self.pretraining_prior is None:
+        if self.synthetic_target_enabled:
+            if self.synthetic_target is None:
                 raise RuntimeError("Pretraining prior was not initialized.")
             depth_valid_mask_np = self._load_prior_depth_valid_mask(row)
             prior_surface_fields = {
@@ -2002,7 +2002,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             prior_latitude_deg, prior_longitude_deg = _prior_patch_coordinates(
                 row, self.tile_size
             )
-            prior_sample = self.pretraining_prior.sample(
+            prior_sample = self.synthetic_target.sample(
                 prior_surface_fields,
                 depth_valid_mask=depth_valid_mask_np,
                 date=int(row["date"]),
@@ -2102,7 +2102,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
                 }
             )
-            if not self.pretraining_prior_enabled:
+            if not self.synthetic_target_enabled:
                 sample["y_supervision_weight"] = torch.from_numpy(
                     temperature_supervision_weight_np
                 )
@@ -2138,7 +2138,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     ),
                 }
             )
-            if not self.pretraining_prior_enabled:
+            if not self.synthetic_target_enabled:
                 sample["y_salinity_supervision_weight"] = torch.from_numpy(
                     salinity_supervision_weight_np
                 )
@@ -2154,10 +2154,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         if self.return_info:
             info = dict(row)
             info["target_kind"] = (
-                "vertical_offset_prior" if self.pretraining_prior_enabled else "glorys"
+                "vertical_offset_prior" if self.synthetic_target_enabled else "glorys"
             )
             info["x_source"] = "argo"
-            if self.pretraining_prior_enabled:
+            if self.synthetic_target_enabled:
                 info["bathymetry_reference_date"] = int(self.bathymetry_reference_date)
             sample["info"] = info
         return sample

@@ -53,7 +53,7 @@ data:  # dataset, split, and loader inputs
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     surface_conditioning:  # checkpoint-stable dense surface inputs
       sources: [sst, sss, adt]  # fixed model channel order
-    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+    synthetic_target:  # deterministic surface-plus-depth-offset pretraining
       enabled: false  # supervise directly against paired GLORYS fields
       statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
@@ -207,7 +207,7 @@ model:  # pixel diffusion model settings
     ambient:  # existing diffusion objective weight
       weight: 1.0  # base ambient/diffusion loss multiplier
     aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
-      enabled: true  # downweight clean-field auxiliaries at very noisy timesteps
+      enabled: false  # auxiliary losses are disabled for standard diffusion
       mode: snr  # snr or linear
       min_weight: 0.1  # keep a small auxiliary signal at low SNR
       max_weight: 1.0  # upper clamp for aux multiplier
@@ -318,7 +318,7 @@ training:  # optimizer, trainer, and logging
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
-    devices: 2  # use both local GPUs with reduced worker fan-out
+    devices: auto  # use every GPU made visible by the SpaceHPC scheduler
     num_gpus: null  # legacy GPU count override
     strategy: ddp  # run one supervised worker per GPU
     precision: 16-mixed  # numeric precision

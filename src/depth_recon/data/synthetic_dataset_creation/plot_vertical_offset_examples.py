@@ -234,7 +234,7 @@ def plot_examples(
         max_land_fraction=float(max_land_fraction),
         require_argo_for_val=True,
         surface_conditioning={"sources": ["sst", "sss", "adt"]},
-        pretraining_prior={"enabled": False},
+        synthetic_target={"enabled": False},
         output_fields=("temperature", "salinity"),
         val_year=int(validation_year),
         random_seed=int(random_seed),

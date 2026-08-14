@@ -77,7 +77,7 @@ publishing credentials.
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
 - Active dataset: `src/depth_recon/data/dataset_argo_geotiff_gridded.py` (`ArgoGeoTIFFGriddedPatchDataset`) reads exported GeoTIFF rasters and preprocessed ARGO/EN4 profiles through the pixel super-configs.
-- Optional Stage 1 initialization: `data.dataset.pretraining_prior.enabled=true` copies SST/SSS through depth and adds fitted scalar GLORYS depth offsets; real ARGO values remain exact anchors. These targets are synthetic targets, not observations or truth.
+- Optional Stage 1 initialization: `data.dataset.synthetic_target.enabled=true` copies SST/SSS through depth and adds fitted scalar GLORYS depth offsets; real ARGO values remain exact anchors. These targets are synthetic targets, not observations or truth.
 - Config layout:
   - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
   - `src/depth_recon/configs/px_space/training_super_config_standard.yaml`: explicit standard-resource training preset
@@ -122,14 +122,14 @@ Two-stage pretraining uses the same three-channel surface architecture throughou
 ```bash
 # Stage 1: deterministic surface-plus-depth-offset target
 /work/envs/depth/bin/python train.py --scenario temperature \
-  --set data.dataset.pretraining_prior.enabled=true \
+  --set data.dataset.synthetic_target.enabled=true \
   --set data.dataset.selection.require_argo_for_train=false \
   --set model.ambient_occlusion.enabled=false \
   --set model.resume_checkpoint=false
 
 # Stage 2: observation-only ambient objective
 /work/envs/depth/bin/python train.py --scenario temperature \
-  --set data.dataset.pretraining_prior.enabled=false \
+  --set data.dataset.synthetic_target.enabled=false \
   --set data.dataset.selection.require_argo_for_train=true \
   --set model.ambient_occlusion.enabled=true \
   --set model.resume_checkpoint=/absolute/path/to/stage1/best.ckpt \

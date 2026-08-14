@@ -53,7 +53,7 @@ data:  # dataset, split, and loader inputs
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     surface_conditioning:  # checkpoint-stable dense surface inputs
       sources: [sst, sss, adt]  # fixed model channel order
-    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+    synthetic_target:  # deterministic surface-plus-depth-offset pretraining
       enabled: true  # generate dense surface-plus-depth-offset targets on the fly
       statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # v1 global or v2 smooth monthly GLORYS-delta artifact
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
@@ -207,7 +207,7 @@ model:  # pixel diffusion model settings
     ambient:  # existing diffusion objective weight
       weight: 1.0  # base ambient/diffusion loss multiplier
     aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
-      enabled: true  # downweight clean-field auxiliaries at very noisy timesteps
+      enabled: false  # auxiliary losses are disabled for standard diffusion
       mode: snr  # snr or linear
       min_weight: 0.1  # keep a small auxiliary signal at low SNR
       max_weight: 1.0  # upper clamp for aux multiplier
@@ -227,7 +227,7 @@ model:  # pixel diffusion model settings
       horizontal_pairs: false  # optional same-depth neighbor pairs
       horizontal_max_distance: null  # reserved for future distance-limited pairs
     structure_function_prior:  # GLORYS distributional variogram prior
-      enabled: true  # requires reference_path in reference mode
+      enabled: false  # disabled for standard synthetic-target diffusion
       target: reference  # reference or paired_glorys
       weight: 0.1  # structure-function prior multiplier
       reference_path: null  # .pt with distance_bins and s2_ref for reference mode
@@ -236,7 +236,7 @@ model:  # pixel diffusion model settings
       eps: 1.0e-6  # log comparison epsilon
       per_depth: true  # compare per-depth reference stats when provided
     spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
-      enabled: true  # requires reference_path in reference mode
+      enabled: false  # disabled for standard synthetic-target diffusion
       target: reference  # reference or paired_glorys
       weight: 0.05  # spectral floor prior multiplier
       reference_path: null  # .pt with radial band energy reference for reference mode
@@ -246,7 +246,7 @@ model:  # pixel diffusion model settings
       max_band: null  # null uses all available reference bands
       per_depth: true  # compare per-depth reference spectra when provided
     feature_gram_prior:  # reserved GLORYS feature-stat prior
-      enabled: true  # not implemented in this pass
+      enabled: false  # disabled for standard synthetic-target diffusion
       weight: 0.01  # reserved feature prior multiplier
       encoder_checkpoint: null  # reserved frozen encoder checkpoint path
       reference_path: null  # reserved feature-stat reference path
@@ -318,7 +318,7 @@ training:  # optimizer, trainer, and logging
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
-    devices: 2  # use both local GPUs with reduced worker fan-out
+    devices: auto  # use every GPU made visible by the SpaceHPC scheduler
     num_gpus: null  # legacy GPU count override
     strategy: ddp  # run one supervised worker per GPU
     precision: 16-mixed  # numeric precision

@@ -53,7 +53,7 @@ data:  # dataset, split, and loader inputs
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     surface_conditioning:  # checkpoint-stable dense surface inputs
       sources: [sst, sss, adt]  # fixed model channel order
-    pretraining_prior:  # disabled during inference
+    synthetic_target:  # disabled during inference
       enabled: false  # inference never creates a synthetic dense target
       statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # retained repository-artifact contract
       bathymetry_reference_date: null  # fixed seafloor-support mask date

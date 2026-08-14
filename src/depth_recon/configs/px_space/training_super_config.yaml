@@ -53,7 +53,7 @@ data:  # dataset, split, and loader inputs
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     surface_conditioning:  # checkpoint-stable dense surface inputs
       sources: [sst, sss, adt]  # fixed model channel order
-    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+    synthetic_target:  # deterministic surface-plus-depth-offset pretraining
       enabled: false  # Stage 1: enable and disable model.ambient_occlusion
       statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # v1 global or v2 smooth monthly GLORYS-delta artifact
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date

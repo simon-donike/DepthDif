@@ -56,7 +56,7 @@ def _minimal_super_config(
                     "filter_bad_argo_quality": True,
                     "accepted_argo_qc_flags": [1, 2],
                 },
-                "pretraining_prior": {"enabled": False},
+                "synthetic_target": {"enabled": False},
                 "output": {
                     "return_info": False,
                     "return_coords": True,

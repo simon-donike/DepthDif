@@ -297,7 +297,7 @@ def apply_surface_conditioning_contract(
             raise ValueError("data.dataset.surface_conditioning.sources is empty.")
     model_section["condition_eo_channels"] = eo_channels
 
-    prior_cfg = dataset_section.get("pretraining_prior", {})
+    prior_cfg = dataset_section.get("synthetic_target", {})
     if isinstance(prior_cfg, dict) and bool(prior_cfg.get("enabled", False)):
         if tuple(str(value).strip().lower() for value in (sources or ())) != (
             "sst",
@@ -305,11 +305,11 @@ def apply_surface_conditioning_contract(
             "adt",
         ):
             raise ValueError(
-                "pretraining_prior.enabled=true requires "
+                "synthetic_target.enabled=true requires "
                 "surface_conditioning.sources=[sst, sss, adt]."
             )
         if not prior_cfg.get("statistics_path"):
-            raise ValueError("pretraining_prior.enabled=true requires statistics_path.")
+            raise ValueError("synthetic_target.enabled=true requires statistics_path.")
         if not bool(model_section.get("condition_include_eo", False)):
             raise ValueError(
                 "Online prior pretraining requires model.condition_include_eo=true."

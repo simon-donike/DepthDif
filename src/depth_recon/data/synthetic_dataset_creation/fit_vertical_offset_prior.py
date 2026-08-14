@@ -147,7 +147,7 @@ def fit_vertical_offset_prior(
         max_land_fraction=float(max_land_fraction),
         require_argo_for_all=False,
         surface_conditioning={"sources": ["sst", "sss", "adt"]},
-        pretraining_prior={"enabled": False},
+        synthetic_target={"enabled": False},
         output_fields=("temperature", "salinity"),
         random_seed=int(random_seed),
     )
