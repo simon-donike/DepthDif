@@ -1,20 +1,20 @@
-# Vertical-Offset Pretraining Targets
+# Smooth GLORYS-Delta Pretraining Targets
 
-The maintained synthetic target is deterministic:
+The synthetic Stage 1 target retains the observed EO surface exactly and adds an
+offline-fitted GLORYS climatological depth delta:
 
 ```text
-temperature(z,y,x) = observed_SST(y,x) + mean_GLORYS[temperature(z)-temperature(surface)]
-salinity(z,y,x) = observed_SSS(y,x) + mean_GLORYS[salinity(z)-salinity(surface)]
+temperature(z,y,x) = observed_SST(y,x) + smooth_GLORYS_delta[month,z,y,x]
+salinity(z,y,x) = observed_SSS(y,x) + smooth_GLORYS_delta[month,z,y,x]
 ```
 
-Every depth therefore retains exactly the observed surface spatial pattern and
-frequencies. Only one scalar changes per depth. GLORYS is used offline to fit
-those coefficients; the training loader does not retrieve same-date GLORYS.
+The v2 prior fits the delta on a monthly 10° grid, shrinks sparse cells toward
+the global monthly profile, smooths the grid with periodic longitude handling,
+and bilinearly samples it at patch pixels. The loader never retrieves paired or
+same-date GLORYS for this synthetic target. Sparse ARGO values still override
+the target at their exact cells and levels.
 
-`vertical_offset_prior.py` implements the target,
-`fit_vertical_offset_prior.py` fits it, and
-`plot_vertical_offset_examples.py` writes qualitative comparisons. Sparse real
-ARGO values override synthetic values at their exact cells and depths.
-
-These targets are not subsurface truth. They intentionally copy surface fronts
-unchanged through depth and serve only as a controlled initialization objective.
+Unsupported abyssal levels carry the deepest supported GLORYS delta. Every
+bathymetrically valid synthetic cell is supervised equally with the standard
+diffusion loss. These targets remain a controlled initialization objective, not
+subsurface truth.

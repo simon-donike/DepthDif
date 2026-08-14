@@ -4,7 +4,7 @@ import hashlib
 import os
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -61,6 +61,22 @@ COMPACT_PROFILE_QC_VARS = {
     "temp": "argo_temp_profile_qc",
     "psal": "argo_psal_profile_qc",
 }
+
+
+def _prior_patch_coordinates(
+    row: Mapping[str, Any], tile_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return pixel-center latitude/longitude coordinates for a target patch."""
+    fractions = (np.arange(int(tile_size), dtype=np.float32) + 0.5) / float(tile_size)
+    latitude = float(row["lat0"]) + fractions * (
+        float(row["lat1"]) - float(row["lat0"])
+    )
+    lon0 = float(row["lon0"])
+    lon_span = (float(row["lon1"]) - lon0) % 360.0
+    if lon_span == 0.0:
+        lon_span = float(row["lon1"]) - lon0
+    longitude = ((lon0 + fractions * lon_span + 180.0) % 360.0) - 180.0
+    return np.meshgrid(latitude, longitude, indexing="ij")
 
 
 def _decode_stretched_uint8(values: np.ndarray, stretch: dict[str, Any]) -> np.ndarray:
@@ -1983,10 +1999,15 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 int(row["grid_y0"]),
                 int(row["grid_x0"]),
             )
+            prior_latitude_deg, prior_longitude_deg = _prior_patch_coordinates(
+                row, self.tile_size
+            )
             prior_sample = self.pretraining_prior.sample(
                 prior_surface_fields,
                 depth_valid_mask=depth_valid_mask_np,
                 date=int(row["date"]),
+                latitude_deg=prior_latitude_deg,
+                longitude_deg=prior_longitude_deg,
                 region=(
                     0.5 * (float(row["lat0"]) + float(row["lat1"])),
                     _center_lon_deg(float(row["lon0"]), float(row["lon1"])),
@@ -2078,12 +2099,13 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "y": torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0),
                     "x_valid_mask": x_valid_mask,
                     "y_valid_mask": y_valid_mask,
-                    "y_supervision_weight": torch.from_numpy(
-                        temperature_supervision_weight_np
-                    ),
                     "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
                 }
             )
+            if not self.pretraining_prior_enabled:
+                sample["y_supervision_weight"] = torch.from_numpy(
+                    temperature_supervision_weight_np
+                )
 
         if (
             self.include_salinity
@@ -2111,14 +2133,15 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     "y_salinity_valid_mask": torch.from_numpy(
                         y_salinity_valid_mask_np.astype(np.bool_, copy=False)
                     ),
-                    "y_salinity_supervision_weight": torch.from_numpy(
-                        salinity_supervision_weight_np
-                    ),
                     "x_salinity_valid_mask_1d": x_salinity_valid_mask.any(
                         dim=0, keepdim=True
                     ),
                 }
             )
+            if not self.pretraining_prior_enabled:
+                sample["y_salinity_supervision_weight"] = torch.from_numpy(
+                    salinity_supervision_weight_np
+                )
 
         if self.return_coords:
             sample["coords"] = torch.tensor(

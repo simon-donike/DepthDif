@@ -104,6 +104,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         ambient_min_kept_observed_pixels: int = 1,
         ambient_require_x0_parameterization: bool = True,
         skip_full_reconstruction_in_sanity_check: bool = True,
+        full_reconstruction_logging_enabled: bool = True,
         max_full_reconstruction_samples: int = 5,
         postprocess_gaussian_blur_enabled: bool = False,
         postprocess_gaussian_blur_sigma: float = 0.35,
@@ -248,6 +249,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         self.skip_full_reconstruction_in_sanity_check = bool(
             skip_full_reconstruction_in_sanity_check
+        )
+        self.full_reconstruction_logging_enabled = bool(
+            full_reconstruction_logging_enabled
         )
         self.max_full_reconstruction_samples = max(
             1, int(max_full_reconstruction_samples)
@@ -473,6 +477,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             ),
             skip_full_reconstruction_in_sanity_check=bool(
                 val_sampling_cfg.get("skip_full_reconstruction_in_sanity_check", True)
+            ),
+            full_reconstruction_logging_enabled=bool(
+                val_sampling_cfg.get("full_reconstruction_logging_enabled", True)
             ),
             max_full_reconstruction_samples=int(
                 val_sampling_cfg.get("max_full_reconstruction_samples", 5)
@@ -2483,6 +2490,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             None: No value is returned.
         """
         self._cached_val_example = None
+        if not self.full_reconstruction_logging_enabled:
+            self._cached_val_example = None
+            return
         if (
             self.trainer is not None
             and self.trainer.sanity_checking
@@ -3182,6 +3192,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             None: No value is returned.
         """
+        if not self.full_reconstruction_logging_enabled:
+            self._cached_val_example = None
+            return
         if (
             self.trainer is not None
             and self.trainer.sanity_checking
@@ -3582,7 +3595,11 @@ class PixelDiffusionConditional(pl.LightningModule):
                 batch_size=y.size(0),
             )
 
-        if batch_idx == 0 and self._cached_val_example is None:
+        if (
+            self.full_reconstruction_logging_enabled
+            and batch_idx == 0
+            and self._cached_val_example is None
+        ):
             # Cache raw batch fields so validation-end prediction can re-apply the same
             # temperature/salinity stacking path used by training and validation loss.
             n_cache = min(self.max_full_reconstruction_samples, int(target.size(0)))

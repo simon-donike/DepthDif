@@ -5,8 +5,9 @@
 #   --metadata-cache-dir /work/data/OceanVariableReconstruction/depthdif_cache \
 #   --start-year 2000 --end-year 2024 --exclude-year 2018 --tile-size 128 \
 #   --patch-stride 128 --max-land-fraction 0.30 --max-patches 4000 \
-#   --max-supervised-depth-m 1000 --random-seed 7 --overwrite --no-progress
-"""Fit mean GLORYS depth-minus-surface offsets for deterministic pretraining."""
+#   --spatial-bin-size-deg 10 --smoothing-sigma-cells 1 --shrinkage-pixels 4096 \
+#   --extrapolation-half-life-m 1000 --random-seed 7 --overwrite --no-progress
+"""Fit smooth monthly GLORYS depth-minus-surface offsets for pretraining."""
 
 from __future__ import annotations
 
@@ -53,14 +54,18 @@ def _centered_window_avoids_excluded_years(
 
 
 def _select_rows(
-    rows: pd.DataFrame, *, max_patches: int | None, random_seed: int
+    rows: pd.DataFrame,
+    *,
+    max_patches: int | None,
+    random_seed: int,
+    group_columns: Sequence[str] = ("_month",),
 ) -> pd.DataFrame:
-    """Select reproducible rows approximately balanced across calendar months."""
+    """Select reproducible rows balanced across month and optional depth strata."""
     selected = rows.copy()
     selected["_month"] = (selected["date"].astype(np.int64) // 100) % 100
     if max_patches is None or int(max_patches) >= len(selected):
         return selected.sort_values(["date", "grid_y0", "grid_x0"])
-    grouped = list(selected.groupby("_month", sort=True))
+    grouped = list(selected.groupby(list(group_columns), sort=True))
     if int(max_patches) < len(grouped):
         raise ValueError(
             "max_patches is smaller than the number of represented months."
@@ -77,6 +82,36 @@ def _select_rows(
     )
 
 
+def _add_depth_strata(
+    dataset: ArgoGeoTIFFGriddedPatchDataset, rows: pd.DataFrame
+) -> pd.DataFrame:
+    """Label candidates by their deepest bathymetrically valid GLORYS level."""
+    labelled = rows.copy()
+    strata: list[int] = []
+    for row in labelled.to_dict(orient="records"):
+        valid_depths = dataset._load_prior_depth_valid_mask(row).any(axis=(1, 2))
+        deepest = float(dataset.depth_axis_m[np.flatnonzero(valid_depths)[-1]])
+        strata.append(int(np.searchsorted((1000.0, 2000.0, 3000.0, 4000.0), deepest)))
+    labelled["_depth_stratum"] = strata
+    return labelled
+
+
+def _patch_coordinates(
+    row: Mapping[str, Any], *, tile_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return patch pixel centers while preserving dateline wrapping."""
+    fractions = (np.arange(int(tile_size), dtype=np.float32) + 0.5) / float(tile_size)
+    latitude = float(row["lat0"]) + fractions * (
+        float(row["lat1"]) - float(row["lat0"])
+    )
+    lon0 = float(row["lon0"])
+    span = (float(row["lon1"]) - lon0) % 360.0
+    if span == 0.0:
+        span = float(row["lon1"]) - lon0
+    longitude = ((lon0 + fractions * span + 180.0) % 360.0) - 180.0
+    return np.meshgrid(latitude, longitude, indexing="ij")
+
+
 def fit_vertical_offset_prior(
     *,
     geotiff_root_dir: str | Path,
@@ -89,12 +124,16 @@ def fit_vertical_offset_prior(
     patch_stride: int | None = None,
     max_land_fraction: float = 0.30,
     max_patches: int | None = 4000,
-    max_supervised_depth_m: float = 1000.0,
+    max_supervised_depth_m: float | None = None,
+    spatial_bin_size_deg: float = 10.0,
+    smoothing_sigma_cells: float = 1.0,
+    shrinkage_pixels: float = 4096.0,
+    extrapolation_half_life_m: float = 1000.0,
     random_seed: int = 7,
     overwrite: bool = False,
     show_progress: bool = True,
 ) -> VerticalOffsetPrior:
-    """Fit and save one scalar temperature/salinity offset per depth level."""
+    """Fit and save a smooth monthly EO-surface-plus-GLORYS-delta prior."""
     output = Path(output_path)
     if output.exists() and not overwrite:
         raise FileExistsError(f"Vertical-offset artifact already exists: {output}")
@@ -125,16 +164,27 @@ def fit_vertical_offset_prior(
             int(date), window_days=window_days, excluded_years=excluded
         )
     )
-    rows = _select_rows(
+    candidates = _select_rows(
         rows.loc[keep].reset_index(drop=True),
+        max_patches=None if max_patches is None else int(max_patches) * 4,
+        random_seed=random_seed,
+    )
+    rows = _add_depth_strata(dataset, candidates)
+    rows = _select_rows(
+        rows,
         max_patches=max_patches,
         random_seed=random_seed,
+        group_columns=("_month", "_depth_stratum"),
     )
     accumulator = VerticalOffsetAccumulator(
         depth_axis_m=dataset.depth_axis_m,
+        spatial_bin_size_deg=spatial_bin_size_deg,
+        smoothing_sigma_cells=smoothing_sigma_cells,
+        shrinkage_pixels=shrinkage_pixels,
+        extrapolation_half_life_m=extrapolation_half_life_m,
         excluded_years=excluded,
         provenance={
-            "source": "mean GLORYS depth-minus-surface offsets",
+            "source": "smooth monthly GLORYS depth-minus-surface offsets",
             "geotiff_root_dir": str(Path(geotiff_root_dir).resolve()),
             "manifest_sha256": hashlib.sha256(
                 dataset.manifest_path.read_bytes()
@@ -153,12 +203,23 @@ def fit_vertical_offset_prior(
         disable=not show_progress,
     )
     for row in iterator:
+        latitude_deg, longitude_deg = _patch_coordinates(
+            row, tile_size=dataset.tile_size
+        )
         accumulator.update(
             temperature_c=dataset._load_y_patch(row),
             salinity_psu=dataset._load_y_salinity_patch(row),
             date=int(row["date"]),
+            latitude_deg=latitude_deg,
+            longitude_deg=longitude_deg,
         )
-    prior = accumulator.finalize(max_supervised_depth_m=float(max_supervised_depth_m))
+    prior = accumulator.finalize(
+        max_supervised_depth_m=(
+            float(dataset.depth_axis_m[-1])
+            if max_supervised_depth_m is None
+            else float(max_supervised_depth_m)
+        )
+    )
     prior.to_npz(output)
     dataset.raster_cache.close()
     return prior
@@ -177,7 +238,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patch-stride", type=int, default=None)
     parser.add_argument("--max-land-fraction", type=float, default=0.30)
     parser.add_argument("--max-patches", type=int, default=4000)
-    parser.add_argument("--max-supervised-depth-m", type=float, default=1000.0)
+    parser.add_argument("--max-supervised-depth-m", type=float, default=None)
+    parser.add_argument("--spatial-bin-size-deg", type=float, default=10.0)
+    parser.add_argument("--smoothing-sigma-cells", type=float, default=1.0)
+    parser.add_argument("--shrinkage-pixels", type=float, default=4096.0)
+    parser.add_argument("--extrapolation-half-life-m", type=float, default=1000.0)
     parser.add_argument("--random-seed", type=int, default=7)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
@@ -201,6 +266,10 @@ def main() -> None:
         max_land_fraction=args.max_land_fraction,
         max_patches=args.max_patches,
         max_supervised_depth_m=args.max_supervised_depth_m,
+        spatial_bin_size_deg=args.spatial_bin_size_deg,
+        smoothing_sigma_cells=args.smoothing_sigma_cells,
+        shrinkage_pixels=args.shrinkage_pixels,
+        extrapolation_half_life_m=args.extrapolation_half_life_m,
         random_seed=args.random_seed,
         overwrite=args.overwrite,
         show_progress=not args.no_progress,

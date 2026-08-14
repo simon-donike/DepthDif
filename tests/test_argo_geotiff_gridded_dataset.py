@@ -286,21 +286,11 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertTrue(dataset.pretraining_prior_enabled)
             self.assertEqual(sample["eo"].shape, (3, 2, 2))
             self.assertEqual(sample["info"]["target_kind"], "vertical_offset_prior")
-            self.assertEqual(sample["y_supervision_weight"].shape, (2, 2, 2))
-            self.assertEqual(sample["y_salinity_supervision_weight"].shape, (2, 2, 2))
+            self.assertNotIn("y_supervision_weight", sample)
+            self.assertNotIn("y_salinity_supervision_weight", sample)
             np.testing.assert_array_equal(
                 sample["y_valid_mask"].numpy(),
                 sample["y_salinity_valid_mask"].numpy(),
-            )
-            self.assertAlmostEqual(float(sample["y_supervision_weight"][1, 0, 1]), 0.65)
-            self.assertAlmostEqual(
-                float(sample["y_salinity_supervision_weight"][1, 0, 1]), 0.35
-            )
-            self.assertFalse(
-                torch.equal(
-                    sample["y_supervision_weight"],
-                    sample["y_salinity_supervision_weight"],
-                )
             )
             # Compact ARGO profiles are exact equality constraints.
             self.assertTrue(

@@ -313,7 +313,8 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      max_full_reconstruction_samples: 6  # log the full shuffled validation batch
+      full_reconstruction_logging_enabled: false  # standard validation loss only; no reconstruction plots
+      max_full_reconstruction_samples: 1  # unused while full reconstruction logging is disabled
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
@@ -338,7 +339,7 @@ training:  # optimizer, trainer, and logging
     entity: esa-phi-lab  # W&B entity
     run_name: glorys_supervised_t_2gpu_spacehpc  # run display name
     log_model: false  # W&B model logging policy
-    verbose: true  # enable extra logging
+    verbose: false  # disable W&B image and diagnostic-stat logging
     watch_gradients: false  # watch gradients
     watch_parameters: false  # watch parameters
     watch_log_freq: 100  # watch log cadence

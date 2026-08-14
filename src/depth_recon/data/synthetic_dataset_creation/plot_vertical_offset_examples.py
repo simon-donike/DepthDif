@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import matplotlib
 
@@ -65,6 +65,79 @@ def _select_textured_row(
     if best is None:
         raise RuntimeError("No valid regional example patch was found.")
     return best
+
+
+def _patch_coordinates(
+    row: Mapping[str, Any], *, tile_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return patch pixel centers while preserving dateline wrapping."""
+    fractions = (np.arange(int(tile_size), dtype=np.float32) + 0.5) / float(tile_size)
+    latitude = float(row["lat0"]) + fractions * (
+        float(row["lat1"]) - float(row["lat0"])
+    )
+    lon0 = float(row["lon0"])
+    span = (float(row["lon1"]) - lon0) % 360.0
+    if span == 0.0:
+        span = float(row["lon1"]) - lon0
+    longitude = ((lon0 + fractions * span + 180.0) % 360.0) - 180.0
+    return np.meshgrid(latitude, longitude, indexing="ij")
+
+
+def _profile_pixel(valid_mask: np.ndarray) -> tuple[int, int]:
+    """Choose the valid profile nearest the center of a diagnostic patch."""
+    spatial_valid = np.asarray(valid_mask, dtype=bool).any(axis=0)
+    candidates = np.argwhere(spatial_valid)
+    if candidates.size == 0:
+        raise RuntimeError("Diagnostic patch contains no valid GLORYS profile.")
+    center = (np.asarray(spatial_valid.shape, dtype=np.float64) - 1.0) / 2.0
+    index = int(np.argmin(np.square(candidates - center).sum(axis=1)))
+    return tuple(int(value) for value in candidates[index])
+
+
+def _plot_profile_comparison(
+    *,
+    synthetic_temperature: np.ndarray,
+    glorys_temperature: np.ndarray,
+    synthetic_salinity: np.ndarray,
+    glorys_salinity: np.ndarray,
+    depths: np.ndarray,
+    pixel: tuple[int, int],
+    title: str,
+    output_path: Path,
+    dpi: int,
+) -> None:
+    """Write validation-style synthetic-versus-GLORYS profile line charts."""
+    row, column = pixel
+    figure, axes = plt.subplots(1, 2, figsize=(10, 6), constrained_layout=True)
+    for axis, synthetic, glorys, label in (
+        (
+            axes[0],
+            synthetic_temperature[:, row, column],
+            glorys_temperature[:, row, column],
+            "Temperature (degrees C)",
+        ),
+        (
+            axes[1],
+            synthetic_salinity[:, row, column],
+            glorys_salinity[:, row, column],
+            "Salinity (PSU)",
+        ),
+    ):
+        valid = np.isfinite(synthetic) & np.isfinite(glorys)
+        axis.plot(
+            synthetic[valid], depths[valid], label="Synthetic target", linewidth=2.0
+        )
+        axis.plot(
+            glorys[valid], depths[valid], label="GLORYS diagnostic", linewidth=1.6
+        )
+        axis.set_xlabel(label)
+        axis.set_ylabel("Depth (m)")
+        axis.invert_yaxis()
+        axis.grid(alpha=0.25)
+        axis.legend()
+    figure.suptitle(f"{title} | profile pixel ({row}, {column})")
+    figure.savefig(output_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(figure)
 
 
 def _depth_indices(axis: np.ndarray, requested: Sequence[float]) -> list[int]:
@@ -119,7 +192,7 @@ def _plot_mosaic(
                 axes[row_index, column].set_title(f"{depths[depth_index]:g} m")
             if column == 0:
                 axes[row_index, column].set_ylabel(
-                    "surface + mean offset" if row_index == 0 else "held-out GLORYS"
+                    "EO + smooth GLORYS delta" if row_index == 0 else "held-out GLORYS"
                 )
         figure.colorbar(
             image,
@@ -173,16 +246,32 @@ def plot_examples(
     written: list[Path] = []
 
     summary_path = output_root / "vertical_offset_summary.png"
-    figure, axes = plt.subplots(1, 2, figsize=(9, 5), constrained_layout=True)
-    axes[0].plot(prior.temperature_offset_c, prior.depth_axis_m)
-    axes[0].set_xlabel("temperature offset (degrees C)")
-    axes[1].plot(prior.salinity_offset_psu, prior.depth_axis_m)
-    axes[1].set_xlabel("salinity offset (PSU)")
+    figure, axes = plt.subplots(1, 2, figsize=(10, 5), constrained_layout=True)
+    if prior.is_spatial:
+        for month_index in range(12):
+            label = f"{month_index + 1:02d}"
+            axes[0].plot(
+                prior.temperature_offset_c[month_index].mean(axis=(0, 1)),
+                prior.depth_axis_m,
+                label=label,
+            )
+            axes[1].plot(
+                prior.salinity_offset_psu[month_index].mean(axis=(0, 1)),
+                prior.depth_axis_m,
+                label=label,
+            )
+        axes[1].legend(title="Month", ncol=2, fontsize=8)
+        figure.suptitle("Monthly mean smooth GLORYS depth-minus-surface deltas")
+    else:
+        axes[0].plot(prior.temperature_offset_c, prior.depth_axis_m)
+        axes[1].plot(prior.salinity_offset_psu, prior.depth_axis_m)
+        figure.suptitle("Mean GLORYS depth-minus-surface coefficients")
+    axes[0].set_xlabel("temperature delta (degrees C)")
+    axes[1].set_xlabel("salinity delta (PSU)")
     for axis in axes:
         axis.set_ylabel("depth (m)")
         axis.invert_yaxis()
         axis.grid(alpha=0.25)
-    figure.suptitle("Mean GLORYS depth-minus-surface coefficients")
     figure.savefig(summary_path, dpi=int(dpi), bbox_inches="tight")
     plt.close(figure)
     written.append(summary_path)
@@ -195,12 +284,19 @@ def plot_examples(
             candidate_count=candidate_count,
         )
         surface = dataset._load_surface_fields(row)
+        depth_valid_mask = dataset._load_prior_depth_valid_mask(row)
+        latitude_deg, longitude_deg = _patch_coordinates(
+            row, tile_size=dataset.tile_size
+        )
         sample = prior.sample(
             {
                 "sst": surface["sst"] + np.float32(CELSIUS_TO_KELVIN_OFFSET),
                 "sss": surface["sss"],
             },
-            depth_valid_mask=dataset._load_prior_depth_valid_mask(row),
+            depth_valid_mask=depth_valid_mask,
+            date=int(row["date"]),
+            latitude_deg=latitude_deg,
+            longitude_deg=longitude_deg,
         )
         title = (
             f"{site_name.replace('_', ' ').title()} | {int(row['date'])} | "
@@ -236,6 +332,20 @@ def plot_examples(
                 dpi=dpi,
             )
             written.append(output_path)
+        profile_path = output_root / f"{site_name}_synthetic_vs_glorys_profiles.png"
+        _plot_profile_comparison(
+            synthetic_temperature=sample.temperature_k
+            - np.float32(CELSIUS_TO_KELVIN_OFFSET),
+            glorys_temperature=dataset._load_y_patch(row),
+            synthetic_salinity=sample.salinity_psu,
+            glorys_salinity=dataset._load_y_salinity_patch(row),
+            depths=dataset.depth_axis_m,
+            pixel=_profile_pixel(depth_valid_mask),
+            title=title,
+            output_path=profile_path,
+            dpi=dpi,
+        )
+        written.append(profile_path)
     dataset.raster_cache.close()
     return written
 
@@ -252,7 +362,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patch-stride", type=int, default=128)
     parser.add_argument("--max-land-fraction", type=float, default=0.30)
     parser.add_argument(
-        "--depths-m", type=float, nargs="+", default=(0, 50, 100, 250, 500, 1000)
+        "--depths-m",
+        type=float,
+        nargs="+",
+        default=(0, 50, 100, 250, 500, 1000, 2000, 3000, 4000, 5000),
     )
     parser.add_argument("--candidate-count", type=int, default=24)
     parser.add_argument("--random-seed", type=int, default=7)

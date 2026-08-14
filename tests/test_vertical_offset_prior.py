@@ -111,6 +111,76 @@ class TestVerticalOffsetPrior(unittest.TestCase):
         np.testing.assert_allclose(prior.salinity_offset_psu, (0.0, 0.15, 0.3))
         self.assertEqual(prior.fit_years, (2017, 2019))
 
+    def test_spatial_monthly_offsets_keep_eo_surface_and_wrap_dateline(self) -> None:
+        """Spatial GLORYS deltas are continuous across the periodic longitude edge."""
+        depth_axis = np.asarray([0.0, 1000.0], dtype=np.float32)
+        longitude = np.arange(-175.0, 180.0, 10.0, dtype=np.float32)
+        offsets = np.zeros((12, 2, len(longitude), 2), dtype=np.float32)
+        offsets[0, :, :, 1] = np.cos(np.deg2rad(longitude))[None, :]
+        offsets[1, :, :, 1] = 3.0
+        prior = VerticalOffsetPrior(
+            depth_axis_m=depth_axis,
+            temperature_offset_c=offsets,
+            salinity_offset_psu=offsets,
+            supervision_weight=np.ones((*offsets.shape, 2), dtype=np.float32),
+            max_supervised_depth_m=1000.0,
+            latitude_bin_centers_deg=np.asarray([-5.0, 5.0]),
+            longitude_bin_centers_deg=longitude,
+        )
+        sample = prior.sample(
+            {
+                "sst": np.asarray([[280.0, 281.0]], dtype=np.float32),
+                "sss": np.asarray([[35.0, 35.5]], dtype=np.float32),
+            },
+            depth_valid_mask=np.ones((2, 1, 2), dtype=bool),
+            date=20240115,
+            latitude_deg=np.zeros((1, 2), dtype=np.float32),
+            longitude_deg=np.asarray([[-179.9, 179.9]], dtype=np.float32),
+        )
+        np.testing.assert_allclose(sample.temperature_k[0], [[280.0, 281.0]])
+        self.assertAlmostEqual(
+            float(sample.temperature_k[1, 0, 0] - 280.0),
+            float(sample.temperature_k[1, 0, 1] - 281.0),
+            places=3,
+        )
+        february = prior.sample(
+            {
+                "sst": np.asarray([[280.0, 281.0]], dtype=np.float32),
+                "sss": np.asarray([[35.0, 35.5]], dtype=np.float32),
+            },
+            depth_valid_mask=np.ones((2, 1, 2), dtype=bool),
+            date=20240215,
+            latitude_deg=np.zeros((1, 2), dtype=np.float32),
+            longitude_deg=np.zeros((1, 2), dtype=np.float32),
+        )
+        np.testing.assert_allclose(february.temperature_k[1], [[283.0, 284.0]])
+
+    def test_spatial_accumulator_extrapolates_missing_abyssal_delta(self) -> None:
+        """Unsupported deep levels carry the last GLORYS delta with lower weight."""
+        accumulator = VerticalOffsetAccumulator(
+            depth_axis_m=np.asarray([0.0, 1000.0, 2000.0]),
+            extrapolation_half_life_m=1000.0,
+        )
+        field = np.asarray([[[10.0]], [[8.0]], [[np.nan]]])
+        accumulator.update(
+            temperature_c=field,
+            salinity_psu=field + 20.0,
+            date=20240115,
+            latitude_deg=np.asarray([[0.0]]),
+            longitude_deg=np.asarray([[0.0]]),
+        )
+        prior = accumulator.finalize(max_supervised_depth_m=2000.0)
+        self.assertTrue(prior.is_spatial)
+        np.testing.assert_allclose(
+            prior.temperature_offset_c[..., 2], prior.temperature_offset_c[..., 1]
+        )
+        self.assertTrue(
+            np.all(
+                prior.supervision_weight[..., 2, :]
+                < prior.supervision_weight[..., 1, :]
+            )
+        )
+
     def test_round_trip_preserves_artifact_contract(self) -> None:
         """The pickle-free artifact must preserve offsets and provenance."""
         with tempfile.TemporaryDirectory() as tmpdir:

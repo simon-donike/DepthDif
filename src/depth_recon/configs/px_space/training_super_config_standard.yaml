@@ -55,7 +55,7 @@ data:  # dataset, split, and loader inputs
       sources: [sst, sss, adt]  # fixed model channel order
     pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
       enabled: false  # Stage 1: enable and disable model.ambient_occlusion
-      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # v1 global or v2 smooth monthly GLORYS-delta artifact
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
     finetune_sampling:  # optional hard-area finetuning row filter
       enabled: true  # enable hard/easy regional finetuning mix
