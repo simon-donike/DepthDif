@@ -1688,6 +1688,9 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
         self.assertEqual(len(profile_calls), 1)
         self.assertEqual(profile_calls[0]["profile_x_label"], "Salinity (PSU)")
+        self.assertTrue(
+            torch.equal(profile_calls[0]["supervision_target"], salinity_denorm)
+        )
         self.assertEqual(len(denoise_calls), 1)
         self.assertEqual(denoise_calls[0]["cmap"], "cmo.haline")
         self.assertEqual(denoise_calls[0]["plot_unit"], "salinity")

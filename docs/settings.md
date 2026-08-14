@@ -8,6 +8,7 @@ This page maps the current config files to runtime behavior. Pixel-space trainin
 | `src/depth_recon/configs/px_space/training_super_config.yaml` | `train.py` | Pixel GeoTIFF training defaults. Contains top-level `scenario`, `data`, `model`, and `training` sections. |
 | `src/depth_recon/configs/px_space/training_super_config_standard.yaml` | `train.py --config ...` | Explicit copy of the standard-resource training preset. |
 | `src/depth_recon/configs/px_space/training_super_config_hpc.yaml` | `train.py --config ...` | SpaceHPC preset with Lustre paths, offline W&B logging, increased batch/worker values, and two-GPU non-ambient dense vertical-offset pretraining. |
+| `src/depth_recon/configs/px_space/training_super_config_spacehpc_glorys.yaml` | `train.py --config ...` | SpaceHPC preset with Lustre paths, offline W&B logging, high-throughput loading, and two-GPU direct GLORYS supervision. |
 | `src/depth_recon/configs/px_space/inference_super_config.yaml` | inference exporters and smoke scripts | Pixel GeoTIFF inference defaults. Contains top-level `scenario`, `data`, `model`, `training`, and `inference` sections. |
 
 Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config.yaml`, `training_config.yaml`, and `ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md).

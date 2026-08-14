@@ -3090,6 +3090,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 x=x_denorm,
                 y_hat=y_hat_denorm_for_plot,
                 y_target=y_denorm_masked,
+                supervision_target=target_denorm_masked,
                 conditioning_mask=x_valid_mask,
                 candidate_mask=generated_profile_mask,
                 prefix="val_imgs",

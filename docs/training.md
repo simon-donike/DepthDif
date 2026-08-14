@@ -24,6 +24,17 @@ occlusion disabled. The tiny prior artifact is committed in the repository data 
 dense targets are generated on the fly and do not require a separate export or
 Lustre-side artifact copy.
 
+For a standard direct GLORYS-supervised SpaceHPC training run, use:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --config src/depth_recon/configs/px_space/training_super_config_spacehpc_glorys.yaml \
+  --scenario temperature
+```
+
+This preset keeps the same Lustre, two-GPU, and offline-W&B settings but disables
+the synthetic prior and ambient objective, so the diffusion target is paired GLORYS.
+
 Override example:
 
 ```bash

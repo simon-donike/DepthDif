@@ -1,0 +1,376 @@
+scenario: temperature  # default pixel task; CLI --scenario overrides
+
+data:  # dataset, split, and loader inputs
+  dataset:  # dataset constructor settings
+    core:  # dataset implementation and paths
+      dataset_variant: argo_geotiff_gridded  # active GeoTIFF dataset class
+      dataloader_type: light  # lightweight dataloader path
+      geotiff_root_dir: /lustre/projects/1000/rubenc/ocean_data/ocean_data/  # SpaceHPC dataset root
+      metadata_cache_dir: /lustre/projects/1000/rubenc/ocean_data/ocean_data/depthdif_cache  # SpaceHPC patch metadata cache
+    grid:  # spatial patch grid
+      tile_size: 128  # patch height and width
+      resolution_deg: 0.1  # grid resolution in degrees
+      patch_grid_source: land_mask  # source for patch origins
+      land_mask_path: masks/world_land_mask_glorys_0p1.tif  # dataset-root-relative land/ocean mask raster
+      patch_stride: 32  # training patch stride
+      max_land_fraction: 0.3  # default land fraction cap
+      force_include_regions:  # regional relaxed land caps
+      - name: mediterranean  # region label
+        lon_min: -6.0  # west bound
+        lon_max: 37.0  # east bound
+        lat_min: 30.0  # south bound
+        lat_max: 46.0  # north bound
+        max_land_fraction: 0.6  # region land cap
+      - name: baltic  # region label
+        lon_min: 9.0  # west bound
+        lon_max: 31.0  # east bound
+        lat_min: 53.0  # south bound
+        lat_max: 66.0  # north bound
+        max_land_fraction: 0.85  # region land cap
+      - name: red_sea  # region label
+        lon_min: 32.0  # west bound
+        lon_max: 44.0  # east bound
+        lat_min: 12.0  # south bound
+        lat_max: 30.0  # north bound
+        max_land_fraction: 0.85  # region land cap
+      - name: hudson_bay  # region label
+        lon_min: -96.0  # west bound
+        lon_max: -74.0  # east bound
+        lat_min: 50.0  # south bound
+        lat_max: 65.0  # north bound
+        max_land_fraction: 0.95  # region land cap
+    sampling:  # time and variable selection
+      temporal_window_days: 7  # ARGO/EO date window
+      glorys_var_name: thetao  # GLORYS-compatible temperature target variable
+      ostia_var_name: analysed_sst  # legacy OSTIA SST variable key
+      eo_source: ostia  # scenario-derived EO raster group: ostia or sss
+      eo_var_name: analysed_sst  # scenario-derived EO raster variable
+    selection:  # row filtering by split
+      require_argo_for_train: true  # train on patches containing ARGO conditioning
+      require_argo_for_val: true  # keep val rows with ARGO
+      require_argo_for_all: false  # allow no-ARGO inference rows
+      filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
+      accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
+    surface_conditioning:  # checkpoint-stable dense surface inputs
+      sources: [sst, sss, adt]  # fixed model channel order
+    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+      enabled: false  # supervise directly against paired GLORYS fields
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
+      bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
+    finetune_sampling:  # optional hard-area finetuning row filter
+      enabled: false  # disable regional finetuning for the standard HPC run
+      hard_fraction: 0.5  # target fraction of rows from hard regions
+      apply_to_splits:  # splits affected by finetune row filtering
+      - train  # keep validation globally comparable
+      - val # also apply to val for finetuning evaluation (remove row)
+      relax_land_filter: true  # add hard boxes as relaxed grid regions
+      default_max_land_fraction: 0.85  # default hard-region land cap
+      hard_regions:  # broad patch-center boxes for coastal hard areas
+      - name: mediterranean  # region label
+        lon_min: -6.0  # west bound
+        lon_max: 37.0  # east bound
+        lat_min: 30.0  # south bound
+        lat_max: 46.0  # north bound
+      - name: black_sea  # region label
+        lon_min: 27.0  # west bound
+        lon_max: 42.0  # east bound
+        lat_min: 40.0  # south bound
+        lat_max: 47.0  # north bound
+      - name: russian_arctic_west  # region label
+        lon_min: 20.0  # west bound
+        lon_max: 180.0  # east bound
+        lat_min: 66.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: russian_arctic_east  # region label
+        lon_min: -180.0  # west bound
+        lon_max: -160.0  # east bound
+        lat_min: 66.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: hudson_bay  # region label
+        lon_min: -96.0  # west bound
+        lon_max: -74.0  # east bound
+        lat_min: 50.0  # south bound
+        lat_max: 65.0  # north bound
+      - name: baja_california  # region label
+        lon_min: -122.0  # west bound
+        lon_max: -104.0  # east bound
+        lat_min: 18.0  # south bound
+        lat_max: 33.0  # north bound
+      - name: greenland  # region label
+        lon_min: -75.0  # west bound
+        lon_max: -10.0  # east bound
+        lat_min: 58.0  # south bound
+        lat_max: 84.0  # north bound
+      - name: svalbard_barents  # region label
+        lon_min: 0.0  # west bound
+        lon_max: 45.0  # east bound
+        lat_min: 70.0  # south bound
+        lat_max: 82.0  # north bound
+      - name: european_atlantic  # region label
+        lon_min: -16.0  # west bound
+        lon_max: 16.0  # east bound
+        lat_min: 35.0  # south bound
+        lat_max: 70.0  # north bound
+      - name: persian_gulf  # region label
+        lon_min: 47.0  # west bound
+        lon_max: 57.0  # east bound
+        lat_min: 23.0  # south bound
+        lat_max: 31.0  # north bound
+      - name: red_sea  # region label
+        lon_min: 32.0  # west bound
+        lon_max: 44.0  # east bound
+        lat_min: 12.0  # south bound
+        lat_max: 30.0  # north bound
+      - name: yellow_sea  # region label
+        lon_min: 117.0  # west bound
+        lon_max: 127.0  # east bound
+        lat_min: 31.0  # south bound
+        lat_max: 41.0  # north bound
+      - name: sea_of_japan  # region label
+        lon_min: 127.0  # west bound
+        lon_max: 142.0  # east bound
+        lat_min: 34.0  # south bound
+        lat_max: 52.0  # north bound
+      - name: sea_of_okhotsk  # region label
+        lon_min: 140.0  # west bound
+        lon_max: 164.0  # east bound
+        lat_min: 43.0  # south bound
+        lat_max: 62.0  # north bound
+      - name: northern_alaska  # region label
+        lon_min: -170.0  # west bound
+        lon_max: -135.0  # east bound
+        lat_min: 68.0  # south bound
+        lat_max: 75.0  # north bound
+      - name: bay_of_benin_west  # region label
+        lon_min: -1.5  # west bound
+        lon_max: 1.5  # east bound
+        lat_min: 4.8  # south bound
+        lat_max: 6.8  # north bound
+      - name: bay_of_benin_east  # region label
+        lon_min: 1.5  # west bound
+        lon_max: 4.5  # east bound
+        lat_min: 4.2  # south bound
+        lat_max: 6.8  # north bound
+      - name: new_york_nova_scotia  # region label
+        lon_min: -75.0  # west bound
+        lon_max: -59.0  # east bound
+        lat_min: 40.0  # south bound
+        lat_max: 47.0  # north bound
+    output:  # optional batch outputs
+      return_info: false  # include metadata dictionaries
+      return_coords: true  # include patch center coords
+    runtime:  # dataset runtime knobs
+      random_seed: 7  # deterministic split/sampling seed
+      cache_size: 8  # open raster/source cache size
+  split:  # train/validation split
+    val_year: 2018  # year reserved for validation
+    val_fraction: 0.2  # fallback random val fraction
+  dataloader:  # dataset-side loader defaults
+    num_workers: 4  # worker process count
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
+    val_shuffle: true  # intentionally shuffle validation
+
+model:  # pixel diffusion model settings
+  model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
+  depth_channels: 50  # depth bands per field
+  resume_checkpoint: false  # checkpoint path or false
+  load_checkpoint_only: false  # weights-only checkpoint load
+  condition_eo_channels: 3  # SST, SSS, and ADT surface channels
+  condition_mask_channels: 1  # valid-mask condition channels
+  condition_include_eo: true  # add configured surface channels
+  condition_use_valid_mask: true  # add ARGO support mask
+  condition_use_land_mask: true  # add GLORYS land mask
+  clamp_known_pixels: false  # clamp known pixels while sampling
+  mask_loss_with_valid_pixels: true  # mask loss to valid support
+  coastal_loss:  # emphasize supervised ocean pixels near land
+    enabled: false  # enable distance-to-land loss weighting
+    radius_px: 5  # ocean-pixel radius around land to upweight
+    weight: 3.0  # maximum loss multiplier for land-adjacent ocean pixels
+    ramp: linear  # distance falloff for coastal weights
+  parameterization: x0  # diffusion target parameterization
+  log_intermediates: false  # log reverse-chain images
+  ema:  # exponential moving average
+    enabled: true  # enable EMA callback
+    decay: 0.9999  # EMA decay factor
+    apply_every_n_steps: 1  # EMA update cadence
+    start_step: 0  # first EMA step
+    save_ema_weights_in_callback_state: true  # save EMA in checkpoints
+    evaluate_ema_weights_instead: true  # validate using EMA weights
+  ambient_occlusion:  # ambient objective controls
+    enabled: false  # use ordinary dense supervision against paired GLORYS
+    further_drop_prob: 0.33  # hide one third of observed pixels
+    apply_to_noisy_branch: true  # mask noisy target branch
+    shared_spatial_mask: true  # share mask across channels
+    min_kept_observed_pixels: 5  # minimum kept observations
+    require_x0_parameterization: true  # require x0 objective
+  losses:  # optional auxiliary ocean losses for ambient diffusion training
+    ambient:  # existing diffusion objective weight
+      weight: 1.0  # base ambient/diffusion loss multiplier
+    aux_timestep_weighting:  # timestep-dependent multiplier for auxiliary losses only
+      enabled: true  # downweight clean-field auxiliaries at very noisy timesteps
+      mode: snr  # snr or linear
+      min_weight: 0.1  # keep a small auxiliary signal at low SNR
+      max_weight: 1.0  # upper clamp for aux multiplier
+      snr_gamma: 5.0  # SNR cap for normalized min-SNR weighting
+      linear_start_weight: 0.0  # linear weight at noisiest timestep
+      linear_end_weight: 1.0  # linear weight at cleanest timestep
+    sparse_observation:  # Charbonnier consistency on sparse ARGO observations
+      enabled: false  # disabled for direct paired-GLORYS supervision
+      weight: 0.25  # conservative weight when this auxiliary term is enabled
+      eps: 1.0e-3  # Charbonnier epsilon
+    increment:  # sparse pairwise increment loss on observed ARGO profiles
+      enabled: false  # disabled for direct paired-GLORYS supervision
+      weight: 0.1  # conservative profile-shape regularizer when enabled
+      eps: 1.0e-3  # Charbonnier epsilon
+      max_pairs_per_sample: 4096  # cap sampled pair count per sample
+      vertical_pairs: true  # adjacent-depth pairs at observed horizontal locations
+      horizontal_pairs: false  # optional same-depth neighbor pairs
+      horizontal_max_distance: null  # reserved for future distance-limited pairs
+    structure_function_prior:  # GLORYS distributional variogram prior
+      enabled: false  # opt-in GLORYS prior; direct supervision is sufficient
+      target: reference  # reference or paired_glorys
+      weight: 0.1  # structure-function prior multiplier
+      reference_path: null  # .pt with distance_bins and s2_ref for reference mode
+      num_pairs: 8192  # random same-depth pairs sampled per batch
+      num_bins: 16  # dynamic distance bins for paired_glorys mode
+      eps: 1.0e-6  # log comparison epsilon
+      per_depth: true  # compare per-depth reference stats when provided
+    spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
+      enabled: false  # opt-in GLORYS prior; direct supervision is sufficient
+      target: reference  # reference or paired_glorys
+      weight: 0.05  # spectral floor prior multiplier
+      reference_path: null  # .pt with radial band energy reference for reference mode
+      eps: 1.0e-8  # log-energy epsilon
+      margin: 0.0  # hinge margin in log-energy units
+      min_band: 1  # skip DC by default
+      max_band: null  # null uses all available reference bands
+      per_depth: true  # compare per-depth reference spectra when provided
+    feature_gram_prior:  # reserved GLORYS feature-stat prior
+      enabled: false  # reserved feature prior is disabled
+      weight: 0.01  # reserved feature prior multiplier
+      encoder_checkpoint: null  # reserved frozen encoder checkpoint path
+      reference_path: null  # reserved feature-stat reference path
+  post_process:  # prediction post-processing
+    gaussian_blur:  # optional output blur
+      enabled: false  # enable Gaussian blur
+      sigma: 0.75  # blur sigma in pixels
+      kernel_size: 5  # blur kernel size
+  coord_conditioning:  # coordinate/date FiLM inputs
+    enabled: true  # enable coordinate conditioning
+    encoding: unit_sphere  # coordinate encoding type
+    include_date: true  # include day-of-year signal
+    date_encoding: day_of_year_sincos  # date encoding type
+    embed_dim: null  # FiLM embedding size override
+  cnn_baseline:  # point-wise ConvTranspose1d/Conv1d profile baseline
+    hidden_channels: 64  # profile decoder channel width
+    seed_length: 8  # learned seed sequence length before transpose-conv upsampling
+    transpose_layers: null  # null auto-upsamples until reaching the depth grid
+    conv_layers: 3  # 1D refinement convolution layers after upsampling
+    kernel_size: 3  # odd depth-axis convolution kernel size
+    batch_norm_momentum: 0.3  # BatchNorm1d momentum for profile conv blocks
+    dropout: 0.0  # dropout after profile conv blocks
+    activation: selu  # activation used with LeCun-normal initialization
+    lr: null  # null falls back to training.training.lr
+    weight_decay: 0.0001  # AdamW weight decay
+    include_valid_mask: true  # include depth-wise ARGO support in the profile vector
+    include_eo: null  # null follows model.condition_include_eo
+    include_land_mask: null  # null follows model.condition_use_land_mask
+  unet_baseline:  # direct trainable U-Net baseline settings for 3D and 2D variants
+    base_channels: 32  # base channel width for the baseline U-Net
+    channel_mults:  # encoder/decoder width multipliers
+    - 1  # first stage multiplier
+    - 2  # second stage multiplier
+    - 4  # third stage multiplier
+    - 8  # fourth stage multiplier
+    norm_groups: 8  # maximum GroupNorm group count
+    dropout: 0.0  # dropout after each double-conv block
+    lr: null  # null falls back to training.training.lr
+    weight_decay: 0.0001  # AdamW weight decay
+    per_channel_valid_mask: true  # 3D masks per field; 2D masks per field/depth band
+  unet:  # denoiser architecture
+    dim: 64  # base channel width
+    dim_mults:  # U-Net width multipliers
+    - 1  # stage multiplier
+    - 2  # stage multiplier
+    - 4  # stage multiplier
+    - 8  # stage multiplier
+    with_time_emb: true  # include timestep embedding
+    output_mean_scale: false  # scale output mean
+    residual: false  # predict residual output
+
+training:  # optimizer, trainer, and logging
+  training:  # diffusion training hyperparameters
+    lr: 0.0001  # optimizer learning rate
+    noise:  # diffusion noise schedule
+      num_timesteps: 1000  # training diffusion steps
+      schedule: cosine  # beta schedule type
+      beta_start: 0.0001  # starting beta
+      beta_end: 0.02  # ending beta
+    validation_sampling:  # validation sampler settings
+      sampler: ddim  # faster validation reconstruction sampler
+      ddim_num_timesteps: 100  # DDIM validation steps
+      ddim_eta: 0.0  # DDIM stochasticity
+      ddim_temperature: 1.0  # sampler noise scale
+      log_intermediates: false  # log denoising intermediates
+      skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
+      max_full_reconstruction_samples: 6  # log the full shuffled validation batch
+  trainer:  # PyTorch Lightning trainer
+    max_epochs: 10000  # extended HPC epoch limit
+    accelerator: auto  # accelerator selection
+    devices: 2  # use both local GPUs with reduced worker fan-out
+    num_gpus: null  # legacy GPU count override
+    strategy: ddp  # run one supervised worker per GPU
+    precision: 16-mixed  # numeric precision
+    matmul_precision: high  # torch matmul precision
+    suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
+    suppress_lightning_pytree_warning: true  # hide Lightning warning
+    ckpt_monitor: val/loss_ckpt  # best-checkpoint metric
+    lr_logging_interval: step  # LR log cadence
+    log_every_n_steps: 25  # trainer log cadence
+    num_sanity_val_steps: 1  # startup val batches
+    val_check_interval: 0.1  # validation cadence
+    limit_val_batches: 64  # validation batch cap
+    enable_model_summary: true  # print model summary
+    gradient_clip_val: 1.0  # gradient clip value
+  wandb:  # Weights & Biases logging
+    offline: true  # compute nodes cannot reach W&B
+    project: DepthDif_Simon  # W&B project
+    entity: esa-phi-lab  # W&B entity
+    run_name: glorys_supervised_t_2gpu_spacehpc  # run display name
+    log_model: false  # W&B model logging policy
+    verbose: true  # enable extra logging
+    watch_gradients: false  # watch gradients
+    watch_parameters: false  # watch parameters
+    watch_log_freq: 100  # watch log cadence
+    watch_log_graph: false  # log computation graph
+    log_stats_every_n_steps: 200  # scalar stats cadence
+    log_images_every_n_steps: 200  # image log cadence
+  dataloader:  # Lightning dataloader settings
+    batch_size: 192  # train batch size
+    val_batch_size: 6  # validation batch size
+    num_workers: 48  # train loader workers
+    val_num_workers: 16  # validation loader workers
+    persistent_workers: true  # keep train workers alive
+    val_persistent_workers: false  # keep val workers alive
+    prefetch_factor: 2  # batches prefetched per worker when workers are enabled
+    multiprocessing_context: spawn  # start train workers with spawn for native handle safety
+    shuffle: true  # shuffle train loader
+    val_shuffle: true  # intentionally shuffle validation
+    pin_memory: true  # use pinned host memory
+  scheduler:  # learning-rate scheduling
+    warmup:  # linear warmup
+      enabled: false  # enable warmup
+      steps: 2000  # warmup step count
+      start_ratio: 0.2  # starting LR ratio
+    reduce_on_plateau:  # plateau LR scheduler
+      enabled: true  # enable plateau schedule
+      monitor: val/loss_ckpt  # monitored metric
+      interval: step  # scheduler interval unit
+      mode: min  # optimize lower metric
+      factor: 0.5  # LR decay factor
+      patience: 50000  # plateau patience
+      threshold: 0.0001  # improvement threshold
+      threshold_mode: rel  # threshold mode
+      cooldown: 0  # cooldown intervals
+      min_lr: 1.0e-06  # LR floor
+      eps: 1.0e-08  # minimum LR change

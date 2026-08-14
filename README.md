@@ -82,6 +82,7 @@ publishing credentials.
   - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
   - `src/depth_recon/configs/px_space/training_super_config_standard.yaml`: explicit standard-resource training preset
   - `src/depth_recon/configs/px_space/training_super_config_hpc.yaml`: SpaceHPC paths, offline W&B, high-throughput loading, and two-GPU dense vertical-offset pretraining preset
+  - `src/depth_recon/configs/px_space/training_super_config_spacehpc_glorys.yaml`: SpaceHPC-ready two-GPU direct GLORYS-supervised diffusion preset
   - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
   - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
@@ -149,6 +150,7 @@ Ambient-occlusion objective example:
 Notes:
 - Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
 - SpaceHPC runs can pass `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`; this preset runs two-GPU, non-ambient dense pretraining with the fitted vertical-offset target. The explicit standard preset is `training_super_config_standard.yaml`.
+- For a direct GLORYS-supervised SpaceHPC run, use `/work/envs/depth/bin/python train.py --config src/depth_recon/configs/px_space/training_super_config_spacehpc_glorys.yaml --scenario temperature`.
 - `--scenario temperature|salinity|joint` derives the output-field contract; `[sst, sss, adt]` remains the fixed dense-conditioning order, and the resolver derives `model.generated_channels` plus `model.condition_channels`.
 - `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
