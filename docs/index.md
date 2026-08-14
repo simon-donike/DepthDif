@@ -32,9 +32,9 @@ The repository currently supports:
 
 ![depthdif_schema](assets/figures/depthdif_schema.webp)
 
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context. See the full model details in [Model](model.md).
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from sparse ARGO profile observations, conditioned on ordered SST, SSS, and ADT surface maps, ARGO observation support, ocean/bathymetry support, plus coordinate/date context. See the full model details in [Model](model.md).
 
-In the GeoTIFF training workflow, EO surface conditioning comes from the scenario-selected surface raster, subsurface targets come from GLORYS, and sparse inputs come from ARGO/EN4 profiles after depth alignment. Salinity is a scenario-selected field: `--scenario salinity` trains salinity only, and `--scenario joint` trains temperature and salinity together.
+In the maintained GeoTIFF workflow, surface conditioning is `[SST, SSS, ADT]` for every stage and sparse inputs come from ARGO/EN4 profiles after depth alignment. Standard dense targets come from GLORYS; optional Stage 1 targets are online deterministic surface-offset targets and are not treated as truth. Salinity is a scenario-selected field: `--scenario salinity` trains salinity only, and `--scenario joint` trains temperature and salinity together.
 
 Ambient diffusion (short): at step `t`, `x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * epsilon`, `epsilon ~ N(0, I)`.
 For ambient-occlusion training with observed mask `m` and further-corrupted mask `m' <= m`, optimize
@@ -58,6 +58,7 @@ For ambient-occlusion training with observed mask `m` and further-corrupted mask
 - [FUll settings documentation](settings.md#full-settings-documentation): per-file config keys, defaults, and explanations
 - [Sampling Diagnostics](sampling-diagnostics.md): denoising intermediates, MAE-vs-step, and schedule profiling
 - [Spectral Wavenumber Validation](spectral-wavenumber-validation.md): post-inference spectral validation procedure and wavenumber formulas
+- [Vertical-Offset Pretraining](vertical-offset-pretraining.md): surface-duplication semantics, leakage-safe fitting, two-stage training, depth confidence, and held-out evaluation
 - [Experiments](experiments.md): qualitative test results
 - [Model Settings](settings.md): key config knobs, runtime mapping, and full settings reference
 - [Development](development.md): known issues, TODOs, and roadmap

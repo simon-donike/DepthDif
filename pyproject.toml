@@ -64,6 +64,7 @@ namespaces = true
 "depth_recon.data" = [
     "**/*.geojson",
     "**/*.json",
+    "**/*.npz",
     "**/*.sh",
     "**/*.tif",
     "**/*.tiff",

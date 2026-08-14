@@ -42,19 +42,21 @@ data:  # dataset, split, and loader inputs
     sampling:  # time and variable selection
       temporal_window_days: 7  # ARGO/EO date window
       glorys_var_name: thetao  # GLORYS-compatible temperature target variable
-      target_source: glorys  # dense target raster group: glorys or synthetic
       ostia_var_name: analysed_sst  # legacy OSTIA SST variable key
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: false  # keep train rows with ARGO
+      require_argo_for_train: true  # ambient training requires observed ARGO support
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
       filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
-    synthetic:  # synthetic sparse-input mode
-      enabled: false  # sample x from y instead of ARGO
-      pixel_count: 250  # synthetic observed pixels
+    surface_conditioning:  # checkpoint-stable dense surface inputs
+      sources: [sst, sss, adt]  # fixed model channel order
+    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+      enabled: false  # Stage 1: enable and disable model.ambient_occlusion
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
+      bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
     finetune_sampling:  # optional hard-area finetuning row filter
       enabled: true  # enable hard/easy regional finetuning mix
       hard_fraction: 0.5  # target fraction of rows from hard regions
@@ -171,10 +173,11 @@ data:  # dataset, split, and loader inputs
 model:  # pixel diffusion model settings
   model_type: cond_px_dif  # model factory selector; use unet2d_baseline for 2D U-Net comparison
   depth_channels: 50  # depth bands per field
-  resume_checkpoint: logs/2026-06-17_16-35-38/last.ckpt  # checkpoint path or false
-  load_checkpoint_only: true  # weights-only checkpoint load
+  resume_checkpoint: false  # checkpoint path or false
+  load_checkpoint_only: false  # weights-only checkpoint load
+  condition_eo_channels: 3  # SST, SSS, and ADT surface channels
   condition_mask_channels: 1  # valid-mask condition channels
-  condition_include_eo: true  # add scenario-selected EO channel
+  condition_include_eo: true  # add configured surface channels
   condition_use_valid_mask: true  # add ARGO support mask
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling

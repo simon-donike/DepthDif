@@ -42,19 +42,21 @@ data:  # dataset, split, and loader inputs
     sampling:  # time and variable selection
       temporal_window_days: 7  # ARGO/EO date window
       glorys_var_name: thetao  # GLORYS-compatible temperature target variable
-      target_source: glorys  # dense target raster group: glorys or synthetic
       ostia_var_name: analysed_sst  # legacy OSTIA SST variable key
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: false  # keep train rows with ARGO
+      require_argo_for_train: false  # dense prior targets do not require colocated ARGO
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
       filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
-    synthetic:  # synthetic sparse-input mode
-      enabled: false  # sample x from y instead of ARGO
-      pixel_count: 250  # synthetic observed pixels
+    surface_conditioning:  # checkpoint-stable dense surface inputs
+      sources: [sst, sss, adt]  # fixed model channel order
+    pretraining_prior:  # deterministic surface-plus-depth-offset pretraining
+      enabled: true  # generate dense surface-plus-depth-offset targets on the fly
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
+      bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
     finetune_sampling:  # optional hard-area finetuning row filter
       enabled: false  # disable regional finetuning for the HPC preset
       hard_fraction: 0.5  # target fraction of rows from hard regions
@@ -173,8 +175,9 @@ model:  # pixel diffusion model settings
   depth_channels: 50  # depth bands per field
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
+  condition_eo_channels: 3  # SST, SSS, and ADT surface channels
   condition_mask_channels: 1  # valid-mask condition channels
-  condition_include_eo: true  # add scenario-selected EO channel
+  condition_include_eo: true  # add configured surface channels
   condition_use_valid_mask: true  # add ARGO support mask
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling
@@ -194,7 +197,7 @@ model:  # pixel diffusion model settings
     save_ema_weights_in_callback_state: true  # save EMA in checkpoints
     evaluate_ema_weights_instead: true  # validate using EMA weights
   ambient_occlusion:  # ambient objective controls
-    enabled: true  # train with the ambient sparse-observation objective
+    enabled: false  # use ordinary dense supervision against the synthetic prior target
     further_drop_prob: 0.33  # hide one third of observed pixels
     apply_to_noisy_branch: true  # mask noisy target branch
     shared_spatial_mask: true  # share mask across channels
@@ -212,11 +215,11 @@ model:  # pixel diffusion model settings
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: true  # opt-in anchor from x0 predictions to observed ARGO values
+      enabled: false  # no sparse-observation auxiliary during dense pretraining
       weight: 0.25  # conservative weight when this auxiliary term is enabled
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: true  # opt-in penalty for over-smoothed sparse-profile increments
+      enabled: false  # no sparse-profile auxiliary during dense pretraining
       weight: 0.1  # conservative profile-shape regularizer when enabled
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
@@ -316,7 +319,7 @@ training:  # optimizer, trainer, and logging
     accelerator: auto  # accelerator selection
     devices: 2  # use both local GPUs with reduced worker fan-out
     num_gpus: null  # legacy GPU count override
-    strategy: auto  # distributed strategy
+    strategy: ddp  # run one supervised worker per GPU
     precision: 16-mixed  # numeric precision
     matmul_precision: high  # torch matmul precision
     suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
@@ -333,7 +336,7 @@ training:  # optimizer, trainer, and logging
     offline: true  # compute nodes cannot reach W&B
     project: DepthDif_Simon  # W&B project
     entity: esa-phi-lab  # W&B entity
-    run_name: ostia_argo_geotiff_px  # run display name
+    run_name: vertical_offset_dense_pretrain_t_2gpu_hpc  # run display name
     log_model: false  # W&B model logging policy
     verbose: true  # enable extra logging
     watch_gradients: false  # watch gradients

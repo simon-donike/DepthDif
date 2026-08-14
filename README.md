@@ -77,15 +77,21 @@ publishing credentials.
 
 - Model: `PixelDiffusionConditional` (conditional pixel-space diffusion with ConvNeXt U-Net denoiser).
 - Active dataset: `src/depth_recon/data/dataset_argo_geotiff_gridded.py` (`ArgoGeoTIFFGriddedPatchDataset`) reads exported GeoTIFF rasters and preprocessed ARGO/EN4 profiles through the pixel super-configs.
-- Optional dataset ablation: `dataset.synthetic.enabled=true` builds sparse `x` from random GLORYS `y` pixels, controlled by `dataset.synthetic.pixel_count`.
+- Optional Stage 1 initialization: `data.dataset.pretraining_prior.enabled=true` copies SST/SSS through depth and adds fitted scalar GLORYS depth offsets; real ARGO values remain exact anchors. These targets are synthetic targets, not observations or truth.
 - Config layout:
   - `src/depth_recon/configs/px_space/training_super_config.yaml`: active pixel training super-config
   - `src/depth_recon/configs/px_space/training_super_config_standard.yaml`: explicit standard-resource training preset
-  - `src/depth_recon/configs/px_space/training_super_config_hpc.yaml`: SpaceHPC paths, offline W&B, and high-throughput loader preset
+  - `src/depth_recon/configs/px_space/training_super_config_hpc.yaml`: SpaceHPC paths, offline W&B, high-throughput loading, and two-GPU dense vertical-offset pretraining preset
   - `src/depth_recon/configs/px_space/inference_super_config.yaml`: active pixel inference super-config
   - `src/depth_recon/configs/lat_space/`: latent-space model/training/autoencoder configs
 
-DepthDif is a conditional diffusion model: it reconstructs dense GLORYS depth fields from sparse ARGO profile observations, conditioned on scenario-selected surface EO context (OSTIA SST for temperature/joint, SSS `sos` for salinity), ARGO observation support, GLORYS spatial support, plus coordinate/date context.
+DepthDif is a conditional diffusion model: it reconstructs dense depth fields from sparse ARGO profile observations, conditioned on three dense surface channels (OSTIA SST, SSS `sos`, and ADT), ARGO observation support, ocean/bathymetry support, plus coordinate/date context.
+
+The optional [vertical-offset pretraining prior](docs/vertical-offset-pretraining.md)
+uses GLORYS only to fit leakage-safe aggregate regional/seasonal statistics. It
+does not treat date-aligned GLORYS pixels or generated volumes as scientific
+truth. After deterministic surface-offset pretraining, training switches to the
+observation-only ambient objective.
 
 Ambient-occlusion training is available via `model.ambient_occlusion.*`: the model receives a further-corrupted sparse Argo input during training while loss is evaluated on the original `x` support intersected with valid `y` support and GLORYS spatial support (`x_valid_mask ∩ y_valid_mask ∩ land_mask`). With the current `x0` training preset, the model predicts the clean target on that masked support rather than the old missing-pixel region. At inference time, both standard and ambient outputs are masked back to `NaN` wherever `y_valid_mask==0`, then cleaned with GLORYS `land_mask` and an optional final `output_land_mask` overlay when supplied by inference/export code; ambient mode does not do a post-hoc overwrite with observed `x` values when `clamp_known_pixels=false`.
 See `docs/ambient-occlusion-objective.md` for the full mathematical objective, figure walkthrough, and citation.
@@ -110,6 +116,28 @@ Pixel-space GeoTIFF training uses `src/depth_recon/configs/px_space/training_sup
 /work/envs/depth/bin/python train.py --scenario joint
 ```
 
+Two-stage pretraining uses the same three-channel surface architecture throughout:
+
+```bash
+# Stage 1: deterministic surface-plus-depth-offset target
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set data.dataset.pretraining_prior.enabled=true \
+  --set data.dataset.selection.require_argo_for_train=false \
+  --set model.ambient_occlusion.enabled=false \
+  --set model.resume_checkpoint=false
+
+# Stage 2: observation-only ambient objective
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set data.dataset.pretraining_prior.enabled=false \
+  --set data.dataset.selection.require_argo_for_train=true \
+  --set model.ambient_occlusion.enabled=true \
+  --set model.resume_checkpoint=/absolute/path/to/stage1/best.ckpt \
+  --set model.load_checkpoint_only=true
+```
+
+Older one-EO-channel checkpoints are architecture-incompatible. See the
+[vertical-offset pretraining guide](docs/vertical-offset-pretraining.md) before fitting or evaluating a prior.
+
 Ambient-occlusion objective example:
 
 ```bash
@@ -120,13 +148,14 @@ Ambient-occlusion objective example:
 
 Notes:
 - Default config: `src/depth_recon/configs/px_space/training_super_config.yaml`; pass `--config <path>` for a custom super-config.
-- SpaceHPC runs can pass `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`; the explicit standard preset is `training_super_config_standard.yaml`.
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, `data.dataset.sampling.eo_source`/`eo_var_name`, `model.generated_channels`, and `model.condition_channels`.
+- SpaceHPC runs can pass `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`; this preset runs two-GPU, non-ambient dense pretraining with the fitted vertical-offset target. The explicit standard preset is `training_super_config_standard.yaml`.
+- `--scenario temperature|salinity|joint` derives the output-field contract; `[sst, sss, adt]` remains the fixed dense-conditioning order, and the resolver derives `model.generated_channels` plus `model.condition_channels`.
 - `--set data.*`, `--set model.*`, and `--set training.*` overrides apply after scenario resolution for intentional experiments.
 - Training outputs are written under `logs/<timestamp>/` with `best.ckpt`, `last.ckpt`, the original super-config, and resolved effective data/model/training config snapshots.
 - `model.resume_checkpoint` is the optional checkpoint path; `model.load_checkpoint_only` selects weights-only loading instead of full Lightning state resume.
 - Latent diffusion workflow configs live in `src/depth_recon/configs/lat_space/`; see `docs/autoencoder.md` for AE + latent setup and launch commands.
 - Pixel config details and key meanings are documented in `docs/settings.md`; latent diffusion still uses the `src/depth_recon/configs/lat_space/` config files documented in `docs/autoencoder.md`.
+- The two-stage vertical-offset/ambient workflow, leakage guard, and evaluation gate are documented in `docs/vertical-offset-pretraining.md`.
 
 ## Inference
 

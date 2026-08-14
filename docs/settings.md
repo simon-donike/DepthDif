@@ -7,7 +7,7 @@ This page maps the current config files to runtime behavior. Pixel-space trainin
 | --- | --- | --- |
 | `src/depth_recon/configs/px_space/training_super_config.yaml` | `train.py` | Pixel GeoTIFF training defaults. Contains top-level `scenario`, `data`, `model`, and `training` sections. |
 | `src/depth_recon/configs/px_space/training_super_config_standard.yaml` | `train.py --config ...` | Explicit copy of the standard-resource training preset. |
-| `src/depth_recon/configs/px_space/training_super_config_hpc.yaml` | `train.py --config ...` | SpaceHPC preset with Lustre paths, offline W&B logging, and increased batch/worker values. |
+| `src/depth_recon/configs/px_space/training_super_config_hpc.yaml` | `train.py --config ...` | SpaceHPC preset with Lustre paths, offline W&B logging, increased batch/worker values, and two-GPU non-ambient dense vertical-offset pretraining. |
 | `src/depth_recon/configs/px_space/inference_super_config.yaml` | inference exporters and smoke scripts | Pixel GeoTIFF inference defaults. Contains top-level `scenario`, `data`, `model`, `training`, and `inference` sections. |
 
 Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config.yaml`, `training_config.yaml`, and `ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md).
@@ -16,13 +16,13 @@ Latent-space workflows still use `src/depth_recon/configs/lat_space/model_config
 
 Select the pixel task with `--scenario temperature|salinity|joint` or with the top-level `scenario` key in the super-config. CLI `--scenario` wins over the file. The resolver lives in `depth_recon.configs.config_resolver_pixel` and materializes effective split configs for existing dataset/model constructors.
 
-| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Derived EO source | Derived `model.generated_channels` | Derived `model.condition_channels` |
+| Scenario | Derived `model.output_fields` | Derived `data.dataset.output.fields` | Derived `data.dataset.output.include_salinity` | Dense surface order | Derived `model.generated_channels` | Derived `model.condition_channels` |
 | --- | --- | --- | ---: | --- | ---: | ---: |
-| `temperature` | `['temperature']` | `['temperature']` | `false` | `ostia/analysed_sst` | `50` | `53` |
-| `salinity` | `['salinity']` | `['salinity']` | `true` | `sss/sos` | `50` | `53` |
-| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `ostia/analysed_sst` | `100` | `103` |
+| `temperature` | `['temperature']` | `['temperature']` | `false` | `[sst, sss, adt]` | `50` | `55` |
+| `salinity` | `['salinity']` | `['salinity']` | `true` | `[sst, sss, adt]` | `50` | `55` |
+| `joint` | `['temperature', 'salinity']` | `['temperature', 'salinity']` | `true` | `[sst, sss, adt]` | `100` | `105` |
 
-`model.condition_channels` is computed from the selected generated channels plus enabled conditioning inputs: EO channel, `condition_mask_channels`, and land-mask channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `eo_source`, `eo_var_name`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
+`model.condition_channels` is computed from the selected generated channels plus the ordered dense surface channels, `condition_mask_channels`, and the ocean-support channel. Do not maintain `output_fields`, `fields`, `include_salinity`, `eo_source`, `eo_var_name`, `generated_channels`, or `condition_channels` by hand in the super-config for normal runs. Use repeatable `--set` overrides only for intentional experiments; overrides are applied after scenario derivation.
 
 Examples:
 
@@ -72,13 +72,15 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.sampling.temporal_window_days` | `7` | Centered ARGO/OSTIA/auxiliary window around each GLORYS date. |
 | `data.dataset.sampling.glorys_var_name` | `thetao` | Dense GLORYS temperature target variable. |
 | `data.dataset.sampling.ostia_var_name` | `analysed_sst` | Legacy OSTIA variable key used when `eo_source=ostia`. |
-| `data.dataset.sampling.eo_source` | scenario-derived | Dense surface EO raster group: `ostia` for temperature/joint, `sss` for salinity. |
-| `data.dataset.sampling.eo_var_name` | scenario-derived | Dense surface EO raster variable: `analysed_sst` for OSTIA, `sos` for SSS. |
-| `data.dataset.selection.require_argo_for_train` | `false` | Drops train rows without ARGO support when enabled. |
+| `data.dataset.sampling.eo_source` | scenario-derived | Legacy single-EO fallback; the maintained contract uses `surface_conditioning.sources`. |
+| `data.dataset.sampling.eo_var_name` | scenario-derived | Legacy single-EO fallback variable. |
+| `data.dataset.surface_conditioning.sources` | `[sst, sss, adt]` | Ordered dense predictor channels. Keep this order unchanged across Stage 1 and Stage 2. |
+| `data.dataset.pretraining_prior.enabled` | `false` | Enables online stochastic vertical-offset targets for Stage 1 only. Requires ambient occlusion to be disabled. |
+| `data.dataset.pretraining_prior.statistics_path` | `src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz` | Aggregate prior artifact committed in the repository data folder. Dataset-root-relative and absolute paths are also accepted. |
+| `data.dataset.pretraining_prior.bathymetry_reference_date` | `null` | Fixed GLORYS validity-mask date; null selects the earliest available mask. No GLORYS values are used. |
+| `data.dataset.selection.require_argo_for_train` | `true` | Drops zero-loss train rows without ARGO support for ambient training; Stage 1 prior pretraining overrides it to `false`. |
 | `data.dataset.selection.require_argo_for_val` | `true` | Drops validation rows without ARGO support. |
 | `data.dataset.selection.require_argo_for_all` | `false` | Keeps no-ARGO rows for full-grid inference. |
-| `data.dataset.synthetic.enabled` | `false` | If true, builds sparse `x` by sampling dense `y` instead of ARGO. |
-| `data.dataset.synthetic.pixel_count` | `250` | Number of horizontal pixels sampled when synthetic mode is enabled. |
 | `data.dataset.finetune_sampling.enabled` | `false` | Enables train-split hard-area row filtering for coastal finetuning. |
 | `data.dataset.finetune_sampling.hard_fraction` | `0.75` | Target retained-row fraction from configured hard regions. |
 | `data.dataset.finetune_sampling.apply_to_splits` | `[train]` | Splits affected by hard/easy row filtering; validation is unchanged by default. |
@@ -111,7 +113,8 @@ These keys live under top-level `model` in both pixel super-configs.
 | `model.generated_channels` | scenario-derived | Number of generated output channels. Derived from scenario. |
 | `model.condition_channels` | scenario-derived | Total input channels to the denoiser. Derived from scenario and conditioning toggles. |
 | `model.condition_mask_channels` | `1` | Number of valid-mask channels appended to conditioning when enabled. |
-| `model.condition_include_eo` | `true` | Prepends the scenario-selected EO channel to model conditioning. |
+| `model.condition_include_eo` | `true` | Prepends the configured dense surface channels to model conditioning. |
+| `model.condition_eo_channels` | `3` | Number of dense surface channels; derived from `surface_conditioning.sources`. |
 | `model.condition_use_valid_mask` | `true` | Appends ARGO observation support to conditioning. |
 | `model.condition_use_land_mask` | `true` | Appends GLORYS spatial support to conditioning. |
 | `model.clamp_known_pixels` | `false` | Re-injects known values during reverse sampling when enabled. |

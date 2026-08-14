@@ -11,7 +11,7 @@ import pandas as pd
 import rasterio
 from rasterio.windows import Window
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, get_worker_info
 from tqdm import tqdm
 import xarray as xr
 import yaml
@@ -31,10 +31,14 @@ from depth_recon.data.dataset_grid_utils import (
     _sanitize_cache_text,
     _validate_grid_params,
 )
+from depth_recon.data.synthetic_dataset_creation.vertical_offset_prior import (
+    VerticalOffsetPrior,
+)
 from depth_recon.paths import config_path, resolve_config_path
 from depth_recon.utils.normalizations import (
     CELSIUS_TO_KELVIN_OFFSET,
     salinity_normalize,
+    sea_height_normalize,
     temperature_normalize,
 )
 
@@ -87,6 +91,14 @@ def _resolve_manifest_path(root_dir: Path, raw_path: str | Path) -> Path:
     if path.is_absolute():
         return path
     return root_dir / path
+
+
+def _resolve_pretraining_prior_path(root_dir: Path, raw_path: str | Path) -> Path:
+    """Resolve a repository-relative prior, then fall back to the dataset root."""
+    path = Path(raw_path)
+    if path.is_absolute() or path.is_file():
+        return path
+    return _resolve_manifest_path(root_dir, path)
 
 
 def _resolve_land_mask_path(root_dir: Path, raw_path: str | Path) -> Path:
@@ -201,6 +213,26 @@ class GeoTIFFRasterStore:
         if self.kelvin_temperature:
             decoded = _kelvin_to_celsius(decoded)
         return decoded.astype(np.float32, copy=False)
+
+    def read_valid_mask_patch(
+        self,
+        *,
+        target_date: int,
+        grid_y0: int,
+        grid_x0: int,
+        tile_size: int,
+    ) -> np.ndarray:
+        """Read raster nodata support without decoding target values."""
+        path = self.paths_by_date[int(target_date)]
+        src = self.cache.get(path)
+        window = Window(
+            col_off=int(grid_x0),
+            row_off=int(grid_y0),
+            width=int(tile_size),
+            height=int(tile_size),
+        )
+        nodata = int(self.stretch.get("nodata", NODATA_CODE))
+        return np.asarray(src.read(window=window) != nodata, dtype=bool)
 
 
 def _normalize_accepted_qc_flags(values: Sequence[int] | None) -> tuple[int, ...]:
@@ -716,6 +748,13 @@ EO_STRETCH_BY_SOURCE_VAR = {
 }
 
 
+SURFACE_SOURCE_SPECS = {
+    "sst": ("ostia", "analysed_sst", "temperature_kelvin", "temperature"),
+    "sss": ("sss", "sos", "salinity", "salinity"),
+    "adt": ("sealevel", "adt", "sea_height", "sea_height"),
+}
+
+
 class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     """Dataset that lazily reads training patches from exported GeoTIFF stores."""
 
@@ -741,15 +780,14 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         finetune_sampling: dict[str, Any] | None = None,
         temporal_window_days: int = 7,
         glorys_var_name: str = "thetao",
-        target_source: str = "glorys",
         ostia_var_name: str = "analysed_sst",
         eo_source: str = "ostia",
         eo_var_name: str | None = None,
         require_argo_for_train: bool = True,
         require_argo_for_val: bool = True,
         require_argo_for_all: bool = False,
-        synthetic_mode: bool = False,
-        synthetic_pixel_count: int = 250,
+        surface_conditioning: dict[str, Any] | None = None,
+        pretraining_prior: dict[str, Any] | None = None,
         return_info: bool = True,
         return_coords: bool = True,
         include_salinity: bool = False,
@@ -799,7 +837,6 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         }
         self.temporal_window_days = int(temporal_window_days)
         self.glorys_var_name = str(glorys_var_name)
-        self.target_source = self._normalize_target_source(target_source)
         self.ostia_var_name = str(ostia_var_name)
         self.eo_source, self.eo_var_name = self._normalize_eo_selection(
             eo_source=eo_source,
@@ -826,13 +863,17 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.require_argo_for_train = bool(require_argo_for_train)
         self.require_argo_for_val = bool(require_argo_for_val)
         self.require_argo_for_all = bool(require_argo_for_all)
-        self.synthetic_mode = bool(synthetic_mode)
-        self.synthetic_pixel_count = int(synthetic_pixel_count)
+        self.surface_conditioning = self._normalize_surface_conditioning(
+            surface_conditioning
+        )
+        self.pretraining_prior_config = self._normalize_pretraining_prior(
+            pretraining_prior
+        )
+        self.pretraining_prior_enabled = bool(self.pretraining_prior_config["enabled"])
+        self._train_prior_rng: np.random.Generator | None = None
         self.cache_size = int(cache_size)
         if self.temporal_window_days < 1:
             raise ValueError("sampling.temporal_window_days must be >= 1.")
-        if self.synthetic_pixel_count < 0:
-            raise ValueError("synthetic.pixel_count must be >= 0.")
 
         self.raster_cache = RasterDatasetCache(max_open=cache_size)
         self._depth_axis_m = np.asarray(
@@ -849,15 +890,39 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "ARGO profile zarr depth axis does not match GeoTIFF manifest depth_axis_m."
             )
 
-        self.glorys_store, self.salinity_store, self.eo_store = (
+        self.glorys_store, self.salinity_store, self.surface_stores = (
             self._build_raster_stores()
         )
         # Backward-compatible alias for callers that still inspect the old name.
-        self.ostia_store = self.eo_store
-        self.available_dates = sorted(self.glorys_store.dates & self.eo_store.dates)
+        self.eo_store = next(iter(self.surface_stores.values()))
+        self.ostia_store = self.surface_stores.get("sst", self.eo_store)
+        self.pretraining_prior = self._open_pretraining_prior()
+
+        available_dates = set(self.glorys_store.dates)
+        for store in self.surface_stores.values():
+            available_dates &= store.dates
+        if self.pretraining_prior_enabled:
+            available_dates = set.intersection(
+                *(store.dates for store in self.surface_stores.values())
+            )
+        self.available_dates = sorted(available_dates)
+        configured_reference_date = self.pretraining_prior_config.get(
+            "bathymetry_reference_date"
+        )
+        self.bathymetry_reference_date = (
+            int(configured_reference_date)
+            if configured_reference_date is not None
+            else min(self.glorys_store.dates)
+        )
+        if self.bathymetry_reference_date not in self.glorys_store.dates:
+            raise ValueError(
+                "pretraining_prior.bathymetry_reference_date is not available "
+                "in the GLORYS mask store."
+            )
+
         if not self.available_dates:
             raise RuntimeError("No overlapping GeoTIFF raster dates were found.")
-        if self.include_salinity:
+        if self.include_salinity and not self.pretraining_prior_enabled:
             if self.salinity_store is None:
                 raise RuntimeError("GeoTIFF salinity store was not initialized.")
             missing_salinity_dates = sorted(
@@ -907,9 +972,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             "glorys_store",
             "salinity_store",
             "eo_store",
+            "surface_stores",
+            "pretraining_prior",
             "ostia_store",
         ):
             state[key] = None
+        state["_train_prior_rng"] = None
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -917,18 +985,55 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.__dict__.update(state)
         self.raster_cache = RasterDatasetCache(max_open=int(self.cache_size))
         self.argo_store = self._open_argo_store()
-        self.glorys_store, self.salinity_store, self.eo_store = (
+        self.glorys_store, self.salinity_store, self.surface_stores = (
             self._build_raster_stores()
         )
-        self.ostia_store = self.eo_store
+        self.eo_store = next(iter(self.surface_stores.values()))
+        self.ostia_store = self.surface_stores.get("sst", self.eo_store)
+        self.pretraining_prior = self._open_pretraining_prior()
 
     @staticmethod
-    def _normalize_target_source(target_source: str) -> str:
-        """Resolve the dense target raster group used as model supervision."""
-        source = str(target_source or "glorys").strip().lower()
-        if source not in {"glorys", "synthetic"}:
-            raise ValueError("target_source must be one of: 'glorys', 'synthetic'")
-        return source
+    def _normalize_surface_conditioning(
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Validate dense surface-conditioning sources in model channel order."""
+        if config is None:
+            return {"sources": None}
+        if not isinstance(config, dict):
+            raise ValueError("surface_conditioning must be a mapping.")
+        raw_sources = config.get("sources", ())
+        if isinstance(raw_sources, str):
+            raw_sources = [raw_sources]
+        sources = tuple(str(value).strip().lower() for value in raw_sources)
+        if not sources:
+            raise ValueError("surface_conditioning.sources must not be empty.")
+        if len(set(sources)) != len(sources):
+            raise ValueError(
+                "surface_conditioning.sources must not contain duplicates."
+            )
+        unsupported = sorted(set(sources) - set(SURFACE_SOURCE_SPECS))
+        if unsupported:
+            raise ValueError(
+                f"Unsupported surface conditioning sources: {unsupported}."
+            )
+        return {"sources": sources}
+
+    @staticmethod
+    def _normalize_pretraining_prior(
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Validate the optional deterministic vertical-offset pretraining prior."""
+        if config is None:
+            return {"enabled": False, "statistics_path": None}
+        if not isinstance(config, dict):
+            raise ValueError("pretraining_prior must be a mapping.")
+        normalized = dict(config)
+        normalized["enabled"] = bool(normalized.get("enabled", False))
+        statistics_path = normalized.get("statistics_path")
+        normalized["statistics_path"] = statistics_path
+        if normalized["enabled"] and not statistics_path:
+            raise ValueError("pretraining_prior.enabled=true requires statistics_path.")
+        return normalized
 
     @staticmethod
     def _normalize_eo_selection(
@@ -978,73 +1083,89 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             accepted_qc_flags=self.accepted_argo_qc_flags,
         )
 
+    def _open_pretraining_prior(self) -> VerticalOffsetPrior | None:
+        """Open the configured deterministic vertical-offset prior."""
+        if not self.pretraining_prior_enabled:
+            return None
+        required_sources = tuple(SURFACE_SOURCE_SPECS)
+        if tuple(self.surface_conditioning["sources"] or ()) != required_sources:
+            raise ValueError(
+                "pretraining_prior.enabled=true requires "
+                "surface_conditioning.sources=[sst, sss, adt]."
+            )
+        prior_path = _resolve_pretraining_prior_path(
+            self.root_dir, self.pretraining_prior_config["statistics_path"]
+        )
+        return VerticalOffsetPrior.from_npz(
+            prior_path,
+            expected_depth_axis_m=self._depth_axis_m,
+        )
+
+    def _build_raster_store(
+        self,
+        *,
+        source: str,
+        variable: str,
+        stretch_name: str,
+        kelvin_temperature: bool = False,
+    ) -> GeoTIFFRasterStore:
+        """Build one date-indexed raster store from manifest metadata."""
+        rasters = self.manifest.get("rasters", {})
+        entries = rasters.get(source, {}).get(variable, [])
+        stretch = self.manifest.get("stretch", {}).get(stretch_name)
+        if not entries or not isinstance(stretch, dict):
+            raise RuntimeError(
+                "GeoTIFF manifest is missing "
+                f"{source}/{variable} or stretch {stretch_name!r}."
+            )
+        return GeoTIFFRasterStore(
+            paths_by_date=_records_by_date(entries, self.root_dir),
+            stretch=stretch,
+            cache=self.raster_cache,
+            kelvin_temperature=kelvin_temperature,
+        )
+
     def _build_raster_stores(
         self,
-    ) -> tuple[GeoTIFFRasterStore, GeoTIFFRasterStore | None, GeoTIFFRasterStore]:
-        """Build date-indexed dense raster stores from manifest entries."""
-        rasters = self.manifest.get("rasters", {})
-        stretch = self.manifest.get("stretch", {})
-        temp_stretch = stretch.get("temperature_kelvin")
-        if not isinstance(temp_stretch, dict):
-            raise RuntimeError(
-                "GeoTIFF manifest is missing temperature_kelvin stretch."
-            )
-        eo_stretch = stretch.get(self.eo_stretch_name)
-        if not isinstance(eo_stretch, dict):
-            raise RuntimeError(
-                "GeoTIFF manifest is missing EO stretch "
-                f"{self.eo_stretch_name!r} for {self.eo_source}/{self.eo_var_name}."
-            )
-        target_rasters = rasters.get(self.target_source, {})
-        target_entries = (
-            target_rasters.get(self.glorys_var_name, [])
-            if isinstance(target_rasters, dict)
-            else []
+    ) -> tuple[
+        GeoTIFFRasterStore,
+        GeoTIFFRasterStore | None,
+        dict[str, GeoTIFFRasterStore],
+    ]:
+        """Build GLORYS targets and configured dense surface stores."""
+        glorys_store = self._build_raster_store(
+            source="glorys",
+            variable=self.glorys_var_name,
+            stretch_name="temperature_kelvin",
+            kelvin_temperature=True,
         )
-        eo_rasters = rasters.get(self.eo_source, {})
-        eo_entries = (
-            eo_rasters.get(self.eo_var_name, []) if isinstance(eo_rasters, dict) else []
+        salinity_store = (
+            self._build_raster_store(
+                source="glorys", variable="so", stretch_name="salinity"
+            )
+            if self.include_salinity
+            else None
         )
-        if not target_entries or not eo_entries:
-            raise RuntimeError(
-                "GeoTIFF manifest is missing target/EO raster entries for "
-                f"{self.target_source}/{self.glorys_var_name!r}/"
-                f"{self.eo_source}/{self.eo_var_name}."
-            )
-        salinity_store = None
-        if self.include_salinity:
-            salinity_stretch = stretch.get("salinity")
-            if not isinstance(salinity_stretch, dict):
-                raise RuntimeError("GeoTIFF manifest is missing salinity stretch.")
-            salinity_entries = (
-                target_rasters.get("so", []) if isinstance(target_rasters, dict) else []
-            )
-            if not salinity_entries:
-                raise RuntimeError(
-                    "GeoTIFF manifest is missing target salinity 'so' raster entries "
-                    f"for source {self.target_source!r}."
-                )
-            salinity_store = GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(salinity_entries, self.root_dir),
-                stretch=salinity_stretch,
-                cache=self.raster_cache,
-                kelvin_temperature=False,
-            )
-        return (
-            GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(target_entries, self.root_dir),
-                stretch=temp_stretch,
-                cache=self.raster_cache,
-                kelvin_temperature=True,
-            ),
-            salinity_store,
-            GeoTIFFRasterStore(
-                paths_by_date=_records_by_date(eo_entries, self.root_dir),
-                stretch=eo_stretch,
-                cache=self.raster_cache,
+        configured_sources = self.surface_conditioning["sources"]
+        if configured_sources is None:
+            eo_store = self._build_raster_store(
+                source=self.eo_source,
+                variable=self.eo_var_name,
+                stretch_name=self.eo_stretch_name,
                 kelvin_temperature=self.eo_normalization == "temperature",
-            ),
-        )
+            )
+            return glorys_store, salinity_store, {"legacy": eo_store}
+
+        surface_stores: dict[str, GeoTIFFRasterStore] = {}
+        for name in configured_sources:
+            source, variable, stretch_name, normalization = SURFACE_SOURCE_SPECS[name]
+            surface_stores[name] = self._build_raster_store(
+                source=source,
+                variable=variable,
+                stretch_name=stretch_name,
+                kelvin_temperature=normalization == "temperature",
+            )
+        return glorys_store, salinity_store, surface_stores
 
     @property
     def rows(self) -> list[dict[str, Any]]:
@@ -1181,14 +1302,6 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     default="thetao",
                 )
             ),
-            target_source=str(
-                cls._cfg_get(
-                    ds_cfg,
-                    "sampling.target_source",
-                    "target_source",
-                    default="glorys",
-                )
-            ),
             ostia_var_name=str(
                 cls._cfg_get(
                     ds_cfg,
@@ -1251,18 +1364,17 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "accepted_argo_qc_flags",
                 default=None,
             ),
-            synthetic_mode=bool(
-                cls._cfg_get(
-                    ds_cfg, "synthetic.enabled", "synthetic_enabled", default=False
-                )
+            surface_conditioning=cls._cfg_get(
+                ds_cfg,
+                "surface_conditioning",
+                "surface_conditioning",
+                default=None,
             ),
-            synthetic_pixel_count=int(
-                cls._cfg_get(
-                    ds_cfg,
-                    "synthetic.pixel_count",
-                    "synthetic_pixel_count",
-                    default=250,
-                )
+            pretraining_prior=cls._cfg_get(
+                ds_cfg,
+                "pretraining_prior",
+                "pretraining_prior",
+                default=None,
             ),
             return_info=bool(
                 cls._cfg_get(ds_cfg, "output.return_info", "return_info", default=True)
@@ -1553,8 +1665,6 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
 
     def _require_argo_for_current_split(self) -> bool:
         """Return whether the current split requires sparse ARGO support."""
-        if self.synthetic_mode:
-            return False
         if self.split == "train":
             return self.require_argo_for_train
         if self.split == "val":
@@ -1629,29 +1739,62 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             copy=False,
         )[None, ...]
 
-    def _load_eo_patch(self, row: dict[str, Any]) -> np.ndarray:
-        """Load the configured dense surface-context patch."""
-        eo_np = self.eo_store.read_patch(
-            target_date=int(row["date"]),
+    def _load_surface_fields(self, row: dict[str, Any]) -> dict[str, np.ndarray]:
+        """Load configured surface predictors in physical units."""
+        fields: dict[str, np.ndarray] = {}
+        for name, store in self.surface_stores.items():
+            values = store.read_patch(
+                target_date=int(row["date"]),
+                grid_y0=int(row["grid_y0"]),
+                grid_x0=int(row["grid_x0"]),
+                tile_size=self.tile_size,
+            )
+            if values.ndim == 3 and int(values.shape[0]) == 1:
+                values = values[0]
+            if values.ndim != 2:
+                raise RuntimeError(
+                    f"Expected surface field {name!r} shape (H,W), "
+                    f"got {tuple(values.shape)}."
+                )
+            fields[name] = values.astype(np.float32, copy=False)
+        return fields
+
+    def _normalize_surface_fields(self, fields: dict[str, np.ndarray]) -> torch.Tensor:
+        """Normalize and stack surface fields in configured channel order."""
+        normalized: list[torch.Tensor] = []
+        for name, values in fields.items():
+            tensor = torch.from_numpy(values[None, ...])
+            if name == "sst":
+                tensor = temperature_normalize(mode="norm", tensor=tensor)
+            elif name == "sss":
+                tensor = salinity_normalize(mode="norm", tensor=tensor)
+            elif name == "adt":
+                tensor = sea_height_normalize(mode="norm", tensor=tensor)
+            elif self.eo_normalization == "temperature":
+                tensor = temperature_normalize(mode="norm", tensor=tensor)
+            elif self.eo_normalization == "salinity":
+                tensor = salinity_normalize(mode="norm", tensor=tensor)
+            else:
+                raise RuntimeError(f"Unsupported EO normalization: {name!r}.")
+            normalized.append(tensor)
+        return torch.cat(normalized, dim=0)
+
+    def _load_prior_depth_valid_mask(self, row: dict[str, Any]) -> np.ndarray:
+        """Read a fixed-reference depth mask without decoding GLORYS values."""
+        return self.glorys_store.read_valid_mask_patch(
+            target_date=int(self.bathymetry_reference_date),
             grid_y0=int(row["grid_y0"]),
             grid_x0=int(row["grid_x0"]),
             tile_size=self.tile_size,
         )
-        if eo_np.ndim == 3 and int(eo_np.shape[0]) == 1:
-            eo_np = eo_np[0]
-        if eo_np.ndim != 2:
-            raise RuntimeError(
-                f"Expected EO patch shape (H,W), got {tuple(eo_np.shape)}"
-            )
-        return eo_np.astype(np.float32, copy=False)[None, ...]
 
-    def _normalize_eo_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Normalize the EO channel according to its physical variable family."""
-        if self.eo_normalization == "temperature":
-            return temperature_normalize(mode="norm", tensor=tensor)
-        if self.eo_normalization == "salinity":
-            return salinity_normalize(mode="norm", tensor=tensor)
-        raise RuntimeError(f"Unsupported EO normalization: {self.eo_normalization}")
+    def _prior_train_rng(self) -> np.random.Generator:
+        """Return one stateful RNG per training dataset worker."""
+        if self._train_prior_rng is None:
+            worker = get_worker_info()
+            worker_seed = int(worker.seed) if worker is not None else self.random_seed
+            self._train_prior_rng = np.random.default_rng(worker_seed)
+        return self._train_prior_rng
 
     def _spatial_support_from_valid_mask(
         self,
@@ -1810,160 +1953,173 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         values = self.argo_store.load_salinity_profiles(indices)
         return self._rasterize_profile_values(row, indices, values)
 
-    def _synthetic_rng_for_row(
-        self,
-        row: dict[str, Any],
-        *,
-        idx: int,
-    ) -> np.random.Generator:
-        """Build a deterministic synthetic-sampling RNG for one row."""
-        seed = np.random.SeedSequence(
-            [
-                int(self.random_seed),
-                int(row.get("patch_id", 0)),
-                int(row.get("date", 0)),
-                int(idx),
-            ]
-        )
-        return np.random.default_rng(seed)
-
-    def _build_synthetic_x_from_glorys(
-        self,
-        y_np: np.ndarray,
-        y_valid_mask_np: np.ndarray,
-        row: dict[str, Any],
-        *,
-        idx: int,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Build sparse synthetic observations by sampling the dense target."""
-        x_np = np.full(y_np.shape, np.nan, dtype=np.float32)
-        x_valid = np.zeros(y_valid_mask_np.shape, dtype=bool)
-        if self.synthetic_pixel_count == 0:
-            return x_np, x_valid
-
-        valid_columns = np.asarray(y_valid_mask_np, dtype=bool).any(axis=0)
-        flat_valid_columns = np.flatnonzero(valid_columns.reshape(-1))
-        if flat_valid_columns.size == 0:
-            return x_np, x_valid
-
-        sample_count = min(
-            int(self.synthetic_pixel_count), int(flat_valid_columns.size)
-        )
-        rng = self._synthetic_rng_for_row(row, idx=idx)
-        selected = rng.choice(flat_valid_columns, size=sample_count, replace=False)
-        row_indices, col_indices = np.unravel_index(selected, valid_columns.shape)
-        for row_idx, col_idx in zip(row_indices.tolist(), col_indices.tolist()):
-            depth_valid = y_valid_mask_np[:, int(row_idx), int(col_idx)]
-            if not np.any(depth_valid):
-                continue
-            # Synthetic mode uses decoded dense target values as sparse input.
-            x_np[depth_valid, int(row_idx), int(col_idx)] = y_np[
-                depth_valid,
-                int(row_idx),
-                int(col_idx),
-            ]
-            x_valid[depth_valid, int(row_idx), int(col_idx)] = True
-        return x_np, x_valid
-
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Return one model-ready training sample."""
+        """Return one model-ready sample with real ARGO sparse inputs."""
         row = self._rows.iloc[int(idx)]
-        eo_np = self._load_eo_patch(row)
-        temperature_payload: dict[str, torch.Tensor] | None = None
-        salinity_payload: dict[str, torch.Tensor] | None = None
-        land_support_np: np.ndarray | None = None
+        surface_fields = self._load_surface_fields(row)
+        x_np, x_valid_mask_np = (
+            self._rasterize_argo_patch(row)
+            if self._loads_temperature
+            else self._empty_sparse_patch()
+        )
+        x_salinity_np, x_salinity_valid_mask_np = (
+            self._rasterize_argo_salinity_patch(row)
+            if self.include_salinity
+            else self._empty_sparse_patch()
+        )
 
-        if self._loads_temperature:
-            y_np = self._load_y_patch(row)
-            y_valid_mask_np = np.isfinite(y_np)
-            if self.synthetic_mode:
-                x_np, x_valid_mask_np = self._build_synthetic_x_from_glorys(
-                    y_np,
-                    y_valid_mask_np,
-                    row,
-                    idx=int(idx),
-                )
-            else:
-                x_np, x_valid_mask_np = self._rasterize_argo_patch(row)
+        if self.pretraining_prior_enabled:
+            if self.pretraining_prior is None:
+                raise RuntimeError("Pretraining prior was not initialized.")
+            depth_valid_mask_np = self._load_prior_depth_valid_mask(row)
+            prior_surface_fields = {
+                "sst": surface_fields["sst"] + np.float32(CELSIUS_TO_KELVIN_OFFSET),
+                "sss": surface_fields["sss"],
+                "adt": surface_fields["adt"],
+            }
+            sample_key = (
+                int(row.get("patch_id", 0)),
+                int(row["date"]),
+                int(row["grid_y0"]),
+                int(row["grid_x0"]),
+            )
+            prior_sample = self.pretraining_prior.sample(
+                prior_surface_fields,
+                depth_valid_mask=depth_valid_mask_np,
+                date=int(row["date"]),
+                region=(
+                    0.5 * (float(row["lat0"]) + float(row["lat1"])),
+                    _center_lon_deg(float(row["lon0"]), float(row["lon1"])),
+                ),
+                grid_spacing_km=(
+                    111.195 * self.resolution_deg,
+                    max(
+                        1.0,
+                        111.195
+                        * self.resolution_deg
+                        * abs(
+                            np.cos(
+                                np.deg2rad(
+                                    0.5 * (float(row["lat0"]) + float(row["lat1"]))
+                                )
+                            )
+                        ),
+                    ),
+                ),
+                split=self.split,
+                sample_key=sample_key,
+                rng=self._prior_train_rng() if self.split == "train" else None,
+                temperature_anchors=(
+                    x_np + np.float32(CELSIUS_TO_KELVIN_OFFSET)
+                    if self._loads_temperature
+                    else None
+                ),
+                salinity_anchors=x_salinity_np if self.include_salinity else None,
+            )
+            y_np = np.asarray(
+                prior_sample.temperature_k, dtype=np.float32
+            ) - np.float32(CELSIUS_TO_KELVIN_OFFSET)
+            y_salinity_np = np.asarray(prior_sample.salinity_psu, dtype=np.float32)
+            y_valid_mask_np = np.asarray(prior_sample.valid_mask, dtype=bool)
+            y_salinity_valid_mask_np = y_valid_mask_np.copy()
+            temperature_supervision_weight_np = np.asarray(
+                prior_sample.temperature_supervision_weight, dtype=np.float32
+            )
+            salinity_supervision_weight_np = np.asarray(
+                prior_sample.salinity_supervision_weight, dtype=np.float32
+            )
+        else:
+            y_np = self._load_y_patch(row) if self._loads_temperature else None
+            y_salinity_np = (
+                self._load_y_salinity_patch(row) if self.include_salinity else None
+            )
+            y_valid_mask_np = np.isfinite(y_np) if y_np is not None else None
+            y_salinity_valid_mask_np = (
+                np.isfinite(y_salinity_np) if y_salinity_np is not None else None
+            )
+            temperature_supervision_weight_np = (
+                y_valid_mask_np.astype(np.float32)
+                if y_valid_mask_np is not None
+                else None
+            )
+            salinity_supervision_weight_np = (
+                y_salinity_valid_mask_np.astype(np.float32)
+                if y_salinity_valid_mask_np is not None
+                else None
+            )
+        eo = self._normalize_surface_fields(surface_fields)
+        eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
+        land_support_np = (
+            y_valid_mask_np if y_valid_mask_np is not None else y_salinity_valid_mask_np
+        )
+        land_mask_np = self._build_land_mask_patch(
+            row,
+            y_valid_mask_np=land_support_np,
+            eo_np=next(iter(surface_fields.values())),
+        )
+        sample: dict[str, Any] = {
+            "eo": eo,
+            "land_mask": torch.from_numpy(land_mask_np),
+            "date": _parse_date_int(row.get("date", 19700115)),
+        }
 
+        if self._loads_temperature and y_np is not None and y_valid_mask_np is not None:
             x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))
             y = temperature_normalize(mode="norm", tensor=torch.from_numpy(y_np))
-            x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-            y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
             x_valid_mask = torch.from_numpy(
                 x_valid_mask_np.astype(np.bool_, copy=False)
             )
             y_valid_mask = torch.from_numpy(
                 y_valid_mask_np.astype(np.bool_, copy=False)
             )
-            temperature_payload = {
-                "x": x,
-                "y": y,
-                "x_valid_mask": x_valid_mask,
-                "y_valid_mask": y_valid_mask,
-                "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
-            }
-            land_support_np = y_valid_mask_np
+            sample.update(
+                {
+                    "x": torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0),
+                    "y": torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0),
+                    "x_valid_mask": x_valid_mask,
+                    "y_valid_mask": y_valid_mask,
+                    "y_supervision_weight": torch.from_numpy(
+                        temperature_supervision_weight_np
+                    ),
+                    "x_valid_mask_1d": x_valid_mask.any(dim=0, keepdim=True),
+                }
+            )
 
-        if self.include_salinity:
-            y_salinity_np = self._load_y_salinity_patch(row)
-            y_salinity_valid_mask_np = np.isfinite(y_salinity_np)
-            if self.synthetic_mode:
-                x_salinity_np, x_salinity_valid_mask_np = (
-                    self._build_synthetic_x_from_glorys(
-                        y_salinity_np,
-                        y_salinity_valid_mask_np,
-                        row,
-                        idx=int(idx),
-                    )
-                )
-            else:
-                x_salinity_np, x_salinity_valid_mask_np = (
-                    self._rasterize_argo_salinity_patch(row)
-                )
+        if (
+            self.include_salinity
+            and y_salinity_np is not None
+            and y_salinity_valid_mask_np is not None
+        ):
             x_salinity = salinity_normalize(
                 mode="norm", tensor=torch.from_numpy(x_salinity_np)
             )
             y_salinity = salinity_normalize(
                 mode="norm", tensor=torch.from_numpy(y_salinity_np)
             )
-            x_salinity = torch.nan_to_num(x_salinity, nan=0.0, posinf=0.0, neginf=0.0)
-            y_salinity = torch.nan_to_num(y_salinity, nan=0.0, posinf=0.0, neginf=0.0)
             x_salinity_valid_mask = torch.from_numpy(
                 x_salinity_valid_mask_np.astype(np.bool_, copy=False)
             )
-            y_salinity_valid_mask = torch.from_numpy(
-                y_salinity_valid_mask_np.astype(np.bool_, copy=False)
+            sample.update(
+                {
+                    "x_salinity": torch.nan_to_num(
+                        x_salinity, nan=0.0, posinf=0.0, neginf=0.0
+                    ),
+                    "y_salinity": torch.nan_to_num(
+                        y_salinity, nan=0.0, posinf=0.0, neginf=0.0
+                    ),
+                    "x_salinity_valid_mask": x_salinity_valid_mask,
+                    "y_salinity_valid_mask": torch.from_numpy(
+                        y_salinity_valid_mask_np.astype(np.bool_, copy=False)
+                    ),
+                    "y_salinity_supervision_weight": torch.from_numpy(
+                        salinity_supervision_weight_np
+                    ),
+                    "x_salinity_valid_mask_1d": x_salinity_valid_mask.any(
+                        dim=0, keepdim=True
+                    ),
+                }
             )
-            salinity_payload = {
-                "x_salinity": x_salinity,
-                "y_salinity": y_salinity,
-                "x_salinity_valid_mask": x_salinity_valid_mask,
-                "y_salinity_valid_mask": y_salinity_valid_mask,
-                "x_salinity_valid_mask_1d": x_salinity_valid_mask.any(
-                    dim=0, keepdim=True
-                ),
-            }
-            if land_support_np is None:
-                # Salinity-only runs should derive the spatial mask from salinity support.
-                land_support_np = y_salinity_valid_mask_np
 
-        land_mask_np = self._build_land_mask_patch(
-            row,
-            y_valid_mask_np=land_support_np,
-            eo_np=eo_np,
-        )
-        eo = self._normalize_eo_tensor(torch.from_numpy(eo_np))
-        eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
-        sample: dict[str, Any] = {
-            "eo": eo,
-            "land_mask": torch.from_numpy(land_mask_np),
-            "date": _parse_date_int(row.get("date", 19700115)),
-        }
-        if temperature_payload is not None:
-            sample.update(temperature_payload)
-        if salinity_payload is not None:
-            sample.update(salinity_payload)
         if self.return_coords:
             sample["coords"] = torch.tensor(
                 [
@@ -1974,10 +2130,11 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             )
         if self.return_info:
             info = dict(row)
-            info["target_source"] = self.target_source
-            info["x_source"] = "glorys_synthetic" if self.synthetic_mode else "argo"
-            info["synthetic_pixel_count"] = (
-                int(self.synthetic_pixel_count) if self.synthetic_mode else 0
+            info["target_kind"] = (
+                "vertical_offset_prior" if self.pretraining_prior_enabled else "glorys"
             )
+            info["x_source"] = "argo"
+            if self.pretraining_prior_enabled:
+                info["bathymetry_reference_date"] = int(self.bathymetry_reference_date)
             sample["info"] = info
         return sample

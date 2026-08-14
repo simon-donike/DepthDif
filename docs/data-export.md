@@ -150,46 +150,18 @@ Contents:
 - Bands: one band per GLORYS depth level
 - Band metadata: `depth_m`, stretch information, clipped counts, nodata counts
 
-### Synthetic Pretraining Targets
+### Vertical-Offset Pretraining
 
-Path:
-
-```text
-rasters/synthetic/thetao/thetao_YYYYMMDD.tif
-rasters/synthetic/so/so_YYYYMMDD.tif
-```
-
-Contents:
-
-- Source inputs: compact ARGO profile zarr, OSTIA SST rasters, and SSS `sos` rasters
-- Temperature strategy: SST plus IDW-interpolated ARGO vertical temperature deltas from each profile's shallowest valid level
-- Salinity strategy: SSS surface salinity plus IDW-interpolated ARGO vertical salinity deltas from each profile's shallowest valid level
-- Robust profile filtering: each date/depth/variable trims the outer 25% of profile deltas when there is enough support before IDW interpolation
-- Vertical gap fill: missing per-profile delta depths are linearly interpolated from available ARGO depths, with nearest-edge values held beyond observed depths
-- Nodata strategy: synthetic valid pixels are copied from same-date GLORYS `thetao`/`so` masks after synthesis
-- Smoothing: no Gaussian smoothing is applied in the current robust-delta experiment
-- IDW backend: Single-pass CUDA blockwise top-k IDW is used for the full temperature/salinity depth stack when available, with CPU KD-tree fallback
-- Stored physical units: Kelvin for `thetao`, PSU for `so`
-- File structure: one multiband GeoTIFF per weekly date
-- Storage contract: the same `uint8` stretches, nodata code, CRS, transform, band descriptions, and decode formula as `rasters/glorys/thetao` and `rasters/glorys/so`
-
-Create the synthetic target rasters in place with:
-
-```bash
-/work/envs/depth/bin/python -m depth_recon.data.synthetic_dataset_creation.synthetic_pretraining_geotiff \
-  --geotiff-root-dir /work/data/OceanVariableReconstruction \
-  --workers 1 \
-  --overwrite-synthetic
-```
-
-The exporter preserves the original `rasters.glorys` manifest entries and adds
-`rasters.synthetic`. Training still uses GLORYS by default; set
-`data.dataset.sampling.target_source: synthetic` to train against the synthetic
-pretraining targets. The exporter trims 25% total delta outliers, fills missing
-profile delta depths vertically, uses single-pass CUDA stack IDW when available, applies no Gaussian
-smoothing, and records those parameters in the manifest.
-
-When uploading with `huggingface_hub`, pass `ignore_patterns=["rasters/synthetic/**", "manifest.yaml.synthetic_backup_*"]`; the packaged dataset root also writes a `.gitignore` for Git-based HF repo updates.
+The old per-date IDW synthetic GeoTIFF export is retired. Pretraining targets
+are constructed online from `priors/vertical_offset_prior.npz`. The artifact
+stores one mean GLORYS depth-minus-surface coefficient per depth for temperature
+and salinity, coverage weights, fitting/excluded years, and provenance. It has
+no dated target rasters. The loader adds each scalar offset to same-date SST/SSS,
+then applies exact surface and ARGO anchors. GLORYS is read only by the separate
+fitting job; online construction reads only a fixed-reference GLORYS nodata
+layout for the depth-valid coast/bathymetry mask. See [Vertical-Offset
+Pretraining](vertical-offset-pretraining.md) for the artifact contract and
+held-out-year guard.
 
 ### OSTIA Surface Temperature
 

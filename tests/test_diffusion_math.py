@@ -366,6 +366,35 @@ class TestDiffusionMath(unittest.TestCase):
         ).sum() / expected_mask.sum()
         self.assertTrue(torch.isclose(loss, expected))
 
+    def test_p_loss_applies_per_depth_supervision_confidence(self) -> None:
+        """Dense prior confidence must reweight both numerator and denominator."""
+        process = _make_conditional_process(parameterization="x0")
+        output = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
+        condition = torch.zeros_like(output)
+        prediction = output.clone()
+        prediction[:, 0] -= 1.0
+        prediction[:, 1] -= 3.0
+        loss_weight = torch.ones_like(output)
+        loss_weight[:, 1] = 0.25
+
+        process.forward_process = _FakeForward(
+            noisy_offset=0.0, noise=torch.zeros_like(output)
+        )
+        process.model = _CapturingPredictor(prediction)
+
+        loss = process.p_loss(
+            output,
+            condition,
+            loss_mask=torch.ones_like(output),
+            loss_weight=loss_weight,
+            mask_loss=True,
+        )
+
+        squared_error = (output - prediction) ** 2
+        expected = (squared_error * loss_weight).sum() / loss_weight.sum()
+        self.assertTrue(torch.isclose(loss, expected))
+        self.assertTrue(torch.isclose(loss, torch.tensor(2.6)))
+
     def test_coastal_loss_weights_supervised_ocean_pixels_near_land(self) -> None:
         process = _make_conditional_process(parameterization="x0")
         output = torch.tensor(

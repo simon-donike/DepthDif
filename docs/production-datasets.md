@@ -37,7 +37,7 @@ At runtime, the loader:
 3. Opens compact ARGO profiles from `argo/argo_profiles_on_grid.zarr`.
 4. Builds a deterministic land-mask-derived patch grid from `masks/`.
 5. Assigns train/val from `split.val_year` when overlapping patches are enabled.
-6. Reads GeoTIFF rasters and compact ARGO profiles lazily per sample.
+6. Reads three ordered surface rasters, target or fixed depth support, and compact ARGO profiles lazily per sample.
 
 Only metadata caches are written under `dataset.core.metadata_cache_dir`.
 Model-facing tensors are produced on demand.
@@ -149,7 +149,7 @@ masks.
   patch centers and add those boxes as run-specific relaxed land-fraction regions.
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile
   search window for each patch date.
-- `dataset.selection.require_argo_for_train` defaults to `false`;
+- `dataset.selection.require_argo_for_train` defaults to `true` for ambient training;
   `dataset.selection.require_argo_for_val` defaults to `true`.
 - `dataset.selection.require_argo_for_all` defaults to `false` so global
   inference can cover rows without ARGO observations.
@@ -158,7 +158,7 @@ masks.
 
 ## Depth Semantics
 
-- GLORYS `thetao` defines the dense target `y`.
+- Normal dense training uses GLORYS `thetao` for `y`; optional Stage 1 uses an online deterministic surface-offset target with per-depth confidence.
 - ARGO `TEMP` is projected from `DEPH_CORRECTED` samples onto the GLORYS depth
   axis before rasterization.
 - `dataset.depth_axis_m` exposes the physical GLORYS depth levels to inference
@@ -166,8 +166,10 @@ masks.
 
 ## Output Contract
 
-Each sample returns `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`,
-`x_valid_mask_1d`, `land_mask`, `date`, and optional `coords`/`info`. `x_valid_mask` is ARGO observation support and `land_mask` is GLORYS spatial support for conditioning/loss, falling back to OSTIA finite support and then the on-disk mask if GLORYS support is unavailable. The common on-disk mask is loaded only by prediction/export paths when final cleanup is needed.
+Each sample returns three-channel `[SST, SSS, ADT]` `eo`, `x`, `y`, `x_valid_mask`, `y_valid_mask`,
+`x_valid_mask_1d`, `land_mask`, `date`, optional Stage 1 `y_supervision_weight`, and optional `coords`/`info`. `x_valid_mask` is ARGO observation support. `land_mask` uses dated GLORYS support in the normal path and the fixed-reference depth mask in Stage 1, with surface/disk-mask fallbacks. The common on-disk mask is loaded only by prediction/export paths when final cleanup is needed.
+
+Stage 1 and Stage 2 keep identical `[sst, sss, adt]` channel order. See [Vertical-Offset Pretraining](vertical-offset-pretraining.md) for leakage and scientific-evaluation requirements.
 
 See [Data Contract](data-contract.md) for the full tensor contract.
 

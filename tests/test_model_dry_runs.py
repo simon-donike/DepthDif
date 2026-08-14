@@ -1048,6 +1048,10 @@ class TestModelDryRuns(unittest.TestCase):
             output_fields=("temperature", "salinity"),
         )
         batch = _make_pixel_batch(include_salinity=True)
+        batch["y_supervision_weight"] = torch.full_like(batch["y"], 0.75)
+        batch["y_salinity_supervision_weight"] = torch.full_like(
+            batch["y_salinity"], 0.25
+        )
         captured: dict[str, Any] = {}
 
         def fake_p_loss(
@@ -1072,6 +1076,10 @@ class TestModelDryRuns(unittest.TestCase):
         expected_y_mask = torch.cat(
             [batch["y_valid_mask"], batch["y_salinity_valid_mask"]], dim=1
         )
+        expected_loss_weight = torch.cat(
+            [batch["y_supervision_weight"], batch["y_salinity_supervision_weight"]],
+            dim=1,
+        )
         expected_condition = model._prepare_condition_for_model(
             expected_x, expected_x_mask
         )
@@ -1081,6 +1089,9 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.equal(captured["output"], expected_y))
         self.assertTrue(torch.equal(captured["condition"], expected_condition))
+        self.assertTrue(
+            torch.equal(captured["kwargs"]["loss_weight"], expected_loss_weight)
+        )
         self.assertTrue(
             torch.equal(captured["kwargs"]["loss_mask"], expected_loss_mask)
         )

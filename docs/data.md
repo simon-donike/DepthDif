@@ -2,8 +2,8 @@
 
 DepthDif learns to densify sparse in-situ ocean profiles into gridded
 temperature fields. The active GeoTIFF workflow can also train a salinity-only or joint temperature + salinity pixel model when `--scenario salinity` or `--scenario joint` is selected. The training data combines satellite surface context,
-profile observations, ocean reanalysis targets, and auxiliary sea-surface
-height plus sea-surface salinity and density on one shared global grid.
+profile observations, normal dense targets or aggregate prior statistics, and three dense surface predictors:
+SST, SSS, and ADT on one shared global grid.
 
 Use [Data Sources](data-source.md) for product-specific details,
 [Dataset Downloads](data-download.md) for raw and packaged download commands,
@@ -19,11 +19,11 @@ The current training workflow is built around these modalities:
 | --- | --- | --- | --- |
 | Sparse profile temperature | EN4 / ARGO | `TEMP`, projected to GLORYS depths | Sparse subsurface conditioning signal. |
 | Sparse profile salinity | EN4 / ARGO | `PSAL_CORRECTED`, projected to GLORYS depths | Auxiliary profile context stored with the training data. |
-| Surface temperature | OSTIA | `analysed_sst` | Dense surface conditioning signal. |
-| Target ocean temperature | GLORYS | `thetao` | Dense 3D supervision target. |
-| Reanalysis salinity | GLORYS | `so` | Dense aligned ocean state variable stored alongside temperature. |
-| Sea-surface height | Sea Level L4 | `adt` | Dense surface-height context stored on the same grid. |
-| Sea-surface salinity/density | SSS MULTIOBS | `sos`, `dos` | Dense surface salinity and density context stored on the same grid. |
+| Surface temperature | OSTIA | `analysed_sst` | First dense surface-conditioning channel (`sst`). |
+| Target ocean temperature | GLORYS | `thetao` | Normal dense target; approved fitting years may also contribute aggregate-only prior statistics. |
+| Reanalysis salinity | GLORYS | `so` | Normal dense salinity target and aggregate-only prior-fitting source. |
+| Sea-surface height | Sea Level L4 | `adt` | Third dense surface-conditioning channel (`adt`). |
+| Sea-surface salinity/density | SSS MULTIOBS | `sos`, `dos` | `sos` is the second conditioning channel (`sss`); `dos` remains auxiliary. |
 | Land/ocean mask | Rasterized world polygons | `output_land_mask` | Defines patch candidates and provides final output cleanup support; model-facing `land_mask` is derived from finite GLORYS target support. |
 
 Temperature is kept physically in Kelvin in the exported GeoTIFF dataset, then
@@ -58,8 +58,8 @@ GLORYS weekly dates define the training timeline. For every GLORYS target date:
 ## Training View
 
 The model-facing training sample is a patch cut from the shared grid. By
-default it contains sparse ARGO temperature observations, dense OSTIA surface
-temperature, the dense GLORYS temperature target, and masks that tell the model
+default it contains sparse ARGO temperature observations and dense `[SST, SSS, ADT]` surface
+context. Normal dense training uses the GLORYS temperature target; optional Stage 1 uses an online deterministic surface-offset target. Masks tell the model
 which values are observed, supervised, ocean, or missing. With
 `--scenario salinity`, the loader skips temperature tensors and returns normalized
 `x_salinity` and `y_salinity` plus salinity-specific masks. With

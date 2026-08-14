@@ -52,6 +52,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         variable_scenario: str | None = None,
         condition_mask_channels: int = 1,
         condition_include_eo: bool = False,
+        condition_eo_channels: int = 1,
         condition_use_valid_mask: bool = True,
         condition_use_land_mask: bool = False,
         clamp_known_pixels: bool = True,
@@ -124,6 +125,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             variable_scenario (str | None): Scenario label embedded in checkpoints.
             condition_mask_channels (int): Mask tensor controlling valid or known pixels.
             condition_include_eo (bool): Boolean flag controlling behavior.
+            condition_eo_channels (int): Number of dense surface predictor channels.
             condition_use_valid_mask (bool): Mask tensor controlling valid or known pixels.
             condition_use_land_mask (bool): Include GLORYS spatial support as conditioning.
             clamp_known_pixels (bool): Boolean flag controlling behavior.
@@ -262,6 +264,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         self.postprocess_gaussian_blur_kernel_size = kernel_size
         self.condition_mask_channels = int(max(0, condition_mask_channels))
         self.condition_include_eo = bool(condition_include_eo)
+        self.condition_eo_channels = (
+            max(1, int(condition_eo_channels)) if self.condition_include_eo else 0
+        )
         self.condition_use_valid_mask = bool(condition_use_valid_mask)
         self.condition_use_land_mask = bool(condition_use_land_mask)
         self.clamp_known_pixels = bool(clamp_known_pixels)
@@ -397,6 +402,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             variable_scenario=m.get("scenario", None),
             condition_mask_channels=int(m.get("condition_mask_channels", 1)),
             condition_include_eo=bool(m.get("condition_include_eo", False)),
+            condition_eo_channels=int(m.get("condition_eo_channels", 1)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
             condition_use_land_mask=bool(m.get("condition_use_land_mask", False)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
@@ -1274,6 +1280,33 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         return model_batch
 
+    def _prepare_dense_supervision_weight(
+        self, batch: dict[str, Any]
+    ) -> torch.Tensor | None:
+        """Stack optional synthetic-prior confidence weights by output field."""
+        if self.ambient_occlusion_enabled:
+            return None
+        keys = {
+            "temperature": ("y", "y_supervision_weight"),
+            "salinity": ("y_salinity", "y_salinity_supervision_weight"),
+        }
+        if not any(keys[field][1] in batch for field in self.output_fields):
+            return None
+        weights: list[torch.Tensor] = []
+        for field in self.output_fields:
+            target_key, weight_key = keys[field]
+            target = self._require_batch_tensor(batch, target_key)
+            weight = batch.get(weight_key)
+            if weight is None:
+                weight = torch.ones_like(target)
+            elif not torch.is_tensor(weight):
+                raise RuntimeError(f"batch['{weight_key}'] must be a tensor.")
+            self._validate_stack_shape(
+                target, weight, reference_key=target_key, key=weight_key
+            )
+            weights.append(weight)
+        return weights[0] if len(weights) == 1 else torch.cat(weights, dim=1)
+
     def _split_output_tensor(
         self, tensor: torch.Tensor, batch: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
@@ -1733,6 +1766,12 @@ class PixelDiffusionConditional(pl.LightningModule):
         if self.condition_include_eo:
             if eo is None:
                 raise RuntimeError("condition_include_eo=true requires batch['eo'].")
+            if eo.ndim != 4 or int(eo.size(1)) != self.condition_eo_channels:
+                raise RuntimeError(
+                    "batch['eo'] channel mismatch: "
+                    f"got shape {tuple(eo.shape)}, expected "
+                    f"(B,{self.condition_eo_channels},H,W)."
+                )
             condition_parts.append(self.input_T(eo))
 
         data_t = self.input_T(x)
@@ -2767,10 +2806,17 @@ class PixelDiffusionConditional(pl.LightningModule):
                 target_denorm = temperature_normalize(mode="denorm", tensor=target)
             eo_denorm = None
             if eo is not None:
+                # New checkpoints order surface channels as SST, SSS, ADT. Keep
+                # legacy one-channel checkpoints readable in validation plots.
+                eo_primary = (
+                    eo[:, 1:2]
+                    if (primary_field == "salinity" and int(eo.size(1)) >= 3)
+                    else eo[:, :1]
+                )
                 eo_denorm = (
-                    salinity_normalize(mode="denorm", tensor=eo)
+                    salinity_normalize(mode="denorm", tensor=eo_primary)
                     if primary_field == "salinity"
-                    else temperature_normalize(mode="denorm", tensor=eo)
+                    else temperature_normalize(mode="denorm", tensor=eo_primary)
                 )
             eval_mask = self._build_task_supervision_mask(
                 reference=target_denorm,
@@ -3187,6 +3233,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Standard mode reconstructs y over y_valid_mask. Ambient mode reconstructs the
         # original x support, but only at depths where y/GLORYS is valid.
         target = x if self.ambient_occlusion_enabled else y
+        loss_weight = self._prepare_dense_supervision_weight(batch)
         loss_mask = self._build_task_supervision_mask(
             reference=target,
             x_valid_mask=valid_mask,
@@ -3230,6 +3277,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             target_t,
             model_condition,
             loss_mask=loss_mask,
+            loss_weight=loss_weight,
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             land_mask=land_mask,
@@ -3378,6 +3426,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Keep validation aligned with training: standard mode uses y_valid_mask over y,
         # ambient mode uses x_valid_mask ∩ y_valid_mask over the x target.
         target = x if self.ambient_occlusion_enabled else y
+        loss_weight = self._prepare_dense_supervision_weight(batch)
         loss_mask = self._build_task_supervision_mask(
             reference=target,
             x_valid_mask=valid_mask,
@@ -3422,6 +3471,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             target_t,
             model_condition,
             loss_mask=loss_mask,
+            loss_weight=loss_weight,
             mask_loss=self.mask_loss_with_valid_pixels,
             further_valid_mask=further_valid_mask,
             land_mask=land_mask,

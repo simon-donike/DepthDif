@@ -1,24 +1,20 @@
-# Synthetic Pretraining GeoTIFFs
+# Vertical-Offset Pretraining Targets
 
-Create SST/SSS-guided synthetic dense targets inside an existing packaged GeoTIFF dataset.
-The exporter writes `uint8` multiband GeoTIFFs under `rasters/synthetic/` and updates
-`manifest.yaml` with `rasters.synthetic.thetao` and `rasters.synthetic.so`. Original
-`rasters.glorys` entries are preserved. ARGO/EN4 profiles provide vertical deltas
-only; per-depth delta outliers are trimmed before IDW interpolation. Salinity uses
-same-date SSS `sos` as its dense surface anchor before ARGO vertical salinity
-deltas are applied. Missing per-profile delta depths are filled by vertical
-interpolation with edge holding before spatial IDW. Synthetic nodata masks are
-copied from the matching GLORYS target rasters after synthesis. No Gaussian
-smoothing is applied in the current experiment; spatial interpolation uses CUDA
-IDW when available and falls back to CPU otherwise.
+The maintained synthetic target is deterministic:
 
-```bash
-/work/envs/depth/bin/python -m depth_recon.data.synthetic_dataset_creation.synthetic_pretraining_geotiff \
-  --geotiff-root-dir /work/data/OceanVariableReconstruction \
-  --workers 1 \
-  --overwrite-synthetic
+```text
+temperature(z,y,x) = observed_SST(y,x) + mean_GLORYS[temperature(z)-temperature(surface)]
+salinity(z,y,x) = observed_SSS(y,x) + mean_GLORYS[salinity(z)-salinity(surface)]
 ```
 
-Training uses real GLORYS targets by default. To use these synthetic targets, set
-`data.dataset.sampling.target_source: synthetic` in the pixel training config or an
-override config.
+Every depth therefore retains exactly the observed surface spatial pattern and
+frequencies. Only one scalar changes per depth. GLORYS is used offline to fit
+those coefficients; the training loader does not retrieve same-date GLORYS.
+
+`vertical_offset_prior.py` implements the target,
+`fit_vertical_offset_prior.py` fits it, and
+`plot_vertical_offset_examples.py` writes qualitative comparisons. Sparse real
+ARGO values override synthetic values at their exact cells and depths.
+
+These targets are not subsurface truth. They intentionally copy surface fronts
+unchanged through depth and serve only as a controlled initialization objective.

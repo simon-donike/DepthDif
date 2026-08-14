@@ -9,19 +9,19 @@ Core stack:
 - diffusion core: `DenoisingDiffusionConditionalProcess`
 - denoiser backbone: `UnetConvNextBlock` (ConvNeXt-style U-Net)
 
-The model learns to generate `y` while conditioning on observed channels (`x`), optional `eo`, ARGO observation support (`x_valid_mask`), and GLORYS spatial support (`land_mask`).
+The model learns to generate `y` while conditioning on observed channels (`x`), ordered dense `[SST, SSS, ADT]` maps in `eo`, ARGO observation support (`x_valid_mask`), and active ocean/bathymetry support (`land_mask`).
 
 The baseline package in `src/depth_recon/models/baselines/` provides non-diffusion comparison models that share the same Lightning `predict_step` output contract. See [Baselines](baselines.md) for the IDW and point-wise LSTM implementations, including their input features, no-ARGO behavior, training steps, and inference contract.
 
 ## Conditioning Setup
-Three conditioning layouts are selected by the pixel scenario resolver:
+All pixel scenarios use the same dense surface architecture; the selected scenario changes only the generated and sparse-profile fields:
 
-- Temperature task: `[OSTIA analysed_sst, x, x_valid_mask, land_mask] -> y`
-- Salinity task: `[SSS sos, x_salinity, x_salinity_valid_mask, land_mask] -> y_salinity`
-- Joint temperature/salinity task: `[OSTIA analysed_sst, cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)` when `--scenario joint` is selected.
+- Temperature task: `[[SST, SSS, ADT], x, x_valid_mask, land_mask] -> y`
+- Salinity task: `[[SST, SSS, ADT], x_salinity, x_salinity_valid_mask, land_mask] -> y_salinity`
+- Joint temperature/salinity task: `[[SST, SSS, ADT], cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)`.
 
 Condition assembly happens in `_prepare_condition_for_model`:
-- optionally prepend `eo` (`condition_include_eo=true`)
+- prepend the three normalized `eo` channels in `[sst, sss, adt]` order (`condition_include_eo=true`)
 - append data channels from `x`
 - optionally append ARGO observation-support `x_valid_mask` channels (`condition_use_valid_mask=true`)
 - optionally append GLORYS spatial-support `land_mask` (`condition_use_land_mask=true`)
@@ -36,7 +36,7 @@ With default `dim_mults=[1,2,4,8]`:
 - 3 upsampling stages with skip connections
 - final ConvNeXt block + `1x1` output conv to `generated_channels`
 
-For the ambient EO preset in `src/depth_recon/configs/px_space/training_super_config.yaml`, the U-Net base width is `dim: 64`. This keeps the same depth (`dim_mults=[1,2,4,8]`) while matching the current 50 generated channels + 53 condition channels.
+For the ambient EO preset in `src/depth_recon/configs/px_space/training_super_config.yaml`, the U-Net base width is `dim: 64`. This keeps the same depth (`dim_mults=[1,2,4,8]`) while matching the current 50 generated channels + 55 condition channels.
 
 Time conditioning:
 - sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks
@@ -46,6 +46,8 @@ Coordinate/date conditioning (when enabled):
 - details in [Data + Coordinate Injection](data-coordinate-injection.md)
 
 ## Training Objective
+Stage 1 can use the online [Vertical-Offset Pretraining](vertical-offset-pretraining.md) as `y`; Stage 2 disables that target and uses observation-only ambient supervision. Both stages retain the same `[sst, sss, adt]` model input.
+
 Training step (`training_step`) calls conditional diffusion `p_loss` on normalized model-output tensors. By default this is temperature only; joint mode stacks normalized temperature and salinity channels before loss computation. The dataset still returns temperature and salinity as separate keys; stacking is owned by `PixelDiffusionConditional`.
 
 Behavior:
@@ -59,6 +61,7 @@ Loss options:
 - unmasked MSE (default behavior when masking disabled)
 - masked MSE with mode-specific supervision support:
   - standard mode: over `y_valid_mask` intersected with GLORYS `land_mask` on the full `y` target
+  - Stage 1 standard mode additionally multiplies valid support by the fitted per-depth `y_supervision_weight`; these deterministic targets are synthetic targets, not truth
   - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` and GLORYS `land_mask` on the degraded `x` target
   - the common on-disk mask is not loaded by train/validation dataloaders; optional `output_land_mask` is only final prediction cleanup support
   - optional `model.losses.*` terms can add sparse ARGO Charbonnier consistency, sparse increments, GLORYS structure-function statistics, and a GLORYS spectral lower-bound prior
@@ -91,11 +94,11 @@ Pixel training and inference use `--scenario temperature|salinity|joint` or the 
 
 | Scenario | Output fields | Salinity data | Generated channels | Condition channels |
 | --- | --- | --- | ---: | ---: |
-| `temperature` | `['temperature']` | disabled | `50` | `53` |
-| `salinity` | `['salinity']` | enabled | `50` | `53` |
-| `joint` | `['temperature', 'salinity']` | enabled | `100` | `103` |
+| `temperature` | `['temperature']` | disabled | `50` | `55` |
+| `salinity` | `['salinity']` | enabled | `50` | `55` |
+| `joint` | `['temperature', 'salinity']` | enabled | `100` | `105` |
 
-For `salinity`, the dataloader returns only `x_salinity`, `y_salinity`, and their salinity masks, which become the single model-facing field. For `joint`, `PixelDiffusionConditional` stacks temperature first and salinity second. Existing 50-channel temperature checkpoints are not shape-compatible with joint 100-channel runs.
+For `salinity`, the dataloader returns only `x_salinity`, `y_salinity`, and their salinity masks, which become the single model-facing field. For `joint`, `PixelDiffusionConditional` stacks temperature first and salinity second. Existing 50-channel temperature checkpoints are not shape-compatible with joint 100-channel runs. Checkpoints from the older one-EO-channel architecture are also incompatible with the maintained three-surface-channel input.
 
 Inside the model path, `_prepare_model_batch_tensors` builds:
 

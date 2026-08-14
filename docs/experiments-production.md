@@ -11,7 +11,7 @@ Production runs use:
 
 - real EN4 / ARGO profile NetCDF files for sparse inputs
 - GLORYS NetCDF files for dense targets
-- OSTIA NetCDF files for EO conditioning
+- OSTIA SST, SSS `sos`, and sea-level ADT rasters in fixed `[sst, sss, adt]` conditioning order
 - the exported GeoTIFF store plus compact metadata caches
 
 ## Current Status

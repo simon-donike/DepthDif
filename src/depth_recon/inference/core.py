@@ -433,11 +433,15 @@ def build_random_batch(
     condition_channels = int(getattr(m, "condition_channels", generated_channels))
     condition_mask_channels = int(getattr(m, "condition_mask_channels", 0))
     include_eo = bool(getattr(m, "condition_include_eo", False))
+    configured_eo_channels = int(getattr(m, "condition_eo_channels", 1))
+    land_channels = 1 if bool(getattr(m, "condition_use_land_mask", False)) else 0
     coord_enabled = bool(getattr(m, "coord_conditioning_enabled", False))
     date_enabled = bool(getattr(m, "date_conditioning_enabled", False))
 
-    eo_channels = 1 if include_eo else 0
-    x_channels = condition_channels - condition_mask_channels - eo_channels
+    eo_channels = max(1, configured_eo_channels) if include_eo else 0
+    x_channels = (
+        condition_channels - condition_mask_channels - eo_channels - land_channels
+    )
     if x_channels <= 0:
         x_channels = generated_channels
 
@@ -463,7 +467,7 @@ def build_random_batch(
     }
 
     if include_eo:
-        batch["eo"] = torch.randn(batch_size, 1, height, width, device=device)
+        batch["eo"] = torch.randn(batch_size, eo_channels, height, width, device=device)
 
     if coord_enabled or bool(
         ds_cfg_value(
