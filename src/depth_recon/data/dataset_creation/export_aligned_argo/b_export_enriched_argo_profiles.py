@@ -9,6 +9,16 @@ Production-range enriched ARGO export:
   --compact-land-mask-path src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif \
   --compact-chunk-profile 50000
 
+Rebuild only the compact HF training store from a pulled remote baseline:
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
+  --compact-only \
+  --temperature-source potential \
+  --output-zarr /work/data/depthdif_potential_temperature_v2/remote_base/data/argo_glors_ostia_ssh.zarr \
+  --compact-reference-zarr /work/data/depthdif_potential_temperature_v2/remote_base/argo/argo_profiles_on_grid.zarr \
+  --compact-output-zarr /work/data/depthdif_potential_temperature_v2/rebuilt/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path /work/data/depthdif_potential_temperature_v2/remote_base/masks/world_land_mask_glorys_0p1.tif \
+  --compact-chunk-profile 50000
+
 Set multiple workers with --workers N, for example --workers 8.
 
 Small smoke export:
@@ -66,6 +76,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.source_files import (
 )
 from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff import (
     DEFAULT_LAND_MASK_PATH,
+    TEMPERATURE_SOURCES,
     _date_int_from_days_since_1950,
     _filter_timed_files as _filter_geotiff_timed_files,
     _load_target_grid,
@@ -2077,6 +2088,7 @@ def _write_compact_argo_profile_zarr(
     end_date: int | None,
     chunk_profile: int,
     overwrite: bool,
+    temperature_source: str = "potential",
 ) -> dict[str, Any]:
     """Write the compact grid-indexed ARGO Zarr used by the GeoTIFF loader."""
     selected_glorys = _filter_geotiff_timed_files(
@@ -2102,11 +2114,74 @@ def _write_compact_argo_profile_zarr(
             source_kind="enriched",
             chunk_profile=int(chunk_profile),
             overwrite=overwrite,
+            temperature_source=temperature_source,
             skip_existing=False,
             show_progress=True,
         )
     finally:
         input_ds.close()
+
+
+def export_compact_argo_profiles(
+    *,
+    enriched_zarr: Path,
+    reference_zarr: Path,
+    compact_output_zarr: Path,
+    land_mask_path: Path,
+    temperature_source: str = "potential",
+    chunk_profile: int = 50000,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Rebuild only the compact store using a reference date/depth contract."""
+    enriched_zarr = Path(enriched_zarr)
+    reference_zarr = Path(reference_zarr)
+    compact_output_zarr = Path(compact_output_zarr)
+    protected_paths = {enriched_zarr.resolve(), reference_zarr.resolve()}
+    if compact_output_zarr.resolve() in protected_paths:
+        raise ValueError(
+            "Compact output must differ from the source and reference stores."
+        )
+    if not enriched_zarr.exists():
+        raise FileNotFoundError(f"Enriched ARGO Zarr does not exist: {enriched_zarr}")
+    if not reference_zarr.exists():
+        raise FileNotFoundError(
+            f"Reference compact Zarr does not exist: {reference_zarr}"
+        )
+
+    reference_ds = xr.open_zarr(reference_zarr, consolidated=None)
+    input_ds = xr.open_zarr(enriched_zarr, consolidated=None)
+    try:
+        for name in ("target_date", "glorys_depth"):
+            if name not in reference_ds:
+                raise RuntimeError(f"Reference compact Zarr is missing {name!r}.")
+        target_dates = np.unique(
+            np.asarray(reference_ds["target_date"].values, dtype=np.int32)
+        )
+        target_dates = target_dates[target_dates > 0]
+        depth_axis = np.asarray(reference_ds["glorys_depth"].values, dtype=np.float32)
+        input_depth = np.asarray(input_ds["glorys_depth"].values, dtype=np.float32)
+        if not np.array_equal(depth_axis, input_depth):
+            raise RuntimeError(
+                "Enriched and reference compact Zarr depth axes do not match."
+            )
+        if target_dates.size == 0:
+            raise RuntimeError("Reference compact Zarr contains no valid target dates.")
+        return _write_argo_profile_store(
+            input_ds=input_ds,
+            output_zarr=compact_output_zarr,
+            grid=_load_target_grid(Path(land_mask_path)),
+            target_dates=target_dates,
+            depth_axis=depth_axis,
+            source_kind="enriched",
+            chunk_profile=int(chunk_profile),
+            overwrite=overwrite,
+            temperature_source=temperature_source,
+            skip_existing=False,
+            show_progress=True,
+        )
+    finally:
+        input_ds.close()
+        reference_ds.close()
 
 
 def _finalize_argo_zarr_exports(
@@ -2120,6 +2195,7 @@ def _finalize_argo_zarr_exports(
     end_date: int | None,
     compact_chunk_profile: int,
     overwrite: bool,
+    temperature_source: str = "potential",
 ) -> Path:
     """Finish optional ARGO-derived Zarr outputs and return the enriched path."""
     if compact_output_zarr is None:
@@ -2134,6 +2210,7 @@ def _finalize_argo_zarr_exports(
         end_date=end_date,
         chunk_profile=int(compact_chunk_profile),
         overwrite=overwrite,
+        temperature_source=temperature_source,
     )
     return output_zarr
 
@@ -2156,6 +2233,7 @@ def export_enriched_argo_profiles(
     compact_output_zarr: Path | None = None,
     compact_land_mask_path: Path = DEFAULT_LAND_MASK_PATH,
     compact_chunk_profile: int = 50000,
+    temperature_source: str = "potential",
 ) -> Path:
     workers = int(workers)
     if workers < 1:
@@ -2219,6 +2297,7 @@ def export_enriched_argo_profiles(
             end_date=end_date,
             compact_chunk_profile=compact_chunk_profile,
             overwrite=overwrite,
+            temperature_source=temperature_source,
         )
 
     cache = DatasetCache(max_open=cache_size)
@@ -2419,6 +2498,7 @@ def export_enriched_argo_profiles(
                                         end_date=end_date,
                                         compact_chunk_profile=compact_chunk_profile,
                                         overwrite=overwrite,
+                                        temperature_source=temperature_source,
                                     )
 
                     if max_profiles is not None and written >= int(max_profiles):
@@ -2433,6 +2513,7 @@ def export_enriched_argo_profiles(
                             end_date=end_date,
                             compact_chunk_profile=compact_chunk_profile,
                             overwrite=overwrite,
+                            temperature_source=temperature_source,
                         )
 
             if batch["profile_idx"]:
@@ -2460,6 +2541,7 @@ def export_enriched_argo_profiles(
         end_date=end_date,
         compact_chunk_profile=compact_chunk_profile,
         overwrite=overwrite,
+        temperature_source=temperature_source,
     )
 
 
@@ -2500,6 +2582,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional compact grid-indexed ARGO Zarr for the GeoTIFF dataloader.",
     )
     parser.add_argument(
+        "--compact-only",
+        action="store_true",
+        help="Rebuild only the compact store from --output-zarr and a reference store.",
+    )
+    parser.add_argument(
+        "--compact-reference-zarr",
+        type=Path,
+        default=None,
+        help="Existing compact store supplying the authoritative dates and depth axis.",
+    )
+    parser.add_argument(
         "--skip-compact-zarr",
         action="store_true",
         help="Only write the enriched profile-level ARGO Zarr.",
@@ -2515,6 +2608,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=50000,
         help="Profile chunk size for the compact ARGO Zarr.",
+    )
+    parser.add_argument(
+        "--temperature-source",
+        choices=TEMPERATURE_SOURCES,
+        default="potential",
+        help="Use corrected EN4 potential temperature or reproduce in-situ TEMP.",
     )
     parser.add_argument(
         "--start-date",
@@ -2547,6 +2646,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_parser().parse_args()
+    if args.compact_only:
+        if args.skip_compact_zarr:
+            raise SystemExit(
+                "--compact-only cannot be combined with --skip-compact-zarr."
+            )
+        if args.compact_reference_zarr is None:
+            raise SystemExit("--compact-only requires --compact-reference-zarr.")
+        result = export_compact_argo_profiles(
+            enriched_zarr=args.output_zarr,
+            reference_zarr=args.compact_reference_zarr,
+            compact_output_zarr=args.compact_output_zarr,
+            land_mask_path=args.compact_land_mask_path,
+            temperature_source=args.temperature_source,
+            chunk_profile=args.compact_chunk_profile,
+            overwrite=args.overwrite,
+        )
+        print(f"Wrote compact ARGO profile Zarr: {args.compact_output_zarr}")
+        print(f"Profiles: {result['profile_count']}")
+        return
     out = export_enriched_argo_profiles(
         argo_dir=args.argo_dir,
         glorys_dir=args.glorys_dir,
@@ -2566,6 +2684,7 @@ def main() -> None:
         ),
         compact_land_mask_path=args.compact_land_mask_path,
         compact_chunk_profile=args.compact_chunk_profile,
+        temperature_source=args.temperature_source,
     )
     print(f"Wrote enriched ARGO profile Zarr: {out}")
 

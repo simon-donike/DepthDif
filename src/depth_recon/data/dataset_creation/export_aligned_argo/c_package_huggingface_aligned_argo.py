@@ -163,14 +163,45 @@ def _stage_directory_tree(
             _stage_file(source_path, target_path, file_mode=file_mode)
 
 
-def _stage_manifest_file(source: Path, target: Path, *, output_dir: Path) -> None:
-    """Stage a manifest and point its output_dir at the package root."""
+def _stage_manifest_file(
+    source: Path,
+    target: Path,
+    *,
+    output_dir: Path,
+    compact_argo_zarr: Path | None = None,
+) -> None:
+    """Stage a manifest with package paths and compact-temperature metadata."""
     target.parent.mkdir(parents=True, exist_ok=True)
     manifest = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         shutil.copy2(source, target)
         return
     manifest["output_dir"] = output_dir.as_posix()
+    if compact_argo_zarr is not None:
+        compact = xr.open_zarr(compact_argo_zarr, consolidated=None)
+        try:
+            argo = manifest.setdefault("argo", {})
+            argo.update(
+                {
+                    "path": "argo/argo_profiles_on_grid.zarr",
+                    "profile_count": int(compact.sizes.get("profile", 0)),
+                    "source_kind": compact.attrs.get("source_kind", "enriched"),
+                    "temperature_source": compact.attrs.get("temperature_source"),
+                    "temperature_source_variable": compact.attrs.get(
+                        "temperature_source_variable"
+                    ),
+                    "temperature_standard_name": compact.attrs.get(
+                        "temperature_standard_name"
+                    ),
+                    "temperature_reference_pressure_dbar": compact.attrs.get(
+                        "temperature_reference_pressure_dbar"
+                    ),
+                    "temperature_scale": compact.attrs.get("temperature_scale"),
+                    "temperature_stretch": compact.attrs.get("temperature_stretch"),
+                }
+            )
+        finally:
+            compact.close()
     target.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
@@ -204,6 +235,7 @@ def _stage_optional_geotiff_assets(
             Path(manifest_path),
             output_dir / "manifest.yaml",
             output_dir=output_dir,
+            compact_argo_zarr=compact_argo_zarr,
         )
         staged = True
     if masks_dir is not None:
@@ -470,7 +502,10 @@ masks/
 The `rasters/` directory is intentionally at the repository root. It contains
 the aligned uint8 GeoTIFF products used by the pixel-space dataloader. The
 compact `argo/argo_profiles_on_grid.zarr` store is the grid-indexed EN4 input
-used by that dataloader.
+used by that dataloader. Its model-facing `argo_temp_*` fields contain corrected
+EN4 `POTM_CORRECTED` potential temperature referenced to 0 dbar; the stable
+field names are retained for dataloader compatibility. GLORYS `thetao` is also
+potential temperature.
 {raster_example_section}
 
 ## Raster Products

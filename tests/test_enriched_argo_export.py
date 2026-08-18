@@ -11,6 +11,7 @@ from depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_arg
     NEAREST_STATUS,
     NEAREST_EDGE_STATUS,
     DatasetCache,
+    export_compact_argo_profiles,
     export_enriched_argo_profiles,
     nearest_timed_file,
     sample_spatial_value,
@@ -408,8 +409,51 @@ class TestEnrichedArgoExport(unittest.TestCase):
                 self.assertIn("argo_psal_valid", compact)
                 self.assertGreater(int(compact.sizes["profile"]), 0)
                 self.assertEqual(int(compact.sizes["glorys_depth"]), 2)
+                potential_codes = compact["argo_temp_kelvin_uint8"].values.copy()
+                potential_target_dates = np.unique(compact["target_date"].values)
+                self.assertEqual(compact.attrs["temperature_source"], "potential")
+                self.assertEqual(
+                    compact.attrs["temperature_source_variable"], "POTM_CORRECTED"
+                )
+                self.assertIn("argo_temp_qc_on_glorys_depth", compact)
             finally:
                 compact.close()
+
+            in_situ_zarr = tmp_path / "argo/argo_profiles_in_situ.zarr"
+            export_compact_argo_profiles(
+                enriched_zarr=output_zarr,
+                reference_zarr=compact_zarr,
+                compact_output_zarr=in_situ_zarr,
+                land_mask_path=land_mask_path,
+                temperature_source="in-situ",
+                chunk_profile=2,
+            )
+            in_situ = xr.open_zarr(in_situ_zarr, consolidated=None)
+            try:
+                self.assertEqual(in_situ.attrs["temperature_source"], "in-situ")
+                self.assertEqual(in_situ.attrs["temperature_source_variable"], "TEMP")
+                self.assertTrue(
+                    np.any(
+                        potential_codes
+                        != np.asarray(in_situ["argo_temp_kelvin_uint8"].values)
+                    )
+                )
+                self.assertTrue(
+                    np.array_equal(
+                        np.unique(in_situ["target_date"].values),
+                        potential_target_dates,
+                    )
+                )
+            finally:
+                in_situ.close()
+
+            with self.assertRaisesRegex(ValueError, "must differ"):
+                export_compact_argo_profiles(
+                    enriched_zarr=output_zarr,
+                    reference_zarr=compact_zarr,
+                    compact_output_zarr=compact_zarr,
+                    land_mask_path=land_mask_path,
+                )
 
     def test_parallel_export_matches_serial_output_order_and_values(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -158,6 +158,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 ("profile", "glorys_depth"),
                 np.asarray([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
             ),
+            "argo_potm_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
+            ),
             "argo_psal_on_glorys_depth": (
                 ("profile", "glorys_depth"),
                 np.asarray([[35.0, 36.0], [37.0, 38.0]], dtype=np.float32),
@@ -167,6 +171,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 np.asarray([[1, 1], [1, 1]], dtype=np.int8),
             ),
             "argo_temp_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [4, 4]], dtype=np.int8),
+            ),
+            "argo_potm_qc_on_glorys_depth": (
                 ("profile", "glorys_depth"),
                 np.asarray([[1, 2], [4, 4]], dtype=np.int8),
             ),
@@ -180,6 +188,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 np.asarray([1, 1], dtype=np.int8),
             ),
             "argo_profile_depth_qc": (
+                ("profile",),
+                np.asarray([1, 1], dtype=np.int8),
+            ),
+            "argo_profile_potm_qc": (
                 ("profile",),
                 np.asarray([1, 1], dtype=np.int8),
             ),

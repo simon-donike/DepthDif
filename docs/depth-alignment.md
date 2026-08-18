@@ -14,7 +14,9 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 - `x`, `y`, `x_valid_mask`, and `y_valid_mask` therefore share the same GLORYS-aligned depth layout.  
 
 ## Per-Profile Alignment Procedure  
-1. Read finite `(DEPH_CORRECTED, TEMP)` pairs from one EN4 / ARGO profile.  
+1. Read finite `(DEPH_CORRECTED, POTM_CORRECTED)` pairs from one EN4 / ARGO
+   profile. `TEMP` remains available only for explicitly requested legacy
+   in-situ exports.
 2. Sort the samples by depth and collapse duplicate depths.  
 3. For each GLORYS target depth inside the observed profile range, linearly interpolate temperature.  
 4. Accept the interpolated value only when the nearest observed ARGO depth satisfies `abs(nearest_depth - target_depth) <= max(0.1 * target_depth, 10 m)`.  

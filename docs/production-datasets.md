@@ -159,8 +159,10 @@ masks.
 ## Depth Semantics
 
 - Normal dense training uses GLORYS `thetao` for `y`; optional Stage 1 uses an online deterministic surface-offset target with per-depth confidence.
-- ARGO `TEMP` is projected from `DEPH_CORRECTED` samples onto the GLORYS depth
-  axis before rasterization.
+- ARGO `POTM_CORRECTED` is projected from `DEPH_CORRECTED` samples onto the
+  GLORYS depth axis before rasterization, matching GLORYS potential-temperature
+  `thetao`. Pass `--temperature-source in-situ` only to reproduce older exports
+  that used measured `TEMP`.
 - `dataset.depth_axis_m` exposes the physical GLORYS depth levels to inference
   and export code.
 

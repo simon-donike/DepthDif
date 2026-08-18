@@ -147,6 +147,25 @@ compact ARGO Zarr has already been written by the ARGO exporter:
   --overwrite
 ```
 
+To non-destructively rebuild only the compact ARGO store from a downloaded HF
+baseline, use the existing enriched and compact stores as separate read-only
+inputs and write to a new destination:
+
+```bash
+/work/envs/depth/bin/python -m depth_recon.data.dataset_creation.export_aligned_argo.b_export_enriched_argo_profiles \
+  --compact-only \
+  --temperature-source potential \
+  --output-zarr /work/data/depthdif_potential_temperature_v2/remote_base/data/argo_glors_ostia_ssh.zarr \
+  --compact-reference-zarr /work/data/depthdif_potential_temperature_v2/remote_base/argo/argo_profiles_on_grid.zarr \
+  --compact-output-zarr /work/data/depthdif_potential_temperature_v2/rebuilt/argo/argo_profiles_on_grid.zarr \
+  --compact-land-mask-path /work/data/depthdif_potential_temperature_v2/remote_base/masks/world_land_mask_glorys_0p1.tif \
+  --compact-chunk-profile 50000
+```
+
+The default temperature source is corrected EN4 `POTM_CORRECTED`, matching
+GLORYS potential-temperature `thetao`. The compact public `argo_temp_*` names
+remain stable and record the physical source in their Zarr attributes.
+
 Use `--skip-existing` instead of `--overwrite` to resume a partial GeoTIFF export
 without rewriting existing modality/date rasters.
 

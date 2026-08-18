@@ -137,6 +137,57 @@ class TestDownloadAlignedArgoZarr(unittest.TestCase):
             self.assertTrue((output_dir / "manifest.yaml").exists())
             self.assertFalse((output_dir / "unrelated.bin").exists())
 
+    def test_training_assets_exclude_large_raster_tree(self) -> None:
+        """Training-asset pulls include compact inputs without dense rasters."""
+        paths = (
+            "data/argo_glors_ostia_ssh.zarr/.zgroup",
+            "argo/argo_profiles_on_grid.zarr/.zgroup",
+            "manifest.yaml",
+            "masks/land_mask.tif",
+            "rasters/glorys/thetao/thetao_20240102.tif",
+        )
+
+        selected = [
+            path
+            for path in paths
+            if downloader._is_package_file(path, downloader.HF_TRAINING_ASSET_PREFIXES)
+        ]
+
+        self.assertIn("argo/argo_profiles_on_grid.zarr/.zgroup", selected)
+        self.assertIn("masks/land_mask.tif", selected)
+        self.assertNotIn("rasters/glorys/thetao/thetao_20240102.tif", selected)
+
+    def test_training_assets_use_pinned_native_snapshot(self) -> None:
+        """The selective mode delegates retries and filtering to HF Hub."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "training_assets"
+
+            def fake_snapshot_download(**kwargs: object) -> str:
+                expected = output_dir / downloader.DEFAULT_ZARR_PATH
+                expected.mkdir(parents=True)
+                (expected / ".zgroup").write_text("{}", encoding="utf-8")
+                return str(output_dir)
+
+            with patch.object(
+                downloader,
+                "snapshot_download",
+                side_effect=fake_snapshot_download,
+            ) as snapshot_mock:
+                paths = downloader.download_hf_training_assets(
+                    "https://huggingface.co/datasets/org/name",
+                    output_dir,
+                    revision="abc123",
+                    max_workers=3,
+                )
+
+            snapshot_kwargs = snapshot_mock.call_args.kwargs
+            self.assertEqual(snapshot_kwargs["revision"], "abc123")
+            self.assertEqual(snapshot_kwargs["max_workers"], 3)
+            self.assertIn("data/**", snapshot_kwargs["allow_patterns"])
+            self.assertIn("argo/**", snapshot_kwargs["allow_patterns"])
+            self.assertEqual(snapshot_kwargs["ignore_patterns"], ["rasters/**"])
+            self.assertTrue(any(path.name == ".zgroup" for path in paths))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,6 +94,48 @@ COMPACT_LEVEL_QC_NAMES = (
 )
 COMPACT_TEMP_PROFILE_QC_NAME = "argo_temp_profile_qc"
 COMPACT_PSAL_PROFILE_QC_NAME = "argo_psal_profile_qc"
+TEMPERATURE_SOURCES = ("potential", "in-situ")
+
+
+def _temperature_source_fields(
+    source_kind: str, temperature_source: str
+) -> dict[str, str]:
+    """Return source-variable names for one compact temperature convention."""
+    if temperature_source not in TEMPERATURE_SOURCES:
+        raise ValueError(
+            "temperature_source must be one of: " + ", ".join(TEMPERATURE_SOURCES)
+        )
+    if temperature_source == "potential":
+        return {
+            "value": (
+                "argo_potm_on_glorys_depth"
+                if source_kind == "enriched"
+                else "POTM_CORRECTED"
+            ),
+            "level_qc": (
+                "argo_potm_qc_on_glorys_depth"
+                if source_kind == "enriched"
+                else "POTM_CORRECTED_QC"
+            ),
+            "profile_qc": (
+                "argo_profile_potm_qc"
+                if source_kind == "enriched"
+                else "PROFILE_POTM_QC"
+            ),
+            "source_variable": "POTM_CORRECTED",
+            "standard_name": "sea_water_potential_temperature",
+            "reference_pressure_dbar": "0",
+        }
+    return {
+        "value": ("argo_temp_on_glorys_depth" if source_kind == "enriched" else "TEMP"),
+        "level_qc": (
+            "argo_temp_qc_on_glorys_depth" if source_kind == "enriched" else "TEMP_QC"
+        ),
+        "profile_qc": "" if source_kind == "enriched" else "PROFILE_TEMP_QC",
+        "source_variable": "TEMP",
+        "standard_name": "sea_water_temperature",
+        "reference_pressure_dbar": "",
+    }
 
 
 @dataclass(frozen=True)
@@ -1111,12 +1153,73 @@ def _align_profile_values_to_depths(
     )
 
 
+def _align_profile_qc_to_depths(
+    qc: np.ndarray,
+    values: np.ndarray,
+    depths: np.ndarray,
+    target_depths: np.ndarray,
+) -> np.ndarray:
+    """Project raw EN4 QC using exact or worst bracketing source flags."""
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    depths = np.asarray(depths, dtype=np.float64).reshape(-1)
+    target_depths = np.asarray(target_depths, dtype=np.float64).reshape(-1)
+    qc_array = np.asarray(qc)
+    if np.issubdtype(qc_array.dtype, np.number):
+        numeric_qc = np.asarray(qc_array, dtype=np.float64).reshape(-1)
+    else:
+        text_qc = np.char.strip(qc_array.astype(str).reshape(-1))
+        numeric_qc = np.full(text_qc.shape, np.nan, dtype=np.float64)
+        valid_text = np.char.isdigit(text_qc)
+        numeric_qc[valid_text] = text_qc[valid_text].astype(np.float64)
+    out = np.full(target_depths.shape, MISSING_QC_FLAG, dtype=np.int8)
+    valid = np.isfinite(values) & np.isfinite(depths) & (depths >= 0.0)
+    if not np.any(valid):
+        return out
+    source_depth = depths[valid]
+    source_qc = np.where(
+        np.isfinite(numeric_qc[valid]),
+        numeric_qc[valid],
+        int(MISSING_QC_FLAG),
+    ).astype(np.int16)
+    order = np.argsort(source_depth, kind="stable")
+    source_depth = source_depth[order]
+    source_qc = source_qc[order]
+    unique_depth, starts = np.unique(source_depth, return_index=True)
+    source_qc = np.maximum.reduceat(source_qc, starts)
+    projected_values = _align_profile_values_to_depths(
+        values,
+        depths,
+        target_depths,
+    )
+    valid_target = np.isfinite(projected_values)
+    if not np.any(valid_target):
+        return out
+    insert = np.searchsorted(unique_depth, target_depths, side="left")
+    left = np.clip(insert - 1, 0, unique_depth.size - 1)
+    right = np.clip(insert, 0, unique_depth.size - 1)
+    exact = valid_target & np.isclose(
+        target_depths,
+        unique_depth[right],
+        rtol=0.0,
+        atol=1.0e-6,
+    )
+    out[exact] = source_qc[right[exact]].astype(np.int8)
+    interpolated = valid_target & ~exact
+    out[interpolated] = np.maximum(
+        source_qc[left[interpolated]],
+        source_qc[right[interpolated]],
+    ).astype(np.int8)
+    return out
+
+
 def _project_raw_argo_dataset_to_depths(
     ds: xr.Dataset,
     *,
     variable_names: Sequence[str],
     depth_var_name: str,
     target_depths: np.ndarray,
+    level_qc_by_value: dict[str, str] | None = None,
+    profile_qc_names: Sequence[str] = (),
 ) -> xr.Dataset:
     """Project raw ARGO variables onto the target GLORYS depth axis."""
     target_depths = np.asarray(target_depths, dtype=np.float32).reshape(-1)
@@ -1130,6 +1233,9 @@ def _project_raw_argo_dataset_to_depths(
         coords["N_PROF"] = ds["N_PROF"]
     out = xr.Dataset(coords=coords, attrs=dict(ds.attrs))
     for name in ("JULD", "LATITUDE", "LONGITUDE"):
+        if name in ds:
+            out[name] = ds[name]
+    for name in profile_qc_names:
         if name in ds:
             out[name] = ds[name]
 
@@ -1167,6 +1273,30 @@ def _project_raw_argo_dataset_to_depths(
             f"{name} projected onto the GLORYS depth coordinate."
         )
         out[name] = projected
+    for qc_name, value_name in (level_qc_by_value or {}).items():
+        if qc_name not in ds or value_name not in ds:
+            continue
+        projected_qc = xr.apply_ufunc(
+            _align_profile_qc_to_depths,
+            ds[qc_name],
+            ds[value_name],
+            ds[str(depth_var_name)],
+            target_depth_da,
+            input_core_dims=[
+                ["N_LEVELS"],
+                ["N_LEVELS"],
+                ["N_LEVELS"],
+                ["depth"],
+            ],
+            output_core_dims=[["depth"]],
+            vectorize=True,
+            dask="parallelized",
+            output_dtypes=[np.int8],
+            dask_gufunc_kwargs={"output_sizes": {"depth": int(target_depths.size)}},
+        )
+        projected_qc.attrs.update(ds[qc_name].attrs)
+        projected_qc.attrs["source_depth_var"] = str(depth_var_name)
+        out[qc_name] = projected_qc
     return out
 
 
@@ -1211,13 +1341,18 @@ def _open_projected_raw_argo_dataset(
     depth_var_name: str,
     target_depths: np.ndarray,
     chunk_profile: int,
+    level_qc_by_value: dict[str, str] | None = None,
+    profile_qc_names: Sequence[str] = (),
 ) -> xr.Dataset:
     """Open raw EN4/ARGO NetCDF files and project profile variables."""
     if not paths:
         raise RuntimeError("No ARGO NetCDF files were selected for GeoTIFF export.")
 
-    selected = ("JULD", "LATITUDE", "LONGITUDE", str(depth_var_name)) + tuple(
-        str(name) for name in variable_names
+    selected = (
+        ("JULD", "LATITUDE", "LONGITUDE", str(depth_var_name))
+        + tuple(str(name) for name in variable_names)
+        + tuple(str(name) for name in (level_qc_by_value or {}))
+        + tuple(str(name) for name in profile_qc_names)
     )
 
     def preprocess(ds: xr.Dataset) -> xr.Dataset:
@@ -1249,6 +1384,8 @@ def _open_projected_raw_argo_dataset(
     projected = _project_raw_argo_dataset_to_depths(
         ds,
         variable_names=variable_names,
+        level_qc_by_value=level_qc_by_value,
+        profile_qc_names=profile_qc_names,
         depth_var_name=depth_var_name,
         target_depths=target_depths,
     )
@@ -1272,16 +1409,25 @@ def _open_raw_argo_as_projected_dataset(
     end_date: int | None,
     target_depths: np.ndarray,
     chunk_profile: int,
+    temperature_source: str = "potential",
 ) -> xr.Dataset:
-    """Open raw EN4/ARGO files and project TEMP/PSAL to the target depth axis."""
+    """Open raw EN4 files and project the selected temperature plus salinity."""
     argo_files = filter_argo_files_by_date_range(
         sorted(Path(argo_dir).glob("*.nc")),
         start_date=start_date,
         end_date=end_date,
     )
+    temperature_fields = _temperature_source_fields("raw", temperature_source)
     return _open_projected_raw_argo_dataset(
         argo_files,
-        variable_names=("TEMP", "PSAL_CORRECTED"),
+        variable_names=(
+            temperature_fields["value"],
+            "PSAL_CORRECTED",
+        ),
+        level_qc_by_value={
+            temperature_fields["level_qc"]: temperature_fields["value"],
+        },
+        profile_qc_names=(temperature_fields["profile_qc"],),
         depth_var_name="DEPH_CORRECTED",
         target_depths=np.asarray(target_depths, dtype=np.float32),
         chunk_profile=int(chunk_profile),
@@ -1300,6 +1446,8 @@ def _existing_argo_profile_store_metadata(
             "path": _output_relative(output_zarr, output_zarr.parent.parent),
             "profile_count": int(ds.sizes.get("profile", 0)),
             "source_kind": str(ds.attrs.get("source_kind", source_kind)),
+            "temperature_source": ds.attrs.get("temperature_source"),
+            "temperature_source_variable": ds.attrs.get("temperature_source_variable"),
             "skipped_existing": True,
         }
     finally:
@@ -1316,10 +1464,12 @@ def _write_argo_profile_store(
     source_kind: str,
     chunk_profile: int,
     overwrite: bool,
+    temperature_source: str = "potential",
     skip_existing: bool = False,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     """Write compact grid-indexed ARGO profile tensors from enriched/raw input."""
+    temperature_fields = _temperature_source_fields(source_kind, temperature_source)
     if output_zarr.exists() and skip_existing and not overwrite:
         return _existing_argo_profile_store_metadata(
             output_zarr,
@@ -1336,7 +1486,7 @@ def _write_argo_profile_store(
             "date": "profile_date",
             "lat": "latitude",
             "lon": "longitude",
-            "temp": "argo_temp_on_glorys_depth",
+            "temp": temperature_fields["value"],
             "salinity": "argo_psal_on_glorys_depth",
         }
         source_file_name = "profile_source_file"
@@ -1346,7 +1496,7 @@ def _write_argo_profile_store(
             "date": "DATE",
             "lat": "LATITUDE",
             "lon": "LONGITUDE",
-            "temp": "TEMP",
+            "temp": temperature_fields["value"],
             "salinity": "PSAL_CORRECTED",
         }
         source_file_name = None
@@ -1372,7 +1522,13 @@ def _write_argo_profile_store(
     level_qc_names = COMPACT_LEVEL_QC_NAMES
     profile_qc_names = tuple(f"argo_{name}_qc" for name in ARGO_PROFILE_QC_VARS)
     level_qc_parts: dict[str, list[np.ndarray]] = {
-        name: [] for name in level_qc_names if name in input_ds
+        name: []
+        for name in level_qc_names
+        if name in input_ds
+        or (
+            name == "argo_temp_qc_on_glorys_depth"
+            and temperature_fields["level_qc"] in input_ds
+        )
     }
     profile_qc_parts: dict[str, list[np.ndarray]] = {
         name: [] for name in profile_qc_names if name in input_ds
@@ -1389,6 +1545,13 @@ def _write_argo_profile_store(
         optional_names["source_index"] = source_index_name
     for name in tuple(level_qc_parts) + tuple(profile_qc_parts):
         optional_names[name] = name
+    if "argo_temp_qc_on_glorys_depth" in level_qc_parts:
+        # Preserve the compact schema while sourcing the matching EN4 QC field.
+        optional_names["argo_temp_qc_on_glorys_depth"] = temperature_fields["level_qc"]
+    if temperature_fields["profile_qc"] in input_ds:
+        optional_names[temperature_fields["profile_qc"]] = temperature_fields[
+            "profile_qc"
+        ]
 
     profile_progress = tqdm(
         total=int(profile_count),
@@ -1485,7 +1648,17 @@ def _write_argo_profile_store(
                     if "argo_temp_qc_on_glorys_depth" in chunk
                     else []
                 ),
-                profile_qc=profile_common_qc,
+                profile_qc=profile_common_qc
+                + (
+                    [
+                        np.asarray(
+                            chunk[temperature_fields["profile_qc"]], dtype=np.int8
+                        ).reshape(-1)[keep]
+                    ]
+                    if temperature_fields["profile_qc"]
+                    and temperature_fields["profile_qc"] in chunk
+                    else []
+                ),
             )
         )
         salinity_profile_qc_parts.append(
@@ -1582,6 +1755,10 @@ def _write_argo_profile_store(
         attrs={
             "created_by": "depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geotiff",
             "source_kind": source_kind,
+            "temperature_source": temperature_source,
+            "temperature_source_variable": temperature_fields["source_variable"],
+            "temperature_standard_name": temperature_fields["standard_name"],
+            "temperature_scale": "ITS-90",
             "temperature_units": "K",
             "temperature_stretch": _stretch_manifest(
                 STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH]
@@ -1606,6 +1783,23 @@ def _write_argo_profile_store(
     ds["argo_temp_kelvin_uint8"].attrs.update(
         _stretch_manifest(STRETCH_SPECS[TEMPERATURE_KELVIN_STRETCH])
     )
+    ds["argo_temp_kelvin_uint8"].attrs.update(
+        {
+            "source_variable": temperature_fields["source_variable"],
+            "standard_name": temperature_fields["standard_name"],
+            "temperature_scale": "ITS-90",
+        }
+    )
+    if temperature_fields["reference_pressure_dbar"]:
+        ds.attrs["temperature_reference_pressure_dbar"] = 0.0
+        ds["argo_temp_kelvin_uint8"].attrs["reference_pressure_dbar"] = 0.0
+    if "argo_temp_qc_on_glorys_depth" in ds:
+        ds["argo_temp_qc_on_glorys_depth"].attrs.update(
+            {
+                "source_variable": temperature_fields["level_qc"],
+                "temperature_source_variable": temperature_fields["source_variable"],
+            }
+        )
     ds["argo_psal_uint8"].attrs.update(
         _stretch_manifest(STRETCH_SPECS[SALINITY_STRETCH])
     )
@@ -1643,6 +1837,8 @@ def _write_argo_profile_store(
         "path": _output_relative(output_zarr, output_zarr.parent.parent),
         "profile_count": int(profile_dates_all.size),
         "source_kind": source_kind,
+        "temperature_source": temperature_source,
+        "temperature_source_variable": temperature_fields["source_variable"],
         "temperature_stats": _merge_stats(temp_stats),
         "salinity_stats": _merge_stats(salinity_stats),
     }
@@ -1657,6 +1853,7 @@ def _open_argo_input_dataset(
     end_date: int | None,
     target_depths: np.ndarray,
     chunk_profile: int,
+    temperature_source: str = "potential",
 ) -> xr.Dataset:
     """Open the configured ARGO source for preprocessing."""
     if argo_source == "none":
@@ -1674,6 +1871,7 @@ def _open_argo_input_dataset(
             end_date=end_date,
             target_depths=target_depths,
             chunk_profile=chunk_profile,
+            temperature_source=temperature_source,
         )
     raise ValueError("argo_source must be one of: enriched, raw, none")
 
@@ -1711,6 +1909,7 @@ def export_training_geotiff_dataset(
     end_date: int | None = DEFAULT_END_DATE,
     surface_aggregate_days: int = DEFAULT_SURFACE_AGGREGATE_DAYS,
     argo_source: str = "enriched",
+    temperature_source: str = "potential",
     chunk_profile: int = DEFAULT_CHUNK_PROFILE,
     workers: int = DEFAULT_RASTER_WORKERS,
     overwrite: bool = False,
@@ -2011,6 +2210,7 @@ def export_training_geotiff_dataset(
                     end_date=end_date,
                     target_depths=depth_axis,
                     chunk_profile=chunk_profile,
+                    temperature_source=temperature_source,
                 )
                 try:
                     export_progress.set_postfix(date="", variable="argo")
@@ -2025,6 +2225,7 @@ def export_training_geotiff_dataset(
                         source_kind=str(argo_source),
                         chunk_profile=int(chunk_profile),
                         overwrite=overwrite,
+                        temperature_source=temperature_source,
                         skip_existing=skip_existing,
                         show_progress=show_progress,
                     )
@@ -2079,6 +2280,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="enriched",
         help="Use the enriched ARGO zarr, project raw EN4 files, or skip ARGO.",
     )
+    parser.add_argument(
+        "--temperature-source",
+        choices=TEMPERATURE_SOURCES,
+        default="potential",
+        help="Use EN4 potential temperature or reproduce the older in-situ input.",
+    )
     parser.add_argument("--chunk-profile", type=int, default=DEFAULT_CHUNK_PROFILE)
     parser.add_argument(
         "--workers",
@@ -2116,6 +2323,7 @@ def main() -> None:
         end_date=args.end_date,
         surface_aggregate_days=args.surface_aggregate_days,
         argo_source=args.argo_source,
+        temperature_source=args.temperature_source,
         chunk_profile=args.chunk_profile,
         workers=args.workers,
         overwrite=args.overwrite,
