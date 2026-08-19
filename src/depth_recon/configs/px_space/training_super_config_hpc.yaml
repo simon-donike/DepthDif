@@ -313,8 +313,8 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      full_reconstruction_logging_enabled: false  # standard validation loss only; no reconstruction plots
-      max_full_reconstruction_samples: 1  # unused while full reconstruction logging is disabled
+      full_reconstruction_logging_enabled: true  # store validation reconstruction plots in the offline W&B run
+      max_full_reconstruction_samples: 5  # log one sample to limit validation overhead
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
@@ -339,7 +339,7 @@ training:  # optimizer, trainer, and logging
     entity: esa-phi-lab  # W&B entity
     run_name: vertical_offset_dense_pretrain_t_2gpu_hpc  # run display name
     log_model: false  # W&B model logging policy
-    verbose: false  # disable W&B image and diagnostic-stat logging
+    verbose: true  # store W&B images and diagnostic stats locally in offline mode
     watch_gradients: false  # watch gradients
     watch_parameters: false  # watch parameters
     watch_log_freq: 100  # watch log cadence
