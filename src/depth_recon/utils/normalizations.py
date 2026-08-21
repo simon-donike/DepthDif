@@ -10,6 +10,7 @@ Y_MEAN = 289.74267177946783
 Y_STD = 10.933397487585731
 SALINITY_MEAN = 34.54260282159372
 SALINITY_STD = 1.158266487751096
+SEA_HEIGHT_HALF_RANGE_M = 2.0
 PLOT_STD_MULTIPLIER = 2.5
 PLOT_TEMP_MIN = -10.740821939496481
 PLOT_TEMP_MAX = 43.92616549843217
@@ -65,6 +66,19 @@ def salinity_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
     if mode == "norm":
         return (tensor - mean) / std
     return tensor * std + mean
+
+
+def sea_height_normalize(mode: str, tensor: torch.Tensor) -> torch.Tensor:
+    """Scale sea-surface height to the symmetric packaged GeoTIFF range."""
+    if mode not in {"norm", "denorm"}:
+        raise ValueError("mode must be 'norm' or 'denorm'")
+
+    scale = torch.as_tensor(
+        SEA_HEIGHT_HALF_RANGE_M, dtype=tensor.dtype, device=tensor.device
+    )
+    if mode == "norm":
+        return tensor / scale
+    return tensor * scale
 
 
 def salinity_to_plot_unit(

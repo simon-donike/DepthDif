@@ -8,7 +8,7 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 |---|---|---|---|  
 | GLORYS | 3D ocean reanalysis field | global gridded field, fixed 50 depth levels | `thetao`, `so`, `depth` |
 | OSTIA | daily surface temperature field | daily global 2D grid | `analysed_sst` |  
-| EN4 / ARGO profiles | in-situ temperature and salinity observations | profile-specific corrected depths | `TEMP`, `PSAL_CORRECTED`, `DEPH_CORRECTED` |
+| EN4 / ARGO profiles | in-situ and potential temperature plus salinity observations | profile-specific corrected depths | `TEMP`, `POTM_CORRECTED`, `PSAL_CORRECTED`, `DEPH_CORRECTED` |
 | Sea Level L4 | daily surface height and currents | daily global 0.125 degree grid | sea-surface-height fields, geostrophic currents |  
 | SSS MULTIOBS | daily surface salinity and density | daily global surface grid | `sos`, `dos`, `sea_ice_fraction` |
 
@@ -52,7 +52,7 @@ EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected 
 
 - Provider: UK Met Office Hadley Centre EN4  
 - Dataset family: EN4.2.2 profile archives  
-- Raw variables used here: `TEMP`, `DEPH_CORRECTED`  
+- Raw variables used here: `POTM_CORRECTED`, `TEMP`, `DEPH_CORRECTED`
 - Profile storage: rectangular arrays with capacity for up to `400` profile samples  
 - Vertical sampling: corrected depths vary profile-by-profile and are irregular in physical depth  
 

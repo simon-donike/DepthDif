@@ -19,6 +19,8 @@ from depth_recon.data.dataset_creation.export_dataset_geotiff.export_dataset_geo
     SALINITY_STRETCH,
     STRETCH_SPECS,
     TEMPERATURE_KELVIN_STRETCH,
+    _project_raw_argo_dataset_to_depths,
+    _temperature_source_fields,
     decode_stretched_uint8,
 )
 from depth_recon.data.dataset_creation.export_aligned_argo.source_files import SSS_VARS
@@ -173,6 +175,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 ("profile", "glorys_depth"),
                 np.asarray([[10.0, 20.0], [11.0, 21.0]], dtype=np.float32),
             ),
+            "argo_potm_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[9.0, 19.0], [10.0, 20.0]], dtype=np.float32),
+            ),
             "argo_psal_on_glorys_depth": (
                 ("profile", "glorys_depth"),
                 np.asarray([[35.0, 36.0], [35.5, 36.5]], dtype=np.float32),
@@ -185,6 +191,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 ("profile", "glorys_depth"),
                 np.asarray([[1, 3], [1, 1]], dtype=np.int8),
             ),
+            "argo_potm_qc_on_glorys_depth": (
+                ("profile", "glorys_depth"),
+                np.asarray([[1, 2], [1, 1]], dtype=np.int8),
+            ),
             "argo_psal_qc_on_glorys_depth": (
                 ("profile", "glorys_depth"),
                 np.asarray([[1, 2], [1, 1]], dtype=np.int8),
@@ -194,6 +204,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
             "argo_profile_depth_qc": (
                 ("profile",),
                 np.asarray([1, 1], dtype=np.int8),
+            ),
+            "argo_profile_potm_qc": (
+                ("profile",),
+                np.asarray([4, 1], dtype=np.int8),
             ),
             "argo_profile_psal_qc": (
                 ("profile",),
@@ -235,6 +249,48 @@ def _make_sources(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path, Path]:
 
 
 class TestExportDatasetGeoTiff(unittest.TestCase):
+    def test_raw_en4_potential_temperature_uses_potm_qc(self) -> None:
+        """Raw projection keeps POTM values plus matching level/profile QC."""
+        fields = _temperature_source_fields("raw", "potential")
+        self.assertEqual(fields["value"], "POTM_CORRECTED")
+        self.assertEqual(fields["level_qc"], "POTM_CORRECTED_QC")
+        self.assertEqual(fields["profile_qc"], "PROFILE_POTM_QC")
+        raw = xr.Dataset(
+            {
+                "JULD": (("N_PROF",), np.asarray([27000.0])),
+                "LATITUDE": (("N_PROF",), np.asarray([1.0])),
+                "LONGITUDE": (("N_PROF",), np.asarray([11.0])),
+                "DEPH_CORRECTED": (
+                    ("N_PROF", "N_LEVELS"),
+                    np.asarray([[0.0, 10.0]], dtype=np.float32),
+                ),
+                "POTM_CORRECTED": (
+                    ("N_PROF", "N_LEVELS"),
+                    np.asarray([[10.0, 8.0]], dtype=np.float32),
+                ),
+                "POTM_CORRECTED_QC": (
+                    ("N_PROF", "N_LEVELS"),
+                    np.asarray([[b"1", b"4"]]),
+                ),
+                "PROFILE_POTM_QC": (("N_PROF",), np.asarray([b"3"])),
+            }
+        )
+
+        projected = _project_raw_argo_dataset_to_depths(
+            raw,
+            variable_names=("POTM_CORRECTED",),
+            depth_var_name="DEPH_CORRECTED",
+            target_depths=np.asarray([0.0, 5.0, 10.0], dtype=np.float32),
+            level_qc_by_value={"POTM_CORRECTED_QC": "POTM_CORRECTED"},
+            profile_qc_names=("PROFILE_POTM_QC",),
+        )
+
+        np.testing.assert_array_equal(
+            projected["POTM_CORRECTED_QC"].values,
+            np.asarray([[1, 4, 4]], dtype=np.int8),
+        )
+        self.assertEqual(projected["PROFILE_POTM_QC"].values.item(), b"3")
+
     def test_export_writes_aligned_uint8_rasters_and_preprocessed_argo(self) -> None:
         """Dense rasters share a grid and ARGO profiles are grid indexed."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -351,10 +407,10 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 argo["argo_psal_uint8"].values,
                 STRETCH_SPECS[SALINITY_STRETCH],
             )
-            self.assertAlmostEqual(float(argo_temp_k[0, 0]), 283.15, delta=0.2)
+            self.assertAlmostEqual(float(argo_temp_k[0, 0]), 282.15, delta=0.2)
             self.assertAlmostEqual(float(argo_psal[0, 1]), 36.0, delta=0.05)
             self.assertTrue(bool(argo["argo_temp_valid"].values[0, 0]))
-            self.assertEqual(int(argo["argo_temp_profile_qc"].values[0]), 3)
+            self.assertEqual(int(argo["argo_temp_profile_qc"].values[0]), 4)
             self.assertEqual(int(argo["argo_psal_profile_qc"].values[0]), 4)
             for name in (
                 "argo_depth_qc_on_glorys_depth",
@@ -362,6 +418,14 @@ class TestExportDatasetGeoTiff(unittest.TestCase):
                 "argo_psal_qc_on_glorys_depth",
             ):
                 self.assertIn(name, argo)
+            self.assertEqual(argo.attrs["temperature_source"], "potential")
+            self.assertEqual(
+                argo.attrs["temperature_source_variable"], "POTM_CORRECTED"
+            )
+            self.assertEqual(
+                argo["argo_temp_kelvin_uint8"].attrs["standard_name"],
+                "sea_water_potential_temperature",
+            )
             for name in (
                 "argo_juld_qc",
                 "argo_position_qc",

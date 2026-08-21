@@ -76,6 +76,7 @@ nav:
       - EMA Weights: ema.md
       - Sampling Diagnostics: sampling-diagnostics.md
       - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
+      - Vertical-Offset Pretraining: vertical-offset-pretraining.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
       - Losses: losses.md
       - Date + Time Injection: data-coordinate-injection.md

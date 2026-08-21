@@ -18,8 +18,22 @@ CLI controls:
 
 The default config mirrors `training_super_config_standard.yaml`. For SpaceHPC,
 use `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`;
-that preset selects the Lustre dataset paths, offline W&B logging, and larger
-batch/worker values.
+that preset selects the Lustre dataset paths, offline W&B logging, larger
+batch/worker values, and two-GPU dense vertical-offset pretraining with ambient
+occlusion disabled. The tiny prior artifact is committed in the repository data folder;
+dense targets are generated on the fly and do not require a separate export or
+Lustre-side artifact copy.
+
+For a standard direct GLORYS-supervised SpaceHPC training run, use:
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --config src/depth_recon/configs/px_space/training_super_config_spacehpc_glorys.yaml \
+  --scenario temperature
+```
+
+This preset keeps the same Lustre, two-GPU, and offline-W&B settings but disables
+the synthetic prior and ambient objective, so the diffusion target is paired GLORYS.
 
 Override example:
 
@@ -40,6 +54,36 @@ Hard-area finetuning example:
 ```
 
 This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only. The model can also emphasize coastal supervised pixels with `model.coastal_loss.*`; see [Coastal Loss Weighting For Finetuning](model.md#coastal-loss-weighting-for-finetuning).
+
+## Two-Stage Prior and Ambient Training
+
+Stage 1 enables the online vertical-offset target and disables ambient occlusion;
+Stage 2 warm-starts that checkpoint, disables the prior target, and uses only
+real ARGO support for the ambient objective. Both stages must retain exactly the
+same `[sst, sss, adt]` conditioning order. Checkpoints trained with the older
+one-EO-channel architecture are input-channel incompatible.
+
+```bash
+# Stage 1: deterministic surface-offset pretraining
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set data.dataset.pretraining_prior.enabled=true \
+  --set data.dataset.selection.require_argo_for_train=false \
+  --set model.ambient_occlusion.enabled=false \
+  --set model.resume_checkpoint=false
+
+# Stage 2: observation-only ambient fine-tuning
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set data.dataset.pretraining_prior.enabled=false \
+  --set data.dataset.selection.require_argo_for_train=true \
+  --set model.ambient_occlusion.enabled=true \
+  --set model.resume_checkpoint=/absolute/path/to/stage1/best.ckpt \
+  --set model.load_checkpoint_only=true
+```
+
+Validation synthetic targets in Stage 1 are deterministic per patch/date so shuffled
+validation remains reproducible. That is a software validation property, not
+scientific evidence; generator and final-model skill must be measured against
+independent held-out ARGO platforms. See [Vertical-Offset Pretraining](vertical-offset-pretraining.md).
 
 Ambient-occlusion objective example (self-supervised on `x`; now the scalar-field training preset):
 
@@ -68,11 +112,11 @@ The scenario selector supports three pixel-space contracts and applies the coupl
 
 | Scenario | Output fields | Salinity data | Generated channels | Condition channels |
 | --- | --- | --- | ---: | ---: |
-| `temperature` | `['temperature']` | disabled | `50` | `53` |
-| `salinity` | `['salinity']` | enabled | `50` | `53` |
-| `joint` | `['temperature', 'salinity']` | enabled | `100` | `103` |
+| `temperature` | `['temperature']` | disabled | `50` | `55` |
+| `salinity` | `['salinity']` | enabled | `50` | `55` |
+| `joint` | `['temperature', 'salinity']` | enabled | `100` | `105` |
 
-`condition_channels` is derived from selected output channels plus the enabled conditioning inputs: scenario-selected EO, collapsed valid mask, and GLORYS land mask. The salinity scenario uses SSS `sos` as the EO channel; temperature and joint use OSTIA `analysed_sst`. Do not maintain `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, or `data.dataset.output.include_salinity` manually in normal super-configs; use `--scenario` and let the resolver write effective configs. `--set` still runs after scenario resolution for intentional experiments.
+`condition_channels` is derived from selected output channels plus three ordered dense surface channels (`sst`, `sss`, `adt`), the collapsed valid mask, and the ocean-support mask. Do not maintain `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, or `data.dataset.output.include_salinity` manually in normal super-configs; use `--scenario` and let the resolver write effective configs. `--set` still runs after scenario resolution for intentional experiments.
 
 Every run snapshots the original super-config plus resolved effective `data_config_effective.yaml`, `model_config_effective.yaml`, and `training_config_effective.yaml` under `logs/<timestamp>/`, and uploads those files to W&B. Validation shuffling stays enabled by default in the super-config for the current experimentation workflow.
 

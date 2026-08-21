@@ -724,6 +724,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         condition: torch.Tensor,
         *,
         loss_mask: torch.Tensor | None = None,
+        loss_weight: torch.Tensor | None = None,
         further_valid_mask: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
         mask_loss: bool = False,
@@ -742,6 +743,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             output (torch.Tensor): Tensor input for the computation.
             condition (torch.Tensor): Tensor input for the computation.
             loss_mask (torch.Tensor | None): Mask tensor selecting the supervised pixels.
+            loss_weight (torch.Tensor | None): Non-negative confidence per supervised pixel.
             further_valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             land_mask (torch.Tensor | None): GLORYS spatial ocean/domain support mask.
             mask_loss (bool): Mask tensor controlling valid or known pixels.
@@ -807,6 +809,16 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                     ramp=coastal_loss_ramp,
                 )
                 weighted_mask = generated_mask
+                if loss_weight is not None:
+                    confidence = self._align_mask_to_reference(
+                        loss_weight.to(device=target.device, dtype=target.dtype),
+                        target,
+                        mask_name="loss_weight",
+                    )
+                    confidence = torch.nan_to_num(
+                        confidence, nan=0.0, posinf=0.0, neginf=0.0
+                    ).clamp_min(0.0)
+                    weighted_mask = weighted_mask * confidence
                 if coastal_weights is not None:
                     weighted_mask = weighted_mask * coastal_weights
                 masked_diff = diff * weighted_mask

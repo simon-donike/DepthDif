@@ -1305,6 +1305,7 @@ def plot_glorys_profile_comparison_axis(
     y_hat_profile: np.ndarray,
     y_target_profile: np.ndarray,
     observed_profile: np.ndarray,
+    supervision_profile: np.ndarray | None = None,
     depth_axis: np.ndarray | None = None,
     ostia_sst_c: float | None = None,
     title: str | None = None,
@@ -1312,7 +1313,11 @@ def plot_glorys_profile_comparison_axis(
     profile_x_label: str = "Temperature (deg C)",
     surface_context_label: str = "OSTIA SST",
 ) -> None:
-    """Draw one validation-style profile comparison axis."""
+    """Draw one validation-style profile comparison axis.
+
+    ``y_target_profile`` is the paired GLORYS field, while
+    ``supervision_profile`` is the active training target when it differs.
+    """
     x_profile_np = np.asarray(x_profile, dtype=np.float64).reshape(-1)
     y_hat_profile_np = np.asarray(y_hat_profile, dtype=np.float64).reshape(-1)
     y_target_profile_np = np.asarray(y_target_profile, dtype=np.float64).reshape(-1)
@@ -1349,6 +1354,24 @@ def plot_glorys_profile_comparison_axis(
         color="tab:orange",
         linewidth=1.8,
     )
+    if supervision_profile is not None:
+        supervision_profile_np = np.asarray(
+            supervision_profile, dtype=np.float64
+        ).reshape(-1)
+        if supervision_profile_np.size != y_target_profile_np.size:
+            raise ValueError(
+                "supervision_profile must share the profile depth dimension."
+            )
+        # Surface-offset and ambient runs can supervise against a signal other
+        # than paired GLORYS, so retain that target as its own visible trace.
+        ax.plot(
+            supervision_profile_np,
+            depth_values,
+            label="Supervision target",
+            color="tab:green",
+            linestyle="--",
+            linewidth=1.6,
+        )
     if bool(np.any(observed_profile_np)):
         # Keep the sparse conditioning profile visually identical to validation logging.
         ax.plot(
@@ -1728,6 +1751,7 @@ def log_wandb_glorys_profile_comparison(
     x: torch.Tensor,
     y_hat: torch.Tensor,
     y_target: torch.Tensor,
+    supervision_target: torch.Tensor | None = None,
     conditioning_mask: torch.Tensor | None = None,
     candidate_mask: torch.Tensor | None = None,
     prefix: str = "val_imgs",
@@ -1741,7 +1765,9 @@ def log_wandb_glorys_profile_comparison(
         logger (Any): Logger instance used for experiment tracking.
         x (torch.Tensor): Conditioning tensor containing sparse Argo-aligned profiles.
         y_hat (torch.Tensor): Reconstructed tensor in denormalized space.
-        y_target (torch.Tensor): GLORYS target tensor in denormalized space.
+        y_target (torch.Tensor): Paired GLORYS tensor in denormalized space.
+        supervision_target (torch.Tensor | None): Active training target in
+            denormalized space, logged as a separate trace when supplied.
         conditioning_mask (torch.Tensor | None): Mask tensor marking known x pixels.
         candidate_mask (torch.Tensor | None): Mask tensor selecting generated-only pixels.
         prefix (str): Input value.
@@ -1768,6 +1794,8 @@ def log_wandb_glorys_profile_comparison(
     if int(x.size(0)) <= 0 or int(x.size(1)) <= 0:
         return
     if x.shape != y_hat.shape or x.shape != y_target.shape:
+        return
+    if supervision_target is not None and supervision_target.shape != y_target.shape:
         return
 
     sample_i = int(max(0, min(int(sample_idx), int(x.size(0)) - 1)))
@@ -1815,6 +1843,15 @@ def log_wandb_glorys_profile_comparison(
             y_target_profile = (
                 y_target[sample_i, :, row_i, col_i].detach().float().cpu().numpy()
             )
+            supervision_profile = None
+            if supervision_target is not None:
+                supervision_profile = (
+                    supervision_target[sample_i, :, row_i, col_i]
+                    .detach()
+                    .float()
+                    .cpu()
+                    .numpy()
+                )
             observed_profile = (
                 conditioning_mask_i[:, row_i, col_i].detach().bool().cpu().numpy()
             )
@@ -1824,6 +1861,7 @@ def log_wandb_glorys_profile_comparison(
                 y_hat_profile=y_hat_profile,
                 y_target_profile=y_target_profile,
                 observed_profile=observed_profile,
+                supervision_profile=supervision_profile,
                 depth_axis=depth_idx,
                 title=f"Pixel ({row_i}, {col_i})",
                 show_legend=(plot_idx == 0),

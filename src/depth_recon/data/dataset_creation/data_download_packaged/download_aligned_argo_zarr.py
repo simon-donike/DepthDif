@@ -5,6 +5,8 @@
 #   --zarr-path data/argo_glors_ostia_ssh.zarr \
 #   --timeout-seconds 120 \
 #   --chunk-size-mb 8 \
+#   --max-workers 16 \
+#   --training-assets \
 #   --force-download \
 #   --overwrite
 """Download the packaged Hugging Face aligned ARGO dataset folder."""
@@ -17,6 +19,9 @@ import os
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
+
+from huggingface_hub import snapshot_download
+
 from depth_recon.data.dataset_creation.data_download_packaged._dataset_links import (
     load_dataset_url,
 )
@@ -29,6 +34,7 @@ DEFAULT_REVISION = "main"
 DEFAULT_ZARR_PATH = Path("data/argo_glors_ostia_ssh.zarr")
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_CHUNK_SIZE_MB = 8
+DEFAULT_MAX_WORKERS = 8
 REQUEST_HEADERS = {"User-Agent": "DepthDif packaged dataset downloader"}
 HF_PACKAGE_PREFIXES = (
     "data/",
@@ -45,6 +51,15 @@ HF_FULL_PACKAGE_PREFIXES = HF_PACKAGE_PREFIXES + (
     "manifest.yaml",
     "masks/",
     "rasters/",
+)
+HF_TRAINING_ASSET_PREFIXES = HF_PACKAGE_PREFIXES + (
+    "argo/",
+    "manifest.yaml",
+    "masks/",
+)
+HF_TRAINING_ASSET_PATTERNS = tuple(
+    f"{prefix}**" if prefix.endswith("/") else prefix
+    for prefix in HF_TRAINING_ASSET_PREFIXES
 )
 
 
@@ -273,6 +288,47 @@ def download_hf_package(
     return written_paths
 
 
+def download_hf_training_assets(
+    source_url: str,
+    output_dir: Path,
+    *,
+    revision: str = DEFAULT_REVISION,
+    zarr_path: Path = DEFAULT_ZARR_PATH,
+    force: bool = False,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    token: str | None = None,
+) -> list[Path]:
+    """Download the pinned training subset with the native HF snapshot client."""
+    _, repo_id, active_revision, subdir = _parse_hf_dataset_url(
+        source_url,
+        default_revision=revision,
+    )
+    if subdir:
+        raise ValueError("Training-assets mode requires a repository-root HF URL.")
+    output_dir = Path(output_dir)
+    snapshot_download(
+        repo_id=repo_id,
+        repo_type="dataset",
+        revision=active_revision,
+        local_dir=output_dir,
+        allow_patterns=list(HF_TRAINING_ASSET_PATTERNS),
+        ignore_patterns=["rasters/**"],
+        force_download=bool(force),
+        max_workers=int(max_workers),
+        token=token,
+    )
+    expected_zarr = output_dir / zarr_path
+    if not expected_zarr.exists():
+        raise RuntimeError(
+            f"Downloaded package is missing expected Zarr path: {expected_zarr}"
+        )
+    return [
+        path
+        for path in output_dir.rglob("*")
+        if path.is_file() and ".cache" not in path.relative_to(output_dir).parts
+    ]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the command-line parser for aligned ARGO package downloads."""
     parser = argparse.ArgumentParser(
@@ -308,9 +364,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Download streaming chunk size in MiB.",
     )
     parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help="Maximum number of parallel file downloads.",
+    )
+    parser.add_argument(
         "--force-download",
         action="store_true",
         help="Download files even if local package files already exist.",
+    )
+    parser.add_argument(
+        "--training-assets",
+        action="store_true",
+        help="Also download compact ARGO, manifest, and masks, but never rasters.",
     )
     parser.add_argument(
         "--overwrite",
@@ -333,20 +400,33 @@ def main() -> None:
         parser.error("--timeout-seconds must be positive.")
     if int(args.chunk_size_mb) <= 0:
         parser.error("--chunk-size-mb must be positive.")
+    if int(args.max_workers) <= 0:
+        parser.error("--max-workers must be positive.")
 
     output_dir = Path(args.output_dir)
     source_url = load_dataset_url(DATASET_LINK_KEY)
-    written_paths = download_hf_package(
-        source_url,
-        output_dir,
-        revision=str(args.revision),
-        zarr_path=Path(args.zarr_path),
-        force=bool(args.force_download),
-        overwrite=bool(args.overwrite),
-        timeout_seconds=int(args.timeout_seconds),
-        chunk_size_mb=int(args.chunk_size_mb),
-        token=args.hf_token,
-    )
+    if args.training_assets:
+        written_paths = download_hf_training_assets(
+            source_url,
+            output_dir,
+            revision=str(args.revision),
+            zarr_path=Path(args.zarr_path),
+            force=bool(args.force_download or args.overwrite),
+            max_workers=int(args.max_workers),
+            token=args.hf_token,
+        )
+    else:
+        written_paths = download_hf_package(
+            source_url,
+            output_dir,
+            revision=str(args.revision),
+            zarr_path=Path(args.zarr_path),
+            force=bool(args.force_download),
+            overwrite=bool(args.overwrite),
+            timeout_seconds=int(args.timeout_seconds),
+            chunk_size_mb=int(args.chunk_size_mb),
+            token=args.hf_token,
+        )
     print(f"Downloaded Hugging Face package files: {len(written_paths)}")
     print(f"Output folder: {output_dir}")
     print(f"Aligned ARGO Zarr: {output_dir / Path(args.zarr_path)}")

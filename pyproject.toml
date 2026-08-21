@@ -15,6 +15,7 @@ dependencies = [
     "dask",
     "einops",
     "h5netcdf",
+    "huggingface-hub",
     "matplotlib",
     "numpy>=1.26,<2.1",
     "pandas",
@@ -64,6 +65,7 @@ namespaces = true
 "depth_recon.data" = [
     "**/*.geojson",
     "**/*.json",
+    "**/*.npz",
     "**/*.sh",
     "**/*.tif",
     "**/*.tiff",

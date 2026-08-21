@@ -4,6 +4,14 @@ entry point around the DepthDif inference stack so users can run weekly ocean
 temperature reconstruction without cloning the repository or preparing a GLORYS
 target dataset.
 
+> **Legacy public checkpoint contract:** the currently published `depthdif_v1`
+> package assets use one OSTIA EO channel. They remain documented here so the
+> released package is reproducible, but they are architecture-incompatible with
+> maintained repository checkpoints, which require ordered `[SST, SSS, ADT]`
+> conditioning. Do not load a maintained three-channel checkpoint through this
+> legacy package path unless matching public source download and config support
+> has also been published.
+
 Install it with:
 
 ```bash
@@ -71,8 +79,8 @@ The default public workflow is:
 6. Download the matching OSTIA daily SST file unless `ostia_dir` is supplied or
    `auto_download_ostia=False`.
 7. Rasterize ARGO profiles into sparse depth channels for each selected patch.
-8. Load OSTIA as the EO surface-conditioning channel, or use an all-zero EO
-   channel when OSTIA is disabled.
+8. For the legacy public checkpoint, load OSTIA as its single EO channel, or
+   use an all-zero EO channel when OSTIA is disabled.
 9. Run `PixelDiffusionConditional.predict_step(...)` in batches.
 10. Optionally run `uncertainty_step(..., num_samples=20)` when `export_uncertainty=True` or `--export-uncertainty` is set.
 11. Stitch overlapping patch predictions into depth-level GeoTIFFs and write
@@ -122,7 +130,7 @@ For progress reporting, pass a callback receiving `(event, name, path)`. Events
 include `cached`, `downloading`, `downloaded`, `builtin`, and `packaged`.
 
 ## Source Data Inputs
-Public inference consumes EN4/ARGO profiles and can consume OSTIA SST.
+The legacy public checkpoint consumes EN4/ARGO profiles and can consume one OSTIA SST channel. Maintained repository checkpoints additionally require SSS and ADT.
 
 EN4/ARGO downloads use the Met Office EN.4.2.2 yearly profile archive and
 extract only the month files touched by the selected seven-day ISO-week window.
@@ -158,7 +166,7 @@ run_week_inference(
 ```
 
 To run without OSTIA, omit `ostia_dir` and set `auto_download_ostia=False`.
-DepthDif will keep the model input contract intact by filling the EO channel
+This preserves the legacy public checkpoint contract by filling its single EO channel
 with zeros.
 
 ## CLI Usage

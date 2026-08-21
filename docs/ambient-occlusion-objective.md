@@ -30,7 +30,7 @@ From left to right, top to bottom:
 2. **Points model still sees**: the subset of those Argo observations that remains after the extra ambient masking step. These are the measurements still available to the model as input.
 3. **Points withheld from model**: the Argo observations that were originally present in the sample but were removed by the extra ambient masking step.
 4. **Seen/withheld mask**: the same split shown as a categorical mask, with green for pixels the model still sees, red for pixels withheld from the model, and black for locations with no Argo observation in the first place.
-5. **OSTIA**: the surface conditioning field for the same patch.
+5. **Surface conditioning (SST panel shown)**: this older figure visualizes the OSTIA component; the maintained pixel architecture stacks `[SST, SSS, ADT]` for the same patch.
 6. **GLORYS surface level**: the target ocean field at the shallowest GLORYS level for the same patch, plotted on the same blue-to-red color scale as OSTIA.
 
 What matters in this figure is the contrast between panels 1, 2, and 3: ambient occlusion does not invent a new sampling pattern from scratch. It starts from the real sparse Argo observations already present in the dataset, then removes an additional subset of them so the model has to work from a stricter, harder version of the same sample.
@@ -96,6 +96,7 @@ Define:
 \]
 
 The model condition is built from \((\tilde{x}, \tilde{A}, \text{EO})\) instead of \((x, A, \text{EO})\).
+The maintained `EO` tensor is the ordered three-channel `[SST, SSS, ADT]` stack; the extra ambient corruption changes only sparse ARGO conditioning.
 
 Optionally (enabled by default), the noisy branch is also masked:
 

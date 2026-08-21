@@ -51,9 +51,12 @@ data:  # dataset, split, and loader inputs
       require_argo_for_all: false  # allow no-ARGO inference rows
       filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
-    synthetic:  # synthetic sparse-input mode
-      enabled: false  # sample x from y instead of ARGO
-      pixel_count: 250  # synthetic observed pixels
+    surface_conditioning:  # checkpoint-stable dense surface inputs
+      sources: [sst, sss, adt]  # fixed model channel order
+    synthetic_target:  # disabled during inference
+      enabled: false  # inference never creates a synthetic dense target
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # retained repository-artifact contract
+      bathymetry_reference_date: null  # fixed seafloor-support mask date
     output:  # optional batch outputs
       return_info: false  # include metadata dictionaries
       return_coords: true  # include patch center coords
@@ -73,8 +76,9 @@ model:  # pixel diffusion model settings
   depth_channels: 50  # depth bands per field
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
+  condition_eo_channels: 3  # SST, SSS, and ADT surface channels
   condition_mask_channels: 1  # valid-mask condition channels
-  condition_include_eo: true  # add scenario-selected EO channel
+  condition_include_eo: true  # add configured surface channels
   condition_use_valid_mask: true  # add ARGO support mask
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling

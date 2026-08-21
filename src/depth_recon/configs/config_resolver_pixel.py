@@ -277,6 +277,67 @@ def apply_cnn_baseline_condition_contract(
         model_section["condition_channels"] = condition_channels
 
 
+def apply_surface_conditioning_contract(
+    model_cfg: dict[str, Any],
+    data_cfg: dict[str, Any],
+    override_keys: set[str],
+) -> None:
+    """Derive dense surface and total denoiser channel counts."""
+    model_section = model_cfg.get("model", {})
+    dataset_section = data_cfg.get("dataset", {})
+    surface_cfg = dataset_section.get("surface_conditioning", {})
+    sources = surface_cfg.get("sources") if isinstance(surface_cfg, dict) else None
+    if sources is None:
+        eo_channels = int(model_section.get("condition_eo_channels", 1))
+    else:
+        if isinstance(sources, str):
+            sources = [sources]
+        eo_channels = len(list(sources))
+        if eo_channels < 1:
+            raise ValueError("data.dataset.surface_conditioning.sources is empty.")
+    model_section["condition_eo_channels"] = eo_channels
+
+    prior_cfg = dataset_section.get("synthetic_target", {})
+    if isinstance(prior_cfg, dict) and bool(prior_cfg.get("enabled", False)):
+        if tuple(str(value).strip().lower() for value in (sources or ())) != (
+            "sst",
+            "sss",
+            "adt",
+        ):
+            raise ValueError(
+                "synthetic_target.enabled=true requires "
+                "surface_conditioning.sources=[sst, sss, adt]."
+            )
+        if not prior_cfg.get("statistics_path"):
+            raise ValueError("synthetic_target.enabled=true requires statistics_path.")
+        if not bool(model_section.get("condition_include_eo", False)):
+            raise ValueError(
+                "Online prior pretraining requires model.condition_include_eo=true."
+            )
+        if not bool(model_section.get("mask_loss_with_valid_pixels", False)):
+            raise ValueError(
+                "Online prior pretraining requires "
+                "model.mask_loss_with_valid_pixels=true."
+            )
+        ambient_cfg = model_section.get("ambient_occlusion", {})
+        if isinstance(ambient_cfg, dict) and bool(ambient_cfg.get("enabled", False)):
+            raise ValueError(
+                "Online prior pretraining requires "
+                "model.ambient_occlusion.enabled=false."
+            )
+
+    if "model.condition_channels" in override_keys:
+        return
+    condition_channels = int(model_section.get("generated_channels", 1))
+    if bool(model_section.get("condition_include_eo", False)):
+        condition_channels += eo_channels
+    if bool(model_section.get("condition_use_valid_mask", True)):
+        condition_channels += int(model_section.get("condition_mask_channels", 1))
+    if bool(model_section.get("condition_use_land_mask", False)):
+        condition_channels += 1
+    model_section["condition_channels"] = condition_channels
+
+
 def resolve_pixel_scenario(
     super_cfg: dict[str, Any], scenario_override: str | None = None
 ) -> str:
@@ -328,7 +389,7 @@ def apply_pixel_scenario(
     generated_channels = depth_channels * len(output_fields)
     condition_channels = generated_channels
     if bool(model_section.get("condition_include_eo", False)):
-        condition_channels += 1
+        condition_channels += int(model_section.get("condition_eo_channels", 1))
     if bool(model_section.get("condition_use_valid_mask", True)):
         condition_channels += int(model_section.get("condition_mask_channels", 1))
     if bool(model_section.get("condition_use_land_mask", False)):
@@ -338,6 +399,9 @@ def apply_pixel_scenario(
     model_section["scenario"] = scenario
     model_section["output_fields"] = list(output_fields)
     model_section["generated_channels"] = generated_channels
+    model_section["condition_eo_channels"] = int(
+        model_section.get("condition_eo_channels", 1)
+    )
     model_section["condition_channels"] = condition_channels
     output_section["fields"] = list(output_fields)
     output_section["include_salinity"] = "salinity" in output_fields
@@ -425,6 +489,7 @@ def load_pixel_training_config(
             "training": training_cfg,
         },
     )
+    apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (
@@ -498,6 +563,7 @@ def load_pixel_inference_config(
             "inference": inference_cfg["inference"],
         },
     )
+    apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (

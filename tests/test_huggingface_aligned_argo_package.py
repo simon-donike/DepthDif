@@ -98,6 +98,15 @@ def _write_compact_argo_zarr(path: Path) -> None:
             "profile": np.asarray([0], dtype=np.int64),
             "glorys_depth": np.asarray([0.0, 10.0], dtype=np.float32),
         },
+        attrs={
+            "source_kind": "enriched",
+            "temperature_source": "potential",
+            "temperature_source_variable": "POTM_CORRECTED",
+            "temperature_standard_name": "sea_water_potential_temperature",
+            "temperature_reference_pressure_dbar": 0.0,
+            "temperature_scale": "ITS-90",
+            "temperature_stretch": {"minimum": 270.15, "maximum": 308.15},
+        },
     )
     ds.to_zarr(path, mode="w", zarr_format=2)
 
@@ -179,6 +188,10 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
                 (package_dir / "manifest.yaml").read_text()
             )
             self.assertEqual(packaged_manifest["output_dir"], package_dir.as_posix())
+            self.assertEqual(
+                packaged_manifest["argo"]["temperature_source_variable"],
+                "POTM_CORRECTED",
+            )
             self.assertTrue((package_dir / "masks/land_mask.tif").exists())
             readme_text = (package_dir / "README.md").read_text()
             self.assertTrue(
@@ -199,6 +212,7 @@ class TestHuggingFaceAlignedArgoPackage(unittest.TestCase):
                 "assets/data/geotiff_dataset_random100_surface.webp", readme_text
             )
             self.assertIn("EN4 Alignment Examples", readme_text)
+            self.assertIn("POTM_CORRECTED", readme_text)
             self.assertEqual(
                 (package_dir / "rasters/sss/sos/sos_20240102.tif").stat().st_nlink,
                 1,

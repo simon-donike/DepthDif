@@ -46,7 +46,7 @@ data:  # dataset, split, and loader inputs
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: false  # dense prior targets do not require colocated ARGO
+      require_argo_for_train: true  # train on patches containing ARGO conditioning
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
       filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
@@ -54,11 +54,11 @@ data:  # dataset, split, and loader inputs
     surface_conditioning:  # checkpoint-stable dense surface inputs
       sources: [sst, sss, adt]  # fixed model channel order
     synthetic_target:  # deterministic surface-plus-depth-offset pretraining
-      enabled: true  # generate dense surface-plus-depth-offset targets on the fly
-      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # v1 global or v2 smooth monthly GLORYS-delta artifact
+      enabled: false  # supervise directly against paired GLORYS fields
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
     finetune_sampling:  # optional hard-area finetuning row filter
-      enabled: false  # disable regional finetuning for the HPC preset
+      enabled: false  # disable regional finetuning for the standard HPC run
       hard_fraction: 0.5  # target fraction of rows from hard regions
       apply_to_splits:  # splits affected by finetune row filtering
       - train  # keep validation globally comparable
@@ -197,7 +197,7 @@ model:  # pixel diffusion model settings
     save_ema_weights_in_callback_state: true  # save EMA in checkpoints
     evaluate_ema_weights_instead: true  # validate using EMA weights
   ambient_occlusion:  # ambient objective controls
-    enabled: false  # use ordinary dense supervision against the synthetic prior target
+    enabled: false  # use ordinary dense supervision against paired GLORYS
     further_drop_prob: 0.33  # hide one third of observed pixels
     apply_to_noisy_branch: true  # mask noisy target branch
     shared_spatial_mask: true  # share mask across channels
@@ -215,11 +215,11 @@ model:  # pixel diffusion model settings
       linear_start_weight: 0.0  # linear weight at noisiest timestep
       linear_end_weight: 1.0  # linear weight at cleanest timestep
     sparse_observation:  # Charbonnier consistency on sparse ARGO observations
-      enabled: false  # no sparse-observation auxiliary during dense pretraining
+      enabled: false  # disabled for direct paired-GLORYS supervision
       weight: 0.25  # conservative weight when this auxiliary term is enabled
       eps: 1.0e-3  # Charbonnier epsilon
     increment:  # sparse pairwise increment loss on observed ARGO profiles
-      enabled: false  # no sparse-profile auxiliary during dense pretraining
+      enabled: false  # disabled for direct paired-GLORYS supervision
       weight: 0.1  # conservative profile-shape regularizer when enabled
       eps: 1.0e-3  # Charbonnier epsilon
       max_pairs_per_sample: 4096  # cap sampled pair count per sample
@@ -227,7 +227,7 @@ model:  # pixel diffusion model settings
       horizontal_pairs: false  # optional same-depth neighbor pairs
       horizontal_max_distance: null  # reserved for future distance-limited pairs
     structure_function_prior:  # GLORYS distributional variogram prior
-      enabled: false  # disabled for standard synthetic-target diffusion
+      enabled: false  # opt-in GLORYS prior; direct supervision is sufficient
       target: reference  # reference or paired_glorys
       weight: 0.1  # structure-function prior multiplier
       reference_path: null  # .pt with distance_bins and s2_ref for reference mode
@@ -236,7 +236,7 @@ model:  # pixel diffusion model settings
       eps: 1.0e-6  # log comparison epsilon
       per_depth: true  # compare per-depth reference stats when provided
     spectral_energy_floor:  # GLORYS radial spectral lower-bound prior
-      enabled: false  # disabled for standard synthetic-target diffusion
+      enabled: false  # opt-in GLORYS prior; direct supervision is sufficient
       target: reference  # reference or paired_glorys
       weight: 0.05  # spectral floor prior multiplier
       reference_path: null  # .pt with radial band energy reference for reference mode
@@ -246,7 +246,7 @@ model:  # pixel diffusion model settings
       max_band: null  # null uses all available reference bands
       per_depth: true  # compare per-depth reference spectra when provided
     feature_gram_prior:  # reserved GLORYS feature-stat prior
-      enabled: false  # disabled for standard synthetic-target diffusion
+      enabled: false  # reserved feature prior is disabled
       weight: 0.01  # reserved feature prior multiplier
       encoder_checkpoint: null  # reserved frozen encoder checkpoint path
       reference_path: null  # reserved feature-stat reference path
@@ -313,8 +313,8 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      full_reconstruction_logging_enabled: true  # store validation reconstruction plots in the offline W&B run
-      max_full_reconstruction_samples: 5  # log one sample to limit validation overhead
+      full_reconstruction_logging_enabled: false  # standard validation loss only; no reconstruction plots
+      max_full_reconstruction_samples: 1  # unused while full reconstruction logging is disabled
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
@@ -337,9 +337,9 @@ training:  # optimizer, trainer, and logging
     offline: true  # compute nodes cannot reach W&B
     project: DepthDif_Simon  # W&B project
     entity: esa-phi-lab  # W&B entity
-    run_name: vertical_offset_dense_pretrain_t_2gpu_hpc  # run display name
+    run_name: glorys_supervised_t_2gpu_spacehpc  # run display name
     log_model: false  # W&B model logging policy
-    verbose: true  # store W&B images and diagnostic stats locally in offline mode
+    verbose: false  # disable W&B image and diagnostic-stat logging
     watch_gradients: false  # watch gradients
     watch_parameters: false  # watch parameters
     watch_log_freq: 100  # watch log cadence
