@@ -21,7 +21,7 @@ Fit the coefficients with:
   --geotiff-root-dir /work/data/OceanVariableReconstruction \
   --output-path /work/data/OceanVariableReconstruction/priors/vertical_offset_prior.npz \
   --metadata-cache-dir /work/data/OceanVariableReconstruction/depthdif_cache \
-  --start-year 2000 --end-year 2024 --exclude-year 2018 \
+  --start-year 2000 --end-year 2024 --exclude-year 2016 \
   --tile-size 128 --patch-stride 128 --max-land-fraction 0.30 \
   --max-patches 4000 --max-supervised-depth-m 1000 \
   --random-seed 7 --overwrite --no-progress
@@ -35,3 +35,9 @@ For Stage 1, enable `data.dataset.pretraining_prior.enabled`, use
 `priors/vertical_offset_prior.npz`, and disable ambient occlusion. Sparse ARGO
 values remain exact overrides. This is a surface-duplication curriculum, not a
 claim that observed fronts truly persist through the water column.
+
+During synthetic-target validation, the loader also returns the same-date
+GLORYS field under separate diagnostic keys. The W&B profile comparison uses
+that field for the `GLORYS` trace and keeps the Stage 1 target as the
+`Supervision target` trace; the diagnostic GLORYS values do not enter model
+conditioning or loss computation.

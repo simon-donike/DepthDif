@@ -299,6 +299,7 @@ class TestPaperWeekExport(unittest.TestCase):
             self.assertFalse(calls[2].persist_ground_truth_rasters)
             self.assertFalse(calls[3].persist_ground_truth_rasters)
             self.assertEqual(manifest["method_order"], ["climatology", "idw", "cnn"])
+            self.assertEqual(manifest["validation_year"], 2016)
             self.assertEqual(manifest_json["depth_export_mode"], "native")
             self.assertEqual(
                 set(manifest_json["methods"]["idw"]["variables"]),

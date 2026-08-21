@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_consistency_dashboard --temperature-run-dir inference/outputs/temporal_variables_2018/runs/temperature/2018_W01 --salinity-run-dir inference/outputs/temporal_variables_2018/runs/salinity/2018_W01 --output-dir inference/outputs/temporal_variables_2018/temporal --validation-year 2018 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal
+# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_consistency_dashboard --temperature-run-dir inference/outputs/temporal_variables_2016/runs/temperature/2016_W01 --salinity-run-dir inference/outputs/temporal_variables_2016/runs/salinity/2016_W01 --output-dir inference/outputs/temporal_variables_2016/temporal --validation-year 2016 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal
 """Export compact temporal dashboard data from weekly validation-year runs."""
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ DEFAULT_TEMPORAL_CONFIG_NAME = "temporal-config.json"
 DEFAULT_TEMPORAL_ANALYSIS_JSON_NAME = "temporal-analysis.json"
 DEFAULT_TEMPORAL_BASIN_DATA_DIR_NAME = "basins"
 DEFAULT_TEMPORAL_BASIN_MAP_GEOJSON_NAME = "basin-map.geojson"
-DEFAULT_TEMPORAL_VALIDATION_YEAR = 2018
+DEFAULT_TEMPORAL_VALIDATION_YEAR = 2016
 DEFAULT_TEMPORAL_YEAR_WEEK_COUNT = 52
 BASIN_DISPLAY_NAMES = {basin: basin for basin in BASIN_NAMES}
 

@@ -1486,9 +1486,11 @@ class PixelDiffusionConditional(pl.LightningModule):
         keys = [
             "x",
             "y",
+            "y_glorys",
             "eo",
             "x_valid_mask",
             "y_valid_mask",
+            "y_glorys_valid_mask",
             "land_mask",
             "coords",
             "date",
@@ -1498,8 +1500,10 @@ class PixelDiffusionConditional(pl.LightningModule):
                 [
                     "x_salinity",
                     "y_salinity",
+                    "y_salinity_glorys",
                     "x_salinity_valid_mask",
                     "y_salinity_valid_mask",
+                    "y_salinity_glorys_valid_mask",
                 ]
             )
 
@@ -2806,13 +2810,31 @@ class PixelDiffusionConditional(pl.LightningModule):
                 y = cached["y_salinity"]
                 x_valid_mask = cached.get("x_salinity_valid_mask")
                 y_valid_mask = cached.get("y_salinity_valid_mask")
+                glorys_reference = cached.get("y_salinity_glorys")
+                glorys_reference_valid_mask = cached.get("y_salinity_glorys_valid_mask")
+                if glorys_reference is None:
+                    glorys_reference = y
+                if glorys_reference_valid_mask is None:
+                    glorys_reference_valid_mask = y_valid_mask
                 target = x if self.ambient_occlusion_enabled else y
                 x_denorm = salinity_normalize(mode="denorm", tensor=x)
                 y_denorm = salinity_normalize(mode="denorm", tensor=y)
+                glorys_reference_denorm = salinity_normalize(
+                    mode="denorm", tensor=glorys_reference
+                )
                 target_denorm = salinity_normalize(mode="denorm", tensor=target)
             else:
+                glorys_reference = cached.get("y_glorys")
+                glorys_reference_valid_mask = cached.get("y_glorys_valid_mask")
+                if glorys_reference is None:
+                    glorys_reference = y
+                if glorys_reference_valid_mask is None:
+                    glorys_reference_valid_mask = y_valid_mask
                 x_denorm = temperature_normalize(mode="denorm", tensor=x)
                 y_denorm = temperature_normalize(mode="denorm", tensor=y)
+                glorys_reference_denorm = temperature_normalize(
+                    mode="denorm", tensor=glorys_reference
+                )
                 target_denorm = temperature_normalize(mode="denorm", tensor=target)
             eo_denorm = None
             if eo is not None:
@@ -2850,6 +2872,9 @@ class PixelDiffusionConditional(pl.LightningModule):
                     generated_profile_mask = y_mask_bool & ~x_mask_bool
             y_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 y_denorm, y_valid_mask
+            )
+            glorys_reference_denorm_masked = self._apply_postprocess_invalid_to_nan(
+                glorys_reference_denorm, glorys_reference_valid_mask
             )
             target_denorm_masked = self._apply_postprocess_invalid_to_nan(
                 target_denorm, eval_mask
@@ -3099,7 +3124,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 logger=self.logger,
                 x=x_denorm,
                 y_hat=y_hat_denorm_for_plot,
-                y_target=y_denorm_masked,
+                y_target=glorys_reference_denorm_masked,
                 supervision_target=target_denorm_masked,
                 conditioning_mask=x_valid_mask,
                 candidate_mask=generated_profile_mask,
@@ -3129,6 +3154,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Drop local tensor refs from this heavy validation path promptly.
         del recon_mse, y_hat, pred, pred_batch, y, x, target
         del target_denorm, y_hat_denorm, y_hat_denorm_for_plot, x_denorm, eo_denorm
+        del glorys_reference, glorys_reference_denorm
+        del glorys_reference_denorm_masked, glorys_reference_valid_mask
         gc.collect()
 
     def _run_single_image_full_reconstruction_and_log(self) -> None:

@@ -250,7 +250,7 @@ For temporal consistency diagnostics during the standard dual-variable productio
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
-  --year 2018 \
+  --year 2016 \
   --iso-week 22 \
   --temperature-checkpoint logs/<temperature-run>/best.ckpt \
   --salinity-checkpoint logs/<salinity-run>/best.ckpt \
@@ -277,7 +277,7 @@ For the production globe with both variables, run separate temperature and salin
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_global_variables \
-  --year 2018 \
+  --year 2016 \
   --iso-week 25 \
   --temperature-checkpoint logs/<temperature-run>/best.ckpt \
   --salinity-checkpoint logs/<salinity-run>/best.ckpt \

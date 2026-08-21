@@ -64,7 +64,7 @@ data:  # dataset, split, and loader inputs
       random_seed: 7  # deterministic split/sampling seed
       cache_size: 8  # open raster/source cache size
   split:  # train/validation split
-    val_year: 2018  # year reserved for validation
+    val_year: 2016  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
     num_workers: 0  # worker process count; keep DDP startup fork-safe by default

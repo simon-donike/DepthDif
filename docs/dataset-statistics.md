@@ -261,8 +261,10 @@ patch starts are 3.2 degrees apart.
 | `train` | 2,214,599 | 3,544 | 684 | 2,214,599 |
 | `val` | 169,936 | 3,391 | 52 | 169,936 |
 
-The configured split uses `2018` as validation year. Training and validation
-rows require at least one valid ARGO temperature profile; the `all` split keeps
+The table above is the earlier `2018`-split statistics snapshot. Current
+training and inference configs reserve `2016` for validation; regenerate this
+table before reporting split-dependent row counts. Training and validation rows
+require at least one valid ARGO temperature profile; the `all` split keeps
 patch/date rows even when no ARGO profile is present.
 
 **ARGO profile support per patch/date row**

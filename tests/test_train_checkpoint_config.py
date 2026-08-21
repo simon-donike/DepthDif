@@ -3,10 +3,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import torch
 
 from train import (
+    build_en4_candidate_validation_callback,
     load_weights_only_checkpoint,
     resolve_load_checkpoint_only,
     resolve_resume_ckpt_path,
@@ -24,6 +27,47 @@ class _TinyCheckpointModule(torch.nn.Module):
 
 
 class TestTrainCheckpointConfig(unittest.TestCase):
+    def test_en4_candidate_callback_builder_selects_configured_week(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            candidate_path = Path(tmpdir) / "candidates.parquet"
+            candidate_path.touch()
+            val_dataset = MagicMock()
+            val_dataset._rows = pd.DataFrame({"date": [20160624]})
+            val_dataset.root_dir = Path(tmpdir)
+            val_dataset.argo_store = object()
+            holdout = pd.DataFrame(
+                {"date": [20160624], "grid_row": [1], "grid_col": [2]}
+            )
+            expected_callback = object()
+            training_cfg = {
+                "training": {
+                    "en4_candidate_eval": {
+                        "enabled": True,
+                        "candidate_profiles_path": str(candidate_path),
+                        "iso_week": 25,
+                    }
+                }
+            }
+
+            with (
+                patch("train.load_dataset_context", return_value=object()),
+                patch("train.select_en4_holdout_locations", return_value=holdout),
+                patch(
+                    "train.EN4CandidateValidationCallback",
+                    return_value=expected_callback,
+                ),
+            ):
+                callback = build_en4_candidate_validation_callback(
+                    val_dataset=val_dataset,
+                    data_cfg={"split": {"val_year": 2016}},
+                    training_cfg=training_cfg,
+                )
+
+            self.assertIs(callback, expected_callback)
+            val_dataset.set_heldout_argo_locations.assert_called_once_with(
+                [(20160624, 1, 2)]
+            )
+
     def test_resume_checkpoint_false_starts_from_scratch(self) -> None:
         model_cfg = {"model": {"resume_checkpoint": False}}
 

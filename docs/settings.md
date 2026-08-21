@@ -94,7 +94,7 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.output.include_salinity` | scenario-derived | Enables salinity raster/profile support. Derived from scenario. |
 | `data.dataset.runtime.random_seed` | `7` | Deterministic split/sampling seed. |
 | `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
-| `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
+| `data.split.val_year` | `2016` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
 | `data.split.val_fraction` | `0.2` | Fallback validation fraction when no validation year is set. |
 | `data.dataloader.num_workers` | `8` | Dataset-side dataloader worker default used by helper paths. |
 | `data.dataloader.prefetch_factor` | `2` | Prefetched batches per worker when workers are enabled. |
@@ -152,6 +152,13 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
 | `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
 | `training.training.validation_sampling.max_full_reconstruction_samples` | `1` | Cap for expensive full-reconstruction validation examples. |
+| `training.training.en4_candidate_eval.enabled` | `true` | Enables the separate exact-profile EN4/GLORYS W&B monitor during validation runs. |
+| `training.training.en4_candidate_eval.candidate_profiles_path` | `instructions/en4_no_spatiotemporal_candidate_profiles.parquet` | External soft-evidence candidate list joined by EN4 source filename and source profile index. |
+| `training.training.en4_candidate_eval.iso_week` | `25` | Fixed week inside `data.split.val_year` used for inexpensive epoch-time monitoring. |
+| `training.training.en4_candidate_eval.holdout_fraction` | `0.2` | Seeded fraction of qualified weekly grid locations hidden from sparse inputs. |
+| `training.training.en4_candidate_eval.seed` | `7` | Candidate location-selection and reconstruction seed. |
+| `training.training.en4_candidate_eval.max_patches` | `1` | Fixed candidate patches reconstructed per validation run; the full population remains post-training evaluation. |
+| `training.training.en4_candidate_eval.max_profiles_to_plot` | `6` | Maximum profile rows in each W&B comparison figure. |
 | `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
 | `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
 | `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |

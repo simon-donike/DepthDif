@@ -282,17 +282,30 @@ Typical bundle export:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_paper_week \
-  --year 2018 \
+  --year 2016 \
   --iso-week 25 \
   --models-config configs/paper_week_models.yaml \
-  --output-dir inference/outputs/paper_2018_W25 \
+  --output-dir inference/outputs/paper_2016_W25 \
   --device cuda \
   --sampler ddim \
   --ddim-steps 100 \
   --batch-size 8 \
   --en4-holdout-fraction 0.2 \
+  --en4-candidate-profiles /path/to/en4_no_spatiotemporal_candidate_profiles.parquet \
   --seed 7
 ```
+
+With `--en4-candidate-profiles`, candidate membership is matched exactly on
+`profile_source_file` and `source_profile_idx` before the existing QC and
+seeded location sampling are applied. These profiles have no nearby
+spatiotemporal profile in the audited GLORYS source release; this is soft
+evidence, not proof that GLORYS did not assimilate them. The large source
+parquet remains external, while the selected provenance IDs and evidence label
+are saved in the bundle CSVs and selection metadata.
+
+All learned methods in a 2016 comparison must be retrained with the 2016 split.
+Checkpoints trained with the former 2018 holdout have already seen 2016 data
+and are not valid for this evaluation.
 
 The bundle writes `paper_week_manifest.json`, `references/en4_holdout_locations.csv`, `references/en4_holdout_profiles.csv`, climatology artifacts, and one `methods/<method>/<variable>/` run per enabled method and variable. Each model run uses `depth_export_mode: native`, so `depth_exports` contains `depth_000` through the final native channel.
 
@@ -300,22 +313,23 @@ Run metrics from the saved bundle:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
-  --paper-run-dir inference/outputs/paper_2018_W25 \
-  --output-dir inference/outputs/paper_2018_W25/metrics
+  --paper-run-dir inference/outputs/paper_2016_W25 \
+  --output-dir inference/outputs/paper_2016_W25/metrics
 ```
 
-Metrics read the manifest dynamically, including CNN, U-Net 2D, and DepthDif when present, and compute RMSE, MAE, and R² by method, variable, target, and depth against the held-out EN4/ARGO profile CSV and the persisted dense GLORYS reference rasters. By default, metrics are evaluated only at native depth levels no deeper than 2000 m; override with `--max-depth-m` only for intentional comparisons with a different cutoff. Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and `paper_metrics_manifest.json`.
+Metrics read the manifest dynamically, including CNN, U-Net 2D, and DepthDif when present, and compute RMSE, MAE, and R² by method, variable, target, and depth against the held-out EN4/ARGO profile CSV and the persisted dense GLORYS reference rasters. GLORYS12 is also sampled at the exact held-out EN4 locations and reported as a method for the EN4 target only; a trivial GLORYS-vs-GLORYS row is intentionally omitted. By default, metrics are evaluated only at native depth levels no deeper than 2000 m; override with `--max-depth-m` only for intentional comparisons with a different cutoff. Outputs include `paper_metrics_summary.csv`, `paper_metrics_by_depth.csv`, `en4_holdout_metrics.csv`, `glorys_field_metrics.csv`, `en4_holdout_locations.csv`, `recon_results_table.tex`, and `paper_metrics_manifest.json`.
 
 The older direct metrics mode remains available for existing runs:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
-  --year 2018 \
+  --year 2016 \
   --iso-week 25 \
-  --idw-run-dir inference/outputs/paper_2018_W25_idw \
-  --lstm-run-dir inference/outputs/paper_2018_W25_lstm \
-  --unet-run-dir inference/outputs/paper_2018_W25_unet \
-  --output-dir inference/outputs/paper_metrics_2018_W25
+  --idw-run-dir inference/outputs/paper_2016_W25_idw \
+  --lstm-run-dir inference/outputs/paper_2016_W25_lstm \
+  --unet-run-dir inference/outputs/paper_2016_W25_unet \
+  --output-dir inference/outputs/paper_metrics_2016_W25 \
+  --en4-candidate-profiles /path/to/en4_no_spatiotemporal_candidate_profiles.parquet
 ```
 
 ### All-Week Baseline Spectral Comparison Bundle
@@ -374,21 +388,21 @@ Generated dashboard output copied into the hosted globe directory:
 Existing runs need inference rerun to get true full-depth dashboard JSON. If a run has no precomputed `error_analysis_json_path`, the Cesium packager falls back to generating `error-analysis.json` from the existing absolute-error GeoTIFF depth exports only. The basin grouping is a land-filtered rasterization of `world_oceans.geojson`, with a dominant GeoJSON region label attached to every grid cell. Use `--no-error-analysis` only when you explicitly want to skip this packaging output.
 
 ## Workflow 1e: Export Temporal Dashboard Data
-The standard production path is `src/depth_recon/inference/export_global_variables.py --export-temporal-consistency`, which runs lightweight weekly exports for the configured validation year (`data.split.val_year`, currently 2018) into `temporal_runs/`, then aggregates compact full-depth absolute-error summaries into schema-v2 `temporal-config.json` plus one `basins/<basin>.json` file per `world_oceans.geojson` dashboard region for `docs/temporal-dashboard/index.html`. Add `--export-temporal-globe` when the same weekly runs should also be tiled into a separate 10m Cesium animation bundle for `docs/temporal-globe/index.html`. Use `src/depth_recon/inference/export_temporal_global_variables.py` only when you want a temporal-only run without generating the normal production globe first.
+The standard production path is `src/depth_recon/inference/export_global_variables.py --export-temporal-consistency`, which runs lightweight weekly exports for the configured validation year (`data.split.val_year`, currently 2016) into `temporal_runs/`, then aggregates compact full-depth absolute-error summaries into schema-v2 `temporal-config.json` plus one `basins/<basin>.json` file per `world_oceans.geojson` dashboard region for `docs/temporal-dashboard/index.html`. Add `--export-temporal-globe` when the same weekly runs should also be tiled into a separate 10m Cesium animation bundle for `docs/temporal-globe/index.html`. Use `src/depth_recon/inference/export_temporal_global_variables.py` only when you want a temporal-only run without generating the normal production globe first.
 
 The temporal payload no longer stores week-to-week change, flicker, grid-cell, or top-cell metrics. Weekly runs still compare model prediction against GLORYS internally, but the hosted temporal bundle keeps only each week's 10m prediction and 10m absolute-error rasters for temperature and salinity. Full-native-depth dashboard values are aggregated as exact count-weighted yearly mean absolute errors by GeoJSON region and depth, and per-date basin mean absolute errors are aggregated across native depths for the temporal chart. The dashboard starts with no selected basin; map clicks or the basin selector choose an area, and clicking the active area again clears it. Temperature and salinity temporal inputs must cover matching weeks and depth metadata.
 
 Typical run:
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_global_variables \
-  --start-year 2018 \
+  --start-year 2016 \
   --start-iso-week 1 \
   --temperature-checkpoint logs/<temperature-run>/best.ckpt \
   --salinity-checkpoint logs/<salinity-run>/best.ckpt \
   --device cuda \
   --export-temporal-globe \
   --output-root inference/outputs \
-  --output-name temporal_variables_2018_W22_W28 \
+  --output-name temporal_variables_2016 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal \
   --rclone-remote r2:depth-data/inference_production/temporal
 ```
@@ -410,10 +424,10 @@ The temporal globe packager defaults to WebP q80, `--temporal-globe-extra-zoom-l
 To package existing weekly temporal run folders without re-running inference, call the packager directly:
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_cesium_globe_assets \
-  --temperature-run-dir inference/outputs/temporal_variables_2018/runs/temperature/2018_W01 \
-  --salinity-run-dir inference/outputs/temporal_variables_2018/runs/salinity/2018_W01 \
-  --output-dir inference/outputs/temporal_variables_2018/temporal-globe \
-  --validation-year 2018 \
+  --temperature-run-dir inference/outputs/temporal_variables_2016/runs/temperature/2016_W01 \
+  --salinity-run-dir inference/outputs/temporal_variables_2016/runs/salinity/2016_W01 \
+  --output-dir inference/outputs/temporal_variables_2016/temporal-globe \
+  --validation-year 2016 \
   --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal-globe \
   --rclone-remote r2:depth-data/inference_production/temporal-globe
 ```

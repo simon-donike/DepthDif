@@ -146,6 +146,10 @@ def _write_enriched_argo_zarr(path: Path) -> None:
                 np.asarray([20240108, 20240108], dtype=np.int32),
             ),
             "profile_idx": (("profile",), np.asarray([7, 8], dtype=np.int32)),
+            "profile_source_file": (
+                ("profile",),
+                np.asarray(["EN.4.2.2.f.profiles.g10.202401.nc"] * 2),
+            ),
             "latitude": (
                 ("profile",),
                 np.asarray([1.5, 1.5], dtype=np.float32),
@@ -254,10 +258,40 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
 
 
 class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
+    def test_synthetic_prior_must_exclude_validation_year(self) -> None:
+        """Synthetic pretraining must reject prior statistics containing validation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
+            prior_path = write_prior_artifact(
+                output_dir / "vertical_offset_prior.npz",
+                depth_axis_m=np.asarray([0.0, 10.0], dtype=np.float32),
+            )
+
+            with self.assertRaisesRegex(ValueError, "validation year 2016"):
+                ArgoGeoTIFFGriddedPatchDataset(
+                    geotiff_root_dir=output_dir,
+                    metadata_cache_dir=cache_dir,
+                    split="train",
+                    tile_size=2,
+                    resolution_deg=1.0,
+                    land_mask_path=land_mask_path,
+                    patch_stride=2,
+                    max_land_fraction=1.0,
+                    val_year=2016,
+                    require_argo_for_train=True,
+                    include_salinity=True,
+                    surface_conditioning={"sources": ["sst", "sss", "adt"]},
+                    synthetic_target={
+                        "enabled": True,
+                        "statistics_path": prior_path.name,
+                        "bathymetry_reference_date": 20240108,
+                    },
+                )
+
     def test_online_prior_integrates_surface_channels_masks_and_argo_anchors(
         self,
     ) -> None:
-        """Prior mode should emit model-ready dense targets without GLORYS values."""
+        """Prior mode should keep training independent of paired GLORYS values."""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir, cache_dir, land_mask_path = _make_geotiff_dataset(Path(tmpdir))
             supervision_weight = np.ones((2, 2), dtype=np.float32)
@@ -300,6 +334,10 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             self.assertEqual(sample["info"]["target_kind"], "vertical_offset_prior")
             self.assertNotIn("y_supervision_weight", sample)
             self.assertNotIn("y_salinity_supervision_weight", sample)
+            self.assertNotIn("y_glorys", sample)
+            self.assertNotIn("y_glorys_valid_mask", sample)
+            self.assertNotIn("y_salinity_glorys", sample)
+            self.assertNotIn("y_salinity_glorys_valid_mask", sample)
             np.testing.assert_array_equal(
                 sample["y_valid_mask"].numpy(),
                 sample["y_salinity_valid_mask"].numpy(),
@@ -332,6 +370,12 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             dataset.split = "val"
             first_validation_sample = dataset[0]
             repeated_validation_sample = dataset[0]
+            glorys_c = temperature_normalize(
+                mode="denorm", tensor=first_validation_sample["y_glorys"]
+            )
+            glorys_salinity = salinity_normalize(
+                mode="denorm", tensor=first_validation_sample["y_salinity_glorys"]
+            )
             np.testing.assert_array_equal(
                 first_validation_sample["y"].numpy(),
                 repeated_validation_sample["y"].numpy(),
@@ -339,6 +383,42 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             np.testing.assert_array_equal(
                 first_validation_sample["y_salinity"].numpy(),
                 repeated_validation_sample["y_salinity"].numpy(),
+            )
+            self.assertFalse(
+                torch.equal(
+                    first_validation_sample["y"],
+                    first_validation_sample["y_glorys"],
+                )
+            )
+            self.assertFalse(
+                torch.equal(
+                    first_validation_sample["y_salinity"],
+                    first_validation_sample["y_salinity_glorys"],
+                )
+            )
+            self.assertFalse(
+                bool(first_validation_sample["y_glorys_valid_mask"][0, 1, 1])
+            )
+            self.assertTrue(
+                bool(
+                    first_validation_sample["y_salinity_glorys_valid_mask"][
+                        :, 1, 1
+                    ].all()
+                )
+            )
+            self.assertTrue(
+                torch.allclose(
+                    glorys_c[:, 0, 0],
+                    torch.tensor([12.0, 22.0], dtype=torch.float32),
+                    atol=0.25,
+                )
+            )
+            self.assertTrue(
+                torch.allclose(
+                    glorys_salinity[:, 0, 0],
+                    torch.tensor([35.2, 36.2], dtype=torch.float32),
+                    atol=0.05,
+                )
             )
 
     def test_contract_decodes_stretched_rasters_and_argo_profiles(self) -> None:
@@ -954,4 +1034,4 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             payload["data"]["dataset"]["surface_conditioning"]["sources"],
             ["sst", "sss", "adt"],
         )
-        self.assertEqual(payload["data"]["split"]["val_year"], 2018)
+        self.assertEqual(payload["data"]["split"]["val_year"], 2016)

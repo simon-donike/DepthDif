@@ -196,6 +196,27 @@ Notable behavior:
 - periodic scalar/image logging intervals are configurable
 - config files are uploaded to W&B run files (when experiment handle is available)
 
+### EN4 candidate validation monitor
+
+Pixel training presets enable `training.training.en4_candidate_eval`. During
+each non-sanity validation run, the monitor uses the external candidate parquet
+to exact-match EN4 provenance, applies the normal QC and seeded 20% location
+holdout for the configured 2016 ISO week, and reconstructs a fixed small set of
+patches. Every selected location is removed from temperature and salinity inputs
+before patch rasterization, including in overlapping patches.
+
+W&B groups the outputs under `en4_candidate_eval/`. For each active variable it
+logs prediction-versus-EN4 and GLORYS12-versus-EN4 RMSE/MAE, the valid value and
+profile counts, and skill `1 - prediction_RMSE / GLORYS_RMSE`. Profile figures
+show EN4 QC-valid points, the predicted curve, the GLORYS12 curve, and both
+absolute-error curves. The standard shuffled 2016 validation loss remains the
+checkpoint metric; this fixed patch monitor is diagnostic only. The complete
+candidate population is still evaluated by the post-training paper workflow.
+
+The 104 MB parquet stays external and untracked. Override
+`training.training.en4_candidate_eval.candidate_profiles_path` when the checkout
+does not expose it at `instructions/en4_no_spatiotemporal_candidate_profiles.parquet`.
+
 - fixed overrides:
   - `data.dataset.conditioning.eo_dropout_prob=0.0`
   - `training.trainer.max_epochs=100`

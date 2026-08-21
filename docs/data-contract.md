@@ -31,13 +31,17 @@ batch dimension. `data.dataset.output.fields` controls which physical fields are
 | `eo` | `(3, H, W)` | `(B, 3, H, W)` | `float32` | Dense `[SST, SSS, ADT]` context, normalized per variable in fixed order. |
 | `x` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Sparse ARGO temperature observations, normalized and zero-filled where missing. |
 | `y` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Normalized temperature target: GLORYS in the standard dense path or an deterministic surface-offset target in Stage 1. |
+| `y_glorys` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Optional dated GLORYS temperature reference returned only by synthetic-target validation samples for diagnostics. |
 | `x_salinity` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Opt-in sparse ARGO salinity observations, normalized and zero-filled where missing. |
 | `y_salinity` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Salinity target: GLORYS in the standard dense path or an deterministic surface-offset target in Stage 1. |
+| `y_salinity_glorys` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Optional salinity counterpart of the validation-only dated GLORYS reference. |
 | `x_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | True where `x` contains an observed ARGO temperature value. |
 | `y_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | True on valid depth/ocean support; Stage 1 uses the fixed depth-valid coast/seafloor mask. |
+| `y_glorys_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Valid support for the optional dated GLORYS temperature reference. |
 | `y_supervision_weight` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Optional per-depth Stage 1 confidence weight; zero below unsupported depths and outside `y_valid_mask`. |
 | `x_salinity_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Opt-in mask where `x_salinity` contains an observed ARGO salinity value. |
 | `y_salinity_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Opt-in salinity depth/ocean support mask. |
+| `y_salinity_glorys_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | Valid support for the optional dated GLORYS salinity reference. |
 | `y_salinity_supervision_weight` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Salinity counterpart of the optional Stage 1 confidence weight. |
 | `x_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | True where any ARGO temperature depth is present in that horizontal pixel. |
 | `x_salinity_valid_mask_1d` | `(1, H, W)` | `(B, 1, H, W)` | `bool` | Opt-in mask where any ARGO salinity depth is present in that horizontal pixel. |
@@ -46,7 +50,7 @@ batch dimension. `data.dataset.output.fields` controls which physical fields are
 | `coords` | `(2,)` | `(B, 2)` | `float32` | Optional patch-center latitude and longitude. |
 | `info` | dictionary | list-like | metadata | Optional debugging metadata, not part of the training model input. |
 
-`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is active spatial ocean/domain support (from dated GLORYS in the normal path or the fixed reference mask in Stage 1) and gates the diffusion loss together with the task-valid mask; if GLORYS support is unavailable for mask construction, the loader falls back to finite EO support and then the configured on-disk mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, or `eo`.
+`x_valid_mask` is ARGO observation support, collapsed to one channel only when it is used as conditioning. `land_mask` is active spatial ocean/domain support (from dated GLORYS in the normal path or the fixed reference mask in Stage 1) and gates the diffusion loss together with the task-valid mask; if GLORYS support is unavailable for mask construction, the loader falls back to finite EO support and then the configured on-disk mask. Train/validation dataloaders do not return the common on-disk mask; callers may pass an optional `output_land_mask` directly to `predict_step` for final cleanup overlays. The optional `y_glorys` tensors are cached only for synthetic-target validation plots and are never stacked into model inputs or used by the loss. Training code should not infer missing values from zeros in `x`, `y`, optional `x_salinity`, optional `y_salinity`, optional GLORYS references, or `eo`.
 
 ## Salinity Scenarios
 
@@ -65,7 +69,7 @@ The resolver writes `dataset.output.fields` for the selected scenario and sets `
 For each selected `(patch, date)` row, the GeoTIFF loader should:
 
 1. Build a rasterio window from the shared land-mask grid.
-2. In the normal dense path, read the dated GLORYS target; in Stage 1, read only the fixed-reference GLORYS validity mask used for coast and seafloor support.
+2. In the normal dense path, read the dated GLORYS target; in Stage 1 training, read only the fixed-reference GLORYS validity mask used for coast and seafloor support. Synthetic-target validation additionally reads dated GLORYS into separate diagnostic-only tensors.
 3. Read and normalize SST, SSS, and ADT, then stack them as `(3, H, W)` in that exact order.
 4. When the online prior is disabled and the scenario enables salinity, read
    `rasters/glorys/so/so_YYYYMMDD.tif` as `(D, H, W)`.
@@ -159,8 +163,8 @@ for every exported date:
 - ARGO profiles are assigned to the nearest GLORYS weekly date inside the same
   temporal window.
 
-The prior-statistics fit must exclude the validation year and any centered surface-aggregation window that touches it. Online Stage 1 sampling uses no same-date GLORYS values; it uses a fixed GLORYS validity layout only for depth/seafloor support.
+The prior-statistics fit must exclude the validation year and any centered surface-aggregation window that touches it. Online Stage 1 training uses no same-date GLORYS values; it uses a fixed GLORYS validity layout only for depth/seafloor support. Synthetic-target validation may load same-date GLORYS solely as an independent W&B reference, without changing supervision, conditioning, metrics, or loss.
 
-The default validation split uses calendar year `2018`; all other years are
+The default validation split uses calendar year `2016`; all other years are
 training rows. When patches overlap, keep a date-based split such as this to
 avoid spatial train/validation leakage.

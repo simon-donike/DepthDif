@@ -3,7 +3,7 @@
 #   --geotiff-root-dir /work/data/OceanVariableReconstruction \
 #   --statistics-path /work/data/OceanVariableReconstruction/priors/vertical_offset_prior.npz \
 #   --output-dir outputs/vertical_offset_examples --metadata-cache-dir \
-#   /work/data/OceanVariableReconstruction/depthdif_cache --validation-year 2018 \
+#   /work/data/OceanVariableReconstruction/depthdif_cache --validation-year 2016 \
 #   --tile-size 128 --patch-stride 128 --max-land-fraction 0.30 \
 #   --depths-m 0 50 100 250 500 1000 --candidate-count 24 --random-seed 7 \
 #   --dpi 170
@@ -357,7 +357,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--statistics-path", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--metadata-cache-dir", type=Path, default=None)
-    parser.add_argument("--validation-year", type=int, default=2018)
+    parser.add_argument("--validation-year", type=int, default=2016)
     parser.add_argument("--tile-size", type=int, default=128)
     parser.add_argument("--patch-stride", type=int, default=128)
     parser.add_argument("--max-land-fraction", type=float, default=0.30)
