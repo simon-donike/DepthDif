@@ -133,10 +133,23 @@ class TestPixelConfig(unittest.TestCase):
                 self.assertEqual(payload["data"]["split"]["val_year"], 2016)
                 self.assertTrue(payload["data"]["dataloader"]["val_shuffle"])
                 if config_path.name.startswith("training_"):
+                    validation_sampling = payload["training"]["training"][
+                        "validation_sampling"
+                    ]
+                    self.assertTrue(
+                        validation_sampling["full_reconstruction_logging_enabled"]
+                    )
+                    self.assertGreaterEqual(
+                        validation_sampling["max_full_reconstruction_samples"], 1
+                    )
                     candidate_eval = payload["training"]["training"][
                         "en4_candidate_eval"
                     ]
                     self.assertTrue(candidate_eval["enabled"])
+                    self.assertEqual(
+                        candidate_eval["candidate_profiles_path"],
+                        "instructions/en4_no_spatiotemporal_candidate_profiles.parquet",
+                    )
                     self.assertEqual(candidate_eval["iso_week"], 25)
                     self.assertEqual(candidate_eval["holdout_fraction"], 0.2)
                     self.assertEqual(candidate_eval["seed"], 7)

@@ -313,8 +313,8 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      full_reconstruction_logging_enabled: false  # standard validation loss only; no reconstruction plots
-      max_full_reconstruction_samples: 1  # unused while full reconstruction logging is disabled
+      full_reconstruction_logging_enabled: true  # log reconstruction and GLORYS-supervision profile plots
+      max_full_reconstruction_samples: 1  # keep HPC validation reconstruction inexpensive
     en4_candidate_eval:  # leakage-free EN4-versus-GLORYS validation monitor
       enabled: true  # log a fixed candidate-profile comparison each validation run
       candidate_profiles_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet  # external audit file

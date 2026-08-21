@@ -151,6 +151,7 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.training.validation_sampling.ddim_num_timesteps` | `100` | DDIM step count when the sampler is `ddim`. |
 | `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
 | `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
+| `training.training.validation_sampling.full_reconstruction_logging_enabled` | `true` | Enables reconstruction images and GLORYS/supervision profile comparisons in every local and HPC training preset. |
 | `training.training.validation_sampling.max_full_reconstruction_samples` | `1` | Cap for expensive full-reconstruction validation examples. |
 | `training.training.en4_candidate_eval.enabled` | `true` | Enables the separate exact-profile EN4/GLORYS W&B monitor during validation runs. |
 | `training.training.en4_candidate_eval.candidate_profiles_path` | `instructions/en4_no_spatiotemporal_candidate_profiles.parquet` | External soft-evidence candidate list joined by EN4 source filename and source profile index. |

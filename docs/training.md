@@ -195,6 +195,7 @@ Notable behavior:
 - gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`
 - periodic scalar/image logging intervals are configurable
 - config files are uploaded to W&B run files (when experiment handle is available)
+- all pixel training presets, including both SpaceHPC presets, enable full-reconstruction/profile logging and the EN4 candidate monitor by default
 
 ### EN4 candidate validation monitor
 
