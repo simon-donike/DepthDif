@@ -264,18 +264,11 @@ means the model is too smooth at those scales. A clearly higher curve means it
 is adding too much variance, often visible as noisy or speckled texture at
 short wavelengths.
 
-The prediction/GLORYS ratio is the most direct quality signal:
-
-- `R_q = 1` is ideal agreement at that wavelength.
-- roughly `0.8` to `1.25` is usually a close scale match.
-- values around `0.5` to `0.8` indicate moderate smoothing.
-- values below `0.5` indicate severe loss of variance at that scale.
-- values around `1.25` to `2` indicate excess variance.
-- values above `2` indicate strong over-energizing or likely artifacts.
-
-These ranges are rules of thumb, not pass/fail limits. They should be judged
-more strictly where many spectra contribute and more cautiously where
-`spectrum_count` is small or bins contain few FFT coefficients.
+The prediction/GLORYS ratio is a direct scale-by-scale comparison: `R_q = 1`
+means equal aggregated power, values below one mean less prediction variance,
+and values above one mean more prediction variance. The repository defines no
+pass/fail bands for this diagnostic. Interpret it with `spectrum_count`, the
+number of FFT coefficients in each bin, and the corresponding spatial maps.
 
 For dashboard metrics, `relative_bias = 0` is ideal, negative values mean
 smoothing, and positive values mean excess variance. Ratio and relative bias are
@@ -286,24 +279,9 @@ variables or depths. The summary cards use the currently selected metric:
 `High freq` averages the short-wavelength range up to about
 100 km, and `Large scale` averages the long-wavelength range from about 300 km
 upward. `Slope diff` is the fitted log-power-vs-log-wavelength slope for
-prediction minus GLORYS. Values near zero are best. Positive values usually
-mean the prediction is too dominated by large scales; negative values usually
-mean relatively too much small-scale power.
-
-Good diagnostics therefore look like:
-
-- prediction, GLORYS, and OSTIA/SSS curves nearly parallel and close together
-- prediction/GLORYS ratio near 1 across both short and long wavelengths
-- relative bias near 0 without a persistent sign across wavelengths
-- high `spectrum_count` for the selected basin and period
-
-Bad diagnostics commonly look like:
-
-- low short-wavelength ratio, showing over-smoothed fronts or missing eddies
-- high short-wavelength ratio, showing noisy or speckled predictions
-- low long-wavelength ratio, showing basin-scale structure is muted
-- high long-wavelength ratio, showing broad false gradients or large blobs
-- large slope differences, showing the model has the wrong scale balance
+prediction minus GLORYS. A positive value means relatively more large-scale
+prediction power; a negative value means relatively more small-scale power.
+These are comparisons to GLORYS, not independent measures of physical fidelity.
 
 ## Test Coverage
 
@@ -313,7 +291,8 @@ assumptions with small deterministic fixtures:
 - exact planar fields detrend to numerical zero
 - a sinusoidal field has its Hann-windowed FFT peak in the expected wavelength
   bin
-- incomplete patches are skipped by default
+- incomplete patches are included by default with finite-pixel detrending and
+  zero-filled residuals; strict mode skips them
 - raster nodata is converted to `NaN`
 - stretched uint8 temperature rasters decode to Celsius
 - basin assignment respects the overlap threshold
@@ -341,8 +320,8 @@ Typical command:
 
 ```bash
 /work/envs/depth/bin/python -m depth_recon.inference.export_wavenumber_spectra \
-  --run-dir inference/outputs/global_variables_2018_W25_v2 \
+  --run-dir inference/outputs/global_variables_2016_W25 \
   --include-temporal-runs \
   --variables temperature salinity \
-  --output-dir inference/outputs/global_variables_2018_W25_v2/wavenumber_spectra
+  --output-dir inference/outputs/global_variables_2016_W25/wavenumber_spectra
 ```

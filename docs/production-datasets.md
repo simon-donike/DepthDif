@@ -75,11 +75,12 @@ Patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay are force
 `dataset.grid.force_include_regions`, because those water bodies are narrow or coastline-heavy and would
 otherwise lose useful ocean context around coastlines.
 
-Hard-area finetuning can temporarily extend these relaxed grid regions through
+Hard-area sampling can temporarily extend these relaxed grid regions through
 `dataset.finetune_sampling.hard_regions` when `dataset.finetune_sampling.enabled=true`
 and `dataset.finetune_sampling.relax_land_filter=true`. That run-specific extension
-lets coast-heavy patches enter the train split for the 75/25 hard/easy finetune mix
-without changing the default training or validation patch registry.
+lets coast-heavy patches enter whichever splits are named by `apply_to_splits`.
+The current local preset applies a 50/50 hard/easy mix to both `train` and `val`;
+HPC presets disable this row filter.
 
 The figure labels show the current region-specific land caps and retained patch counts.
 The overview marks the configured bounding boxes and retained force-include patch centers for
@@ -145,7 +146,7 @@ masks.
   committed GLORYS-aligned world mask.
 - `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay up
   to a relaxed land fraction so the training registry retains those water bodies.
-- `dataset.finetune_sampling.*` can filter the train split to named hard-region
+- `dataset.finetune_sampling.*` can filter configured splits to named hard-region
   patch centers and add those boxes as run-specific relaxed land-fraction regions.
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile
   search window for each patch date.
@@ -178,16 +179,14 @@ See [Data Contract](data-contract.md) for the full tensor contract.
 
 ## Finetuning
 
-Hard-area finetuning is disabled by default and can be enabled with
-`data.dataset.finetune_sampling.enabled=true`. When enabled for the train split,
-the GeoTIFF dataset keeps all rows whose patch centers fall inside the configured
-hard regions, then adds a deterministic random sample of easy rows to target the
-configured 75/25 hard/easy mix. Validation keeps the normal global split so the
-main validation metric stays comparable across runs.
+Hard-area row sampling is enabled in the local/standard presets and disabled in
+the HPC presets. The local preset applies it to both `train` and `val`, keeps all
+rows whose patch centers fall inside configured hard regions, and adds a
+deterministic sample of easy rows to target `hard_fraction: 0.5`.
 
 When `data.dataset.finetune_sampling.relax_land_filter=true`, the same hard-region
 boxes are also added as run-specific relaxed land-fraction regions before the
-patch registry is built. This lets narrow coastline-heavy areas enter finetuning
-without changing the default training grid.
+patch registry is built. The configured polygons are provisional diagnostic
+regions, not literature-backed scientific boundaries.
 
 ![Hard-region finetuning patch footprints](assets/data/patch_grid/hard_region_finetune_footprints_global.webp)

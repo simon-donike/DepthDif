@@ -2012,7 +2012,10 @@ def _build_public_parser() -> argparse.ArgumentParser:
         "--export-uncertainty",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Export one 5-sample uncertainty raster for the selected week.",
+        help=(
+            "Export one depth-collapsed uncertainty raster using "
+            f"{DEFAULT_UNCERTAINTY_NUM_SAMPLES} samples by default."
+        ),
     )
     infer.add_argument(
         "--uncertainty-num-samples",
@@ -2022,7 +2025,7 @@ def _build_public_parser() -> argparse.ArgumentParser:
     infer.add_argument(
         "--uncertainty-only",
         action="store_true",
-        help="Only run and export the 5-sample uncertainty raster.",
+        help="Only run and export the depth-collapsed uncertainty raster.",
     )
     infer.add_argument("--strict-load", action="store_true")
     infer.add_argument("--force-download", action="store_true")

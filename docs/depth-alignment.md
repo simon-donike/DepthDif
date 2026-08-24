@@ -61,15 +61,13 @@ Use [Data Sources](data-source.md) for native product properties and [Production
 ![Example of good EN4-to-GLORYS temperature and salinity profile alignment](assets/data/profile_comparison_good_alignment.webp)  
 
 - This example shows a typical well-aligned case: the sparse EN4 `x` points sit close to the GLORYS profile at the same pixel, so the projected profile shape is consistent across the observed depth range.  
-- In practice, this is the common outcome. The depth projection is usually very good when local vertical structure is smooth and the nearest-depth cutoff retains enough support.  
+- The figure is an illustrative diagnostic, not a measured archive-wide success rate.  
 
 ![Example of weaker ARGO-to-GLORYS profile alignment](assets/data/profile_comparison_bad_alignment.webp)  
 
 - This second example shows that the alignment is not perfect in every case. At some locations, the sparse ARGO observations and the GLORYS profile disagree more noticeably over part of the observed depth range.  
 - These mismatches can happen when the local profile structure changes quickly with depth, when observations are sparse at the relevant levels, or when the nearest valid ARGO samples are still relatively far from the GLORYS target depths even though they pass the cutoff.  
 
-## Saved Alignment Artifacts  
-- `data/glorys_argo_alignment/argo_to_glorys_channel_mapping.json`  
-- `data/glorys_argo_alignment/glorys_argo_alignment_report.txt`  
-- `data/glorys_argo_alignment/figures/glorys_target_alignment_depth_summary.png`  
-- `data/glorys_argo_alignment/figures/glorys_target_alignment_within_cutoff_fraction.png`  
+The committed WebP/GIF figures on this page are documentation assets. Any
+machine-local reports produced by visualization utilities are not part of the
+dataset contract.

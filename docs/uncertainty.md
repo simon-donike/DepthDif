@@ -1,39 +1,43 @@
 # Uncertainty
 
-DepthDif estimates predictive uncertainty with an ensemble of stochastic reverse
-diffusion samples. For the same input batch and conditioning tensor, inference is
-run \(N\) times:
+DepthDif estimates sampling uncertainty by running multiple stochastic reverse
+diffusion trajectories for the same condition.
+
+For samples \(\hat{x}^{(1)},\ldots,\hat{x}^{(N)}\), the implementation returns
+the population standard deviation (`torch.std(..., unbiased=False)`):
 
 \[
-\hat{y}^{(1)}, \hat{y}^{(2)}, \ldots, \hat{y}^{(N)}
+\sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}
+  \left(\hat{x}^{(i)}-\bar{x}\right)^2}.
 \]
 
-The prediction used for a pixel can be summarized by the ensemble mean:
+This is sample dispersion under the configured sampler and checkpoint. It is not
+a calibrated predictive interval and does not include data or model uncertainty
+outside those stochastic trajectories.
 
-\[
-\mu = \frac{1}{N}\sum_{i=1}^{N}\hat{y}^{(i)}
-\]
+## Export modes
 
-Uncertainty is the pixel-wise ensemble standard deviation:
+- Repository global exporters use 20 samples by default and preserve depth
+  channels unless `--uncertainty-collapse-depth` is passed.
+- The public weekly API uses 20 samples by default and exports one collapsed
+  uncertainty raster for its legacy checkpoint.
+- `uncertainty_only=True` or `--uncertainty-only` skips the ordinary prediction
+  export and runs only the uncertainty ensemble.
+- The uncertainty sampler and DDIM step count can be overridden independently
+  from the main reconstruction sampler.
 
-\[
-\sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^{N}\left(\hat{y}^{(i)} - \mu\right)^2}
-\]
+```python
+from depth_recon import run_week_inference
 
-This is computed after denormalization, so temperature and salinity uncertainty
-maps are reported in physical units. Temperature uncertainty is in degrees
-Celsius, and salinity uncertainty is in PSU.
+run_week_inference(
+    year=2015,
+    iso_week=25,
+    export_uncertainty=True,
+    uncertainty_num_samples=20,
+    uncertainty_sampler="ddim",
+    uncertainty_ddim_num_timesteps=50,
+)
+```
 
-For multi-depth outputs, the implementation computes the per-channel standard
-deviation as a depth-resolved \(B \times D \times H \times W\) tensor. The
-production global exporter keeps that tensor by default and writes uncertainty
-GeoTIFFs for the same depth levels used by the globe. Callers that need the older
-single-map behavior can request channel collapse, which averages the depth
-channels into a \(B \times 1 \times H \times W\) raster. Joint
-temperature/salinity runs keep field-specific uncertainty maps before producing
-their normalized display rasters.
-
-Empirically, the observed reconstruction error lines up quite well with the
-estimated uncertainty. This is the expected behavior: regions where the ensemble
-samples disagree more should also be regions where the model is more likely to
-make larger errors.
+For depth-resolved uncertainty and reliability data used by the spatial
+dashboard, use the repository global exporters described in [Inference](inference.md).

@@ -130,27 +130,13 @@ class DepthTileDataModule(pl.LightningDataModule):
         return DataLoader(**kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        """Return the training dataloader from the attached datamodule.
-
-        Args:
-            None: This callable takes no explicit input arguments.
-
-        Returns:
-            DataLoader: Computed output value.
-        """
+        """Return the training dataloader from the attached datamodule."""
         if not self._train_val_split_done:
             self.setup("fit")
         return self._build_loader(self.train_dataset, is_val=False)
 
     def val_dataloader(self) -> DataLoader:
-        """Return the validation dataloader from the attached datamodule.
-
-        Args:
-            None: This callable takes no explicit input arguments.
-
-        Returns:
-            DataLoader: Computed output value.
-        """
+        """Return the validation dataloader from the attached datamodule."""
         if not self._train_val_split_done:
             self.setup("fit")
         # Lightning sanity checking: force single-worker if trainer requests it (handled in trainer configs)

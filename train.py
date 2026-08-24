@@ -217,14 +217,7 @@ def load_weights_only_checkpoint(model: torch.nn.Module, ckpt_path: str) -> str:
 # Build process rank defensively across common launchers.
 # Preference order avoids local-rank-only false positives in multi-node jobs.
 def resolve_global_rank() -> int:
-    """Resolve and validate global rank.
-
-    Args:
-        None: This callable takes no explicit input arguments.
-
-    Returns:
-        int: Computed scalar output.
-    """
+    """Resolve and validate the process global rank."""
     rank_env_keys = ("RANK", "SLURM_PROCID", "OMPI_COMM_WORLD_RANK", "LOCAL_RANK")
     for key in rank_env_keys:
         value = os.environ.get(key)
@@ -839,14 +832,7 @@ def main(
 
 def parse_args() -> argparse.Namespace:
     # Keep CLI names stable and map aliases to canonical destination keys.
-    """Parse command-line arguments for this script.
-
-    Args:
-        None: This callable takes no explicit input arguments.
-
-    Returns:
-        argparse.Namespace: Computed output value.
-    """
+    """Parse command-line arguments for this script."""
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--config",

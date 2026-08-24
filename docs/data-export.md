@@ -153,15 +153,15 @@ Contents:
 ### Vertical-Offset Pretraining
 
 The old per-date IDW synthetic GeoTIFF export is retired. Pretraining targets
-are constructed online from `priors/vertical_offset_prior.npz`. The artifact
-stores one mean GLORYS depth-minus-surface coefficient per depth for temperature
-and salinity, coverage weights, fitting/excluded years, and provenance. It has
-no dated target rasters. The loader adds each scalar offset to same-date SST/SSS,
-then applies exact surface and ARGO anchors. GLORYS is read only by the separate
-fitting job; online construction reads only a fixed-reference GLORYS nodata
-layout for the depth-valid coast/bathymetry mask. See [Vertical-Offset
-Pretraining](vertical-offset-pretraining.md) for the artifact contract and
-held-out-year guard.
+are constructed online from `priors/vertical_offset_prior.npz`. The schema-v2
+artifact stores monthly, 10° spatial GLORYS depth-minus-surface deltas for
+temperature and salinity, supervision weights, fitting/excluded years, and
+provenance. Sparse bins shrink toward a global monthly profile before smoothing;
+the loader bilinearly samples the result at patch pixels, preserves a zero
+surface offset, applies depth-confidence decay, and overwrites exact cells with
+ARGO anchors. It has no dated target rasters and does not retrieve same-date
+GLORYS during loading. See [Synthetic Vertical-Offset Prior](vertical-offset-pretraining.md)
+for the artifact contract and held-out-year guard.
 
 ### OSTIA Surface Temperature
 
@@ -270,8 +270,9 @@ loader without redoing expensive profile preprocessing:
 - optional source profile identifiers
 
 Profiles are assigned to the nearest GLORYS target date inside the centered
-weekly window and to the nearest raster grid cell. Temperature is converted to
-Kelvin before quantization.
+weekly window and to the nearest raster grid cell. The production source is
+EN4 `POTM_CORRECTED`; it is converted to Kelvin before quantization. In-situ
+`TEMP` is available only through the explicit legacy-reproduction option.
 
 ## Quantization
 

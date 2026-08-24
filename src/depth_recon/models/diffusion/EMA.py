@@ -241,14 +241,7 @@ class EMA(Callback):
             self.ema(pl_module)
 
     def state_dict(self) -> Dict[str, Any]:
-        """Return the serializable state for this object.
-
-        Args:
-            None: This callable takes no explicit input arguments.
-
-        Returns:
-            Dict[str, Any]: Computed output value.
-        """
+        """Return the callback step and optional serializable EMA weights."""
         if self.save_ema_weights_in_callback_state:
             ema_weights = None
             if self._ema_model_weights is not None:
@@ -461,14 +454,7 @@ class EMA(Callback):
 
     @property
     def ema_initialized(self) -> bool:
-        """Compute ema initialized and return the result.
-
-        Args:
-            None: This callable takes no explicit input arguments.
-
-        Returns:
-            bool: Computed scalar output.
-        """
+        """Return whether the callback has initialized EMA weights."""
         return self._ema_model_weights is not None
 
     def on_validation_start(
