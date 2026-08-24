@@ -195,6 +195,62 @@ Notable behavior:
 - gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`
 - periodic scalar/image logging intervals are configurable
 - config files are uploaded to W&B run files (when experiment handle is available)
+- all pixel training presets, including both SpaceHPC presets, enable full-reconstruction/profile logging and the EN4 candidate monitor by default
+
+### EN4 candidate validation monitor
+
+See [GLORYS-comparative evaluation](glorys-comparative-evaluation.md) for the
+complete distinction between checkpoint validation, epoch-time monitors, and
+the post-training paper comparison.
+
+Pixel training presets enable `training.training.en4_candidate_eval`. During
+each non-sanity validation run, the monitor uses the external candidate parquet
+to exact-match EN4 provenance, applies the normal QC and seeded 20% location
+holdout for the configured 2016 ISO week, and reconstructs a fixed small set of
+patches. Every selected location is removed from temperature and salinity inputs
+before patch rasterization, including in overlapping patches.
+
+W&B groups the outputs under `en4_candidate_eval/`. For each active variable it
+logs prediction-versus-EN4 and GLORYS12-versus-EN4 RMSE/MAE, the valid value and
+profile counts, and skill `1 - prediction_RMSE / GLORYS_RMSE`. Profile figures
+show EN4 QC-valid points, the predicted curve, the GLORYS12 curve, and both
+absolute-error curves. The standard shuffled 2016 validation loss remains the
+checkpoint metric; this fixed patch monitor is diagnostic only. The complete
+candidate population is still evaluated by the post-training paper workflow.
+
+The 104 MB parquet stays external and untracked. Override
+`training.training.en4_candidate_eval.candidate_profiles_path` when the checkout
+does not expose it at `instructions/en4_no_spatiotemporal_candidate_profiles.parquet`.
+
+### Hard-region validation monitor
+
+Pixel training presets also enable `training.training.hard_region_eval`. During
+each non-sanity Lightning validation epoch, its callback reconstructs a fixed
+2016 validation patch for each configured hard region and computes pooled RMSE
+and MAE against dense GLORYS on valid ocean pixels. This adds deterministic
+regional diagnostics without filtering or unshuffling the normal validation
+loader.
+
+Lightning logs pooled keys such as `hard_region_eval/temperature_rmse` and
+region-specific keys such as
+`hard_region_eval/greenland/temperature_rmse`. Temperature and salinity are
+reported separately. For each region and active variable, W&B also receives a
+GLORYS/prediction/absolute-error comparison figure at the configured
+`image_depths_m` (surface, 100 m, and 500 m by default). Pixels outside the
+region polygon or valid GLORYS ocean support are masked. The callback uses
+`y_glorys` for synthetic-target
+validation batches and the normal dense `y` target for direct-GLORYS training.
+It does not use the no-nearby-GLORYS EN4 candidates, which remain the independent
+profile validation target described above.
+
+The provisional Greenland, California/Baja, and Beaufort/Arctic definitions are
+hand-drawn placeholder polygons stored in
+`src/depth_recon/configs/evaluation/hard_regions_2016.yaml`. Their stable IDs can
+stay unchanged when the geometries are replaced with the supplied
+literature-backed polygons. Both
+`training.training.hard_region_eval.evaluation_year` and the region file's
+`evaluation_year` are checked against `data.split.val_year`, so a 2016 regional
+monitor cannot silently run on another split.
 
 - fixed overrides:
   - `data.dataset.conditioning.eo_dropout_prob=0.0`

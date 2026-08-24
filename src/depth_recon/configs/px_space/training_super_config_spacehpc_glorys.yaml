@@ -163,7 +163,7 @@ data:  # dataset, split, and loader inputs
       random_seed: 7  # deterministic split/sampling seed
       cache_size: 8  # open raster/source cache size
   split:  # train/validation split
-    val_year: 2018  # year reserved for validation
+    val_year: 2016  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
     num_workers: 4  # worker process count
@@ -313,8 +313,23 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      full_reconstruction_logging_enabled: false  # standard validation loss only; no reconstruction plots
-      max_full_reconstruction_samples: 1  # unused while full reconstruction logging is disabled
+      full_reconstruction_logging_enabled: true  # log reconstruction and GLORYS-supervision profile plots
+      max_full_reconstruction_samples: 1  # keep HPC validation reconstruction inexpensive
+    en4_candidate_eval:  # leakage-free EN4-versus-GLORYS validation monitor
+      enabled: true  # log a fixed candidate-profile comparison each validation run
+      candidate_profiles_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet  # external audit file
+      iso_week: 25  # fixed monitoring week within the 2016 validation year
+      holdout_fraction: 0.2  # location-level candidate holdout
+      seed: 7  # deterministic location and reconstruction seed
+      max_patches: 1  # keep epoch-time reverse diffusion inexpensive
+      max_profiles_to_plot: 6  # cap rows in each W&B profile figure
+    hard_region_eval:  # fixed difficult-area prediction-versus-GLORYS monitor
+      enabled: true  # run as part of each Lightning validation epoch
+      regions_path: src/depth_recon/configs/evaluation/hard_regions_2016.yaml  # named provisional polygons
+      evaluation_year: 2016  # must match data.split.val_year
+      max_patches_per_region: 1  # one deterministic 2016 patch per region
+      seed: 7  # deterministic reconstruction seed
+      image_depths_m: [0.0, 100.0, 500.0]  # GLORYS/prediction/error figure depths
   trainer:  # PyTorch Lightning trainer
     max_epochs: 10000  # extended HPC epoch limit
     accelerator: auto  # accelerator selection
@@ -329,7 +344,7 @@ training:  # optimizer, trainer, and logging
     lr_logging_interval: step  # LR log cadence
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches
-    val_check_interval: 0.1  # validation cadence
+    val_check_interval: 1.0  # validate once per epoch
     limit_val_batches: 64  # validation batch cap
     enable_model_summary: true  # print model summary
     gradient_clip_val: 1.0  # gradient clip value
@@ -347,7 +362,7 @@ training:  # optimizer, trainer, and logging
     log_stats_every_n_steps: 200  # scalar stats cadence
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
-    batch_size: 192  # train batch size
+    batch_size: 96  # train batch size
     val_batch_size: 6  # validation batch size
     num_workers: 48  # train loader workers
     val_num_workers: 16  # validation loader workers

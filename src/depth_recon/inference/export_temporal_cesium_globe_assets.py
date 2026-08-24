@@ -1,4 +1,4 @@
-# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_cesium_globe_assets --temperature-run-dir inference/outputs/temporal_variables_2018/runs/temperature/2018_W01 --salinity-run-dir inference/outputs/temporal_variables_2018/runs/salinity/2018_W01 --output-dir inference/outputs/temporal_variables_2018/temporal-globe --validation-year 2018 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal-globe
+# /work/envs/depth/bin/python -m depth_recon.inference.export_temporal_cesium_globe_assets --temperature-run-dir inference/outputs/temporal_variables_2016/runs/temperature/2016_W01 --salinity-run-dir inference/outputs/temporal_variables_2016/runs/salinity/2016_W01 --output-dir inference/outputs/temporal_variables_2016/temporal-globe --validation-year 2016 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/temporal-globe
 """Package weekly 10m temporal exports into a lightweight Cesium globe animation."""
 
 from __future__ import annotations

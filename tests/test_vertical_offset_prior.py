@@ -43,6 +43,18 @@ def write_prior_artifact(
 
 
 class TestVerticalOffsetPrior(unittest.TestCase):
+    def test_committed_prior_excludes_2016_validation_year(self) -> None:
+        """The production Stage 1 prior must not contain validation-year data."""
+        prior = VerticalOffsetPrior.from_npz(
+            Path(
+                "src/depth_recon/data/synthetic_dataset_creation/"
+                "vertical_offset_prior.npz"
+            )
+        )
+
+        self.assertEqual(prior.excluded_years, (2016,))
+        self.assertNotIn(2016, prior.fit_years)
+
     def test_surface_spatial_pattern_is_identical_at_every_depth(self) -> None:
         """Depth targets must differ from the surface only by one scalar."""
         with tempfile.TemporaryDirectory() as tmpdir:

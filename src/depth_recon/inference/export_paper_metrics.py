@@ -1,19 +1,20 @@
 # Example bundle mode:
 # /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
-#   --paper-run-dir inference/outputs/paper_2018_W25 \
-#   --output-dir inference/outputs/paper_2018_W25/metrics \
-#   --climatology-path inference/outputs/paper_2018_W25/methods/climatology \
-#   --en4-holdout-fraction 0.2 --seed 7 --validation-year 2018 \
+#   --paper-run-dir inference/outputs/paper_2016_W25 \
+#   --output-dir inference/outputs/paper_2016_W25/metrics \
+#   --climatology-path inference/outputs/paper_2016_W25/methods/climatology \
+#   --en4-holdout-fraction 0.2 --seed 7 --validation-year 2016 \
 #   --climatology-idw-power 2.0 --climatology-idw-eps 1.0e-6 \
 #   --climatology-idw-neighbors 16 --climatology-idw-chunk-size 250000 \
 #   --profile-chunk-size 100000 --overwrite-climatology
 # Example legacy mode:
 # /work/envs/depth/bin/python -m depth_recon.inference.export_paper_metrics \
-#   --year 2018 --iso-week 25 \
-#   --idw-run-dir inference/outputs/paper_2018_W25_idw \
-#   --lstm-run-dir inference/outputs/paper_2018_W25_lstm \
-#   --unet-run-dir inference/outputs/paper_2018_W25_unet \
-#   --output-dir inference/outputs/paper_metrics_2018_W25
+#   --year 2016 --iso-week 25 \
+#   --idw-run-dir inference/outputs/paper_2016_W25_idw \
+#   --lstm-run-dir inference/outputs/paper_2016_W25_lstm \
+#   --unet-run-dir inference/outputs/paper_2016_W25_unet \
+#   --output-dir inference/outputs/paper_metrics_2016_W25 \
+#   --en4-candidate-profiles /path/to/en4_no_spatiotemporal_candidate_profiles.parquet
 """Export paper-ready weekly reconstruction metrics."""
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import rasterio
 from rasterio.transform import xy as transform_xy
 from scipy.spatial import cKDTree
@@ -67,9 +69,10 @@ METHOD_LABELS = {
     "unet": "U-Net",
     "unet2d": "U-Net 2D",
     "depthdif": "DepthDif",
+    "glorys": "GLORYS12",
 }
 TARGET_ORDER = ("en4", "glorys")
-TARGET_LABELS = {"en4": "EN4 Validation Set", "glorys": "GLORYS12"}
+TARGET_LABELS = {"en4": "EN4 Held-Out Profiles", "glorys": "GLORYS12"}
 METRIC_ORDER = ("rmse", "mae", "r2")
 GLORYS_MANIFEST_VARIABLES = {"temperature": "thetao", "salinity": "so"}
 ARGO_VALUE_VARIABLES = {
@@ -83,8 +86,10 @@ DEFAULT_CLIMATOLOGY_IDW_POWER = 2.0
 DEFAULT_CLIMATOLOGY_IDW_EPS = 1.0e-6
 DEFAULT_CLIMATOLOGY_IDW_CHUNK_SIZE = 250_000
 DEFAULT_PROFILE_CHUNK_SIZE = 100_000
-DEFAULT_VALIDATION_YEAR = 2018
+DEFAULT_VALIDATION_YEAR = 2016
 DEFAULT_METRICS_MAX_DEPTH_M = 2000.0
+EN4_CANDIDATE_EVIDENCE = "no_nearby_glorys_source_candidate"
+EN4_CANDIDATE_KEY_COLUMNS = ("profile_source_file", "source_profile_idx")
 
 
 @dataclass(frozen=True)
@@ -941,18 +946,55 @@ def _stats_record(
     }
 
 
+def _load_en4_candidate_profile_keys(
+    path: Path,
+    *,
+    relevant_source_files: Sequence[str],
+) -> pd.MultiIndex:
+    """Load unique EN4 candidate provenance keys for relevant source files."""
+    candidate_path = Path(path)
+    if not candidate_path.is_file():
+        raise FileNotFoundError(
+            f"EN4 candidate profile parquet does not exist: {candidate_path}"
+        )
+    schema_names = set(pq.read_schema(candidate_path).names)
+    missing = sorted(set(EN4_CANDIDATE_KEY_COLUMNS) - schema_names)
+    if missing:
+        raise ValueError(
+            "EN4 candidate profile parquet is missing required columns: "
+            + ", ".join(missing)
+        )
+    source_files = sorted({str(value) for value in relevant_source_files})
+    candidates = pd.read_parquet(
+        candidate_path,
+        columns=list(EN4_CANDIDATE_KEY_COLUMNS),
+        filters=[("profile_source_file", "in", source_files)],
+    )
+    candidates["profile_source_file"] = candidates["profile_source_file"].astype(str)
+    candidates["source_profile_idx"] = pd.to_numeric(
+        candidates["source_profile_idx"], errors="raise"
+    ).astype(np.int64)
+    candidates = candidates.drop_duplicates(list(EN4_CANDIDATE_KEY_COLUMNS))
+    return pd.MultiIndex.from_frame(candidates[list(EN4_CANDIDATE_KEY_COLUMNS)])
+
+
 def select_en4_holdout_locations(
     *,
     context: DatasetContext,
     date_value: int,
     fraction: float,
     seed: int,
+    candidate_profiles_path: Path | None = None,
+    profile_store: ArgoGeoTIFFProfileStore | None = None,
 ) -> pd.DataFrame:
     """Select deterministic held-out EN4/ARGO date-location profiles."""
     frac = float(fraction)
     if frac <= 0.0 or frac >= 1.0:
         raise ValueError("EN4 holdout fraction must be in (0, 1).")
-    store = ArgoGeoTIFFProfileStore(_manifest_argo_path(context), include_salinity=True)
+    owns_store = profile_store is None
+    store = profile_store or ArgoGeoTIFFProfileStore(
+        _manifest_argo_path(context), include_salinity=True
+    )
     try:
         all_indices = np.flatnonzero(
             np.asarray(store.target_date, dtype=np.int32) == int(date_value)
@@ -960,6 +1002,41 @@ def select_en4_holdout_locations(
         if all_indices.size == 0:
             raise RuntimeError(f"No EN4/ARGO profiles found for date {date_value}.")
         group = store._ensure_zarr_group()
+        profile_source_files: np.ndarray | None = None
+        source_profile_indices: np.ndarray | None = None
+        if candidate_profiles_path is not None:
+            missing_provenance = sorted(
+                set(EN4_CANDIDATE_KEY_COLUMNS) - set(store.ds.variables)
+            )
+            if missing_provenance:
+                raise RuntimeError(
+                    "Compact EN4/ARGO profile store is missing provenance fields "
+                    "required for candidate matching: " + ", ".join(missing_provenance)
+                )
+            profile_source_files = np.asarray(
+                group["profile_source_file"].get_orthogonal_selection((all_indices,))
+            ).astype(str)
+            source_profile_indices = np.asarray(
+                group["source_profile_idx"].get_orthogonal_selection((all_indices,)),
+                dtype=np.int64,
+            )
+            candidate_keys = _load_en4_candidate_profile_keys(
+                Path(candidate_profiles_path),
+                relevant_source_files=profile_source_files.tolist(),
+            )
+            profile_keys = pd.MultiIndex.from_arrays(
+                [profile_source_files, source_profile_indices],
+                names=list(EN4_CANDIDATE_KEY_COLUMNS),
+            )
+            candidate_mask = profile_keys.isin(candidate_keys)
+            all_indices = all_indices[candidate_mask]
+            profile_source_files = profile_source_files[candidate_mask]
+            source_profile_indices = source_profile_indices[candidate_mask]
+            if all_indices.size == 0:
+                raise RuntimeError(
+                    f"No EN4/ARGO profiles for date {date_value} matched the "
+                    "candidate profile parquet."
+                )
         temp_valid = np.asarray(
             group["argo_temp_valid"].get_orthogonal_selection(
                 (all_indices, slice(None))
@@ -980,9 +1057,15 @@ def select_en4_holdout_locations(
         sal_counts = sal_valid.sum(axis=1).astype(np.int64)
         usable = (temp_counts > 0) | (sal_counts > 0)
         profile_indices = all_indices[usable]
+        if profile_source_files is not None:
+            profile_source_files = profile_source_files[usable]
+        if source_profile_indices is not None:
+            source_profile_indices = source_profile_indices[usable]
         if profile_indices.size == 0:
             raise RuntimeError(
-                f"No valid EN4/ARGO profiles found for date {date_value}."
+                f"No valid EN4/ARGO candidate profiles found for date {date_value}."
+                if candidate_profiles_path is not None
+                else f"No valid EN4/ARGO profiles found for date {date_value}."
             )
         rows = np.asarray(store.grid_row[profile_indices], dtype=np.int64)
         cols = np.asarray(store.grid_col[profile_indices], dtype=np.int64)
@@ -1030,15 +1113,51 @@ def select_en4_holdout_locations(
                     "salinity_valid_depth_count": int(sal_counts[int(local_idx)]),
                     "holdout_fraction": frac,
                     "split_seed": int(seed),
+                    **(
+                        {
+                            "profile_source_file": str(
+                                profile_source_files[int(local_idx)]
+                            ),
+                            "source_profile_idx": int(
+                                source_profile_indices[int(local_idx)]
+                            ),
+                            "candidate_evidence": EN4_CANDIDATE_EVIDENCE,
+                        }
+                        if profile_source_files is not None
+                        and source_profile_indices is not None
+                        else {}
+                    ),
                 }
             )
     finally:
-        store.close()
+        if owns_store:
+            store.close()
     if not records:
         raise RuntimeError("EN4 holdout selection produced no profile records.")
-    return pd.DataFrame.from_records(records).sort_values(
+    holdout_df = pd.DataFrame.from_records(records).sort_values(
         ["date", "grid_row", "grid_col", "profile_index"]
     )
+    holdout_df.attrs.update(
+        {
+            "selection_pool": (
+                EN4_CANDIDATE_EVIDENCE
+                if candidate_profiles_path is not None
+                else "all_usable_en4_profiles"
+            ),
+            "candidate_profiles_path": (
+                None
+                if candidate_profiles_path is None
+                else str(Path(candidate_profiles_path).resolve())
+            ),
+            "eligible_profile_count": int(profile_indices.size),
+            "eligible_location_count": int(len(loc_df)),
+            "selected_location_count": int(holdout_count),
+            "selected_profile_count": int(len(holdout_df)),
+            "holdout_fraction": float(frac),
+            "split_seed": int(seed),
+        }
+    )
+    return holdout_df
 
 
 def _load_holdout_profiles(
@@ -1089,6 +1208,15 @@ def write_en4_holdout_profiles_csv(
                         "channel_index": int(channel_index),
                         "depth_m": float(depth_m),
                         "value": float(profiles[int(profile_row), int(channel_index)]),
+                        **{
+                            column: holdout_row[column]
+                            for column in (
+                                "profile_source_file",
+                                "source_profile_idx",
+                                "candidate_evidence",
+                            )
+                            if column in holdout_df.columns
+                        },
                     }
                 )
     pd.DataFrame.from_records(rows).to_csv(output_path, index=False)
@@ -1239,14 +1367,16 @@ def compute_glorys_metrics(
 def compute_en4_holdout_metrics(
     *,
     context: DatasetContext,
+    selected_date: int,
     holdout_df: pd.DataFrame,
     specs: dict[str, dict[str, dict[int, DepthLayerSpec]]],
     climatology: ClimatologyArtifacts,
     method_order: Sequence[str] = METHOD_ORDER,
     method_labels: dict[str, str] | None = None,
     holdout_profiles_df: pd.DataFrame | None = None,
+    glorys_reference_specs: dict[str, dict[int, DepthLayerSpec]] | None = None,
 ) -> pd.DataFrame:
-    """Compute held-out EN4 profile metrics by method, variable, and depth."""
+    """Compute method and GLORYS metrics against the same held-out EN4 profiles."""
     rows: list[dict[str, Any]] = []
     grid_rows = holdout_df["grid_row"].to_numpy(dtype=np.int64)
     grid_cols = holdout_df["grid_col"].to_numpy(dtype=np.int64)
@@ -1296,6 +1426,34 @@ def compute_en4_holdout_metrics(
                         method_labels=method_labels,
                     )
                 )
+            glorys_reference = _glorys_reference_array(
+                context=context,
+                selected_date=int(selected_date),
+                variable=variable,
+                depth_index=int(depth_index),
+                glorys_reference_specs=glorys_reference_specs,
+            )
+            glorys_prediction = np.full(reference.shape, np.nan, dtype=np.float32)
+            in_bounds = (
+                (grid_rows >= 0)
+                & (grid_rows < int(glorys_reference.shape[0]))
+                & (grid_cols >= 0)
+                & (grid_cols < int(glorys_reference.shape[1]))
+            )
+            glorys_prediction[in_bounds] = glorys_reference[
+                grid_rows[in_bounds], grid_cols[in_bounds]
+            ]
+            rows.append(
+                _stats_record(
+                    method="glorys",
+                    target="en4",
+                    variable=variable,
+                    depth_index=int(depth_index),
+                    depth_m=float(depth_m),
+                    stats=_metric_stats(glorys_prediction, reference),
+                    method_labels=method_labels,
+                )
+            )
     return pd.DataFrame.from_records(rows)
 
 
@@ -1335,6 +1493,7 @@ def write_latex_table(
     *,
     method_order: Sequence[str] | None = None,
     max_depth_m: float | None = DEFAULT_METRICS_MAX_DEPTH_M,
+    evaluation_year: int = DEFAULT_VALIDATION_YEAR,
 ) -> Path:
     """Write a LaTeX table matching the paper reconstruction layout."""
     ordered_methods = _ordered_methods(
@@ -1379,13 +1538,13 @@ def write_latex_table(
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        rf"\caption{{\textbf{{Subsurface reconstruction results}} (evaluation year 2018). Performance is reported for temperature and salinity against two reference targets: dense GLORYS12 fields and held-out EN4 profiles, {depth_phrase}. Best values highlighted in bold.}}",
+        rf"\caption{{\textbf{{Subsurface reconstruction results}} (evaluation year {int(evaluation_year)}). Performance is reported for temperature and salinity against two reference targets: dense GLORYS12 fields and held-out EN4 profiles, {depth_phrase}. Best values highlighted in bold.}}",
         r"\label{tab:recon_results}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{3.5pt}",
         r"\begin{tabular}{@{}lcccccccccccc@{}}",
         r"\toprule",
-        r"& \multicolumn{6}{c}{\textbf{EN4 Validation Set}} & \multicolumn{6}{c}{\textbf{GLORYS12}} \\",
+        r"& \multicolumn{6}{c}{\textbf{EN4 Held-Out Profiles}} & \multicolumn{6}{c}{\textbf{GLORYS12}} \\",
         r"\cmidrule(lr){2-7} \cmidrule(lr){8-13}",
         r"& \multicolumn{3}{c}{\textbf{Temperature}} & \multicolumn{3}{c}{\textbf{Salinity}} & \multicolumn{3}{c}{\textbf{Temperature}} & \multicolumn{3}{c}{\textbf{Salinity}} \\",
         r"\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10} \cmidrule(lr){11-13}",
@@ -1544,6 +1703,7 @@ def export_paper_metrics(
     unet_run_dir: Path | None = None,
     climatology_path: Path | None = None,
     en4_holdout_fraction: float = 0.2,
+    en4_candidate_profiles: Path | None = None,
     seed: int = 7,
     validation_year: int = DEFAULT_VALIDATION_YEAR,
     climatology_idw_power: float = DEFAULT_CLIMATOLOGY_IDW_POWER,
@@ -1584,6 +1744,7 @@ def export_paper_metrics(
         }
         holdout_locations_path = None
         holdout_profiles_df = None
+        holdout_selection: dict[str, Any] = {}
         glorys_reference_specs = None
     else:
         manifest = bundle["manifest"]
@@ -1598,6 +1759,7 @@ def export_paper_metrics(
             manifest.get("en4_holdout_fraction", en4_holdout_fraction)
         )
         seed = int(manifest.get("seed", seed))
+        holdout_selection = dict(manifest.get("en4_holdout_selection", {}))
         method_labels = dict(bundle["method_labels"])
         method_order = _ordered_methods(
             bundle["method_order"], preferred_order=bundle["method_order"]
@@ -1659,7 +1821,9 @@ def export_paper_metrics(
             date_value=int(selected_date),
             fraction=float(en4_holdout_fraction),
             seed=int(seed),
+            candidate_profiles_path=en4_candidate_profiles,
         )
+        holdout_selection = dict(holdout_df.attrs)
     holdout_path = output_dir / "en4_holdout_locations.csv"
     holdout_df.to_csv(holdout_path, index=False)
 
@@ -1674,12 +1838,14 @@ def export_paper_metrics(
     )
     en4_metrics = compute_en4_holdout_metrics(
         context=context,
+        selected_date=int(selected_date),
         holdout_df=holdout_df,
         specs=specs,
         climatology=climatology,
         method_order=method_order,
         method_labels=method_labels,
         holdout_profiles_df=holdout_profiles_df,
+        glorys_reference_specs=glorys_reference_specs,
     )
     glorys_path = output_dir / "glorys_field_metrics.csv"
     en4_path = output_dir / "en4_holdout_metrics.csv"
@@ -1691,11 +1857,13 @@ def export_paper_metrics(
     by_depth.to_csv(by_depth_path, index=False)
     summary = summarize_equal_depth_metrics(by_depth)
     summary.to_csv(summary_path, index=False)
+    comparison_method_order = [*method_order, "glorys"]
     table_path = write_latex_table(
         summary,
         output_dir / "recon_results_table.tex",
-        method_order=method_order,
+        method_order=comparison_method_order,
         max_depth_m=max_depth_m,
+        evaluation_year=int(validation_year),
     )
     manifest = {
         "schema_version": 1,
@@ -1706,15 +1874,17 @@ def export_paper_metrics(
         "selected_date": int(selected_date),
         "validation_year": int(validation_year),
         "en4_holdout_fraction": float(en4_holdout_fraction),
+        "en4_holdout_selection": holdout_selection,
         "seed": int(seed),
         "depth_averaging": "equal_depth_mean",
         "max_depth_m": None if max_depth_m is None else float(max_depth_m),
         "evaluated_depth_count": int(context.depth_axis_m.size),
         "evaluated_depth_min_m": float(np.min(context.depth_axis_m)),
         "evaluated_depth_max_m": float(np.max(context.depth_axis_m)),
-        "method_order": list(method_order),
+        "method_order": comparison_method_order,
         "method_labels": {
-            method: _method_label(method, method_labels) for method in method_order
+            method: _method_label(method, method_labels)
+            for method in comparison_method_order
         },
         "run_dirs": {method: str(path) for method, path in method_run_dirs.items()},
         "artifacts": {
@@ -1768,6 +1938,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.2,
         help="Date-location EN4 holdout fraction used for profile validation.",
     )
+    parser.add_argument(
+        "--en4-candidate-profiles",
+        type=Path,
+        default=None,
+        help=(
+            "Optional parquet of no-nearby-GLORYS-source EN4 candidates used "
+            "when legacy mode creates a holdout."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--validation-year", type=int, default=DEFAULT_VALIDATION_YEAR)
     parser.add_argument(
@@ -1818,6 +1997,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         unet_run_dir=args.unet_run_dir,
         climatology_path=args.climatology_path,
         en4_holdout_fraction=args.en4_holdout_fraction,
+        en4_candidate_profiles=args.en4_candidate_profiles,
         seed=args.seed,
         validation_year=args.validation_year,
         climatology_idw_power=args.climatology_idw_power,

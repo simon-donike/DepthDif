@@ -876,6 +876,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.include_salinity = "salinity" in self.output_fields
         self._loads_temperature = "temperature" in self.output_fields
         self.random_seed = int(random_seed)
+        self.val_year = None if val_year is None else int(val_year)
         self.require_argo_for_train = bool(require_argo_for_train)
         self.require_argo_for_val = bool(require_argo_for_val)
         self.require_argo_for_all = bool(require_argo_for_all)
@@ -921,6 +922,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             available_dates = set.intersection(
                 *(store.dates for store in self.surface_stores.values())
             )
+            if self.split == "val":
+                # Synthetic validation keeps the dated GLORYS fields as diagnostics
+                # only; training dates must remain independent of paired GLORYS.
+                available_dates &= self.glorys_store.dates
+                if self.include_salinity and self.salinity_store is not None:
+                    available_dates &= self.salinity_store.dates
         self.available_dates = sorted(available_dates)
         configured_reference_date = self.synthetic_target_config.get(
             "bathymetry_reference_date"
@@ -956,7 +963,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             invalid_threshold=0.5,
             invalid_mask_flags=("land",),
             val_fraction=float(val_fraction),
-            val_year=None if val_year is None else int(val_year),
+            val_year=self.val_year,
             split_seed=self.random_seed,
             patch_grid_source=self.patch_grid_source,
             land_mask_path=self.land_mask_path,
@@ -1112,10 +1119,16 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         prior_path = _resolve_synthetic_target_path(
             self.root_dir, self.synthetic_target_config["statistics_path"]
         )
-        return VerticalOffsetPrior.from_npz(
+        prior = VerticalOffsetPrior.from_npz(
             prior_path,
             expected_depth_axis_m=self._depth_axis_m,
         )
+        if self.val_year is not None and self.val_year not in prior.excluded_years:
+            raise ValueError(
+                "Synthetic vertical-offset prior must exclude the configured "
+                f"validation year {self.val_year}: {prior_path}"
+            )
+        return prior
 
     def _build_raster_store(
         self,
@@ -1972,6 +1985,10 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Return one model-ready sample with real ARGO sparse inputs."""
         row = self._rows.iloc[int(idx)]
+        y_glorys_np: np.ndarray | None = None
+        y_glorys_valid_mask_np: np.ndarray | None = None
+        y_salinity_glorys_np: np.ndarray | None = None
+        y_salinity_glorys_valid_mask_np: np.ndarray | None = None
         surface_fields = self._load_surface_fields(row)
         x_np, x_valid_mask_np = (
             self._rasterize_argo_patch(row)
@@ -2049,6 +2066,15 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             salinity_supervision_weight_np = np.asarray(
                 prior_sample.salinity_supervision_weight, dtype=np.float32
             )
+            if self.split == "val":
+                # Paired GLORYS is returned only for validation visualization and is
+                # deliberately kept separate from the synthetic supervision target.
+                if self._loads_temperature:
+                    y_glorys_np = self._load_y_patch(row)
+                    y_glorys_valid_mask_np = np.isfinite(y_glorys_np)
+                if self.include_salinity:
+                    y_salinity_glorys_np = self._load_y_salinity_patch(row)
+                    y_salinity_glorys_valid_mask_np = np.isfinite(y_salinity_glorys_np)
         else:
             y_np = self._load_y_patch(row) if self._loads_temperature else None
             y_salinity_np = (
@@ -2106,6 +2132,20 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 sample["y_supervision_weight"] = torch.from_numpy(
                     temperature_supervision_weight_np
                 )
+            if y_glorys_np is not None and y_glorys_valid_mask_np is not None:
+                y_glorys = temperature_normalize(
+                    mode="norm", tensor=torch.from_numpy(y_glorys_np)
+                )
+                sample.update(
+                    {
+                        "y_glorys": torch.nan_to_num(
+                            y_glorys, nan=0.0, posinf=0.0, neginf=0.0
+                        ),
+                        "y_glorys_valid_mask": torch.from_numpy(
+                            y_glorys_valid_mask_np.astype(np.bool_, copy=False)
+                        ),
+                    }
+                )
 
         if (
             self.include_salinity
@@ -2141,6 +2181,23 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             if not self.synthetic_target_enabled:
                 sample["y_salinity_supervision_weight"] = torch.from_numpy(
                     salinity_supervision_weight_np
+                )
+            if (
+                y_salinity_glorys_np is not None
+                and y_salinity_glorys_valid_mask_np is not None
+            ):
+                y_salinity_glorys = salinity_normalize(
+                    mode="norm", tensor=torch.from_numpy(y_salinity_glorys_np)
+                )
+                sample.update(
+                    {
+                        "y_salinity_glorys": torch.nan_to_num(
+                            y_salinity_glorys, nan=0.0, posinf=0.0, neginf=0.0
+                        ),
+                        "y_salinity_glorys_valid_mask": torch.from_numpy(
+                            y_salinity_glorys_valid_mask_np.astype(np.bool_, copy=False)
+                        ),
+                    }
                 )
 
         if self.return_coords:

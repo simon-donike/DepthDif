@@ -1,0 +1,60 @@
+type: FeatureCollection
+properties:
+  name: DepthDif 2016 hard-region evaluation
+  evaluation_year: 2016
+  definition_status: provisional_hand_drawn_polygons
+  description: Hand-drawn placeholders for development; replace them with the supplied literature-backed geometries before final paper reporting.
+features:
+- type: Feature
+  properties:
+    id: greenland
+    label: Greenland seas (provisional)
+    geometry_status: hand_drawn_placeholder
+  geometry:
+    type: Polygon
+    coordinates:
+    - - [-75.0, 58.0]
+      - [-45.0, 57.0]
+      - [-20.0, 62.0]
+      - [-8.0, 70.0]
+      - [-8.0, 80.0]
+      - [-20.0, 84.0]
+      - [-50.0, 85.0]
+      - [-70.0, 80.0]
+      - [-76.0, 70.0]
+      - [-75.0, 58.0]
+- type: Feature
+  properties:
+    id: california_baja
+    label: California/Baja margin (provisional)
+    geometry_status: hand_drawn_placeholder
+  geometry:
+    type: Polygon
+    coordinates:
+    - - [-132.0, 42.0]
+      - [-124.0, 45.0]
+      - [-118.0, 36.0]
+      - [-110.0, 28.0]
+      - [-104.0, 23.0]
+      - [-106.0, 18.0]
+      - [-116.0, 21.0]
+      - [-124.0, 32.0]
+      - [-129.0, 38.0]
+      - [-132.0, 42.0]
+- type: Feature
+  properties:
+    id: beaufort_arctic
+    label: Beaufort Sea/Western Arctic (provisional)
+    geometry_status: hand_drawn_placeholder
+  geometry:
+    type: Polygon
+    coordinates:
+    - - [-175.0, 70.0]
+      - [-162.0, 66.0]
+      - [-142.0, 67.0]
+      - [-125.0, 70.0]
+      - [-128.0, 76.0]
+      - [-145.0, 79.0]
+      - [-165.0, 77.0]
+      - [-175.0, 73.0]
+      - [-175.0, 70.0]

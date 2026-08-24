@@ -94,7 +94,7 @@ These keys live under top-level `data` in both pixel super-configs.
 | `data.dataset.output.include_salinity` | scenario-derived | Enables salinity raster/profile support. Derived from scenario. |
 | `data.dataset.runtime.random_seed` | `7` | Deterministic split/sampling seed. |
 | `data.dataset.runtime.cache_size` | `8` | Maximum open raster/source cache size. |
-| `data.split.val_year` | `2018` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
+| `data.split.val_year` | `2016` | Calendar year assigned to validation. Prevents spatial leakage when overlapping tiles are used. |
 | `data.split.val_fraction` | `0.2` | Fallback validation fraction when no validation year is set. |
 | `data.dataloader.num_workers` | `8` | Dataset-side dataloader worker default used by helper paths. |
 | `data.dataloader.prefetch_factor` | `2` | Prefetched batches per worker when workers are enabled. |
@@ -151,7 +151,21 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.training.validation_sampling.ddim_num_timesteps` | `100` | DDIM step count when the sampler is `ddim`. |
 | `training.training.validation_sampling.ddim_eta` | `0.0` | DDIM stochasticity. |
 | `training.training.validation_sampling.ddim_temperature` | `1.0` | Reverse-process noise scale. |
+| `training.training.validation_sampling.full_reconstruction_logging_enabled` | `true` | Enables reconstruction images and GLORYS/supervision profile comparisons in every local and HPC training preset. |
 | `training.training.validation_sampling.max_full_reconstruction_samples` | `1` | Cap for expensive full-reconstruction validation examples. |
+| `training.training.en4_candidate_eval.enabled` | `true` | Enables the separate exact-profile EN4/GLORYS W&B monitor during validation runs. |
+| `training.training.en4_candidate_eval.candidate_profiles_path` | `instructions/en4_no_spatiotemporal_candidate_profiles.parquet` | External soft-evidence candidate list joined by EN4 source filename and source profile index. |
+| `training.training.en4_candidate_eval.iso_week` | `25` | Fixed week inside `data.split.val_year` used for inexpensive epoch-time monitoring. |
+| `training.training.en4_candidate_eval.holdout_fraction` | `0.2` | Seeded fraction of qualified weekly grid locations hidden from sparse inputs. |
+| `training.training.en4_candidate_eval.seed` | `7` | Candidate location-selection and reconstruction seed. |
+| `training.training.en4_candidate_eval.max_patches` | `1` | Fixed candidate patches reconstructed per validation run; the full population remains post-training evaluation. |
+| `training.training.en4_candidate_eval.max_profiles_to_plot` | `6` | Maximum profile rows in each W&B comparison figure. |
+| `training.training.hard_region_eval.enabled` | `true` | Enables fixed hard-region prediction-vs-GLORYS metrics during each non-sanity Lightning validation epoch. |
+| `training.training.hard_region_eval.regions_path` | `src/depth_recon/configs/evaluation/hard_regions_2016.yaml` | Named WGS84 Polygon/MultiPolygon regions used by the callback. |
+| `training.training.hard_region_eval.evaluation_year` | `2016` | Required evaluation year; must match `data.split.val_year` and the region file. |
+| `training.training.hard_region_eval.max_patches_per_region` | `1` | Fixed deterministic patches reconstructed per region and validation run. |
+| `training.training.hard_region_eval.seed` | `7` | Deterministic regional reconstruction seed. |
+| `training.training.hard_region_eval.image_depths_m` | `[0.0, 100.0, 500.0]` | Requested depths mapped to nearest native channels for W&B GLORYS/prediction/error figures. |
 | `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
 | `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
 | `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |

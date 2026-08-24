@@ -121,6 +121,39 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
 
 
 class TestPixelConfig(unittest.TestCase):
+    def test_active_pixel_presets_reserve_2016_for_validation(self) -> None:
+        """Every active train/inference preset must use the same validation year."""
+        config_dir = Path("src/depth_recon/configs/px_space")
+        config_paths = sorted(config_dir.glob("training_super_config*.yaml"))
+        config_paths.append(config_dir / "inference_super_config.yaml")
+
+        for config_path in config_paths:
+            with self.subTest(config_path=config_path):
+                payload = load_yaml(config_path)
+                self.assertEqual(payload["data"]["split"]["val_year"], 2016)
+                self.assertTrue(payload["data"]["dataloader"]["val_shuffle"])
+                if config_path.name.startswith("training_"):
+                    validation_sampling = payload["training"]["training"][
+                        "validation_sampling"
+                    ]
+                    self.assertTrue(
+                        validation_sampling["full_reconstruction_logging_enabled"]
+                    )
+                    self.assertGreaterEqual(
+                        validation_sampling["max_full_reconstruction_samples"], 1
+                    )
+                    candidate_eval = payload["training"]["training"][
+                        "en4_candidate_eval"
+                    ]
+                    self.assertTrue(candidate_eval["enabled"])
+                    self.assertEqual(
+                        candidate_eval["candidate_profiles_path"],
+                        "instructions/en4_no_spatiotemporal_candidate_profiles.parquet",
+                    )
+                    self.assertEqual(candidate_eval["iso_week"], 25)
+                    self.assertEqual(candidate_eval["holdout_fraction"], 0.2)
+                    self.assertEqual(candidate_eval["seed"], 7)
+
     def test_super_config_derives_temperature_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

@@ -1574,6 +1574,55 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.equal(metric_masks[0][:, :, 1, 0], torch.zeros(1, 2)))
         self.assertTrue(torch.equal(metric_masks[0][:, :, 0, 0], torch.ones(1, 2)))
 
+    def test_full_reconstruction_logs_distinct_glorys_profile_reference(self) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+        batch["y_glorys"] = batch["y"] + 0.5
+        batch["y_glorys_valid_mask"] = batch["y_valid_mask"].clone()
+        batch["y_glorys_valid_mask"][:, :, 0, 1] = False
+        model._cache_validation_batch(batch, n_cache=1)
+        temperature_denorm = temperature_normalize(mode="denorm", tensor=batch["y"])
+        glorys_denorm = temperature_normalize(
+            mode="denorm", tensor=batch["y_glorys"]
+        ).masked_fill(~batch["y_glorys_valid_mask"], torch.nan)
+        pred = {
+            "y_hat": batch["y"],
+            "y_hat_denorm": temperature_denorm,
+            "y_hat_denorm_for_plot": temperature_denorm,
+            "further_valid_mask": None,
+            "denoise_samples": [],
+            "x0_denoise_samples": [],
+        }
+        profile_calls: list[dict[str, Any]] = []
+
+        with (
+            patch.object(model, "predict_step", lambda *args, **kwargs: pred),
+            patch.object(model, "log", lambda *args, **kwargs: None),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_conditional_reconstruction_grid",
+                lambda **kwargs: None,
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_glorys_profile_comparison",
+                lambda **kwargs: profile_calls.append(kwargs),
+            ),
+        ):
+            model._run_single_image_full_reconstruction_for_current_weights(
+                log_denoise=False
+            )
+
+        self.assertEqual(len(profile_calls), 1)
+        self.assertTrue(
+            torch.allclose(profile_calls[0]["y_target"], glorys_denorm, equal_nan=True)
+        )
+        self.assertTrue(
+            torch.allclose(
+                profile_calls[0]["supervision_target"],
+                temperature_denorm.masked_fill(~batch["y_valid_mask"], torch.nan),
+                equal_nan=True,
+            )
+        )
+
     def test_full_reconstruction_logs_separate_salinity_grid(self) -> None:
         model = _make_pixel_model(
             generated_channels=4,
@@ -1688,8 +1737,22 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.equal(salinity_call["y_hat"], salinity_denorm))
         self.assertEqual(len(profile_calls), 1)
         self.assertEqual(profile_calls[0]["profile_x_label"], "Salinity (PSU)")
+        expected_salinity_target = salinity_denorm.masked_fill(
+            ~batch["y_salinity_valid_mask"], torch.nan
+        )
         self.assertTrue(
-            torch.equal(profile_calls[0]["supervision_target"], salinity_denorm)
+            torch.allclose(
+                profile_calls[0]["y_target"],
+                expected_salinity_target,
+                equal_nan=True,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                profile_calls[0]["supervision_target"],
+                expected_salinity_target,
+                equal_nan=True,
+            )
         )
         self.assertEqual(len(denoise_calls), 1)
         self.assertEqual(denoise_calls[0]["cmap"], "cmo.haline")

@@ -416,7 +416,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
                     copy_dashboard=False,
                 )
 
-    def test_temporal_runner_defaults_to_complete_2018_validation_year(self) -> None:
+    def test_temporal_runner_defaults_to_complete_2016_validation_year(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_root = Path(tmp_dir)
             args = _build_temporal_runner_parser().parse_args(
@@ -457,17 +457,17 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         first_call_args = run_mock.call_args_list[0].args[0]
         last_call_args = run_mock.call_args_list[-1].args[0]
         self.assertEqual(first_call_args.scenario, "temperature")
-        self.assertEqual(first_call_args.year, 2018)
+        self.assertEqual(first_call_args.year, 2016)
         self.assertEqual(first_call_args.iso_week, 1)
         self.assertEqual(first_call_args.depth_export_suffix, ["10m"])
         self.assertTrue(first_call_args.compact_basin_depth_error)
         self.assertFalse(first_call_args.persist_ground_truth_rasters)
         self.assertEqual(last_call_args.scenario, "salinity")
-        self.assertEqual(last_call_args.year, 2018)
+        self.assertEqual(last_call_args.year, 2016)
         self.assertEqual(last_call_args.iso_week, 52)
         export_mock.assert_called_once()
         self.assertEqual(summary["week_count"], 52)
-        self.assertEqual(summary["weeks"][-1], {"iso_year": 2018, "iso_week": 52})
+        self.assertEqual(summary["weeks"][-1], {"iso_year": 2016, "iso_week": 52})
 
     def test_temporal_runner_can_package_temporal_globe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -603,14 +603,14 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(first_call_args.scenario, "temperature")
         self.assertEqual(first_call_args.output_name, "temperature")
         self.assertEqual(extra_call_args.scenario, "temperature")
-        self.assertEqual(extra_call_args.year, 2018)
+        self.assertEqual(extra_call_args.year, 2016)
         self.assertEqual(extra_call_args.iso_week, 1)
-        self.assertEqual(extra_call_args.output_name, "2018_W01")
+        self.assertEqual(extra_call_args.output_name, "2016_W01")
         self.assertEqual(extra_call_args.depth_export_suffix, ["10m"])
         self.assertTrue(extra_call_args.compact_basin_depth_error)
         self.assertFalse(extra_call_args.persist_ground_truth_rasters)
         self.assertEqual(last_call_args.scenario, "salinity")
-        self.assertEqual(last_call_args.year, 2018)
+        self.assertEqual(last_call_args.year, 2016)
         self.assertEqual(last_call_args.iso_week, 52)
 
         temporal_kwargs = temporal_mock.call_args.kwargs
@@ -618,7 +618,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
             temporal_kwargs["output_dir"],
             output_root / "standard_temporal" / "temporal",
         )
-        self.assertEqual(temporal_kwargs["validation_year"], 2018)
+        self.assertEqual(temporal_kwargs["validation_year"], 2016)
         self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["temperature"]), 52)
         self.assertEqual(len(temporal_kwargs["variable_run_dirs"]["salinity"]), 52)
         globe_kwargs = temporal_globe_mock.call_args.kwargs
@@ -633,7 +633,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertEqual(summary["temporal_consistency"]["week_count"], 52)
         self.assertEqual(
             summary["temporal_consistency"]["weeks"][-1],
-            {"iso_year": 2018, "iso_week": 52},
+            {"iso_year": 2016, "iso_week": 52},
         )
         self.assertEqual(
             summary["temporal_consistency"]["globe"],

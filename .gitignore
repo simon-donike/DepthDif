@@ -25,7 +25,7 @@ inference/outputs_v1_backup.zip
 tok.txt
 src/depth_recon/inference/outputs
 commands.txt
-src/depth_recon/data/local_data/
+src/depth_recon/data/local_data/*
 temp/
 instructions
 outputs
@@ -38,6 +38,7 @@ dist
 # temp file types
 *.csv
 *.geojson
+!src/depth_recon/data/local_data/world_oceans.geojson
 *.json
 !docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.json
 *.tif

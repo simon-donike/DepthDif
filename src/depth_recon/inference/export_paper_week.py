@@ -2,8 +2,8 @@
 # /work/envs/depth/bin/python -m depth_recon.inference.export_paper_week \
 #   --config src/depth_recon/configs/px_space/inference_super_config.yaml \
 #   --set inference.grid.patch_stride=128 \
-#   --year 2018 --iso-week 25 \
-#   --output-dir inference/outputs/paper_2018_W25 \
+#   --year 2016 --iso-week 25 \
+#   --output-dir inference/outputs/paper_2016_W25 \
 #   --models-config configs/paper_week_models.yaml \
 #   --device cuda --multi-gpu --strict-load \
 #   --batch-size 8 --inference-num-workers 8 --inference-prefetch-factor 2 \
@@ -12,7 +12,8 @@
 #   --rectangle -80 -60 20 70 \
 #   --sampler ddim --ddim-steps 100 \
 #   --seed 7 --sigma 0.0 --full-sample-count 0 \
-#   --validation-year 2018 --en4-holdout-fraction 0.2 \
+#   --validation-year 2016 --en4-holdout-fraction 0.2 \
+#   --en4-candidate-profiles /path/to/en4_no_spatiotemporal_candidate_profiles.parquet \
 #   --climatology-idw-power 2.0 --climatology-idw-eps 1.0e-6 \
 #   --climatology-idw-neighbors 16 --climatology-idw-chunk-size 250000 \
 #   --profile-chunk-size 100000 --overwrite-climatology
@@ -348,7 +349,9 @@ def export_paper_week(
         date_value=int(selected_date),
         fraction=float(args.en4_holdout_fraction),
         seed=int(args.seed),
+        candidate_profiles_path=args.en4_candidate_profiles,
     )
+    holdout_selection = dict(holdout_df.attrs)
     holdout_locations_path = references_dir / "en4_holdout_locations.csv"
     holdout_df.to_csv(holdout_locations_path, index=False)
     holdout_profiles_path = write_en4_holdout_profiles_csv(
@@ -431,6 +434,7 @@ def export_paper_week(
         "selected_date": int(selected_date),
         "validation_year": int(args.validation_year),
         "en4_holdout_fraction": float(args.en4_holdout_fraction),
+        "en4_holdout_selection": holdout_selection,
         "seed": int(args.seed),
         "dataset_root": str(dataset_root),
         "variables": list(VARIABLES),
@@ -505,6 +509,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--full-sample-count", type=int, default=0)
     parser.add_argument("--validation-year", type=int, default=DEFAULT_VALIDATION_YEAR)
     parser.add_argument("--en4-holdout-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--en4-candidate-profiles",
+        type=Path,
+        default=None,
+        help=(
+            "Optional parquet of no-nearby-GLORYS-source EN4 candidate profiles; "
+            "matching uses profile_source_file and source_profile_idx."
+        ),
+    )
     parser.add_argument(
         "--climatology-idw-power",
         type=float,

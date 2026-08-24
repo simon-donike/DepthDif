@@ -3,7 +3,7 @@
 #   --geotiff-root-dir /work/data/OceanVariableReconstruction \
 #   --output-path /work/data/OceanVariableReconstruction/priors/vertical_offset_prior.npz \
 #   --metadata-cache-dir /work/data/OceanVariableReconstruction/depthdif_cache \
-#   --start-year 2000 --end-year 2024 --exclude-year 2018 --tile-size 128 \
+#   --start-year 2000 --end-year 2024 --exclude-year 2016 --tile-size 128 \
 #   --patch-stride 128 --max-land-fraction 0.30 --max-patches 4000 \
 #   --spatial-bin-size-deg 10 --smoothing-sigma-cells 1 --shrinkage-pixels 4096 \
 #   --extrapolation-half-life-m 1000 --random-seed 7 --overwrite --no-progress
@@ -119,7 +119,7 @@ def fit_vertical_offset_prior(
     metadata_cache_dir: str | Path | None = None,
     start_year: int | None = None,
     end_year: int | None = None,
-    excluded_years: Sequence[int] = (2018,),
+    excluded_years: Sequence[int] = (2016,),
     tile_size: int = 128,
     patch_stride: int | None = None,
     max_land_fraction: float = 0.30,
@@ -259,7 +259,7 @@ def main() -> None:
         start_year=args.start_year,
         end_year=args.end_year,
         excluded_years=(
-            args.exclude_year if args.exclude_year is not None else (2018,)
+            args.exclude_year if args.exclude_year is not None else (2016,)
         ),
         tile_size=args.tile_size,
         patch_stride=args.patch_stride,

@@ -18,6 +18,7 @@ import sys
 from typing import Any
 import warnings
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
@@ -30,6 +31,10 @@ if __package__ in {None, ""}:
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
+from depth_recon.inference.export_paper_metrics import (
+    load_dataset_context,
+    select_en4_holdout_locations,
+)
 from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
     PointwiseLSTMBaseline,
@@ -38,6 +43,8 @@ from depth_recon.models.baselines import (
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
+from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
+from depth_recon.utils.hard_region_validation import HardRegionValidationCallback
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
     PIXEL_SCENARIOS,
@@ -46,6 +53,113 @@ from depth_recon.configs.config_resolver_pixel import (
 )
 
 PIXEL_TRAINING_CONFIG_PATH = DEFAULT_PIXEL_TRAINING_CONFIG_PATH
+
+
+def build_en4_candidate_validation_callback(
+    *,
+    val_dataset: ArgoGeoTIFFGriddedPatchDataset,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+) -> EN4CandidateValidationCallback | None:
+    """Configure the optional exact-profile EN4 comparison for validation epochs."""
+    validation_cfg = training_cfg.get("training", {}).get("en4_candidate_eval", {})
+    if not bool(validation_cfg.get("enabled", False)):
+        return None
+    candidate_path_value = validation_cfg.get("candidate_profiles_path")
+    if not candidate_path_value:
+        raise ValueError(
+            "training.en4_candidate_eval.candidate_profiles_path is required when "
+            "candidate evaluation is enabled."
+        )
+    candidate_path = Path(str(candidate_path_value)).expanduser()
+    if not candidate_path.is_absolute() and not candidate_path.exists():
+        candidate_path = Path(__file__).resolve().parent / candidate_path
+    if not candidate_path.is_file():
+        raise FileNotFoundError(
+            f"EN4 candidate profile parquet does not exist: {candidate_path}"
+        )
+    validation_year = int(data_cfg.get("split", {}).get("val_year", 2016))
+    iso_week = int(validation_cfg.get("iso_week", 25))
+    dates = sorted(
+        {
+            int(value)
+            for value in val_dataset._rows["date"].to_numpy(dtype=np.int64).tolist()
+            if datetime.strptime(str(int(value)), "%Y%m%d").isocalendar()[:2]
+            == (validation_year, iso_week)
+        }
+    )
+    if len(dates) != 1:
+        raise RuntimeError(
+            "EN4 candidate validation expected exactly one dataset target date for "
+            f"ISO {validation_year}-W{iso_week:02d}, found {dates}."
+        )
+    context = load_dataset_context(val_dataset.root_dir)
+    holdout_df = select_en4_holdout_locations(
+        context=context,
+        date_value=dates[0],
+        fraction=float(validation_cfg.get("holdout_fraction", 0.2)),
+        seed=int(validation_cfg.get("seed", 7)),
+        candidate_profiles_path=candidate_path,
+        profile_store=val_dataset.argo_store,
+    )
+    # Apply the location holdout to the shared validation dataset so every
+    # overlapping patch and both sparse variables use the same leakage-free input.
+    val_dataset.set_heldout_argo_locations(
+        [
+            (int(row.date), int(row.grid_row), int(row.grid_col))
+            for row in holdout_df.itertuples(index=False)
+        ]
+    )
+    return EN4CandidateValidationCallback(
+        dataset=val_dataset,
+        holdout_df=holdout_df,
+        max_patches=int(validation_cfg.get("max_patches", 1)),
+        max_profiles_to_plot=int(validation_cfg.get("max_profiles_to_plot", 6)),
+        random_seed=int(validation_cfg.get("seed", 7)),
+    )
+
+
+def build_hard_region_validation_callback(
+    *,
+    val_dataset: ArgoGeoTIFFGriddedPatchDataset,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+) -> HardRegionValidationCallback | None:
+    """Configure the fixed 2016 hard-region GLORYS validation callback."""
+    validation_cfg = training_cfg.get("training", {}).get("hard_region_eval", {})
+    if not bool(validation_cfg.get("enabled", False)):
+        return None
+    regions_path_value = validation_cfg.get("regions_path")
+    if not regions_path_value:
+        raise ValueError(
+            "training.hard_region_eval.regions_path is required when hard-region "
+            "validation is enabled."
+        )
+    regions_path = Path(str(regions_path_value)).expanduser()
+    if not regions_path.is_absolute() and not regions_path.exists():
+        regions_path = Path(__file__).resolve().parent / regions_path
+    if not regions_path.is_file():
+        raise FileNotFoundError(
+            f"Hard-region definition file does not exist: {regions_path}"
+        )
+    validation_year = int(data_cfg.get("split", {}).get("val_year", 2016))
+    evaluation_year = int(validation_cfg.get("evaluation_year", validation_year))
+    if evaluation_year != validation_year:
+        raise ValueError(
+            "training.hard_region_eval.evaluation_year must match "
+            f"data.split.val_year ({validation_year})."
+        )
+    return HardRegionValidationCallback(
+        dataset=val_dataset,
+        regions_path=regions_path,
+        evaluation_year=evaluation_year,
+        max_patches_per_region=int(validation_cfg.get("max_patches_per_region", 1)),
+        random_seed=int(validation_cfg.get("seed", 7)),
+        image_depths_m=tuple(
+            float(value)
+            for value in validation_cfg.get("image_depths_m", (0.0, 100.0, 500.0))
+        ),
+    )
 
 
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
@@ -531,6 +645,16 @@ def main(
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
+    en4_candidate_callback = build_en4_candidate_validation_callback(
+        val_dataset=val_dataset,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+    )
+    hard_region_callback = build_hard_region_validation_callback(
+        val_dataset=val_dataset,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+    )
 
     if model_type == "idw_baseline":
         model = IDWInterpolationBaseline.from_config(
@@ -646,6 +770,10 @@ def main(
             latest_checkpoint_callback,
             lr_monitor_callback,
         ]
+    if en4_candidate_callback is not None:
+        callbacks.append(en4_candidate_callback)
+    if hard_region_callback is not None:
+        callbacks.append(hard_region_callback)
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)

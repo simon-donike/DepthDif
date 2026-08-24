@@ -153,7 +153,7 @@ masks.
   `dataset.selection.require_argo_for_val` defaults to `true`.
 - `dataset.selection.require_argo_for_all` defaults to `false` so global
   inference can cover rows without ARGO observations.
-- `split.val_year` defaults to `2018`, assigning that year to validation and
+- `split.val_year` defaults to `2016`, assigning that year to validation and
   all other years to training.
 
 ## Depth Semantics
