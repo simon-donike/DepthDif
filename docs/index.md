@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/branding/banner_depthdif.webp" width="65%" alt="DepthDif" />
-</p>
-
 # DepthDif
 
 DepthDif is a research codebase for reconstructing dense subsurface temperature

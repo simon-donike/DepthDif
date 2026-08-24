@@ -116,6 +116,21 @@ The repository also provides standalone exporters for spatial error analysis,
 temporal dashboards, temporal globes, and wavenumber spectra. See the
 [CLI reference](cli.md) for their module names and canonical entry points.
 
+## Host the comparison globe
+
+The standalone comparison viewer at `docs/comparison-globe/index.html` compares
+GLORYS, DepthDif, IDW, climatology, LSTM, CNN, and U-Net layers. It loads the
+hosted `comparison-globe-config.json` by default; append `?config=<url>` to test
+another manifest.
+
+Each variable/depth entry can use a `layers` mapping, matching the spatial globe
+manifest shape. For compatibility, the viewer also accepts direct
+`glorys_tiles_url`/`ground_truth_tiles_url`,
+`depthdif_tiles_url`/`prediction_tiles_url`, `idw_tiles_url`,
+`climatology_tiles_url`, `lstm_tiles_url`, `cnn_tiles_url`, and
+`unet_tiles_url` fields. ARGO sample and patch-split GeoJSON URLs may be declared
+at the manifest root or inside a variable config.
+
 ## Validation and paper products
 
 For one model's pooled validation error by depth:

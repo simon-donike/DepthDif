@@ -31,7 +31,6 @@ date conditioning is also enabled, missing `date` raises an error.
 - `raw` returns latitude/90 and longitude/180; it is compact but discontinuous at
   the dateline.
 
-![Unit-sphere coordinate encoding](assets/figures/coord_encoding_unit_sphere_rgb.webp)
 
 ## Date encoding
 
@@ -45,7 +44,6 @@ computes day of year, and returns
 This represents annual periodicity without treating the end and start of a year
 as distant scalar values.
 
-![Day-of-year encoding](assets/figures/time_encodings_365.webp)
 
 ## FiLM path
 

@@ -825,7 +825,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("ground_truth", script)
         self.assertNotIn("uncertainty", script)
         self.assertIn(".globe-toolbar--temporal", css)
-        self.assertIn("Analysis: /analysis/", mkdocs_config)
+        self.assertIn("Analysis: analysis/index.html", mkdocs_config)
         self.assertNotIn(
             "Temporal Globe: https://depthdif.donike.net/temporal-globe/",
             mkdocs_config,
@@ -869,7 +869,7 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertNotIn("prediction_flicker", script)
         self.assertNotIn("change_error", script)
         self.assertNotIn("temporal-analysis.json", script)
-        self.assertIn("Analysis: /analysis/", mkdocs_config)
+        self.assertIn("Analysis: analysis/index.html", mkdocs_config)
         self.assertNotIn(
             "Temporal Dashboard: https://depthdif.donike.net/temporal-dashboard/",
             mkdocs_config,

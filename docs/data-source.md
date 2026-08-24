@@ -13,7 +13,6 @@ Use [Depth Alignment](depth-alignment.md) for ARGO-to-GLORYS vertical resampling
 | SSS MULTIOBS | daily surface salinity and density | daily global surface grid | `sos`, `dos`, `sea_ice_fraction` |
 
 ## Product A: GLORYS Reanalysis  
-![GLORYS banner](assets/data/glorys_banner.webp)  
 
 GLORYS is a global ocean reanalysis product that provides physically consistent 3D temperature fields on a fixed depth grid.  
 
@@ -27,12 +26,7 @@ Relevant helper scripts:
 - `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_monthly.sh`  
 - `src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh`  
 
-GLORYS depth distribution:  
-![img](assets/data/depth_levels.webp)  
-
-
 ## Product B: OSTIA Surface EO  
-![OSTIA banner](assets/data/ostia_banner.webp)  
 
 OSTIA is a satellite- and in-situ-derived ocean surface temperature product that provides daily global sea-surface temperature fields.  
 
@@ -42,11 +36,7 @@ OSTIA is a satellite- and in-situ-derived ocean surface temperature product that
 - Temporal sampling: one daily SST snapshot at `12:00 UTC`  
 - Geometry: global 2D grid  
 
-OSTIA example tile:  
-![img](assets/data/ostia_dataset.webp)  
-
 ## Product C: EN4 / ARGO Profiles  
-![ARGO banner](assets/data/argo_banner.webp)  
 
 EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected depth samples that capture sparse but physically grounded vertical structure.  
 
@@ -58,17 +48,6 @@ EN4 / ARGO provides in-situ ocean temperature profiles with irregular corrected 
 
 Relevant helper script:  
 - `src/depth_recon/data/dataset_creation/data_download_raw/get_argo/download_en4_profiles.sh`  
-
-Archive-wide corrected-depth histogram with GLORYS reference levels:  
-![img](assets/data/argo_corrected_depth_histogram.webp)  
-
-- The histogram aggregates finite `DEPH_CORRECTED` values over the scanned EN4 archive.  
-- Sampling density is concentrated in the upper ocean and decreases with depth.  
-- The dotted GLORYS depth markers show the discrete reference levels used elsewhere in the project.  
-
-Example ARGO profile in 3D:  
-![img](assets/data/argo_profile_3D.gif)  
-Important: `z` shows the netCDF dimension (400), not actual depth.  
 
 ## Product D: Global Ocean L4 Sea Level  
 
