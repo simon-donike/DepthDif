@@ -160,6 +160,12 @@ These keys live under top-level `training` in `training_super_config.yaml` and a
 | `training.training.en4_candidate_eval.seed` | `7` | Candidate location-selection and reconstruction seed. |
 | `training.training.en4_candidate_eval.max_patches` | `1` | Fixed candidate patches reconstructed per validation run; the full population remains post-training evaluation. |
 | `training.training.en4_candidate_eval.max_profiles_to_plot` | `6` | Maximum profile rows in each W&B comparison figure. |
+| `training.training.hard_region_eval.enabled` | `true` | Enables fixed hard-region prediction-vs-GLORYS metrics during each non-sanity Lightning validation epoch. |
+| `training.training.hard_region_eval.regions_path` | `src/depth_recon/configs/evaluation/hard_regions_2016.yaml` | Named WGS84 Polygon/MultiPolygon regions used by the callback. |
+| `training.training.hard_region_eval.evaluation_year` | `2016` | Required evaluation year; must match `data.split.val_year` and the region file. |
+| `training.training.hard_region_eval.max_patches_per_region` | `1` | Fixed deterministic patches reconstructed per region and validation run. |
+| `training.training.hard_region_eval.seed` | `7` | Deterministic regional reconstruction seed. |
+| `training.training.hard_region_eval.image_depths_m` | `[0.0, 100.0, 500.0]` | Requested depths mapped to nearest native channels for W&B GLORYS/prediction/error figures. |
 | `training.trainer.max_epochs` | `1500` | Lightning epoch cap. |
 | `training.trainer.accelerator` / `devices` | `auto` / `auto` | Lightning device selection. |
 | `training.trainer.precision` | `16-mixed` | Mixed-precision mode. |

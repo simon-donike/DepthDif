@@ -67,6 +67,7 @@ nav:
       - Tests: tests.md
   - Model:
       - Training: training.md
+      - GLORYS-comparative evaluation: glorys-comparative-evaluation.md
       - Inference: inference.md
       - Uncertainty: uncertainty.md
       - Public Inference Package: public-inference-package.md

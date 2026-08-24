@@ -44,6 +44,7 @@ from depth_recon.models.baselines import (
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
+from depth_recon.utils.hard_region_validation import HardRegionValidationCallback
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
     PIXEL_SCENARIOS,
@@ -115,6 +116,49 @@ def build_en4_candidate_validation_callback(
         max_patches=int(validation_cfg.get("max_patches", 1)),
         max_profiles_to_plot=int(validation_cfg.get("max_profiles_to_plot", 6)),
         random_seed=int(validation_cfg.get("seed", 7)),
+    )
+
+
+def build_hard_region_validation_callback(
+    *,
+    val_dataset: ArgoGeoTIFFGriddedPatchDataset,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+) -> HardRegionValidationCallback | None:
+    """Configure the fixed 2016 hard-region GLORYS validation callback."""
+    validation_cfg = training_cfg.get("training", {}).get("hard_region_eval", {})
+    if not bool(validation_cfg.get("enabled", False)):
+        return None
+    regions_path_value = validation_cfg.get("regions_path")
+    if not regions_path_value:
+        raise ValueError(
+            "training.hard_region_eval.regions_path is required when hard-region "
+            "validation is enabled."
+        )
+    regions_path = Path(str(regions_path_value)).expanduser()
+    if not regions_path.is_absolute() and not regions_path.exists():
+        regions_path = Path(__file__).resolve().parent / regions_path
+    if not regions_path.is_file():
+        raise FileNotFoundError(
+            f"Hard-region definition file does not exist: {regions_path}"
+        )
+    validation_year = int(data_cfg.get("split", {}).get("val_year", 2016))
+    evaluation_year = int(validation_cfg.get("evaluation_year", validation_year))
+    if evaluation_year != validation_year:
+        raise ValueError(
+            "training.hard_region_eval.evaluation_year must match "
+            f"data.split.val_year ({validation_year})."
+        )
+    return HardRegionValidationCallback(
+        dataset=val_dataset,
+        regions_path=regions_path,
+        evaluation_year=evaluation_year,
+        max_patches_per_region=int(validation_cfg.get("max_patches_per_region", 1)),
+        random_seed=int(validation_cfg.get("seed", 7)),
+        image_depths_m=tuple(
+            float(value)
+            for value in validation_cfg.get("image_depths_m", (0.0, 100.0, 500.0))
+        ),
     )
 
 
@@ -606,6 +650,11 @@ def main(
         data_cfg=data_cfg,
         training_cfg=training_cfg,
     )
+    hard_region_callback = build_hard_region_validation_callback(
+        val_dataset=val_dataset,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+    )
 
     if model_type == "idw_baseline":
         model = IDWInterpolationBaseline.from_config(
@@ -723,6 +772,8 @@ def main(
         ]
     if en4_candidate_callback is not None:
         callbacks.append(en4_candidate_callback)
+    if hard_region_callback is not None:
+        callbacks.append(hard_region_callback)
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)

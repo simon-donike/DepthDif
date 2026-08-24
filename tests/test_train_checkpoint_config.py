@@ -10,6 +10,7 @@ import torch
 
 from train import (
     build_en4_candidate_validation_callback,
+    build_hard_region_validation_callback,
     load_weights_only_checkpoint,
     resolve_load_checkpoint_only,
     resolve_resume_ckpt_path,
@@ -27,6 +28,49 @@ class _TinyCheckpointModule(torch.nn.Module):
 
 
 class TestTrainCheckpointConfig(unittest.TestCase):
+    def test_hard_region_callback_builder_requires_validation_year_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            regions_path = Path(tmpdir) / "regions.yaml"
+            regions_path.touch()
+            val_dataset = MagicMock()
+            expected_callback = object()
+            training_cfg = {
+                "training": {
+                    "hard_region_eval": {
+                        "enabled": True,
+                        "regions_path": str(regions_path),
+                        "evaluation_year": 2016,
+                        "max_patches_per_region": 2,
+                        "seed": 11,
+                    }
+                }
+            }
+
+            with patch(
+                "train.HardRegionValidationCallback", return_value=expected_callback
+            ) as callback_class:
+                callback = build_hard_region_validation_callback(
+                    val_dataset=val_dataset,
+                    data_cfg={"split": {"val_year": 2016}},
+                    training_cfg=training_cfg,
+                )
+
+            self.assertIs(callback, expected_callback)
+            callback_class.assert_called_once_with(
+                dataset=val_dataset,
+                regions_path=regions_path,
+                evaluation_year=2016,
+                max_patches_per_region=2,
+                random_seed=11,
+                image_depths_m=(0.0, 100.0, 500.0),
+            )
+            with self.assertRaisesRegex(ValueError, "must match"):
+                build_hard_region_validation_callback(
+                    val_dataset=val_dataset,
+                    data_cfg={"split": {"val_year": 2018}},
+                    training_cfg=training_cfg,
+                )
+
     def test_en4_candidate_callback_builder_selects_configured_week(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             candidate_path = Path(tmpdir) / "candidates.parquet"
