@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Sequence
+import warnings
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 
-from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
+from depth_recon.utils.normalizations import (
+    PLOT_CMAP,
+    PLOT_SALINITY_CMAP,
+    salinity_normalize,
+    temperature_normalize,
+)
+from depth_recon.utils.validation_denoise import (
+    log_wandb_conditional_reconstruction_grid,
+)
 
 
 class IDWInterpolationBaseline(pl.LightningModule):
@@ -21,6 +31,8 @@ class IDWInterpolationBaseline(pl.LightningModule):
         output_fields: Sequence[str] | str | None = None,
         variable_scenario: str | None = None,
         datamodule: pl.LightningDataModule | None = None,
+        skip_full_reconstruction_in_sanity_check: bool = True,
+        max_full_reconstruction_samples: int = 1,
     ) -> None:
         """Initialize the IDW baseline.
 
@@ -31,6 +43,8 @@ class IDWInterpolationBaseline(pl.LightningModule):
             output_fields (Sequence[str] | str | None): Active output fields.
             variable_scenario (str | None): Scenario metadata stored in checkpoints.
             datamodule (pl.LightningDataModule | None): Optional Lightning datamodule.
+            skip_full_reconstruction_in_sanity_check (bool): Skip costly sanity metrics.
+            max_full_reconstruction_samples (int): Cached validation sample count.
 
         Returns:
             None: No value is returned.
@@ -49,6 +63,13 @@ class IDWInterpolationBaseline(pl.LightningModule):
         self.output_fields = self._normalize_output_fields(output_fields)
         self.variable_scenario = variable_scenario
         self.datamodule = datamodule
+        self.skip_full_reconstruction_in_sanity_check = bool(
+            skip_full_reconstruction_in_sanity_check
+        )
+        self.max_full_reconstruction_samples = max(
+            1, int(max_full_reconstruction_samples)
+        )
+        self._cached_val_example: dict[str, Any] | None = None
         self.automatic_optimization = False
         self.save_hyperparameters(ignore=["datamodule"])
         self.register_buffer("_empty", torch.empty(0), persistent=False)
@@ -106,7 +127,11 @@ class IDWInterpolationBaseline(pl.LightningModule):
             idw_cfg = {}
         if not isinstance(idw_cfg, dict):
             raise ValueError("model.idw must be a mapping when provided.")
-        _ = data_config_path, training_config_path
+        training_cfg = (
+            cls._load_yaml(training_config_path) if training_config_path else {}
+        )
+        training_section = training_cfg.get("training", training_cfg)
+        validation_cfg = training_section.get("validation_sampling", {})
         return cls(
             power=float(idw_cfg.get("power", 2.0)),
             eps=float(idw_cfg.get("eps", 1.0e-6)),
@@ -114,6 +139,12 @@ class IDWInterpolationBaseline(pl.LightningModule):
             output_fields=m.get("output_fields", None),
             variable_scenario=m.get("scenario", None),
             datamodule=datamodule,
+            skip_full_reconstruction_in_sanity_check=bool(
+                validation_cfg.get("skip_full_reconstruction_in_sanity_check", True)
+            ),
+            max_full_reconstruction_samples=int(
+                validation_cfg.get("max_full_reconstruction_samples", 1)
+            ),
         )
 
     def _require_batch_tensor(self, batch: dict[str, Any], key: str) -> torch.Tensor:
@@ -405,15 +436,372 @@ class IDWInterpolationBaseline(pl.LightningModule):
         )
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
-        """Log IDW validation loss."""
-        _ = batch_idx
-        return self._shared_step(
+        """Log IDW validation loss and cache one reconstruction batch."""
+        loss = self._shared_step(
             batch,
             prefix="val",
             batch_size=int(
                 self._prepare_model_batch_tensors(batch, include_y=False)["x"].size(0)
             ),
         )
+        if batch_idx == 0 and self._cached_val_example is None:
+            batch_size = int(
+                self._prepare_model_batch_tensors(batch, include_y=True)["y"].size(0)
+            )
+            self._cache_validation_batch(
+                batch,
+                n_cache=min(self.max_full_reconstruction_samples, batch_size),
+            )
+        return loss
+
+    def _cache_validation_batch(self, batch: dict[str, Any], *, n_cache: int) -> None:
+        """Cache tensors needed for epoch-end reconstruction metrics and figures."""
+        cache_keys = (
+            "x",
+            "y",
+            "x_valid_mask",
+            "y_valid_mask",
+            "x_salinity",
+            "y_salinity",
+            "x_salinity_valid_mask",
+            "y_salinity_valid_mask",
+            "eo",
+            "land_mask",
+            "output_land_mask",
+            "coords",
+            "date",
+        )
+        cached: dict[str, Any] = {}
+        for key in cache_keys:
+            if key not in batch:
+                continue
+            value = batch[key]
+            if torch.is_tensor(value):
+                cached[key] = value[:n_cache].detach().clone()
+            elif isinstance(value, (list, tuple)):
+                cached[key] = value[:n_cache]
+            else:
+                cached[key] = value
+        self._cached_val_example = cached
+
+    def on_validation_epoch_start(self) -> None:
+        """Reset the cached validation batch before each validation pass."""
+        self._cached_val_example = None
+
+    def _log_full_reconstruction_metrics(
+        self,
+        *,
+        recon_mse: torch.Tensor,
+        recon_l1: torch.Tensor,
+        recon_psnr: torch.Tensor,
+        recon_ssim: torch.Tensor,
+        batch_size: int,
+        metric_prefix: str,
+    ) -> None:
+        """Log the shared full-reconstruction validation metric keys."""
+        for name, value, show in (
+            ("recon_mse_full_recon", recon_mse, True),
+            ("recon_l1_full_recon", recon_l1, True),
+            ("recon_psnr_full_recon", recon_psnr, True),
+            ("recon_ssim_full_recon", recon_ssim, False),
+        ):
+            self.log(
+                f"{metric_prefix}/{name}",
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=show and metric_prefix == "val",
+                logger=True,
+                sync_dist=True,
+                batch_size=batch_size,
+            )
+
+    def _log_full_reconstruction_placeholders(self) -> None:
+        """Log stable zero-valued metric keys when reconstruction is unavailable."""
+        placeholder = torch.zeros((), device=self.device, dtype=torch.float32)
+        prefixes = (
+            (
+                "val"
+                if len(self.output_fields) == 1
+                else ("val_salinity" if field == "salinity" else f"val_{field}")
+            )
+            for field in self.output_fields
+        )
+        for metric_prefix in prefixes:
+            self._log_full_reconstruction_metrics(
+                recon_mse=placeholder,
+                recon_l1=placeholder,
+                recon_psnr=placeholder,
+                recon_ssim=placeholder,
+                batch_size=1,
+                metric_prefix=metric_prefix,
+            )
+
+    @staticmethod
+    def _compute_full_reconstruction_metrics(
+        *,
+        prediction_denorm: torch.Tensor,
+        target_denorm: torch.Tensor,
+        eval_mask: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute physical-unit MSE, L1, PSNR, and SSIM scalars."""
+        zero = torch.zeros((), device=target_denorm.device, dtype=target_denorm.dtype)
+        support = torch.isfinite(prediction_denorm) & torch.isfinite(target_denorm)
+        if eval_mask is not None:
+            support = support & (eval_mask > 0.5)
+        if bool(support.any().item()):
+            difference = prediction_denorm - target_denorm
+            recon_mse = difference.square()[support].mean()
+            recon_l1 = difference.abs()[support].mean()
+        else:
+            recon_mse = zero
+            recon_l1 = zero
+
+        recon_psnr = zero
+        recon_ssim = zero
+        try:
+            from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+
+            target_np = target_denorm.detach().float().cpu().numpy()
+            prediction_np = prediction_denorm.detach().float().cpu().numpy()
+            mask_np = (
+                (eval_mask > 0.5).detach().cpu().numpy()
+                if eval_mask is not None
+                else None
+            )
+            if target_np.ndim == 2:
+                target_np = target_np[None, None, ...]
+                prediction_np = prediction_np[None, None, ...]
+                mask_np = None if mask_np is None else mask_np[None, None, ...]
+            elif target_np.ndim == 3:
+                target_np = target_np[:, None, ...]
+                prediction_np = prediction_np[:, None, ...]
+                mask_np = None if mask_np is None else mask_np[:, None, ...]
+            psnr_values: list[float] = []
+            ssim_values: list[float] = []
+            for sample_index in range(target_np.shape[0]):
+                for band_index in range(target_np.shape[1]):
+                    target_band = target_np[sample_index, band_index]
+                    prediction_band = prediction_np[sample_index, band_index]
+                    band_mask = (
+                        mask_np[sample_index, band_index] > 0.5
+                        if mask_np is not None
+                        else np.isfinite(target_band) & np.isfinite(prediction_band)
+                    )
+                    band_mask &= np.isfinite(target_band) & np.isfinite(prediction_band)
+                    if not bool(np.any(band_mask)):
+                        continue
+                    target_valid = target_band[band_mask]
+                    prediction_valid = prediction_band[band_mask]
+                    data_range = float(target_valid.max() - target_valid.min())
+                    if data_range <= 0.0:
+                        continue
+                    psnr_values.append(
+                        float(
+                            peak_signal_noise_ratio(
+                                target_valid,
+                                prediction_valid,
+                                data_range=data_range,
+                            )
+                        )
+                    )
+                    if bool(np.all(band_mask)):
+                        ssim_values.append(
+                            float(
+                                structural_similarity(
+                                    target_band,
+                                    prediction_band,
+                                    data_range=data_range,
+                                )
+                            )
+                        )
+            if psnr_values:
+                recon_psnr = target_denorm.new_tensor(float(np.mean(psnr_values)))
+            if ssim_values:
+                recon_ssim = target_denorm.new_tensor(float(np.mean(ssim_values)))
+        except Exception:
+            # MSE/L1 remain available when optional image metrics cannot be computed.
+            pass
+        return recon_mse, recon_l1, recon_psnr, recon_ssim
+
+    @staticmethod
+    def _denormalize_field(field: str, tensor: torch.Tensor) -> torch.Tensor:
+        """Denormalize a model field into its physical units."""
+        if field == "salinity":
+            return salinity_normalize(mode="denorm", tensor=tensor)
+        return temperature_normalize(mode="denorm", tensor=tensor)
+
+    def _move_cached_batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Move cached tensors onto the active model device."""
+        return {
+            key: value.to(self.device) if torch.is_tensor(value) else value
+            for key, value in batch.items()
+        }
+
+    def _trainer_or_none(self) -> pl.Trainer | None:
+        """Return the attached trainer when the module is inside a Trainer run."""
+        try:
+            return self.trainer
+        except RuntimeError:
+            return None
+
+    def _apply_invalid_to_nan(
+        self, tensor: torch.Tensor, mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Mask invalid values with NaN for W&B reconstruction figures."""
+        if mask is None:
+            return tensor
+        aligned = self._align_mask_to_reference(
+            (mask > 0.5).to(dtype=tensor.dtype, device=tensor.device),
+            tensor,
+            mask_name="validation_plot_mask",
+        )
+        return torch.where(aligned > 0.5, tensor, torch.full_like(tensor, float("nan")))
+
+    def _log_full_reconstruction_image(
+        self,
+        *,
+        field: str,
+        cached: dict[str, Any],
+        prediction: dict[str, Any],
+        target_denorm: torch.Tensor,
+        eval_mask: torch.Tensor | None,
+    ) -> None:
+        """Log one denormalized IDW reconstruction image grid to W&B."""
+        is_salinity = field == "salinity"
+        input_key = "x_salinity" if is_salinity else "x"
+        target_key = "y_salinity" if is_salinity else "y"
+        input_valid_key = "x_salinity_valid_mask" if is_salinity else "x_valid_mask"
+        target_valid_key = "y_salinity_valid_mask" if is_salinity else "y_valid_mask"
+        input_tensor = self._require_batch_tensor(cached, input_key)
+        target_tensor = self._require_batch_tensor(cached, target_key)
+        input_valid_mask = cached.get(input_valid_key)
+        target_valid_mask = cached.get(target_valid_key)
+        input_denorm = self._denormalize_field(field, input_tensor)
+        target_full_denorm = self._denormalize_field(field, target_tensor)
+        target_full_denorm = self._apply_invalid_to_nan(
+            target_full_denorm,
+            self._supervision_mask(
+                target_full_denorm,
+                target_valid_mask if torch.is_tensor(target_valid_mask) else None,
+                cached.get("land_mask"),
+            ),
+        )
+        eo_denorm = None
+        if torch.is_tensor(cached.get("eo")):
+            eo_denorm = self._denormalize_field(field, cached["eo"])
+        try:
+            log_wandb_conditional_reconstruction_grid(
+                logger=self.logger,
+                x=input_denorm,
+                y=target_full_denorm,
+                eo=eo_denorm,
+                y_hat=prediction.get(
+                    f"y_hat_{field}_denorm_for_plot",
+                    prediction[f"y_hat_{field}_denorm"],
+                ),
+                y_target=self._apply_invalid_to_nan(target_denorm, eval_mask),
+                valid_mask=(
+                    input_valid_mask if torch.is_tensor(input_valid_mask) else None
+                ),
+                land_mask=(
+                    cached.get("land_mask")
+                    if torch.is_tensor(cached.get("land_mask"))
+                    else None
+                ),
+                prefix="val_salinity_imgs" if is_salinity else "val_imgs",
+                image_key=(
+                    "salinity_full_reconstruction"
+                    if is_salinity
+                    else "x_y_full_reconstruction"
+                ),
+                cmap=PLOT_SALINITY_CMAP if is_salinity else PLOT_CMAP,
+                show_valid_mask_panel=False,
+                plot_unit="salinity" if is_salinity else "temperature",
+                error_metric_prefix=(
+                    "val_salinity_absolute_band_error"
+                    if is_salinity
+                    else "val_absolute_band_error"
+                ),
+                error_metric_unit="psu" if is_salinity else "deg",
+                error_metric_label="L1 (PSU)" if is_salinity else "L1 (deg)",
+                error_metric_title=(
+                    "Generated-Pixel Salinity L1 by Band"
+                    if is_salinity
+                    else "Generated-Pixel L1 by Band"
+                ),
+            )
+        except Exception as exc:
+            warnings.warn(
+                f"IDW validation image logging failed for {field}: {exc}",
+                stacklevel=2,
+            )
+
+    @torch.no_grad()
+    def on_validation_epoch_end(self) -> None:
+        """Log IDW full-reconstruction metrics and images for the cached batch."""
+        trainer = self._trainer_or_none()
+        if (
+            trainer is not None
+            and trainer.sanity_checking
+            and self.skip_full_reconstruction_in_sanity_check
+        ):
+            self._log_full_reconstruction_placeholders()
+            self._cached_val_example = None
+            return
+        if self._cached_val_example is None:
+            self._log_full_reconstruction_placeholders()
+            return
+        try:
+            cached = self._move_cached_batch_to_device(self._cached_val_example)
+            prediction = self.predict_step(cached, batch_idx=0)
+            batch_size = int(prediction["y_hat"].size(0))
+            for field in self.output_fields:
+                is_salinity = field == "salinity"
+                target_key = "y_salinity" if is_salinity else "y"
+                valid_key = "y_salinity_valid_mask" if is_salinity else "y_valid_mask"
+                target = self._require_batch_tensor(cached, target_key)
+                valid_mask = cached.get(valid_key)
+                target_denorm = self._denormalize_field(field, target)
+                eval_mask = self._supervision_mask(
+                    target_denorm,
+                    valid_mask if torch.is_tensor(valid_mask) else None,
+                    cached.get("land_mask"),
+                )
+                metrics = self._compute_full_reconstruction_metrics(
+                    prediction_denorm=prediction[f"y_hat_{field}_denorm"],
+                    target_denorm=target_denorm,
+                    eval_mask=eval_mask,
+                )
+                metric_prefix = (
+                    "val"
+                    if len(self.output_fields) == 1
+                    else ("val_salinity" if is_salinity else f"val_{field}")
+                )
+                self._log_full_reconstruction_metrics(
+                    recon_mse=metrics[0],
+                    recon_l1=metrics[1],
+                    recon_psnr=metrics[2],
+                    recon_ssim=metrics[3],
+                    batch_size=batch_size,
+                    metric_prefix=metric_prefix,
+                )
+                self._log_full_reconstruction_image(
+                    field=field,
+                    cached=cached,
+                    prediction=prediction,
+                    target_denorm=target_denorm,
+                    eval_mask=eval_mask,
+                )
+        except Exception as exc:
+            warnings.warn(
+                "IDW full validation reconstruction failed; logging placeholder "
+                f"metrics instead. Error: {exc}",
+                stacklevel=2,
+            )
+            self._log_full_reconstruction_placeholders()
+        finally:
+            self._cached_val_example = None
 
     def configure_optimizers(self) -> list[Any]:
         """Return no optimizers because IDW has no trainable weights."""

@@ -29,6 +29,21 @@ depth-recon-infer-week --help
 `train.py` is the maintained pixel/baseline training entry point. Autoencoder
 and latent components are experimental; see [Autoencoder](autoencoder.md).
 
+The complete held-out-2016 baseline workflow uses two independent GPU workers,
+stable W&B run identities, resumable checkpoints, and the paper/spectral export
+pipeline:
+
+```bash
+/work/envs/depth/bin/python src/depth_recon/scripts/run_baseline_2016_suite.py \
+  --phase all --gpu-indices 0 1 \
+  --output-root logs/baseline_2016_global \
+  --resume-incomplete
+```
+
+Use `--dry-run` to inspect all model/scenario commands without requiring CUDA or
+W&B. Normal execution requires both requested GPUs and valid online W&B
+authentication; it never falls back to CPU.
+
 ## Packaged data downloads
 
 ```bash

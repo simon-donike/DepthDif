@@ -13,6 +13,8 @@ from rasterio.transform import from_origin
 import yaml
 
 from depth_recon.inference.export_spectral_comparison_bundle import (
+    _build_parser as _build_spectral_bundle_parser,
+    _paper_week_argv,
     export_paper_method_wavenumber_spectra,
 )
 from depth_recon.inference.export_wavenumber_spectra import (
@@ -28,6 +30,32 @@ from depth_recon.inference.export_wavenumber_spectra import (
 
 
 class TestWavenumberSpectra(unittest.TestCase):
+    def test_spectral_bundle_forwards_en4_candidate_profiles(self) -> None:
+        parser = _build_spectral_bundle_parser()
+        args = parser.parse_args(
+            [
+                "--models-config",
+                "models.yaml",
+                "--year",
+                "2016",
+                "--iso-week",
+                "25",
+                "--output-dir",
+                "spectral-output",
+                "--en4-candidate-profiles",
+                "candidates.parquet",
+            ]
+        )
+
+        paper_argv = _paper_week_argv(
+            args,
+            iso_week=25,
+            output_dir=Path("spectral-output/weeks/2016_W25"),
+        )
+
+        candidate_index = paper_argv.index("--en4-candidate-profiles")
+        self.assertEqual(paper_argv[candidate_index + 1], "candidates.parquet")
+
     def _write_float_raster(
         self,
         path: Path,

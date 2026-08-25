@@ -211,6 +211,8 @@ For IDW:
 
 - A depth band with observations is interpolated from those observations.
 - A depth band with no observations emits `NaN`.
+- Validation-only runs cache one shuffled batch and log the same denormalized
+  MSE, L1, PSNR, SSIM, and reconstruction image keys as trainable baselines.
 
 For the U-Net baselines:
 

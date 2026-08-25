@@ -90,6 +90,28 @@ Each run writes under `logs/<timestamp>/`:
 `model.load_checkpoint_only=true`, only compatible weights are loaded; otherwise
 Lightning restores full training state.
 
+`train.py --run-dir <path>` selects a stable local run directory and
+`--validate-only` runs the configured validation callbacks without fitting.
+Optional `training.trainer.seed` and `training.trainer.early_stopping` settings
+support reproducible, convergence-limited baseline runs. W&B accepts stable
+`run_id`, `resume`, `group`, `job_type`, and `tags` metadata from the training
+config.
+
+## Two-GPU baseline suite
+
+`run_baseline_2016_suite.py` trains temperature and salinity LSTM, profile-CNN,
+3D U-Net, and 2D U-Net checkpoints from scratch, then validates checkpoint-free
+IDW. Two workers independently bind to GPU 0 and GPU 1 and dequeue the longest
+remaining jobs first. The suite fixes the validation year to 2016, disables the
+hard/easy row sampler, retains shuffled validation, and selects checkpoints with
+five-epoch early stopping under a 100-epoch cap.
+
+Each task logs losses, reconstruction metrics/images, EN4 candidate profiles,
+and hard-region comparisons to one resumable W&B group. After training, the
+best checkpoint is validated under the same W&B run ID. The `all` phase also
+exports 2016-W25 EN4/GLORYS tables and spectral comparisons and uploads the
+evaluation tables, plots, configs, and dashboard as a W&B artifact.
+
 ## Validation
 
 Validation loading remains shuffled intentionally. Normal Lightning validation

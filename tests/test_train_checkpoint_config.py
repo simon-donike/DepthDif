@@ -9,8 +9,10 @@ import pandas as pd
 import torch
 
 from train import (
+    build_early_stopping_callback,
     build_en4_candidate_validation_callback,
     build_hard_region_validation_callback,
+    build_wandb_logger,
     load_weights_only_checkpoint,
     resolve_load_checkpoint_only,
     resolve_resume_ckpt_path,
@@ -28,6 +30,67 @@ class _TinyCheckpointModule(torch.nn.Module):
 
 
 class TestTrainCheckpointConfig(unittest.TestCase):
+    def test_early_stopping_callback_uses_configured_validation_metric(self) -> None:
+        callback = build_early_stopping_callback(
+            {
+                "trainer": {
+                    "early_stopping": {
+                        "enabled": True,
+                        "monitor": "val/loss_ckpt",
+                        "mode": "min",
+                        "patience": 5,
+                        "min_delta": 0.01,
+                    }
+                }
+            }
+        )
+
+        self.assertIsNotNone(callback)
+        self.assertEqual(callback.monitor, "val/loss_ckpt")
+        self.assertEqual(callback.patience, 5)
+        self.assertAlmostEqual(callback.min_delta, -0.01)
+        self.assertIsNone(
+            build_early_stopping_callback(
+                {"trainer": {"early_stopping": {"enabled": False}}}
+            )
+        )
+
+    def test_wandb_logger_forwards_suite_identity_and_resume_metadata(self) -> None:
+        model = MagicMock()
+        training_cfg = {
+            "wandb": {
+                "offline": False,
+                "project": "DepthDif_Simon",
+                "entity": "esa-phi-lab",
+                "run_name": "baseline-temperature",
+                "run_id": "stable-id",
+                "resume": "allow",
+                "group": "baseline-2016",
+                "job_type": "training",
+                "tags": ["baseline", "temperature"],
+                "watch_gradients": False,
+                "watch_parameters": False,
+                "log_model": False,
+            }
+        }
+        with patch("train.WandbLogger") as logger_class:
+            logger = build_wandb_logger(training_cfg, model, run_config={"seed": 7})
+
+        self.assertIs(logger, logger_class.return_value)
+        logger_class.assert_called_once_with(
+            offline=False,
+            project="DepthDif_Simon",
+            entity="esa-phi-lab",
+            name="baseline-temperature",
+            id="stable-id",
+            resume="allow",
+            group="baseline-2016",
+            job_type="training",
+            tags=["baseline", "temperature"],
+            log_model=False,
+            config={"seed": 7},
+        )
+
     def test_hard_region_callback_builder_requires_validation_year_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             regions_path = Path(tmpdir) / "regions.yaml"

@@ -412,6 +412,32 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.isnan(pred["y_hat"]).all())
         self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
 
+    def test_idw_validation_logs_full_reconstruction_metric_keys(self) -> None:
+        model = IDWInterpolationBaseline(
+            power=2.0,
+            output_fields=("temperature",),
+            max_full_reconstruction_samples=1,
+        )
+        batch = _make_pixel_batch()
+        logged_names: list[str] = []
+
+        with (
+            patch.object(
+                model,
+                "log",
+                lambda name, *args, **kwargs: logged_names.append(name),
+            ),
+            patch.object(model, "_log_full_reconstruction_image"),
+        ):
+            model.on_validation_epoch_start()
+            model.validation_step(batch, batch_idx=0)
+            model.on_validation_epoch_end()
+
+        self.assertIn("val/recon_mse_full_recon", logged_names)
+        self.assertIn("val/recon_l1_full_recon", logged_names)
+        self.assertIn("val/recon_psnr_full_recon", logged_names)
+        self.assertIn("val/recon_ssim_full_recon", logged_names)
+
     def test_idw_baseline_from_factory_needs_no_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
