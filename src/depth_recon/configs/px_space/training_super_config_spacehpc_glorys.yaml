@@ -346,7 +346,10 @@ training:  # optimizer, trainer, and logging
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches
     val_check_interval: 1.0  # validate once per epoch
+    limit_train_batches: 1.0  # full dataset by default; suite uses short logical epochs
     limit_val_batches: 64  # validation batch cap
+    checkpoint_every_n_train_steps: null  # optional recovery-checkpoint cadence
+    max_time: null  # optional Lightning wall-time limit
     enable_model_summary: true  # print model summary
     gradient_clip_val: 1.0  # gradient clip value
     early_stopping:  # optional monitored convergence stop

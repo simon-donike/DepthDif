@@ -788,6 +788,15 @@ def main(
         save_last=False,
     )
     # Keep last.ckpt independent of top-k improvements and save it on failures.
+    checkpoint_every_n_train_steps = trainer_cfg.get(
+        "checkpoint_every_n_train_steps", None
+    )
+    if checkpoint_every_n_train_steps is not None:
+        checkpoint_every_n_train_steps = int(checkpoint_every_n_train_steps)
+        if checkpoint_every_n_train_steps < 1:
+            raise ValueError(
+                "trainer.checkpoint_every_n_train_steps must be >= 1 when set."
+            )
     latest_checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="last",
@@ -795,7 +804,8 @@ def main(
         save_top_k=1,
         save_last=False,
         save_on_exception=True,
-        save_on_train_epoch_end=True,
+        every_n_train_steps=checkpoint_every_n_train_steps,
+        save_on_train_epoch_end=checkpoint_every_n_train_steps is None,
         enable_version_counter=False,
     )
     lr_monitor_callback = LearningRateMonitor(
@@ -853,9 +863,15 @@ def main(
         # Lightning-native value: float fraction (0-1] or int batch count.
         limit_val_batches = trainer_cfg.get("limit_val_batches", 1.0)
 
+    # A fixed batch count can define short logical epochs over very large datasets.
+    limit_train_batches = trainer_cfg.get("limit_train_batches", 1.0)
+    if isinstance(limit_train_batches, int) and limit_train_batches < 1:
+        raise ValueError("trainer.limit_train_batches must be >= 1 when integer.")
+
     # Trainer configuration is fully driven from the resolved super-config.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
+        max_time=trainer_cfg.get("max_time", None),
         accelerator=accelerator,
         devices=devices,
         strategy=trainer_cfg.get("strategy", "auto"),
@@ -867,6 +883,7 @@ def main(
         callbacks=callbacks,
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         val_check_interval=trainer_cfg.get("val_check_interval", 1.0),
+        limit_train_batches=limit_train_batches,
         limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),

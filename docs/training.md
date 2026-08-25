@@ -103,8 +103,16 @@ config.
 3D U-Net, and 2D U-Net checkpoints from scratch, then validates checkpoint-free
 IDW. Two workers independently bind to GPU 0 and GPU 1 and dequeue the longest
 remaining jobs first. The suite fixes the validation year to 2016, disables the
-hard/easy row sampler, retains shuffled validation, and selects checkpoints with
-five-epoch early stopping under a 100-epoch cap.
+hard/easy row sampler, and retains shuffled validation. By default, a logical
+epoch exposes approximately 100,000 examples, validation runs after each logical
+epoch, and checkpoint selection uses patience 2 under an eight-logical-epoch
+cap. Recovery state is written every 5,000 optimizer steps and each training
+task has a six-hour Lightning wall-time ceiling.
+
+Use `--validation-examples`, `--max-epochs`, `--patience`,
+`--checkpoint-every-n-train-steps`, and `--max-task-hours` to adjust this budget.
+`--skip-models unet3d` records both 3D tasks as intentionally skipped and omits
+that method from the generated evaluation configuration.
 
 Each task logs losses, reconstruction metrics/images, EN4 candidate profiles,
 and hard-region comparisons to one resumable W&B group. After training, the

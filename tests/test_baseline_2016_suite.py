@@ -12,6 +12,7 @@ import yaml
 from depth_recon.scripts.run_baseline_2016_suite import (
     MODEL_SPECS,
     _initial_manifest,
+    _logical_epoch_batches,
     _run_evaluation,
     _run_training_queue,
     _suite_id,
@@ -40,8 +41,12 @@ def _args(output_root: Path) -> argparse.Namespace:
         year=2016,
         iso_week=25,
         seed=7,
-        max_epochs=100,
-        patience=5,
+        max_epochs=8,
+        patience=2,
+        validation_examples=100_000,
+        checkpoint_every_n_train_steps=5_000,
+        max_task_hours=6,
+        skip_models=(),
         resume_incomplete=False,
         dry_run=False,
         max_wandb_images=10,
@@ -93,11 +98,30 @@ class TestBaseline2016Suite(unittest.TestCase):
         self.assertIn("data.split.val_year=2016", train_text)
         self.assertIn("data.dataset.finetune_sampling.enabled=false", train_text)
         self.assertIn("training.trainer.devices=1", train_text)
-        self.assertIn("training.trainer.early_stopping.patience=5", train_text)
+        self.assertIn("training.trainer.early_stopping.patience=2", train_text)
+        self.assertIn("training.trainer.limit_train_batches=12500", train_text)
+        self.assertIn("training.trainer.val_check_interval=1.0", train_text)
+        self.assertIn(
+            "training.trainer.checkpoint_every_n_train_steps=5000", train_text
+        )
+        self.assertIn('training.trainer.max_time="00:06:00:00"', train_text)
         self.assertIn("model.resume_checkpoint=false", train_text)
         self.assertIn("--validate-only", validation_command)
         self.assertIn("model.load_checkpoint_only=true", validation_text)
         self.assertIn('training.wandb.resume="allow"', validation_text)
+
+    def test_logical_epochs_expose_comparable_example_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = _args(Path(tmpdir))
+            batches = {
+                task.model.name: _logical_epoch_batches(args, task)
+                for task in _task_list()[::2]
+            }
+
+        self.assertEqual(batches["unet3d"], 12_500)
+        self.assertEqual(batches["unet2d"], 2_084)
+        self.assertEqual(batches["cnn"], 11_112)
+        self.assertEqual(batches["lstm"], 100_000)
 
     def test_two_gpu_queue_stops_dequeueing_after_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -163,6 +187,28 @@ class TestBaseline2016Suite(unittest.TestCase):
                 "unet2d_temperature.ckpt"
             )
         )
+
+    def test_skipped_architecture_is_omitted_from_models_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_root = Path(tmpdir)
+            args = _args(output_root)
+            manifest = _initial_manifest(output_root, args)
+            for model in MODEL_SPECS:
+                for scenario in ("temperature", "salinity"):
+                    state = manifest["tasks"][f"{model.name}_{scenario}"]
+                    if model.name == "unet3d":
+                        state["status"] = "skipped"
+                    else:
+                        state["status"] = "complete"
+                        if model.trainable:
+                            checkpoint = output_root / f"{model.name}_{scenario}.ckpt"
+                            checkpoint.touch()
+                            state["best_checkpoint"] = str(checkpoint)
+
+            config_path = _write_models_config(output_root, manifest)
+            methods = yaml.safe_load(config_path.read_text(encoding="utf-8"))["methods"]
+
+        self.assertEqual(list(methods), ["idw", "unet2d", "cnn", "lstm"])
 
     def test_evaluation_dry_run_does_not_require_completed_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

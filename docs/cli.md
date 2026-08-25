@@ -37,6 +37,8 @@ pipeline:
 /work/envs/depth/bin/python src/depth_recon/scripts/run_baseline_2016_suite.py \
   --phase all --gpu-indices 0 1 \
   --output-root logs/baseline_2016_global \
+  --validation-examples 100000 --max-epochs 8 --patience 2 \
+  --checkpoint-every-n-train-steps 5000 --max-task-hours 6 \
   --resume-incomplete
 ```
 

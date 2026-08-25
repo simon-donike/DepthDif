@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python src/depth_recon/scripts/run_baseline_2016_suite.py --phase all --config src/depth_recon/configs/px_space/training_super_config.yaml --inference-config src/depth_recon/configs/px_space/inference_super_config.yaml --output-root logs/baseline_2016_global --gpu-indices 0 1 --project DepthDif_Simon --entity esa-phi-lab --candidate-profiles instructions/en4_no_spatiotemporal_candidate_profiles.parquet --year 2016 --iso-week 25 --seed 7 --max-epochs 100 --patience 5 --resume-incomplete --max-wandb-images 100
+# /work/envs/depth/bin/python src/depth_recon/scripts/run_baseline_2016_suite.py --phase all --config src/depth_recon/configs/px_space/training_super_config.yaml --inference-config src/depth_recon/configs/px_space/inference_super_config.yaml --output-root logs/baseline_2016_global --gpu-indices 0 1 --project DepthDif_Simon --entity esa-phi-lab --candidate-profiles instructions/en4_no_spatiotemporal_candidate_profiles.parquet --year 2016 --iso-week 25 --seed 7 --max-epochs 8 --patience 2 --validation-examples 100000 --checkpoint-every-n-train-steps 5000 --max-task-hours 6 --skip-models unet3d --resume-incomplete --max-wandb-images 100
 """Run the complete two-GPU 2016 baseline training and evaluation suite."""
 
 from __future__ import annotations
@@ -90,8 +90,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--year", type=int, default=2016)
     parser.add_argument("--iso-week", type=int, default=25)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--max-epochs", type=int, default=100)
-    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--max-epochs", type=int, default=8)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--validation-examples", type=int, default=100_000)
+    parser.add_argument("--checkpoint-every-n-train-steps", type=int, default=5_000)
+    parser.add_argument("--max-task-hours", type=int, default=6)
+    parser.add_argument(
+        "--skip-models",
+        nargs="*",
+        choices=tuple(model.name for model in MODEL_SPECS if model.trainable),
+        default=(),
+    )
     parser.add_argument("--resume-incomplete", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--max-wandb-images", type=int, default=100)
@@ -133,6 +142,15 @@ def _set_arg(path: str, value: Any) -> list[str]:
     return ["--set", f"{path}={json.dumps(value)}"]
 
 
+def _logical_epoch_batches(args: argparse.Namespace, task: SuiteTask) -> int:
+    """Return batches that expose approximately the requested example count."""
+    validation_examples = int(args.validation_examples)
+    if validation_examples < 1:
+        raise ValueError("--validation-examples must be >= 1.")
+    batch_size = int(task.model.train_batch_size)
+    return max(1, (validation_examples + batch_size - 1) // batch_size)
+
+
 def _common_overrides(
     *,
     args: argparse.Namespace,
@@ -141,6 +159,12 @@ def _common_overrides(
     job_type: str,
 ) -> list[str]:
     """Build the shared fair-training and W&B overrides for one task."""
+    checkpoint_interval = int(args.checkpoint_every_n_train_steps)
+    max_task_hours = int(args.max_task_hours)
+    if checkpoint_interval < 1:
+        raise ValueError("--checkpoint-every-n-train-steps must be >= 1.")
+    if max_task_hours < 1:
+        raise ValueError("--max-task-hours must be >= 1.")
     run_name = f"{suite_id}-{task.model.name}-{task.scenario}"
     tags = [
         "baseline",
@@ -161,6 +185,15 @@ def _common_overrides(
         ("training.trainer.strategy", "auto"),
         ("training.trainer.precision", "16-mixed"),
         ("training.trainer.val_check_interval", 1.0),
+        ("training.trainer.limit_train_batches", _logical_epoch_batches(args, task)),
+        (
+            "training.trainer.checkpoint_every_n_train_steps",
+            checkpoint_interval,
+        ),
+        (
+            "training.trainer.max_time",
+            f"00:{max_task_hours:02d}:00:00",
+        ),
         ("training.dataloader.batch_size", task.model.train_batch_size),
         ("training.dataloader.val_batch_size", task.model.val_batch_size),
         ("training.wandb.offline", False),
@@ -278,6 +311,11 @@ def _initial_manifest(output_root: Path, args: argparse.Namespace) -> dict[str, 
         "year": int(args.year),
         "iso_week": int(args.iso_week),
         "seed": int(args.seed),
+        "max_epochs": int(args.max_epochs),
+        "patience": int(args.patience),
+        "validation_examples": int(args.validation_examples),
+        "checkpoint_every_n_train_steps": int(args.checkpoint_every_n_train_steps),
+        "max_task_hours": int(args.max_task_hours),
         "gpu_indices": [int(value) for value in args.gpu_indices],
         "wandb": {
             "project": str(args.project),
@@ -431,6 +469,15 @@ def _execute_task(
                     last_checkpoint = run_dir / "last.ckpt"
                     if args.resume_incomplete and last_checkpoint.is_file():
                         resume_checkpoint = last_checkpoint
+                    elif args.resume_incomplete:
+                        # A monitored validation checkpoint is also full trainer state.
+                        best_checkpoints = sorted(run_dir.glob("best-epoch*.ckpt"))
+                        if best_checkpoints:
+                            resume_checkpoint = best_checkpoints[-1]
+                        else:
+                            raise RuntimeError(
+                                f"No resumable checkpoint exists in {run_dir}."
+                            )
                     else:
                         raise RuntimeError(
                             f"Incomplete run directory already exists: {run_dir}. "
@@ -521,10 +568,35 @@ def _run_training_queue(
     manifest: dict[str, Any],
 ) -> None:
     """Run pending tasks on two fixed-GPU workers with fail-fast dequeueing."""
+    manifest.update(
+        {
+            "max_epochs": int(args.max_epochs),
+            "patience": int(args.patience),
+            "validation_examples": int(args.validation_examples),
+            "checkpoint_every_n_train_steps": int(args.checkpoint_every_n_train_steps),
+            "max_task_hours": int(args.max_task_hours),
+        }
+    )
+    skipped_models = set(args.skip_models)
+    for task in _task_list():
+        if task.model.name not in skipped_models:
+            continue
+        task_state = manifest["tasks"][task.key]
+        if task_state.get("status") == "complete":
+            continue
+        task_state.update(
+            {
+                "status": "skipped",
+                "skipped_at": datetime.now().isoformat(),
+                "reason": "Explicitly excluded with --skip-models.",
+            }
+        )
+    if skipped_models and not args.dry_run:
+        _write_manifest(output_root / MANIFEST_NAME, manifest)
     tasks = [
         task
         for task in _task_list()
-        if manifest["tasks"][task.key].get("status") != "complete"
+        if manifest["tasks"][task.key].get("status") not in {"complete", "skipped"}
     ]
     if args.dry_run:
         suite_id = str(manifest["suite_id"])
@@ -597,6 +669,11 @@ def _write_models_config(output_root: Path, manifest: dict[str, Any]) -> Path:
     methods: dict[str, Any] = {"idw": {"label": "IDW", "model_type": "idw_baseline"}}
     for model in MODEL_SPECS:
         if not model.trainable:
+            continue
+        model_states = [
+            manifest["tasks"][f"{model.name}_{scenario}"] for scenario in SCENARIOS
+        ]
+        if all(state.get("status") == "skipped" for state in model_states):
             continue
         checkpoints: dict[str, str] = {}
         for scenario in SCENARIOS:
