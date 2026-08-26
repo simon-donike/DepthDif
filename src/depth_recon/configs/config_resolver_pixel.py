@@ -22,6 +22,13 @@ PIXEL_SCENARIO_EO: dict[str, tuple[str, str]] = {
     "salinity": ("sss", "sos"),
     "joint": ("ostia", "analysed_sst"),
 }
+PIXEL_SCENARIO_SURFACE_SOURCES: dict[str, list[str]] = {
+    "temperature": ["sst"],
+    "salinity": ["sss"],
+    # Joint runs retain the existing temperature-oriented EO choice while using
+    # only one surface channel like the single-variable scenarios.
+    "joint": ["sst"],
+}
 
 DEFAULT_PIXEL_TRAINING_CONFIG_PATH = str(
     config_path("px_space", "training_super_config.yaml")
@@ -299,15 +306,6 @@ def apply_surface_conditioning_contract(
 
     prior_cfg = dataset_section.get("synthetic_target", {})
     if isinstance(prior_cfg, dict) and bool(prior_cfg.get("enabled", False)):
-        if tuple(str(value).strip().lower() for value in (sources or ())) != (
-            "sst",
-            "sss",
-            "adt",
-        ):
-            raise ValueError(
-                "synthetic_target.enabled=true requires "
-                "surface_conditioning.sources=[sst, sss, adt]."
-            )
         if not prior_cfg.get("statistics_path"):
             raise ValueError("synthetic_target.enabled=true requires statistics_path.")
         if not bool(model_section.get("condition_include_eo", False)):
@@ -379,6 +377,9 @@ def apply_pixel_scenario(
     sampling_section = dataset_section.setdefault("sampling", {})
     if not isinstance(sampling_section, dict):
         raise ValueError("data.dataset.sampling must be a mapping.")
+    surface_section = dataset_section.setdefault("surface_conditioning", {})
+    if not isinstance(surface_section, dict):
+        raise ValueError("data.dataset.surface_conditioning must be a mapping.")
 
     output_fields = PIXEL_SCENARIOS[scenario]
     eo_source, eo_var_name = PIXEL_SCENARIO_EO[scenario]
@@ -407,6 +408,7 @@ def apply_pixel_scenario(
     output_section["include_salinity"] = "salinity" in output_fields
     sampling_section["eo_source"] = eo_source
     sampling_section["eo_var_name"] = eo_var_name
+    surface_section["sources"] = list(PIXEL_SCENARIO_SURFACE_SOURCES[scenario])
 
 
 def _require_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:

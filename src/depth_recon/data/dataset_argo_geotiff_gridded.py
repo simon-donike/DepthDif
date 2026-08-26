@@ -1110,12 +1110,6 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         """Open the configured deterministic vertical-offset prior."""
         if not self.synthetic_target_enabled:
             return None
-        required_sources = tuple(SURFACE_SOURCE_SPECS)
-        if tuple(self.surface_conditioning["sources"] or ()) != required_sources:
-            raise ValueError(
-                "synthetic_target.enabled=true requires "
-                "surface_conditioning.sources=[sst, sss, adt]."
-            )
         prior_path = _resolve_synthetic_target_path(
             self.root_dir, self.synthetic_target_config["statistics_path"]
         )
@@ -1186,7 +1180,13 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             return glorys_store, salinity_store, {"legacy": eo_store}
 
         surface_stores: dict[str, GeoTIFFRasterStore] = {}
-        for name in configured_sources:
+        model_sources = tuple(configured_sources)
+        required_sources = (
+            tuple(SURFACE_SOURCE_SPECS)
+            if self.synthetic_target_enabled
+            else model_sources
+        )
+        for name in dict.fromkeys((*model_sources, *required_sources)):
             source, variable, stretch_name, normalization = SURFACE_SOURCE_SPECS[name]
             surface_stores[name] = self._build_raster_store(
                 source=source,
@@ -1791,7 +1791,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
     def _normalize_surface_fields(self, fields: dict[str, np.ndarray]) -> torch.Tensor:
         """Normalize and stack surface fields in configured channel order."""
         normalized: list[torch.Tensor] = []
-        for name, values in fields.items():
+        configured_sources = self.surface_conditioning["sources"]
+        field_names = (
+            tuple(fields) if configured_sources is None else configured_sources
+        )
+        for name in field_names:
+            values = fields[name]
             tensor = torch.from_numpy(values[None, ...])
             if name == "sst":
                 tensor = temperature_normalize(mode="norm", tensor=tensor)

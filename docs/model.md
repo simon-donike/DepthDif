@@ -6,14 +6,12 @@ pixel-space diffusion model with a ConvNeXt-style U-Net denoiser.
 ## Model-facing fields
 
 The active dataset returns 128×128 patches. A scalar scenario has 50 generated
-depth channels and 55 condition channels; the joint scenario concatenates
-temperature and salinity into 100 generated and 105 condition channels.
+depth channels and 53 condition channels; the joint scenario concatenates
+temperature and salinity into 100 generated and 103 condition channels.
 
-Dense surface conditioning has a fixed order:
-
-1. OSTIA sea-surface temperature (`sst`)
-2. sea-surface salinity (`sss`)
-3. absolute dynamic topography (`adt`)
+Dense surface conditioning uses one scenario-derived channel: OSTIA sea-surface
+temperature (`sst`) for temperature and joint scenarios, or sea-surface salinity
+(`sss`) for the salinity scenario.
 
 Sparse depth-aligned EN4/ARGO values, observation masks, ocean/bathymetry support,
 coordinates, and date context complete the condition. The scenario resolver owns

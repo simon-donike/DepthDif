@@ -46,19 +46,19 @@ data:  # dataset, split, and loader inputs
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: true  # train on patches containing ARGO conditioning
+      require_argo_for_train: false  # include train patches without observed ARGO support
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
-      filter_bad_argo_quality: true  # mask compact ARGO levels with bad QC
+      filter_bad_argo_quality: false  # retain all compact ARGO levels regardless of QC
       accepted_argo_qc_flags: [1, 2]  # EN4/ARGO QC codes accepted as usable
     surface_conditioning:  # checkpoint-stable dense surface inputs
-      sources: [sst, sss, adt]  # fixed model channel order
+      sources: [sst]  # scenario resolver selects SST or SSS as the sole EO channel
     synthetic_target:  # deterministic surface-plus-depth-offset pretraining
       enabled: false  # supervise directly against paired GLORYS fields
       statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz  # fitted offsets committed in the repository data folder
       bathymetry_reference_date: null  # null uses the earliest GLORYS mask date
     finetune_sampling:  # optional hard-area finetuning row filter
-      enabled: false  # disable regional finetuning for the standard HPC run
+      enabled: false  # disable hard/easy regional row sampling
       hard_fraction: 0.5  # target fraction of rows from hard regions
       apply_to_splits:  # splits affected by finetune row filtering
       - train  # keep validation globally comparable
@@ -175,7 +175,7 @@ model:  # pixel diffusion model settings
   depth_channels: 50  # depth bands per field
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
-  condition_eo_channels: 3  # SST, SSS, and ADT surface channels
+  condition_eo_channels: 1  # one scenario-derived SST or SSS channel
   condition_mask_channels: 1  # valid-mask condition channels
   condition_include_eo: true  # add configured surface channels
   condition_use_valid_mask: true  # add ARGO support mask

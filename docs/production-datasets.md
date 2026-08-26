@@ -122,8 +122,9 @@ masks.
   patch centers and add those boxes as run-specific relaxed land-fraction regions.
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile
   search window for each patch date.
-- `dataset.selection.require_argo_for_train` defaults to `true` for ambient training;
-  `dataset.selection.require_argo_for_val` defaults to `true`.
+- `dataset.selection.require_argo_for_train` is `false` in maintained presets so
+  all otherwise eligible training locations are retained;
+  `dataset.selection.require_argo_for_val` remains `true`.
 - `dataset.selection.require_argo_for_all` defaults to `false` so global
   inference can cover rows without ARGO observations.
 - `split.val_year` defaults to `2016`, assigning that year to validation and
