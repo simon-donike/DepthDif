@@ -11,6 +11,8 @@
 
 # DepthDif
 
+[![DOI](https://zenodo.org/badge/1148711247.svg)](https://doi.org/10.5281/zenodo.22111273)
+
 DepthDif reconstructs dense subsurface ocean temperature or salinity fields from
 sparse EN4/ARGO profiles with conditional diffusion. The maintained repository
 workflow conditions on ordered surface SST, SSS, and ADT rasters, together with

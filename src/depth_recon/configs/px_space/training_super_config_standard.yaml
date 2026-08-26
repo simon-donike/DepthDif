@@ -321,8 +321,10 @@ training:  # optimizer, trainer, and logging
       iso_week: 25  # fixed monitoring week within the 2016 validation year
       holdout_fraction: 0.2  # location-level candidate holdout
       seed: 7  # deterministic location and reconstruction seed
+      min_input_profiles: 8  # require this many QC-valid inputs after holdout
       max_patches: 1  # keep epoch-time reverse diffusion inexpensive
       max_profiles_to_plot: 6  # cap rows in each W&B profile figure
+      image_depths_m: [0.0, 100.0, 500.0]  # full-patch reconstruction figure depths
     hard_region_eval:  # fixed difficult-area prediction-versus-GLORYS monitor
       enabled: true  # run as part of each Lightning validation epoch
       regions_path: src/depth_recon/configs/evaluation/hard_regions_2016.yaml  # named provisional polygons

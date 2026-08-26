@@ -45,8 +45,11 @@ Do not set channel counts independently of the scenario resolver.
 - `training.dataloader`: training/validation batch and worker settings. These take
   precedence where the datamodule reads the training-specific section.
 - `training.validation_sampling`: validation sampler and reconstruction cadence.
-- `training.en4_candidate_eval` and `training.hard_region_eval`: optional callback
-  configuration; both are enabled in current pixel presets.
+- `training.en4_candidate_eval`: optional patch-first EN4 callback; use
+  `min_input_profiles` to set the post-holdout density floor and `image_depths_m`
+  to choose full-reconstruction figure depths.
+- `training.hard_region_eval`: optional hard-region callback. Both validation
+  callbacks are enabled in current pixel presets.
 - `inference.sampling`: reconstruction sampler overrides.
 - `inference.grid`: stitched export stride and ocean-coverage filter.
 - `inference.dataloader`: inference batch, workers, and prefetch settings.

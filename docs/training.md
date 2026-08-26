@@ -125,8 +125,12 @@ evaluation tables, plots, configs, and dashboard as a W&B artifact.
 Validation loading remains shuffled intentionally. Normal Lightning validation
 can be supplemented by two configured monitors:
 
-- EN4 candidate evaluation holds out deterministic profile locations from the
-  sparse input and compares reconstructed values at those exact locations.
+- EN4 candidate evaluation uniformly selects deterministic patches that retain at
+  least the configured number of QC-valid input profiles, then holds out candidate
+  locations within only those patches. The external candidate parquet is a
+  provenance allowlist; both the remaining sparse inputs and exact held-out profile
+  values come from the compact EN4/ARGO store. W&B logs profile comparisons and
+  full-patch input/GLORYS/reconstruction/error images at configured depths.
 - Hard-region evaluation samples deterministic 2016 patches from provisional
   hand-authored polygons and compares against GLORYS. These regions are useful
   diagnostics, not literature-backed scientific boundaries.

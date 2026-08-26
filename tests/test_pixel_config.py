@@ -153,6 +153,10 @@ class TestPixelConfig(unittest.TestCase):
                     self.assertEqual(candidate_eval["iso_week"], 25)
                     self.assertEqual(candidate_eval["holdout_fraction"], 0.2)
                     self.assertEqual(candidate_eval["seed"], 7)
+                    self.assertEqual(candidate_eval["min_input_profiles"], 8)
+                    self.assertEqual(
+                        candidate_eval["image_depths_m"], [0.0, 100.0, 500.0]
+                    )
 
     def test_super_config_derives_temperature_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
