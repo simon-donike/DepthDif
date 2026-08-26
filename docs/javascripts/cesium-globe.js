@@ -361,10 +361,10 @@
       : "";
     const titleText = "Ocean Variable Reconstruction";
     const descriptionText = selectedDateParts
-      ? "Densifying ocean variables based on sparse ARGO submarine measurements.\nShowing ISO week " +
+      ? "Reconstructed ocean fields conditioned on sparse EN4/ARGO profile observations.\nShowing ISO week " +
         weekLabel +
         "."
-      : "Densifying ocean variables based on sparse ARGO submarine measurements.";
+      : "Reconstructed ocean fields conditioned on sparse EN4/ARGO profile observations.";
 
     document.title = compactWeekLabel ? titleText + " " + compactWeekLabel : titleText;
     const metaDescription = document.querySelector('meta[name="description"]');

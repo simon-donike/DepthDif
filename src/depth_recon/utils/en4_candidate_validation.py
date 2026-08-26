@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import default_collate
 
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
+from depth_recon.utils.validation_denoise import log_wandb_average_depth_profiles
 
 
 @dataclass(frozen=True)
@@ -294,13 +295,32 @@ class EN4CandidateValidationCallback(pl.Callback):
                 predicted = prediction.get("y_hat_denorm")
             target_key = "y_salinity" if variable == "salinity" else "y"
             glorys_key = "y_salinity_glorys" if variable == "salinity" else "y_glorys"
+            target_valid_key = (
+                "y_salinity_valid_mask" if variable == "salinity" else "y_valid_mask"
+            )
+            glorys_valid_key = (
+                "y_salinity_glorys_valid_mask"
+                if variable == "salinity"
+                else "y_glorys_valid_mask"
+            )
             if not torch.is_tensor(predicted) or target_key not in batch:
                 continue
             glorys_target = batch.get(glorys_key)
             if glorys_target is None:
                 # Direct-GLORYS and custom datasets retain the legacy y fallback.
                 glorys_target = batch[target_key]
+                glorys_valid_mask = batch.get(target_valid_key)
+            else:
+                glorys_valid_mask = batch.get(glorys_valid_key)
             glorys = self._denormalize_target(variable, glorys_target)
+            if torch.is_tensor(glorys_valid_mask):
+                # Invalid normalized targets are stored as zero, so restore NaNs
+                # before plotting or computing profile metrics.
+                glorys = torch.where(
+                    glorys_valid_mask.to(device=glorys.device, dtype=torch.bool),
+                    glorys,
+                    torch.full_like(glorys, float("nan")),
+                )
             variable_results: list[CandidateProfileResult] = []
             for profile_row, assignment in self.profile_assignments.iterrows():
                 batch_idx = int(assignment["eval_batch_index"])
@@ -388,6 +408,30 @@ class EN4CandidateValidationCallback(pl.Callback):
                         figures.append(figure)
                         payload[f"en4_candidate_eval/{variable}_profiles"] = (
                             wandb.Image(figure)
+                        )
+                        log_wandb_average_depth_profiles(
+                            logger=logger,
+                            profiles={
+                                "Prediction": np.stack(
+                                    [result.prediction for result in variable_results]
+                                ),
+                                "GLORYS": np.stack(
+                                    [result.glorys for result in variable_results]
+                                ),
+                                "EN4": np.stack(
+                                    [result.en4 for result in variable_results]
+                                ),
+                            },
+                            depth_axis_m=self.depth_axis_m,
+                            depth_dimension=1,
+                            prefix="en4_candidate_eval",
+                            image_key=f"{variable}_average_profile_by_depth",
+                            value_label=(
+                                "Salinity (PSU)"
+                                if variable == "salinity"
+                                else "Temperature (deg C)"
+                            ),
+                            title=f"Average EN4 candidate profile: {variable}",
                         )
                 experiment.log(payload)
             finally:

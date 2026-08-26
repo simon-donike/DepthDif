@@ -61,41 +61,37 @@ markdown_extensions:
       generic: true
 
 nav:
-  - Home:
+  - Overview:
       - Overview: index.md
+      - Quick Start: quickstart.md
       - Development: development.md
       - Tests: tests.md
-  - Model:
+  - Model and Training:
+      - Model: model.md
       - Training: training.md
-      - GLORYS-comparative evaluation: glorys-comparative-evaluation.md
-      - Inference: inference.md
-      - Uncertainty: uncertainty.md
-      - Public Inference Package: public-inference-package.md
-      - Quickstart: quickstart.md
-      - Model Description: model.md
-      - Baselines: baselines.md
-      - EMA Weights: ema.md
-      - Sampling Diagnostics: sampling-diagnostics.md
-      - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
-      - Vertical-Offset Pretraining: vertical-offset-pretraining.md
       - Ambient Occlusion Objective: ambient-occlusion-objective.md
-      - Losses: losses.md
-      - Date + Time Injection: data-coordinate-injection.md
-      - Model Settings: settings.md
-      - Autoencoder + Latent Diffusion: autoencoder.md
-      - Temporal Dimension Ideas: temporal_dimension.md
+      - Auxiliary Losses: losses.md
+      - EMA Weights: ema.md
+      - Coordinate and Date Conditioning: data-coordinate-injection.md
+      - Baselines: baselines.md
+      - Autoencoder and Latent Components: autoencoder.md
+      - Synthetic Vertical-Offset Prior: vertical-offset-pretraining.md
   - Data:
       - Overview: data.md
       - Data Sources: data-source.md
       - Dataset Downloads: data-download.md
       - Depth Alignment: depth-alignment.md
       - Data Export: data-export.md
-      - Dataset Statistics: dataset-statistics.md
       - Data Contract: data-contract.md
       - Production Dataset: production-datasets.md
-  - Experiments:
-      - Early Experiments: experiments.md
-      - Second Dataset Results: experiments-glorys-argo-aligned.md
-      - Production Results: experiments-production.md
-  - Analysis: /analysis/
-  - API Reference: api.md
+  - Evaluation and Inference:
+      - Workflows: inference.md
+      - Public Inference Package: public-inference-package.md
+      - Uncertainty: uncertainty.md
+      - GLORYS-comparative Evaluation: glorys-comparative-evaluation.md
+      - Spectral Wavenumber Validation: spectral-wavenumber-validation.md
+  - Analysis: analysis/index.html
+  - Reference:
+      - Configuration Settings: settings.md
+      - CLI Reference: cli.md
+      - Python API: api.md

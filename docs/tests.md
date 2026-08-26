@@ -1,47 +1,39 @@
 # Tests
 
-This page documents the current repository test coverage around diffusion math,
-GeoTIFF dataset behavior, config wiring, inference exports, and one-batch model
-smoke runs.
-
-## How To Run
-
-Run the full local suite through the repository wrapper:
+DepthDif uses the standard-library `unittest` runner through a repository wrapper.
+Run the complete suite from the repository root:
 
 ```bash
-bash tests/run_tests.sh
+tests/run_tests.sh
 ```
 
-The wrapper uses `unittest` discovery in the configured environment.
-It also prepends `src` to `PYTHONPATH` so tests exercise the src-layout package
-without requiring a prior editable install.
+The wrapper uses `/work/envs/depth/bin/python`. Targeted test execution is useful
+while diagnosing a failure, but substantive changes are accepted against the full
+suite.
 
-## Main Test Areas
+## Coverage map
 
-### Diffusion Math
+| Area | Representative coverage |
+| --- | --- |
+| Data creation | EN4 enrichment, potential-temperature selection, GeoTIFF export, compact Zarr, packaged downloads, and Hugging Face layout. |
+| Dataset contract | Quantization, masks, fields, scenarios, synthetic targets, hard-region sampling, splits, and datamodule wiring. |
+| Model | Diffusion math, schedules, DDPM/DDIM samplers, model dry runs, losses, coordinate/date conditioning, EMA, and baselines. |
+| Configuration | Pixel scenario resolution, preset invariants, checkpoint compatibility, and CLI override parsing. |
+| Public API | Asset resolution, source downloads, weekly patch selection, mosaics, metadata, and package exports. |
+| Evaluation | Global inference, EN4 holdouts, hard regions, validation summaries, paper-week bundles, and metrics. |
+| Analysis products | Cesium assets, comparison globe, spatial/temporal dashboards, temporal globe, and wavenumber spectra. |
 
-`tests/test_diffusion_math.py` checks schedule construction, mask polarity,
-ambient further-corruption, target selection, masked loss behavior, and the
-guarded zero-loss path.
+Tests use temporary directories and small synthetic fixtures where possible. They
+do not establish scientific skill or validate external hosted data; they verify
+the repository contracts and deterministic transformations.
 
-### Model Dry Runs
+## Documentation checks
 
-`tests/test_model_dry_runs.py` instantiates small in-memory datasets and tiny
-models to verify one training/validation batch for pixel diffusion, latent
-diffusion, and the autoencoder.
+Build with API rendering enabled so malformed docstrings are not hidden:
 
-### Inference Exports
+```bash
+ENABLE_MKDOCSTRINGS=true /work/envs/depth/bin/python -m mkdocs build --strict
+```
 
-The global export and Cesium packaging tests verify that inference code uses
-public dataset metadata (`rows`, `depth_axis_m`) and produces consistent raster,
-GeoJSON, summary, and globe asset outputs.
-
-### Config And CLI Wiring
-
-Training, inference, validation-summary, and override tests protect the active pixel super-config path, scenario derivation, effective config materialization, and GeoTIFF builder selection.
-
-## Notes
-
-- Tests use `unittest`, not `pytest`.
-- Some smoke tests intentionally use tiny in-memory fixtures so model wiring can
-  be checked quickly without local source archives.
+For notebook changes, validate the JSON and compile each Python code cell without
+running downloads or GPU inference.

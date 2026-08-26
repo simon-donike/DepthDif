@@ -29,6 +29,7 @@ src/depth_recon/data/local_data/*
 temp/
 instructions
 outputs
+evaluations
 
 # Packages
 *.egg-info

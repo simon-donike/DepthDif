@@ -1,59 +1,57 @@
-# API Reference  
-This page is automatically generated via `mkdocstrings` from the current codebase.  
+# Python API Reference
 
-## Training & Inference Entry Points  
+## Supported public API
 
-### `depth_recon`  
-::: depth_recon  
+The package root intentionally exposes a small, lazy-loaded inference surface.
 
-### `depth_recon.inference.api`  
-::: depth_recon.inference.api  
+::: depth_recon
 
-### `depth_recon.inference`  
-::: depth_recon.inference  
+::: depth_recon.inference.api
+    options:
+      members:
+        - InferenceAssets
+        - PublicInferenceAssets
+        - resolve_hf_assets
+        - resolve_public_inference_assets
+        - download_argo_for_week
+        - run_week_inference
 
-## Data  
+Use [Public inference](public-inference-package.md) for the checkpoint interface,
+source downloads, outputs, and CLI equivalents.
 
-### `depth_recon.data.datamodule`  
-::: depth_recon.data.datamodule  
+## Repository building blocks
 
-### `depth_recon.data.dataset_argo_geotiff_gridded`
+The following interfaces support repository training and exporters. They are
+documented for contributors but are not the stable PyPI surface.
+
+### Data
+
+::: depth_recon.data.datamodule
+
 ::: depth_recon.data.dataset_argo_geotiff_gridded
 
-## Model Core  
+### Diffusion model and EMA
 
-### `depth_recon.models.diffusion.PixelDiffusion`  
-::: depth_recon.models.diffusion.PixelDiffusion  
+::: depth_recon.models.diffusion.PixelDiffusion
 
-### `depth_recon.models.diffusion.EMA`  
-::: depth_recon.models.diffusion.EMA  
+::: depth_recon.models.diffusion.EMA
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess`  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess  
+### Diffusion process and samplers
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.forward`  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.forward  
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules`  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules  
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.forward
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDPM`  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDPM  
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.beta_schedules
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDIM`  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDIM  
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDPM
 
-### `depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock`  
-<!-- Use the class symbol path because mkdocstrings in CI fails to collect this submodule path directly. -->  
-::: depth_recon.models.diffusion.DenoisingDiffusionProcess.DenoisingDiffusionProcess.UnetConvNextBlock  
+::: depth_recon.models.diffusion.DenoisingDiffusionProcess.samplers.DDIM
 
-## Utilities  
+### Utilities
 
-### `depth_recon.utils.normalizations`  
-::: depth_recon.utils.normalizations  
+::: depth_recon.utils.normalizations
 
-### `depth_recon.utils.stretching`  
-::: depth_recon.utils.stretching  
+::: depth_recon.utils.stretching
 
-### `depth_recon.utils.validation_denoise`  
-::: depth_recon.utils.validation_denoise  
+::: depth_recon.utils.validation_denoise

@@ -21,7 +21,11 @@ import warnings
 import numpy as np
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
 from pytorch_lightning.loggers import WandbLogger
 
 if __package__ in {None, ""}:
@@ -217,14 +221,7 @@ def load_weights_only_checkpoint(model: torch.nn.Module, ckpt_path: str) -> str:
 # Build process rank defensively across common launchers.
 # Preference order avoids local-rank-only false positives in multi-node jobs.
 def resolve_global_rank() -> int:
-    """Resolve and validate global rank.
-
-    Args:
-        None: This callable takes no explicit input arguments.
-
-    Returns:
-        int: Computed scalar output.
-    """
+    """Resolve and validate the process global rank."""
     rank_env_keys = ("RANK", "SLURM_PROCID", "OMPI_COMM_WORLD_RANK", "LOCAL_RANK")
     for key in rank_env_keys:
         value = os.environ.get(key)
@@ -294,11 +291,19 @@ def build_wandb_logger(
         WandbLogger: Computed output value.
     """
     wandb_cfg = training_cfg.get("wandb", {})
+    resume_value = wandb_cfg.get("resume")
+    if resume_value is False:
+        resume_value = None
     logger = WandbLogger(
         offline=wandb_cfg.get("offline", False),
         project=wandb_cfg.get("project", "DepthDif"),
         entity=wandb_cfg.get("entity"),
         name=wandb_cfg.get("run_name"),
+        id=wandb_cfg.get("run_id"),
+        resume=resume_value,
+        group=wandb_cfg.get("group"),
+        job_type=wandb_cfg.get("job_type"),
+        tags=wandb_cfg.get("tags"),
         log_model=wandb_cfg.get("log_model", "all"),
         config=run_config if run_config is not None else training_cfg,
     )
@@ -314,6 +319,37 @@ def build_wandb_logger(
             log_graph=bool(wandb_cfg.get("watch_log_graph", False)),
         )
     return logger
+
+
+def build_early_stopping_callback(
+    training_cfg: dict[str, Any],
+) -> EarlyStopping | None:
+    """Build the optional validation-loss early-stopping callback."""
+    trainer_cfg = training_cfg.get("trainer", {})
+    callback_cfg = trainer_cfg.get("early_stopping", {})
+    if callback_cfg is None or callback_cfg is False:
+        return None
+    if not isinstance(callback_cfg, dict):
+        raise ValueError("training.trainer.early_stopping must be a mapping.")
+    if not parse_config_bool(
+        callback_cfg.get("enabled", False),
+        key="training.trainer.early_stopping.enabled",
+    ):
+        return None
+    patience = int(callback_cfg.get("patience", 5))
+    if patience < 0:
+        raise ValueError("training.trainer.early_stopping.patience must be >= 0.")
+    mode = str(callback_cfg.get("mode", "min")).strip().lower()
+    if mode not in {"min", "max"}:
+        raise ValueError("training.trainer.early_stopping.mode must be min or max.")
+    return EarlyStopping(
+        monitor=str(callback_cfg.get("monitor", "val/loss_ckpt")),
+        mode=mode,
+        patience=patience,
+        min_delta=float(callback_cfg.get("min_delta", 0.0)),
+        check_finite=bool(callback_cfg.get("check_finite", True)),
+        verbose=bool(callback_cfg.get("verbose", True)),
+    )
 
 
 def upload_configs_to_wandb(logger: WandbLogger, config_paths: list[str]) -> None:
@@ -499,6 +535,8 @@ def main(
     overrides: list[str] | None = None,
     fast_dev_run: int = 0,
     scenario: str | None = None,
+    run_dir_value: str | None = None,
+    validate_only: bool = False,
 ) -> None:
     """Run the script entry point.
 
@@ -507,6 +545,8 @@ def main(
         overrides (list[str] | None): Optional config overrides from CLI.
         fast_dev_run (int): Number of fast-dev-run batches.
         scenario (str | None): Optional high-level training scenario.
+        run_dir_value (str | None): Optional explicit output directory.
+        validate_only (bool): Run one validation pass without fitting.
 
     Returns:
         None: No value is returned.
@@ -517,13 +557,20 @@ def main(
 
     # Create one run directory per launch; non-zero ranks reuse the resolved path.
     run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = Path("logs") / run_stamp
+    run_dir = (
+        Path(run_dir_value).expanduser()
+        if run_dir_value is not None
+        else Path("logs") / run_stamp
+    )
     if is_global_zero:
-        suffix = 1
-        while run_dir.exists():
-            run_dir = Path("logs") / f"{run_stamp}_{suffix:02d}"
-            suffix += 1
-        run_dir.mkdir(parents=True, exist_ok=False)
+        if run_dir_value is None:
+            suffix = 1
+            while run_dir.exists():
+                run_dir = Path("logs") / f"{run_stamp}_{suffix:02d}"
+                suffix += 1
+        # Explicit run directories are reusable for interrupted-run validation
+        # snapshots; the suite launcher owns collision and resume decisions.
+        run_dir.mkdir(parents=True, exist_ok=run_dir_value is not None)
 
     runtime_cfg_dir = (
         Path("/tmp/depthdif_runtime_configs")
@@ -550,6 +597,11 @@ def main(
     load_checkpoint_only = resolve_load_checkpoint_only(model_cfg)
     trainer_cfg = training_cfg.get("trainer", model_cfg.get("trainer", {}))
     model_type = resolve_model_type(model_cfg)
+
+    trainer_seed = trainer_cfg.get("seed")
+    if trainer_seed is not None:
+        # Seed model initialization, shuffling, and worker RNGs from one recorded value.
+        pl.seed_everything(int(trainer_seed), workers=True)
 
     # Use Tensor Cores efficiently for fp16/bf16 mixed precision.
     torch.set_float32_matmul_precision(str(trainer_cfg.get("matmul_precision", "high")))
@@ -736,6 +788,15 @@ def main(
         save_last=False,
     )
     # Keep last.ckpt independent of top-k improvements and save it on failures.
+    checkpoint_every_n_train_steps = trainer_cfg.get(
+        "checkpoint_every_n_train_steps", None
+    )
+    if checkpoint_every_n_train_steps is not None:
+        checkpoint_every_n_train_steps = int(checkpoint_every_n_train_steps)
+        if checkpoint_every_n_train_steps < 1:
+            raise ValueError(
+                "trainer.checkpoint_every_n_train_steps must be >= 1 when set."
+            )
     latest_checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
         filename="last",
@@ -743,7 +804,8 @@ def main(
         save_top_k=1,
         save_last=False,
         save_on_exception=True,
-        save_on_train_epoch_end=True,
+        every_n_train_steps=checkpoint_every_n_train_steps,
+        save_on_train_epoch_end=checkpoint_every_n_train_steps is None,
         enable_version_counter=False,
     )
     lr_monitor_callback = LearningRateMonitor(
@@ -759,17 +821,22 @@ def main(
     ema_callback = (
         None if model_type in baseline_model_types else build_ema_callback(model_cfg)
     )
-    callbacks: list[pl.Callback] = [checkpoint_callback, latest_checkpoint_callback]
-    if model_type != "idw_baseline":
-        callbacks.append(lr_monitor_callback)
-    if ema_callback is not None:
-        # Restore raw training weights before ModelCheckpoint writes resume state.
-        callbacks = [
-            ema_callback,
-            checkpoint_callback,
-            latest_checkpoint_callback,
-            lr_monitor_callback,
-        ]
+    callbacks: list[pl.Callback] = []
+    if not validate_only:
+        callbacks.extend([checkpoint_callback, latest_checkpoint_callback])
+        if model_type != "idw_baseline":
+            callbacks.append(lr_monitor_callback)
+        if ema_callback is not None:
+            # Restore raw training weights before ModelCheckpoint writes resume state.
+            callbacks = [
+                ema_callback,
+                checkpoint_callback,
+                latest_checkpoint_callback,
+                lr_monitor_callback,
+            ]
+        early_stopping_callback = build_early_stopping_callback(training_cfg)
+        if early_stopping_callback is not None:
+            callbacks.append(early_stopping_callback)
     if en4_candidate_callback is not None:
         callbacks.append(en4_candidate_callback)
     if hard_region_callback is not None:
@@ -796,9 +863,15 @@ def main(
         # Lightning-native value: float fraction (0-1] or int batch count.
         limit_val_batches = trainer_cfg.get("limit_val_batches", 1.0)
 
+    # A fixed batch count can define short logical epochs over very large datasets.
+    limit_train_batches = trainer_cfg.get("limit_train_batches", 1.0)
+    if isinstance(limit_train_batches, int) and limit_train_batches < 1:
+        raise ValueError("trainer.limit_train_batches must be >= 1 when integer.")
+
     # Trainer configuration is fully driven from the resolved super-config.
     trainer = pl.Trainer(
         max_epochs=int(trainer_cfg.get("max_epochs", 100)),
+        max_time=trainer_cfg.get("max_time", None),
         accelerator=accelerator,
         devices=devices,
         strategy=trainer_cfg.get("strategy", "auto"),
@@ -810,6 +883,7 @@ def main(
         callbacks=callbacks,
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         val_check_interval=trainer_cfg.get("val_check_interval", 1.0),
+        limit_train_batches=limit_train_batches,
         limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
@@ -832,21 +906,24 @@ def main(
                 f"{float(finetune_summary.get('actual_hard_fraction', 0.0)):.3f}"
             )
 
-    # Start (or resume) training.
-    fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
-    trainer.fit(model=model, datamodule=datamodule, ckpt_path=fit_ckpt_path)
+    if validate_only:
+        # Weight-only loading occurs above; full checkpoint validation is delegated
+        # to Lightning when load_checkpoint_only is disabled.
+        validation_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
+        trainer.validate(
+            model=model,
+            datamodule=datamodule,
+            ckpt_path=validation_ckpt_path,
+        )
+    else:
+        # Start from scratch or restore the complete optimizer/trainer state.
+        fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=fit_ckpt_path)
 
 
 def parse_args() -> argparse.Namespace:
     # Keep CLI names stable and map aliases to canonical destination keys.
-    """Parse command-line arguments for this script.
-
-    Args:
-        None: This callable takes no explicit input arguments.
-
-    Returns:
-        argparse.Namespace: Computed output value.
-    """
+    """Parse command-line arguments for this script."""
     parser = argparse.ArgumentParser(description="Train DepthDif models.")
     parser.add_argument(
         "--config",
@@ -880,6 +957,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="High-level pixel training scenario; derives data/model channel settings.",
     )
+    parser.add_argument(
+        "--run-dir",
+        default=None,
+        help="Optional explicit directory for checkpoints and resolved config snapshots.",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Run validation and configured validation callbacks without fitting.",
+    )
     return parser.parse_args()
 
 
@@ -890,6 +977,8 @@ if __name__ == "__main__":
         overrides=args.config_overrides,
         fast_dev_run=args.fast_dev_run,
         scenario=args.scenario,
+        run_dir_value=args.run_dir,
+        validate_only=bool(args.validate_only),
     )
 
 """

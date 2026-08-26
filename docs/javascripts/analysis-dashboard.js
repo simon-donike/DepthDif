@@ -137,7 +137,7 @@
     $("analysis-map-caption").textContent = "No analysis data loaded";
     $("analysis-profile-caption").textContent = "No depth profile loaded";
     $("analysis-detail-caption").textContent = "No selected depth loaded";
-    $("analysis-uncertainty-caption").textContent = "No uncertainty reliability data loaded";
+    $("analysis-uncertainty-caption").textContent = "No uncertainty comparison data loaded";
     $("analysis-selection-pill").textContent = "Unavailable";
     const existing = document.querySelector(".analysis-error-state");
     if (existing) {
@@ -1136,8 +1136,8 @@
       if (chart && window.Plotly) {
         window.Plotly.purge(chart);
       }
-      $("analysis-uncertainty-caption").textContent = reliability.reason || "No uncertainty reliability data available";
-      $("analysis-uncertainty-highlights").innerHTML = '<div class="analysis-uncertainty-empty">Run with <code>--export-uncertainty</code> to enable calibration diagnostics.</div>';
+      $("analysis-uncertainty-caption").textContent = reliability.reason || "No uncertainty comparison data available";
+      $("analysis-uncertainty-highlights").innerHTML = '<div class="analysis-uncertainty-empty">Run with <code>--export-uncertainty</code> to compare sampling dispersion with realized error.</div>';
       return;
     }
 

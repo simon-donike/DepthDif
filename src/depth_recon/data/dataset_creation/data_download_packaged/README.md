@@ -23,9 +23,10 @@ located at:
 /data1/datasets/depth_v2/aligned_argo/hf_argo_glors_ostia_ssh/data/argo_glors_ostia_ssh.zarr
 ```
 
-Use that zarr directly as `--enriched-argo-zarr` for the GeoTIFF export. It
-contains the GLORYS, OSTIA, sea-level, and SSS profile-context variables from
-the original enriched ARGO export.
+Use that zarr directly as `--enriched-argo-zarr` for inspection or alternate
+exports. It contains the GLORYS, OSTIA, sea-level, and SSS profile-context
+variables from the original enriched ARGO export. Its production temperature
+source is EN4 `POTM_CORRECTED`; the source is recorded in Zarr attributes.
 
 Download the full exported GeoTIFF training dataset from the official Hugging
 Face repository configured in `dataset_links.yaml`:
@@ -34,3 +35,8 @@ Face repository configured in `dataset_links.yaml`:
 /work/envs/depth/bin/python -m depth_recon.data.dataset_creation.data_download_packaged.download_exported_geotiff_dataset \
   --output-dir /work/data/OceanVariableReconstruction
 ```
+
+The full package is self-contained for `ArgoGeoTIFFGriddedPatchDataset`: it
+includes `manifest.yaml`, dense `rasters/`, the compact
+`argo/argo_profiles_on_grid.zarr`, masks, metadata, and the unchanged enriched
+profile Zarr under `data/`. Valid raster codes are `0..254`; `255` is nodata.

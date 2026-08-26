@@ -50,6 +50,7 @@ class _StaticBatchDataset(Dataset):
         self.size = int(size)
         self.include_eo = bool(include_eo)
         self.include_salinity = bool(include_salinity)
+        self.depth_axis_m = np.arange(self.channels, dtype=np.float32) * 10.0
 
     def __len__(self) -> int:
         return self.length
@@ -208,6 +209,21 @@ class TestModelDryRuns(unittest.TestCase):
         observed_pixels = average_observed_argo_pixels_per_image(batch["x_valid_mask"])
 
         self.assertTrue(torch.isclose(observed_pixels, torch.tensor(48.0)))
+
+    def test_validation_depth_axis_unwraps_random_split_subset(self) -> None:
+        dataset = _StaticBatchDataset(length=4, channels=2)
+        datamodule = DepthTileDataModule(
+            dataset=dataset,
+            val_fraction=0.5,
+            dataloader_cfg={"num_workers": 0, "val_num_workers": 0},
+        )
+        datamodule.setup("fit")
+        model = _make_pixel_model(datamodule=datamodule)
+
+        np.testing.assert_array_equal(
+            model._validation_depth_axis_m(depth_count=2),
+            np.asarray([0.0, 10.0], dtype=np.float64),
+        )
 
     def test_pixel_diffusion_from_config_wires_nested_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -411,6 +427,32 @@ class TestModelDryRuns(unittest.TestCase):
 
         self.assertTrue(torch.isnan(pred["y_hat"]).all())
         self.assertTrue(torch.isnan(pred["y_hat_denorm"]).all())
+
+    def test_idw_validation_logs_full_reconstruction_metric_keys(self) -> None:
+        model = IDWInterpolationBaseline(
+            power=2.0,
+            output_fields=("temperature",),
+            max_full_reconstruction_samples=1,
+        )
+        batch = _make_pixel_batch()
+        logged_names: list[str] = []
+
+        with (
+            patch.object(
+                model,
+                "log",
+                lambda name, *args, **kwargs: logged_names.append(name),
+            ),
+            patch.object(model, "_log_full_reconstruction_image"),
+        ):
+            model.on_validation_epoch_start()
+            model.validation_step(batch, batch_idx=0)
+            model.on_validation_epoch_end()
+
+        self.assertIn("val/recon_mse_full_recon", logged_names)
+        self.assertIn("val/recon_l1_full_recon", logged_names)
+        self.assertIn("val/recon_psnr_full_recon", logged_names)
+        self.assertIn("val/recon_ssim_full_recon", logged_names)
 
     def test_idw_baseline_from_factory_needs_no_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1594,6 +1636,7 @@ class TestModelDryRuns(unittest.TestCase):
             "x0_denoise_samples": [],
         }
         profile_calls: list[dict[str, Any]] = []
+        average_profile_calls: list[dict[str, Any]] = []
 
         with (
             patch.object(model, "predict_step", lambda *args, **kwargs: pred),
@@ -1605,6 +1648,10 @@ class TestModelDryRuns(unittest.TestCase):
             patch(
                 "depth_recon.models.diffusion.PixelDiffusion.log_wandb_glorys_profile_comparison",
                 lambda **kwargs: profile_calls.append(kwargs),
+            ),
+            patch(
+                "depth_recon.models.diffusion.PixelDiffusion.log_wandb_average_depth_profiles",
+                lambda **kwargs: average_profile_calls.append(kwargs),
             ),
         ):
             model._run_single_image_full_reconstruction_for_current_weights(
@@ -1618,6 +1665,19 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(
             torch.allclose(
                 profile_calls[0]["supervision_target"],
+                temperature_denorm.masked_fill(~batch["y_valid_mask"], torch.nan),
+                equal_nan=True,
+            )
+        )
+        self.assertEqual(len(average_profile_calls), 1)
+        average_call = average_profile_calls[0]
+        self.assertEqual(average_call["prefix"], "val_imgs")
+        self.assertEqual(
+            average_call["image_key"], "average_temperature_profile_by_depth"
+        )
+        self.assertTrue(
+            torch.allclose(
+                average_call["profiles"]["GLORYS / supervision target"],
                 temperature_denorm.masked_fill(~batch["y_valid_mask"], torch.nan),
                 equal_nan=True,
             )

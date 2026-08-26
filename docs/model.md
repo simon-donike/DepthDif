@@ -1,172 +1,66 @@
 # Model
-DepthDif uses a conditional pixel-space diffusion model implemented in `src/depth_recon/models/diffusion/PixelDiffusion.py`.
 
-Model schema:
-![depthdif_schema](assets/figures/depthdif_schema.webp)
+DepthDif's maintained model is `PixelDiffusionConditional`, a conditional
+pixel-space diffusion model with a ConvNeXt-style U-Net denoiser.
 
-Core stack:
-- Lightning wrapper: `PixelDiffusionConditional`
-- diffusion core: `DenoisingDiffusionConditionalProcess`
-- denoiser backbone: `UnetConvNextBlock` (ConvNeXt-style U-Net)
+## Model-facing fields
 
-The model learns to generate `y` while conditioning on observed channels (`x`), ordered dense `[SST, SSS, ADT]` maps in `eo`, ARGO observation support (`x_valid_mask`), and active ocean/bathymetry support (`land_mask`).
+The active dataset returns 128×128 patches. A scalar scenario has 50 generated
+depth channels and 55 condition channels; the joint scenario concatenates
+temperature and salinity into 100 generated and 105 condition channels.
 
-The baseline package in `src/depth_recon/models/baselines/` provides non-diffusion comparison models that share the same Lightning `predict_step` output contract. See [Baselines](baselines.md) for the IDW and point-wise LSTM implementations, including their input features, no-ARGO behavior, training steps, and inference contract.
+Dense surface conditioning has a fixed order:
 
-## Conditioning Setup
-All pixel scenarios use the same dense surface architecture; the selected scenario changes only the generated and sparse-profile fields:
+1. OSTIA sea-surface temperature (`sst`)
+2. sea-surface salinity (`sss`)
+3. absolute dynamic topography (`adt`)
 
-- Temperature task: `[[SST, SSS, ADT], x, x_valid_mask, land_mask] -> y`
-- Salinity task: `[[SST, SSS, ADT], x_salinity, x_salinity_valid_mask, land_mask] -> y_salinity`
-- Joint temperature/salinity task: `[[SST, SSS, ADT], cat(x, x_salinity), collapsed x_valid_mask, land_mask] -> cat(y, y_salinity)`.
+Sparse depth-aligned EN4/ARGO values, observation masks, ocean/bathymetry support,
+coordinates, and date context complete the condition. The scenario resolver owns
+the final channel contract.
 
-Condition assembly happens in `_prepare_condition_for_model`:
-- prepend the three normalized `eo` channels in `[sst, sss, adt]` order (`condition_include_eo=true`)
-- append data channels from `x`
-- optionally append ARGO observation-support `x_valid_mask` channels (`condition_use_valid_mask=true`)
-- optionally append GLORYS spatial-support `land_mask` (`condition_use_land_mask=true`)
-- enforce channel count equals `model.condition_channels`
+## Conditioning and denoising
 
-## Architecture Summary
-`UnetConvNextBlock` follows a U-Net encoder/decoder with ConvNeXt blocks and linear attention.
+Coordinates are encoded with the configured scheme and the date is represented
+by periodic day-of-year features. The resulting context is injected through FiLM
+in ConvNeXt blocks throughout the denoiser. See [Coordinate and date
+conditioning](data-coordinate-injection.md).
 
-With default `dim_mults=[1,2,4,8]`:
-- 4 downsampling stages
-- bottleneck block with attention
-- 3 upsampling stages with skip connections
-- final ConvNeXt block + `1x1` output conv to `generated_channels`
+For diffusion timestep `t`, the forward process is
 
-For the ambient EO preset in `src/depth_recon/configs/px_space/training_super_config.yaml`, the U-Net base width is `dim: 64`. This keeps the same depth (`dim_mults=[1,2,4,8]`) while matching the current 50 generated channels + 55 condition channels.
+\[
+x_t = \sqrt{\bar\alpha_t}x_0 + \sqrt{1-\bar\alpha_t}\epsilon,
+\qquad \epsilon \sim \mathcal{N}(0,I).
+\]
 
-Time conditioning:
-- sinusoidal timestep embedding -> MLP -> additive bias in ConvNeXt blocks
+The configured objective determines whether the model predicts noise or the
+clean target. Current pixel presets use the values recorded in their committed
+YAML snapshots; checkpoints must be loaded with a compatible objective and
+channel layout.
 
-Coordinate/date conditioning (when enabled):
-- per-channel FiLM scale/shift in ConvNeXt blocks
-- details in [Data + Coordinate Injection](data-coordinate-injection.md)
+## Training objectives
 
-## Training Objective
-Stage 1 can use the online [Vertical-Offset Pretraining](vertical-offset-pretraining.md) as `y`; Stage 2 disables that target and uses observation-only ambient supervision. Both stages retain the same `[sst, sss, adt]` model input.
+- Direct paired supervision uses the dense GLORYS target.
+- Synthetic pretraining uses observed surfaces plus a fitted monthly/spatial
+  GLORYS depth-delta prior, with exact ARGO anchors.
+- Ambient training further corrupts sparse observations for the condition while
+  computing loss on the original observed support intersected with valid target
+  and ocean support.
 
-Training step (`training_step`) calls conditional diffusion `p_loss` on normalized model-output tensors. By default this is temperature only; joint mode stacks normalized temperature and salinity channels before loss computation. The dataset still returns temperature and salinity as separate keys; stacking is owned by `PixelDiffusionConditional`.
+Coastal distance weighting exists but is disabled in all current pixel presets.
+Optional observation, increment, structure, and spectral losses are also
+disabled by default. Feature Gram configuration is reserved but not implemented.
 
-Behavior:
-- sample random timestep `t`
-- forward diffuse the selected training target to the noisy target branch
-- predict either:
-  - noise (`epsilon` parameterization), or
-  - clean sample (`x0` parameterization)
+## Sampling and output
 
-Loss options:
-- unmasked MSE (default behavior when masking disabled)
-- masked MSE with mode-specific supervision support:
-  - standard mode: over `y_valid_mask` intersected with GLORYS `land_mask` on the full `y` target
-  - Stage 1 standard mode additionally multiplies valid support by the fitted per-depth `y_supervision_weight`; these deterministic targets are synthetic targets, not truth
-  - ambient mode: over `x_valid_mask` intersected with `y_valid_mask` and GLORYS `land_mask` on the degraded `x` target
-  - the common on-disk mask is not loaded by train/validation dataloaders; optional `output_land_mask` is only final prediction cleanup support
-  - optional `model.losses.*` terms can add sparse ARGO Charbonnier consistency, sparse increments, GLORYS structure-function statistics, and a GLORYS spectral lower-bound prior
-  - GLORYS structure/spectral losses support `target: reference` for precomputed statistics and `target: paired_glorys` for same-sample statistical comparison against dense `y`; neither mode adds direct dense pixel MSE/L1 supervision
+DDPM and DDIM samplers are implemented. Training validation uses 100-step DDIM;
+the inference super-config defaults to DDPM unless explicitly overridden.
 
-GLORYS prior reference files are PyTorch `.pt` mappings used only with `target: reference`. `structure_function_prior.reference_path` expects `distance_bins` plus `s2_ref` shaped `[num_bins]` or `[C,num_bins]`. `spectral_energy_floor.reference_path` expects one radial-band tensor under `power_ref`, `energy_ref`, `band_energy_ref`, or `spectral_energy_ref`, shaped `[bands]` or `[C,bands]`. With `target: paired_glorys`, no reference file is required because the batch `y` tensor supplies the comparison statistics.
+Prediction applies the target field's inverse normalization, preserves invalid
+support as `NaN` internally, and lets exporters apply final land/nodata masks.
+Repository exporters can retain all native depth channels or select requested
+physical depths by nearest GLORYS channel.
 
-Ambient occlusion objective (`model.ambient_occlusion.enabled: true`):
-- sample an additional Bernoulli keep-mask over already observed pixels (`~A = B * A`)
-- feed the model a further-corrupted condition (`x_tilde = x * ~A`) and `~A` as condition mask
-- switch the diffusion target from `y` to the original sparse-observation tensor `x`
-- optionally apply `~A` to noisy target branch during `p_loss` (`~A * x_t`)
-- compute masked MSE on the originally valid `x` support intersected with valid `y` support and GLORYS `land_mask` (`A ∩ Y ∩ land_mask`, not `~A`)
-- detailed walkthrough and citation: [Ambient Occlusion Objective](ambient-occlusion-objective.md)
-
-Current EO config (`src/depth_recon/configs/px_space/training_super_config.yaml`) uses:
-- `parameterization: "x0"`
-- `mask_loss_with_valid_pixels: true`
-- `coastal_loss.enabled: true` with `radius_px: 5`, `weight: 3.0`, and `ramp: linear`
-
-### Coastal Loss Weighting For Finetuning
-
-Hard-area finetuning can additionally emphasize supervised ocean pixels near land through `model.coastal_loss.*`. The loss still ignores invalid target cells and land cells first; the coastal multiplier is applied only to the remaining supervised ocean support. Far-ocean pixels keep weight `1.0`, while ocean pixels close to land ramp up to the configured maximum weight.
-
-![Coastal loss weight example](assets/figures/coastal_loss_weight_example.webp)
-
-## Scenario-Selected Temperature And Salinity Modes
-
-Pixel training and inference use `--scenario temperature|salinity|joint` or the top-level `scenario` key in the super-config. The resolver derives the coupled data/model contract before datasets and models are built:
-
-| Scenario | Output fields | Salinity data | Generated channels | Condition channels |
-| --- | --- | --- | ---: | ---: |
-| `temperature` | `['temperature']` | disabled | `50` | `55` |
-| `salinity` | `['salinity']` | enabled | `50` | `55` |
-| `joint` | `['temperature', 'salinity']` | enabled | `100` | `105` |
-
-For `salinity`, the dataloader returns only `x_salinity`, `y_salinity`, and their salinity masks, which become the single model-facing field. For `joint`, `PixelDiffusionConditional` stacks temperature first and salinity second. Existing 50-channel temperature checkpoints are not shape-compatible with joint 100-channel runs. Checkpoints from the older one-EO-channel architecture are also incompatible with the maintained three-surface-channel input.
-
-Inside the model path, `_prepare_model_batch_tensors` builds:
-
-```text
-x_model            = cat([x, x_salinity], dim=1)
-y_model            = cat([y, y_salinity], dim=1)
-x_valid_mask_model = cat([x_valid_mask, x_salinity_valid_mask], dim=1)
-y_valid_mask_model = cat([y_valid_mask, y_salinity_valid_mask], dim=1)
-```
-
-The diffusion core remains channel-agnostic and sees one 100-channel normalized
-target. The loss is the existing unweighted diffusion MSE over the stacked
-normalized channels, masked by the stacked task-valid support intersected with GLORYS `land_mask` when mask-based
-loss is enabled. `predict_step` splits sampled outputs back into temperature and
-salinity fields and denormalizes them with their own normalization helpers.
-
-For non-ambient training, the loss is pulled over all valid target pixels via
-`y_valid_mask ∩ land_mask`, or the stacked target-valid mask intersected with `land_mask` in joint temperature/salinity mode.
-
-Latent model workflow is configured via `src/depth_recon/configs/lat_space/model_config.yaml` with AE controls in `src/depth_recon/configs/lat_space/ae_config.yaml`; see [Autoencoder + Latent Diffusion](autoencoder.md) for the full setup.
-
-EMA weight averaging can be enabled through `model.ema`; see [Exponential Moving Average Weights](ema.md) for the implementation details, validation logging behavior, and metric definitions.
-
-## Inference Flow
-Prediction entry point is `predict_step`.
-
-At inference:
-- build condition tensor from batch inputs
-- start reverse process from Gaussian latent
-- keep condition fixed during reverse sampling
-- use configured sampler (`ddpm` by default, `ddim` optional)
-- optional known-pixel clamping can overwrite known pixels each step
-
-Output dictionary from `predict_step`:
-- `y_hat`: normalized model output; stacked in joint mode
-- `y_hat_denorm`: denormalized active single field for single-field scenarios, or temperature for joint mode
-- `y_hat_temperature` / `y_hat_salinity`: normalized field-specific outputs when that field is active
-- `y_hat_temperature_denorm` / `y_hat_salinity_denorm`: Celsius and PSU field-specific denormalized outputs when that field is active
-- `denoise_samples`: optional intermediate reverse samples
-- `x0_denoise_samples`: optional per-step `x0` predictions
-- `sampler`: sampler object used
-
-Uncertainty entry point is `uncertainty_step(batch, batch_idx=0, num_samples=20)`. It runs repeated predictions with intermediates disabled, computes the pixel-wise standard deviation in denormalized physical units, collapses output/depth channels to `B x 1 x H x W`, and returns uncertainty-only outputs:
-- `uncertainty`: active single field, or temperature in joint mode
-- `uncertainty_normalized`: 0-1 min-max normalized uncertainty raster for display
-- `uncertainty_temperature` / `uncertainty_salinity`: field-specific uncertainty maps when active
-- `uncertainty_temperature_normalized` / `uncertainty_salinity_normalized`: field-specific display maps when active
-- `uncertainty_num_samples`, `uncertainty_stat`, `sampler`, and `further_valid_mask`
-
-## Post-Processing in Lightning Inference
-After denormalization, inference can apply:
-- optional Gaussian blur (`model.post_process.gaussian_blur.*`)
-- direct `y` prediction: keep the generated field and set `y_valid_mask==0` pixels to `NaN`
-- ambient `x` completion: return the model prediction as-is after optional sampler-time `clamp_known_pixels`, then set `y_valid_mask==0` pixels to `NaN`
-
-This post-processing is centralized in `predict_step`.
-
-## Validation Diagnostics
-Validation computes two paths:
-- per-batch validation loss (`validation_step`) using the same objective as training
-- one full reverse-diffusion reconstruction per validation run from the global-rank-0 cached first validation batch (`on_validation_epoch_end`)
-
-When available, full reconstruction logging includes:
-- MSE
-- PSNR/SSIM (if `skimage` is installed)
-- qualitative reconstruction grid
-- denoising-intermediate grid and MAE-vs-step curve (when intermediates enabled)
-- reconstruction plotting keeps the unmerged model prediction panel and masks invalid output support through `y_valid_mask`
-- joint mode logs a separate salinity reconstruction grid under `val_salinity_imgs` and separate per-band PSU L1 charts under `val_salinity_absolute_band_error` using a blue-to-green color scale
-- these epoch-end diagnostics stay rank-local on global rank 0 to avoid DDP logging mismatches for optional metrics like PSNR/SSIM
-
+EMA weights are maintained by current pixel presets and can be compared with
+standard weights during validation. See [EMA](ema.md), [Losses](losses.md), and
+[Uncertainty](uncertainty.md).

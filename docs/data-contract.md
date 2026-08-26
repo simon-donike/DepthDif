@@ -30,10 +30,10 @@ batch dimension. `data.dataset.output.fields` controls which physical fields are
 | --- | ---: | ---: | --- | --- |
 | `eo` | `(3, H, W)` | `(B, 3, H, W)` | `float32` | Dense `[SST, SSS, ADT]` context, normalized per variable in fixed order. |
 | `x` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Sparse ARGO temperature observations, normalized and zero-filled where missing. |
-| `y` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Normalized temperature target: GLORYS in the standard dense path or an deterministic surface-offset target in Stage 1. |
+| `y` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Normalized temperature target: GLORYS in the standard dense path or a deterministic surface-offset target in Stage 1. |
 | `y_glorys` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Optional dated GLORYS temperature reference returned only by synthetic-target validation samples for diagnostics. |
 | `x_salinity` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Opt-in sparse ARGO salinity observations, normalized and zero-filled where missing. |
-| `y_salinity` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Salinity target: GLORYS in the standard dense path or an deterministic surface-offset target in Stage 1. |
+| `y_salinity` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Salinity target: GLORYS in the standard dense path or a deterministic surface-offset target in Stage 1. |
 | `y_salinity_glorys` | `(D, H, W)` | `(B, D, H, W)` | `float32` | Optional salinity counterpart of the validation-only dated GLORYS reference. |
 | `x_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | True where `x` contains an observed ARGO temperature value. |
 | `y_valid_mask` | `(D, H, W)` | `(B, D, H, W)` | `bool` | True on valid depth/ocean support; Stage 1 uses the fixed depth-valid coast/seafloor mask. |

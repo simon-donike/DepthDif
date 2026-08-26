@@ -34,6 +34,10 @@ from depth_recon.utils.en4_candidate_validation import (
     _profile_figure,
 )
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
+from depth_recon.utils.validation_denoise import (
+    _finite_mean_profile,
+    log_wandb_average_depth_profiles,
+)
 from tests.test_argo_geotiff_gridded_dataset import _make_geotiff_dataset
 
 
@@ -511,6 +515,28 @@ class TestPaperMetricsExport(unittest.TestCase):
                 expected_salinity_glorys.numpy(),
             )
 
+            invalid_glorys_batch = dict(synthetic_batch)
+            invalid_glorys_batch["y_glorys_valid_mask"] = masked_batch[
+                "y_valid_mask"
+            ].clone()
+            invalid_glorys_batch["y_salinity_glorys_valid_mask"] = masked_batch[
+                "y_salinity_valid_mask"
+            ].clone()
+            invalid_glorys_batch["y_glorys_valid_mask"][
+                batch_idx, 0, row_idx, col_idx
+            ] = False
+            invalid_glorys_batch["y_salinity_glorys_valid_mask"][
+                batch_idx, 0, row_idx, col_idx
+            ] = False
+            with patch.object(
+                callback, "_build_batch", return_value=invalid_glorys_batch
+            ):
+                invalid_glorys_results = callback.evaluate(ExactGlorysModel())
+            self.assertTrue(
+                np.isnan(invalid_glorys_results["temperature"][0].glorys[0])
+            )
+            self.assertTrue(np.isnan(invalid_glorys_results["salinity"][0].glorys[0]))
+
             logged_payloads: list[dict[str, object]] = []
             trainer = SimpleNamespace(
                 sanity_checking=False,
@@ -524,8 +550,34 @@ class TestPaperMetricsExport(unittest.TestCase):
             with patch.dict(sys.modules, {"wandb": fake_wandb}):
                 callback.on_validation_epoch_end(trainer, ExactGlorysModel())
 
-            self.assertEqual(len(logged_payloads), 1)
-            logged = logged_payloads[0]
+            self.assertEqual(len(logged_payloads), 3)
+            aggregate_keys = {
+                key
+                for payload in logged_payloads
+                for key in payload
+                if key.endswith("_average_profile_by_depth")
+            }
+            self.assertEqual(
+                aggregate_keys,
+                {
+                    "en4_candidate_eval/temperature_average_profile_by_depth",
+                    "en4_candidate_eval/salinity_average_profile_by_depth",
+                },
+            )
+            for payload in logged_payloads:
+                for key, figure in payload.items():
+                    if not key.endswith("_average_profile_by_depth"):
+                        continue
+                    axis = figure.axes[0]
+                    self.assertEqual(axis.get_ylabel(), "Depth (m)")
+                    np.testing.assert_array_equal(
+                        axis.lines[0].get_ydata(), callback.depth_axis_m
+                    )
+            logged = next(
+                payload
+                for payload in logged_payloads
+                if "en4_candidate_eval/temperature_prediction_rmse" in payload
+            )
             self.assertIn("en4_candidate_eval/temperature_prediction_rmse", logged)
             self.assertIn("en4_candidate_eval/temperature_glorys_rmse", logged)
             self.assertIn("en4_candidate_eval/temperature_profiles", logged)
@@ -570,6 +622,45 @@ class TestPaperMetricsExport(unittest.TestCase):
                 self.assertEqual(axis.get_ylim(), (20.0, 0.0))
         finally:
             plt.close(figure)
+
+    def test_finite_mean_profile_aggregates_each_depth_independently(self) -> None:
+        values = np.asarray(
+            [
+                [[[1.0]], [[np.nan]]],
+                [[[3.0]], [[4.0]]],
+            ],
+            dtype=np.float32,
+        )
+
+        np.testing.assert_allclose(
+            _finite_mean_profile(values, depth_dimension=1),
+            np.asarray([2.0, 4.0]),
+        )
+
+    def test_average_profile_axis_labels_match_coordinates(self) -> None:
+        logged_payloads: list[dict[str, object]] = []
+        logger = SimpleNamespace(experiment=SimpleNamespace(log=logged_payloads.append))
+        fake_wandb = SimpleNamespace(Image=lambda figure: figure)
+        profiles = {"Prediction": np.asarray([[1.0, 2.0]])}
+
+        with patch.dict(sys.modules, {"wandb": fake_wandb}):
+            log_wandb_average_depth_profiles(
+                logger=logger,
+                profiles=profiles,
+                depth_axis_m=np.asarray([0.5, 10.0]),
+            )
+            log_wandb_average_depth_profiles(logger=logger, profiles=profiles)
+
+        meter_axis = logged_payloads[0]["val_imgs/average_profile_by_depth"].axes[0]
+        level_axis = logged_payloads[1]["val_imgs/average_profile_by_depth"].axes[0]
+        self.assertEqual(meter_axis.get_ylabel(), "Depth (m)")
+        np.testing.assert_array_equal(
+            meter_axis.lines[0].get_ydata(), np.asarray([0.5, 10.0])
+        )
+        self.assertEqual(level_axis.get_ylabel(), "Depth level index")
+        np.testing.assert_array_equal(
+            level_axis.lines[0].get_ydata(), np.asarray([0.0, 1.0])
+        )
 
     def test_metrics_math_and_equal_depth_average(self) -> None:
         stats = _metric_stats(

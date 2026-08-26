@@ -331,6 +331,7 @@ training:  # optimizer, trainer, and logging
       seed: 7  # deterministic reconstruction seed
       image_depths_m: [0.0, 100.0, 500.0]  # GLORYS/prediction/error figure depths
   trainer:  # PyTorch Lightning trainer
+    seed: null  # optional global model/loader seed; suite overrides to 7
     max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection
     devices: 2  # use both local GPUs with reduced worker fan-out
@@ -345,14 +346,30 @@ training:  # optimizer, trainer, and logging
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches
     val_check_interval: 0.1  # validation cadence
+    limit_train_batches: 1.0  # full dataset by default; suite uses short logical epochs
     limit_val_batches: 64  # validation batch cap
+    checkpoint_every_n_train_steps: null  # optional recovery-checkpoint cadence
+    max_time: null  # optional Lightning wall-time limit
     enable_model_summary: true  # print model summary
     gradient_clip_val: 1.0  # gradient clip value
+    early_stopping:  # optional monitored convergence stop
+      enabled: false  # baseline suite enables this explicitly
+      monitor: val/loss_ckpt  # metric watched for convergence
+      mode: min  # lower validation loss is better
+      patience: 5  # validation epochs without improvement
+      min_delta: 0.0  # minimum improvement threshold
+      check_finite: true  # stop when the monitored metric is non-finite
+      verbose: true  # print early-stopping decisions
   wandb:  # Weights & Biases logging
     offline: false  # use online W&B logging for the standard preset
     project: DepthDif_Simon  # W&B project
     entity: esa-phi-lab  # W&B entity
     run_name: ostia_argo_geotiff_px  # run display name
+    run_id: null  # optional stable W&B id for resumable suite tasks
+    resume: null  # null starts normally; suite uses allow
+    group: null  # optional W&B run group
+    job_type: null  # optional W&B job classification
+    tags: null  # optional W&B tag list
     log_model: 'false'  # W&B model logging policy
     verbose: true  # enable extra logging
     watch_gradients: false  # watch gradients

@@ -22,6 +22,118 @@ PROFILE_GRAPH_LOGO_PATH = (
 )
 
 
+def _finite_mean_profile(
+    values: np.ndarray | torch.Tensor, *, depth_dimension: int
+) -> np.ndarray:
+    """Average finite values over every dimension except the depth dimension."""
+    if torch.is_tensor(values):
+        values_np = values.detach().float().cpu().numpy()
+    else:
+        values_np = np.asarray(values, dtype=np.float64)
+    if values_np.ndim < 1:
+        raise ValueError("Profile values must have at least one dimension.")
+    depth_axis = int(depth_dimension) % int(values_np.ndim)
+    depth_first = np.moveaxis(values_np, depth_axis, 0).reshape(
+        int(values_np.shape[depth_axis]), -1
+    )
+    finite = np.isfinite(depth_first)
+    counts = finite.sum(axis=1)
+    totals = np.where(finite, depth_first, 0.0).sum(axis=1, dtype=np.float64)
+    return np.divide(
+        totals,
+        counts,
+        out=np.full(totals.shape, np.nan, dtype=np.float64),
+        where=counts > 0,
+    )
+
+
+def log_wandb_average_depth_profiles(
+    *,
+    logger: Any,
+    profiles: dict[str, np.ndarray | torch.Tensor],
+    depth_axis_m: np.ndarray | torch.Tensor | None = None,
+    depth_dimension: int = 1,
+    prefix: str = "val_imgs",
+    image_key: str = "average_profile_by_depth",
+    value_label: str = "Temperature (deg C)",
+    title: str = "Average profile by depth",
+) -> None:
+    """Log depth-wise finite means for prediction and reference profile tensors."""
+    if logger is None or not hasattr(logger, "experiment") or not profiles:
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+    try:
+        import wandb
+    except Exception:
+        return
+
+    mean_profiles = {
+        str(label): _finite_mean_profile(values, depth_dimension=depth_dimension)
+        for label, values in profiles.items()
+    }
+    profile_sizes = {int(values.size) for values in mean_profiles.values()}
+    if len(profile_sizes) != 1:
+        raise ValueError("Average profile traces must share the same depth dimension.")
+    profile_size = next(iter(profile_sizes))
+    if depth_axis_m is None:
+        depth_values = np.arange(profile_size, dtype=np.float64)
+        depth_label = "Depth level index"
+    else:
+        if torch.is_tensor(depth_axis_m):
+            depth_values = depth_axis_m.detach().float().cpu().numpy().reshape(-1)
+        else:
+            depth_values = np.asarray(depth_axis_m, dtype=np.float64).reshape(-1)
+        if int(depth_values.size) != profile_size:
+            raise ValueError(
+                "depth_axis_m must match the average profile depth dimension: "
+                f"{int(depth_values.size)} != {profile_size}."
+            )
+        if not bool(np.all(np.isfinite(depth_values))):
+            raise ValueError("depth_axis_m must contain only finite meter values.")
+        if bool(np.any(depth_values < 0.0)) or bool(
+            np.any(np.diff(depth_values) < 0.0)
+        ):
+            raise ValueError(
+                "depth_axis_m must contain non-negative, monotonically increasing "
+                "meter values."
+            )
+        depth_label = "Depth (m)"
+
+    colors = {
+        "Prediction": "tab:orange",
+        "GLORYS": "black",
+        "GLORYS / supervision target": "black",
+        "Supervision target": "tab:green",
+        "EN4": "tab:blue",
+    }
+    figure = None
+    try:
+        figure, axis = plt.subplots(1, 1, figsize=(6.5, 8.0))
+        for label, mean_profile in mean_profiles.items():
+            if not bool(np.any(np.isfinite(mean_profile))):
+                continue
+            axis.plot(
+                mean_profile,
+                depth_values,
+                label=label,
+                color=colors.get(label),
+                linewidth=1.8,
+            )
+        axis.set_xlabel(value_label)
+        axis.set_ylabel(depth_label)
+        axis.set_title(title)
+        axis.invert_yaxis()
+        axis.grid(True, alpha=0.25)
+        axis.legend(loc="best")
+        figure.tight_layout()
+        experiment.log({f"{prefix}/{image_key}": wandb.Image(figure)})
+    finally:
+        if figure is not None:
+            plt.close(figure)
+
+
 def _overlay_profile_graph_logo(
     *,
     output_path: str | Path,

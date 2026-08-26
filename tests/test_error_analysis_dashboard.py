@@ -479,7 +479,7 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertNotIn("function renderKpis", script)
         self.assertIn("state.focus = active", script)
         self.assertNotIn('params.get("data")', script)
-        self.assertIn("Analysis: /analysis/", mkdocs_config)
+        self.assertIn("Analysis: analysis/index.html", mkdocs_config)
         self.assertNotIn(
             "Spatial Dashboard: https://depthdif.donike.net/spatial-dashboard/",
             mkdocs_config,

@@ -1,8 +1,8 @@
 # Training
-Training is launched via `train.py` and is fully config-driven.
 
-## Recommended CLI Usage
-Use `--scenario` for pixel-space GeoTIFF training so the data/model channel contract is derived automatically:
+## Launch
+
+Pixel-space training requires one scenario:
 
 ```bash
 /work/envs/depth/bin/python train.py --scenario temperature
@@ -10,21 +10,35 @@ Use `--scenario` for pixel-space GeoTIFF training so the data/model channel cont
 /work/envs/depth/bin/python train.py --scenario joint
 ```
 
-CLI controls:
-- `--config` defaults to `src/depth_recon/configs/px_space/training_super_config.yaml`
-- `--scenario temperature|salinity|joint` derives `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, `data.dataset.output.include_salinity`, and the EO raster source
-- `--set <root.path=value>` is repeatable for strict nested overrides (`root` in `data`, `training`, `model`) after scenario resolution; inference helpers also accept `inference.*` overrides
-- because the super-config has top-level `data`, `model`, and `training` sections, model overrides use `model.*` paths
+The resolver applies the scenario first and explicit `--set` overrides afterward.
+This keeps dataset fields, salinity loading, generated channels, and condition
+channels aligned.
 
-The default config mirrors `training_super_config_standard.yaml`. For SpaceHPC,
-use `--config src/depth_recon/configs/px_space/training_super_config_hpc.yaml`;
-that preset selects the Lustre dataset paths, offline W&B logging, larger
-batch/worker values, and two-GPU dense vertical-offset pretraining with ambient
-occlusion disabled. The tiny prior artifact is committed in the repository data folder;
-dense targets are generated on the fly and do not require a separate export or
-Lustre-side artifact copy.
+## Maintained presets
 
-For a standard direct GLORYS-supervised SpaceHPC training run, use:
+The local `training_super_config.yaml` and explicit standard preset train on real
+sparse EN4/ARGO support. They enable the ambient objective, EMA, a 50/50
+hard-region/easy-region row mix for both training and validation, and 100-step
+DDIM validation reconstruction. Synthetic targets and coastal loss are disabled.
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --config src/depth_recon/configs/px_space/training_super_config.yaml \
+  --scenario temperature
+```
+
+The HPC preset enables deterministic synthetic targets and disables ambient and
+hard-region modes. It uses automatic visible devices with DDP, offline W&B,
+batch size 96, 48 training workers, and a 10,000-epoch ceiling.
+
+```bash
+/work/envs/depth/bin/python train.py \
+  --config src/depth_recon/configs/px_space/training_super_config_hpc.yaml \
+  --scenario temperature
+```
+
+The SpaceHPC GLORYS preset has the same resource envelope but supervises directly
+against paired GLORYS fields instead of the synthetic prior.
 
 ```bash
 /work/envs/depth/bin/python train.py \
@@ -32,240 +46,90 @@ For a standard direct GLORYS-supervised SpaceHPC training run, use:
   --scenario temperature
 ```
 
-This preset keeps the same Lustre, two-GPU, and offline-W&B settings but disables
-the synthetic prior and ambient objective, so the diffusion target is paired GLORYS.
+## Two-stage initialization
 
-Override example:
-
-```bash
-/work/envs/depth/bin/python train.py \
-  --scenario temperature \
-  --set data.dataset.output.return_info=true \
-  --set training.trainer.max_epochs=100 \
-  --set training.wandb.run_name=null
-```
-
-Hard-area finetuning example:
+Stage 1 can initialize the same three-surface architecture with a deterministic
+monthly/spatial surface-offset target. Stage 2 loads those weights and returns to
+the observation-supported ambient objective.
 
 ```bash
-/work/envs/depth/bin/python train.py \
-  --scenario temperature \
-  --set data.dataset.finetune_sampling.enabled=true
-```
-
-This keeps validation on the normal validation split, while the train dataset is filtered to the configured hard-region/easy-row mix. When `data.dataset.finetune_sampling.relax_land_filter=true`, hard-region boxes also relax patch-grid land filtering for the finetune run only. The model can also emphasize coastal supervised pixels with `model.coastal_loss.*`; see [Coastal Loss Weighting For Finetuning](model.md#coastal-loss-weighting-for-finetuning).
-
-## Two-Stage Prior and Ambient Training
-
-Stage 1 enables the online vertical-offset target and disables ambient occlusion;
-Stage 2 warm-starts that checkpoint, disables the prior target, and uses only
-real ARGO support for the ambient objective. Both stages must retain exactly the
-same `[sst, sss, adt]` conditioning order. Checkpoints trained with the older
-one-EO-channel architecture are input-channel incompatible.
-
-```bash
-# Stage 1: deterministic surface-offset pretraining
+# Stage 1
 /work/envs/depth/bin/python train.py --scenario temperature \
-  --set data.dataset.pretraining_prior.enabled=true \
+  --set data.dataset.synthetic_target.enabled=true \
   --set data.dataset.selection.require_argo_for_train=false \
   --set model.ambient_occlusion.enabled=false \
   --set model.resume_checkpoint=false
 
-# Stage 2: observation-only ambient fine-tuning
+# Stage 2
 /work/envs/depth/bin/python train.py --scenario temperature \
-  --set data.dataset.pretraining_prior.enabled=false \
+  --set data.dataset.synthetic_target.enabled=false \
   --set data.dataset.selection.require_argo_for_train=true \
   --set model.ambient_occlusion.enabled=true \
   --set model.resume_checkpoint=/absolute/path/to/stage1/best.ckpt \
   --set model.load_checkpoint_only=true
 ```
 
-Validation synthetic targets in Stage 1 are deterministic per patch/date so shuffled
-validation remains reproducible. That is a software validation property, not
-scientific evidence; generator and final-model skill must be measured against
-independent held-out ARGO platforms. See [Vertical-Offset Pretraining](vertical-offset-pretraining.md).
+The synthetic target is an initialization objective, not an observation or
+scientific truth. Its fitter excludes 2016 and rejects source windows touching
+that held-out year. See [Synthetic prior](vertical-offset-pretraining.md).
 
-Ambient-occlusion objective example (self-supervised on `x`; now the scalar-field training preset):
+## Startup and outputs
 
-```bash
-/work/envs/depth/bin/python train.py \
-  --scenario temperature \
-  --set training.wandb.run_name=ambient_ostia_argo_geotiff_v1
-```
+`train.py` loads the selected YAML, resolves the scenario and overrides, builds
+the active GeoTIFF dataset/datamodule, constructs the selected diffusion or
+baseline model, validates checkpoint compatibility, and launches Lightning.
 
-When enabled, training logs:
-- `train/ambient_further_drop_fraction`
-- `train/ambient_observed_fraction_original`
-- `train/ambient_observed_fraction_further`
-- same metrics under `val/*` on validation epochs
+Each run writes under `logs/<timestamp>/`:
 
-See [Ambient Occlusion Objective](ambient-occlusion-objective.md) for the full derivation, figure walkthrough, and paper citation.
+- `best.ckpt` and `last.ckpt` according to checkpoint configuration;
+- the original super-config;
+- resolved effective data, model, and training YAML snapshots;
+- W&B metadata and callback outputs when enabled.
 
-Note: turning `model.ambient_occlusion.enabled` back to `false` switches training back to direct `y` reconstruction over `y_valid_mask`. With `model.mask_loss_with_valid_pixels=true`, the standard task uses `y_valid_mask ∩ land_mask`, while ambient uses `x_valid_mask ∩ y_valid_mask ∩ land_mask`. `x_valid_mask` is ARGO observation support; `land_mask` is GLORYS spatial support.
-For CLI overrides, the corresponding path is `model.ambient_occlusion.enabled=false`.
+`model.resume_checkpoint` selects a checkpoint. With
+`model.load_checkpoint_only=true`, only compatible weights are loaded; otherwise
+Lightning restores full training state.
 
-Auxiliary ambient-ocean losses are configured under `model.losses.*` in the pixel super-config. The scalar-field training preset keeps sparse observation consistency, sparse increment consistency, and GLORYS structure/spectral terms disabled by default. SNR-based auxiliary timestep weighting remains configured with `min_weight=0.1`, `max_weight=1.0`, and `snr_gamma=5.0` for runs that enable auxiliary terms. Use `target: reference` with reference `.pt` files for archive-level priors, or opt into `target: paired_glorys` to compare `x0_pred` against the paired dense GLORYS target `y`.
+`train.py --run-dir <path>` selects a stable local run directory and
+`--validate-only` runs the configured validation callbacks without fitting.
+Optional `training.trainer.seed` and `training.trainer.early_stopping` settings
+support reproducible, convergence-limited baseline runs. W&B accepts stable
+`run_id`, `resume`, `group`, `job_type`, and `tags` metadata from the training
+config.
 
-## Temperature, Salinity, And Joint Training
+## Two-GPU baseline suite
 
-The scenario selector supports three pixel-space contracts and applies the coupled data/model settings together:
+`run_baseline_2016_suite.py` trains temperature and salinity LSTM, profile-CNN,
+3D U-Net, and 2D U-Net checkpoints from scratch, then validates checkpoint-free
+IDW. Two workers independently bind to GPU 0 and GPU 1 and dequeue the longest
+remaining jobs first. The suite fixes the validation year to 2016, disables the
+hard/easy row sampler, and retains shuffled validation. By default, a logical
+epoch exposes approximately 100,000 examples, validation runs after each logical
+epoch, and checkpoint selection uses patience 2 under an eight-logical-epoch
+cap. Recovery state is written every 5,000 optimizer steps and each training
+task has a six-hour Lightning wall-time ceiling.
 
-| Scenario | Output fields | Salinity data | Generated channels | Condition channels |
-| --- | --- | --- | ---: | ---: |
-| `temperature` | `['temperature']` | disabled | `50` | `55` |
-| `salinity` | `['salinity']` | enabled | `50` | `55` |
-| `joint` | `['temperature', 'salinity']` | enabled | `100` | `105` |
+Use `--validation-examples`, `--max-epochs`, `--patience`,
+`--checkpoint-every-n-train-steps`, and `--max-task-hours` to adjust this budget.
+`--skip-models unet3d` records both 3D tasks as intentionally skipped and omits
+that method from the generated evaluation configuration.
 
-`condition_channels` is derived from selected output channels plus three ordered dense surface channels (`sst`, `sss`, `adt`), the collapsed valid mask, and the ocean-support mask. Do not maintain `model.output_fields`, `model.generated_channels`, `model.condition_channels`, `data.dataset.output.fields`, or `data.dataset.output.include_salinity` manually in normal super-configs; use `--scenario` and let the resolver write effective configs. `--set` still runs after scenario resolution for intentional experiments.
+Each task logs losses, reconstruction metrics/images, EN4 candidate profiles,
+and hard-region comparisons to one resumable W&B group. After training, the
+best checkpoint is validated under the same W&B run ID. The `all` phase also
+exports 2016-W25 EN4/GLORYS tables and spectral comparisons and uploads the
+evaluation tables, plots, configs, and dashboard as a W&B artifact.
 
-Every run snapshots the original super-config plus resolved effective `data_config_effective.yaml`, `model_config_effective.yaml`, and `training_config_effective.yaml` under `logs/<timestamp>/`, and uploads those files to W&B. Validation shuffling stays enabled by default in the super-config for the current experimentation workflow.
+## Validation
 
-Start from scratch or from a checkpoint trained with the same architecture; temperature-only, salinity-only, and joint checkpoints are not channel-compatible with each other.
+Validation loading remains shuffled intentionally. Normal Lightning validation
+can be supplemented by two configured monitors:
 
-## Important Config Notes
-- `dataset.core.dataloader_type` is expected to be `"light"` in the training runner.
-- `model.model_type="cond_px_dif"` runs pixel-space diffusion; `lstm_baseline`, `cnn_baseline`, `unet_baseline`, and `unet2d_baseline` train baseline models on the same dataloaders.
-- Example profile-CNN baseline run; the CNN loss is evaluated only at ARGO-supported profile columns:
+- EN4 candidate evaluation holds out deterministic profile locations from the
+  sparse input and compares reconstructed values at those exact locations.
+- Hard-region evaluation samples deterministic 2016 patches from provisional
+  hand-authored polygons and compares against GLORYS. These regions are useful
+  diagnostics, not literature-backed scientific boundaries.
 
-```bash
-/work/envs/depth/bin/python train.py --scenario temperature \
-  --set model.model_type=cnn_baseline \
-  --set training.wandb.run_name=cnn_baseline_temperature
-```
-
-- Example 2D U-Net comparison run:
-
-```bash
-src/depth_recon/scripts/train_unet2d_baseline.sh --scenario temperature \
-  --run-name unet2d_baseline_temperature
-```
-
-- `train.py` super-config workflow is pixel-space only; latent diffusion still uses the latent config files documented below.
-- dataset variant is selected by `dataset.core.dataset_variant`; use `"argo_geotiff_gridded"`, the only supported dataset variant.
-- `dataset.output.fields` and `dataset.output.include_salinity` are derived by `--scenario`; do not maintain them by hand in the super-config.
-- Pixel split data/model/training YAML files were removed; use the super-configs for pixel training and inference.
-
-## What `train.py` Does During Startup
-1. Resolves distributed rank and creates a run directory under `logs/<timestamp>` on global rank 0.
-2. Copies exact config files into the run directory for reproducibility.
-3. Loads configs and validates `model.resume_checkpoint` / `model.load_checkpoint_only` early.
-4. Builds dataset and datamodule.
-5. Instantiates `PixelDiffusionConditional.from_config(...)`.
-6. Sets up W&B logger and callbacks.
-
-## Checkpointing and Resume
-ModelCheckpoint behavior:
-- best checkpoint: `best-epoch{epoch:03d}.ckpt` (monitor from `trainer.ckpt_monitor`)
-- always saved: `last.ckpt`
-- location: current run folder under `logs/`
-
-Resume and warm-start behavior:
-- set `model.resume_checkpoint` to `false/null` to train from scratch, or to a valid `.ckpt` path to load a checkpoint
-- set `model.load_checkpoint_only: true` to load only model `state_dict` before training starts (optimizer/scheduler state is re-initialized)
-- set `model.load_checkpoint_only: false` to resume full Lightning state from `model.resume_checkpoint` (model + optimizer/scheduler/trainer state)
-- invalid path fails early before trainer start
-
-## Device, Precision, and Validation Controls
-From the `training.trainer` section:
-- accelerator/devices strategy (`accelerator`, `devices`, optional legacy `num_gpus`)
-- mixed precision (`precision`)
-- optional validation cap via `val_batches_per_epoch` or `limit_val_batches`
-- gradient clipping (`gradient_clip_val`)
-- epoch-end full-reconstruction validation diagnostics run on global rank 0 only; regular `validation_step` loss metrics still use distributed reduction
-
-## Learning Rate Behavior
-`PixelDiffusionConditional` supports:
-- step-based linear warmup in `optimizer_step`
-- `ReduceLROnPlateau` scheduler when enabled
-
-Warmup and scheduler are configured via:
-- `scheduler.warmup.*`
-- `scheduler.reduce_on_plateau.*`
-
-`scheduler.reduce_on_plateau.interval` selects whether `patience` counts optimizer
-steps or epochs. The default monitor is `val/loss_ckpt`; with step-based patience,
-Lightning skips scheduler updates until validation has logged that metric.
-Increasing cheap validation-loss batches does not increase the full reverse-chain
-reconstruction count, which remains one cached first-batch pass per validation run.
-
-## Logging
-W&B logging is configured in `training.wandb`.
-
-Notable behavior:
-- gradients/parameters watching is opt-in via `watch_gradients` / `watch_parameters`
-- periodic scalar/image logging intervals are configurable
-- config files are uploaded to W&B run files (when experiment handle is available)
-- all pixel training presets, including both SpaceHPC presets, enable full-reconstruction/profile logging and the EN4 candidate monitor by default
-
-### EN4 candidate validation monitor
-
-See [GLORYS-comparative evaluation](glorys-comparative-evaluation.md) for the
-complete distinction between checkpoint validation, epoch-time monitors, and
-the post-training paper comparison.
-
-Pixel training presets enable `training.training.en4_candidate_eval`. During
-each non-sanity validation run, the monitor uses the external candidate parquet
-to exact-match EN4 provenance, applies the normal QC and seeded 20% location
-holdout for the configured 2016 ISO week, and reconstructs a fixed small set of
-patches. Every selected location is removed from temperature and salinity inputs
-before patch rasterization, including in overlapping patches.
-
-W&B groups the outputs under `en4_candidate_eval/`. For each active variable it
-logs prediction-versus-EN4 and GLORYS12-versus-EN4 RMSE/MAE, the valid value and
-profile counts, and skill `1 - prediction_RMSE / GLORYS_RMSE`. Profile figures
-show EN4 QC-valid points, the predicted curve, the GLORYS12 curve, and both
-absolute-error curves. The standard shuffled 2016 validation loss remains the
-checkpoint metric; this fixed patch monitor is diagnostic only. The complete
-candidate population is still evaluated by the post-training paper workflow.
-
-The 104 MB parquet stays external and untracked. Override
-`training.training.en4_candidate_eval.candidate_profiles_path` when the checkout
-does not expose it at `instructions/en4_no_spatiotemporal_candidate_profiles.parquet`.
-
-### Hard-region validation monitor
-
-Pixel training presets also enable `training.training.hard_region_eval`. During
-each non-sanity Lightning validation epoch, its callback reconstructs a fixed
-2016 validation patch for each configured hard region and computes pooled RMSE
-and MAE against dense GLORYS on valid ocean pixels. This adds deterministic
-regional diagnostics without filtering or unshuffling the normal validation
-loader.
-
-Lightning logs pooled keys such as `hard_region_eval/temperature_rmse` and
-region-specific keys such as
-`hard_region_eval/greenland/temperature_rmse`. Temperature and salinity are
-reported separately. For each region and active variable, W&B also receives a
-GLORYS/prediction/absolute-error comparison figure at the configured
-`image_depths_m` (surface, 100 m, and 500 m by default). Pixels outside the
-region polygon or valid GLORYS ocean support are masked. The callback uses
-`y_glorys` for synthetic-target
-validation batches and the normal dense `y` target for direct-GLORYS training.
-It does not use the no-nearby-GLORYS EN4 candidates, which remain the independent
-profile validation target described above.
-
-The provisional Greenland, California/Baja, and Beaufort/Arctic definitions are
-hand-drawn placeholder polygons stored in
-`src/depth_recon/configs/evaluation/hard_regions_2016.yaml`. Their stable IDs can
-stay unchanged when the geometries are replaced with the supplied
-literature-backed polygons. Both
-`training.training.hard_region_eval.evaluation_year` and the region file's
-`evaluation_year` are checked against `data.split.val_year`, so a 2016 regional
-monitor cannot silently run on another split.
-
-- fixed overrides:
-  - `data.dataset.conditioning.eo_dropout_prob=0.0`
-  - `training.trainer.max_epochs=100`
-  - `training.wandb.run_name=null` (auto-generated run names)
-
-Launch:
-
-```bash
-./src/depth_recon/scripts/start_occlusion_sweep.sh
-```
-
-Equivalent manual steps:
-
-```bash
-/work/envs/depth/bin/wandb sweep src/depth_recon/configs/px_space/sweeps/eo_occlusion_grid_no_eodrop.yaml
-/work/envs/depth/bin/wandb agent <entity/project/sweep_id>
-```
+Both monitors are enabled in the current pixel presets. Their results are model
+diagnostics and should not be presented as independent scientific validation.

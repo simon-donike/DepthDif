@@ -17,7 +17,7 @@ The current training workflow is built around these modalities:
 
 | Modality | Source | Variables | Role |
 | --- | --- | --- | --- |
-| Sparse profile temperature | EN4 / ARGO | `TEMP`, projected to GLORYS depths | Sparse subsurface conditioning signal. |
+| Sparse profile temperature | EN4 / ARGO | `POTM_CORRECTED`, projected from `DEPH_CORRECTED` samples to GLORYS depths | Sparse subsurface conditioning signal; `TEMP` is available only for explicit legacy reproduction. |
 | Sparse profile salinity | EN4 / ARGO | `PSAL_CORRECTED`, projected to GLORYS depths | Auxiliary profile context stored with the training data. |
 | Surface temperature | OSTIA | `analysed_sst` | First dense surface-conditioning channel (`sst`). |
 | Target ocean temperature | GLORYS | `thetao` | Normal dense target; approved fitting years may also contribute aggregate-only prior statistics. |
@@ -26,7 +26,7 @@ The current training workflow is built around these modalities:
 | Sea-surface salinity/density | SSS MULTIOBS | `sos`, `dos` | `sos` is the second conditioning channel (`sss`); `dos` remains auxiliary. |
 | Land/ocean mask | Rasterized world polygons | `output_land_mask` | Defines patch candidates and provides final output cleanup support; model-facing `land_mask` is derived from finite GLORYS target support. |
 
-Temperature is kept physically in Kelvin in the exported GeoTIFF dataset, then
+Temperature is stored physically in Kelvin in the exported GeoTIFF dataset, then
 converted or normalized by the loader as needed for model training. Salinity is
 stored in PSU and normalized only when the GeoTIFF dataloader is configured with
 `--scenario salinity` or `--scenario joint`.
@@ -59,7 +59,7 @@ GLORYS weekly dates define the training timeline. For every GLORYS target date:
 
 The model-facing training sample is a patch cut from the shared grid. By
 default it contains sparse ARGO temperature observations and dense `[SST, SSS, ADT]` surface
-context. Normal dense training uses the GLORYS temperature target; optional Stage 1 uses an online deterministic surface-offset target. Masks tell the model
+context. Normal dense training uses the GLORYS temperature target; optional Stage 1 uses an online deterministic monthly/spatial surface-offset target. Masks tell the model
 which values are observed, supervised, ocean, or missing. With
 `--scenario salinity`, the loader skips temperature tensors and returns normalized
 `x_salinity` and `y_salinity` plus salinity-specific masks. With

@@ -1,5 +1,5 @@
 # Example:
-# /work/envs/depth/bin/python -m depth_recon.inference.export_spectral_comparison_bundle --config src/depth_recon/inference/inference_config.yaml --models-config inference/outputs/paper_2018_W25_selection/models_config.yaml --year 2018 --all-weeks --output-dir inference/outputs/spectral_comparison_2018 --device cuda --sampler ddpm --batch-size 1 --inference-num-workers 4 --patch-stride 128 --min-ocean-fraction 0.05 --en4-holdout-fraction 0.2 --seed 7 --wavenumber-output-name wavenumber_spectra --min-wavelength-km 30 --max-wavelength-km 1000 --wavelength-bin-count 32 --basin-overlap-threshold 0.30 --public-base-url https://globe-assets.hyperalislabs.com/inference_production/globe/wavenumber_spectra --rclone-remote r2:depth-data/inference_production/globe/wavenumber_spectra --upload-scope spectral
+# /work/envs/depth/bin/python -m depth_recon.inference.export_spectral_comparison_bundle --config src/depth_recon/inference/inference_config.yaml --models-config inference/outputs/paper_2016_W25_selection/models_config.yaml --year 2016 --iso-week 25 --output-dir inference/outputs/spectral_comparison_2016_W25 --device cuda --sampler ddim --ddim-steps 100 --batch-size 8 --inference-num-workers 4 --inference-prefetch-factor 2 --patch-stride 128 --min-ocean-fraction 0.05 --en4-holdout-fraction 0.2 --en4-candidate-profiles instructions/en4_no_spatiotemporal_candidate_profiles.parquet --seed 7 --validation-year 2016 --wavenumber-output-name wavenumber_spectra --min-wavelength-km 30 --max-wavelength-km 1000 --wavelength-bin-count 32 --basin-overlap-threshold 0.30 --prediction-method unet2d
 """Run paper-week inference bundles and export baseline spectral comparisons."""
 
 from __future__ import annotations
@@ -907,6 +907,8 @@ def _paper_week_argv(
         argv.append("--strict-load")
     if bool(args.overwrite_climatology):
         argv.append("--overwrite-climatology")
+    if getattr(args, "en4_candidate_profiles", None) is not None:
+        argv.extend(["--en4-candidate-profiles", str(args.en4_candidate_profiles)])
     for override in args.config_overrides or []:
         argv.extend(["--set", str(override)])
     optional = {
@@ -1073,6 +1075,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--full-sample-count", type=int, default=0)
     parser.add_argument("--validation-year", type=int, default=DEFAULT_VALIDATION_YEAR)
     parser.add_argument("--en4-holdout-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--en4-candidate-profiles",
+        type=Path,
+        default=None,
+        help="Optional leakage-audit EN4 candidate parquet forwarded per paper week.",
+    )
     parser.add_argument(
         "--climatology-idw-power", type=float, default=DEFAULT_CLIMATOLOGY_IDW_POWER
     )

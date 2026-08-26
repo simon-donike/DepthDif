@@ -838,7 +838,7 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("function layerTilesUrl", globe_script)
         self.assertIn("function resolveActiveVectorUrl", globe_script)
         self.assertIn('href="../comparison-globe/"', analysis_html)
-        self.assertIn("Workflow 1h: Host the Comparison Globe", inference_docs)
+        self.assertIn("Host the comparison globe", inference_docs)
         self.assertIn("idw_tiles_url", inference_docs)
         self.assertIn("climatology_tiles_url", inference_docs)
         self.assertIn("lstm_tiles_url", inference_docs)

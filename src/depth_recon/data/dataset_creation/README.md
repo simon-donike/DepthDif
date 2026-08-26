@@ -49,7 +49,7 @@ Download GLORYS files:
 ```bash
 START_DATE=2010-01-01 END_DATE=2024-07-31 STEP_DAYS=7 \
   src/depth_recon/data/dataset_creation/data_download_raw/get_glorys/download_glorys_weekly.sh \
-  /data1/datasets/depth_v2/glorys
+  /data1/datasets/depth_v2/glorys_weekly
 ```
 
 Download daily sea-level files:

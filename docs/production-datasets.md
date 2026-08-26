@@ -54,13 +54,6 @@ The same world grid is reused every time the dataset is instantiated. That makes
 the patch locations deterministic: changing the date range changes which
 timesteps are available, but it does not move the patch boundaries.
 
-![Global patch grid overview](assets/data/patch_grid/patch_grid_global_overview.webp)
-
-The global view shows all candidate patch windows. Transparent outlines make
-overlap visible: darker regions are covered by more candidate patches. Retained
-patches pass the ocean/land rules, force-included patches are retained by a
-regional override, and rejected patches are land-heavy candidates that are not
-used for training or validation rows.
 
 ## Patch Filtering
 
@@ -75,24 +68,12 @@ Patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay are force
 `dataset.grid.force_include_regions`, because those water bodies are narrow or coastline-heavy and would
 otherwise lose useful ocean context around coastlines.
 
-Hard-area finetuning can temporarily extend these relaxed grid regions through
+Hard-area sampling can temporarily extend these relaxed grid regions through
 `dataset.finetune_sampling.hard_regions` when `dataset.finetune_sampling.enabled=true`
 and `dataset.finetune_sampling.relax_land_filter=true`. That run-specific extension
-lets coast-heavy patches enter the train split for the 75/25 hard/easy finetune mix
-without changing the default training or validation patch registry.
-
-The figure labels show the current region-specific land caps and retained patch counts.
-The overview marks the configured bounding boxes and retained force-include patch centers for
-the stride-32 GeoTIFF preset. The regional panel shows the corresponding 128-pixel
-patch footprints over the committed land mask.
-
-![Force-include region overview](assets/data/patch_grid/force_include_regions_overview.webp)
-
-![Force-included patch footprints by region](assets/data/patch_grid/force_include_regions_detail.webp)
-
-![Land fraction filter examples](assets/data/patch_grid/land_fraction_filter_examples.webp)
-
-![Mediterranean overlap example](assets/data/patch_grid/patch_overlap_regional_example.webp)
+lets coast-heavy patches enter whichever splits are named by `apply_to_splits`.
+The current local preset applies a 50/50 hard/easy mix to both `train` and `val`;
+HPC presets disable this row filter.
 
 Overlapping patches mean an ARGO profile is not tied to only one spatial
 context. If a profile falls inside several retained patch bounds, it can
@@ -100,7 +81,6 @@ contribute support to each matching `(patch, date)` row. The stride-32 GeoTIFF
 preset increases these contexts compared with the earlier half-overlap grid,
 giving each profile more local visual neighborhoods during training.
 
-![ARGO profile in multiple patch contexts](assets/data/patch_grid/argo_profile_multiple_contexts.webp)
 
 ## Patch Registry Storage
 
@@ -118,13 +98,6 @@ changed configuration creates a new cache instead of reusing stale rows.
 
 The cache is metadata only. It records where patches are and which dates are
 valid; it does not store precomputed GLORYS, OSTIA, sea-level, or ARGO tensors.
-
-## Sample Visualization
-
-Representative surface-level training patches show the image-like model input
-and target layout used by the dataset.
-
-![Random surface-level dataset patches](assets/data/geotiff_dataset_random100_surface.webp)
 
 ## Sample Read Path
 
@@ -145,7 +118,7 @@ masks.
   committed GLORYS-aligned world mask.
 - `dataset.grid.force_include_regions` keeps patches centered on the Mediterranean, Baltic, Red Sea, and Hudson Bay up
   to a relaxed land fraction so the training registry retains those water bodies.
-- `dataset.finetune_sampling.*` can filter the train split to named hard-region
+- `dataset.finetune_sampling.*` can filter configured splits to named hard-region
   patch centers and add those boxes as run-specific relaxed land-fraction regions.
 - `dataset.sampling.temporal_window_days` controls the centered ARGO profile
   search window for each patch date.
@@ -178,16 +151,12 @@ See [Data Contract](data-contract.md) for the full tensor contract.
 
 ## Finetuning
 
-Hard-area finetuning is disabled by default and can be enabled with
-`data.dataset.finetune_sampling.enabled=true`. When enabled for the train split,
-the GeoTIFF dataset keeps all rows whose patch centers fall inside the configured
-hard regions, then adds a deterministic random sample of easy rows to target the
-configured 75/25 hard/easy mix. Validation keeps the normal global split so the
-main validation metric stays comparable across runs.
+Hard-area row sampling is enabled in the local/standard presets and disabled in
+the HPC presets. The local preset applies it to both `train` and `val`, keeps all
+rows whose patch centers fall inside configured hard regions, and adds a
+deterministic sample of easy rows to target `hard_fraction: 0.5`.
 
 When `data.dataset.finetune_sampling.relax_land_filter=true`, the same hard-region
 boxes are also added as run-specific relaxed land-fraction regions before the
-patch registry is built. This lets narrow coastline-heavy areas enter finetuning
-without changing the default training grid.
-
-![Hard-region finetuning patch footprints](assets/data/patch_grid/hard_region_finetune_footprints_global.webp)
+patch registry is built. The configured polygons are provisional diagnostic
+regions, not literature-backed scientific boundaries.
