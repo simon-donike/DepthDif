@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use DepthDif in your research, please cite this software."
+type: software
+title: "DepthDif: Ambient Diffusion for a Global Dense Reconstruction of Subsurface Ocean Variables from Extremely Sparse Inputs"
+version: "0.1.0"
+date-released: 2026-08-26
+authors:
+  - family-names: "Donike"
+    given-names: "Simon"
+  - family-names: "Cartuyvels"
+    given-names: "Ruben"
+abstract: >-
+  DepthDif reconstructs dense subsurface ocean temperature and salinity fields
+  from sparse EN4/ARGO profiles using conditional diffusion.
+keywords:
+  - "conditional diffusion"
+  - "ocean reconstruction"
+  - "salinity"
+  - "subsurface ocean"
+  - "temperature"
+repository-code: "https://github.com/simon-donike/DepthDif"
+url: "https://depthdif.donike.net/"

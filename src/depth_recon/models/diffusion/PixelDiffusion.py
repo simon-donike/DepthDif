@@ -29,6 +29,7 @@ from depth_recon.utils.stretching import minmax_stretch
 from depth_recon.utils.validation_denoise import (
     average_observed_argo_pixels_per_image,
     build_evenly_spaced_capture_steps,
+    log_wandb_average_depth_profiles,
     log_wandb_diffusion_schedule_profile,
     log_wandb_conditional_reconstruction_grid,
     log_wandb_denoise_timestep_grid,
@@ -2504,6 +2505,29 @@ class PixelDiffusionConditional(pl.LightningModule):
                 return callback
         return None
 
+    def _validation_depth_axis_m(self, depth_count: int) -> np.ndarray | None:
+        """Return the validation dataset depth axis when it matches model output."""
+        if self.datamodule is None:
+            return None
+        candidates = (
+            getattr(self.datamodule, "val_dataset", None),
+            getattr(self.datamodule, "dataset", None),
+        )
+        visited: set[int] = set()
+        for candidate in candidates:
+            dataset = candidate
+            while dataset is not None and id(dataset) not in visited:
+                visited.add(id(dataset))
+                depth_axis = getattr(dataset, "depth_axis_m", None)
+                if depth_axis is not None:
+                    depth_axis_np = np.asarray(depth_axis, dtype=np.float64).reshape(-1)
+                    if int(depth_axis_np.size) == int(depth_count):
+                        return depth_axis_np
+                # Validation commonly uses torch.utils.data.Subset; its parent
+                # dataset owns the physical GLORYS depth coordinates.
+                dataset = getattr(dataset, "dataset", None)
+        return None
+
     @staticmethod
     def _suffixed_validation_image_key(base_key: str, suffix: str) -> str:
         """Return validation image key with optional raw/EMA suffix."""
@@ -3101,6 +3125,55 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sample_idx=0,
                 profile_x_label=primary_profile_x_label,
             )
+            depth_axis_m = self._validation_depth_axis_m(
+                depth_count=int(y_hat_denorm_for_plot.size(1))
+            )
+            log_wandb_average_depth_profiles(
+                logger=self.logger,
+                profiles={
+                    "Prediction": torch.where(
+                        torch.isfinite(target_denorm_masked),
+                        y_hat_denorm_for_plot,
+                        torch.full_like(y_hat_denorm_for_plot, float("nan")),
+                    ),
+                    "GLORYS / supervision target": target_denorm_masked,
+                },
+                depth_axis_m=depth_axis_m,
+                prefix="val_imgs",
+                image_key=self._suffixed_validation_image_key(
+                    f"average_{primary_field}_profile_by_depth",
+                    image_key_suffix,
+                ),
+                value_label=primary_profile_x_label,
+                title=f"Average validation profile: {primary_field}",
+            )
+            if salinity_log_payload is not None:
+                log_wandb_average_depth_profiles(
+                    logger=self.logger,
+                    profiles={
+                        "Prediction": torch.where(
+                            torch.isfinite(
+                                salinity_log_payload["target_denorm_masked"]
+                            ),
+                            salinity_log_payload["y_hat_denorm_for_plot"],
+                            torch.full_like(
+                                salinity_log_payload["y_hat_denorm_for_plot"],
+                                float("nan"),
+                            ),
+                        ),
+                        "GLORYS / supervision target": salinity_log_payload[
+                            "target_denorm_masked"
+                        ],
+                    },
+                    depth_axis_m=depth_axis_m,
+                    prefix="val_salinity_imgs",
+                    image_key=self._suffixed_validation_image_key(
+                        "average_salinity_profile_by_depth",
+                        image_key_suffix,
+                    ),
+                    value_label="Salinity (PSU)",
+                    title="Average validation profile: salinity",
+                )
         if log_denoise and self.log_intermediates and sampler_for_val is not None:
             log_wandb_denoise_timestep_grid(
                 logger=self.logger,
