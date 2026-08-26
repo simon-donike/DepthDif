@@ -4,6 +4,7 @@ type: software
 title: "DepthDif: Ambient Diffusion for a Global Dense Reconstruction of Subsurface Ocean Variables from Extremely Sparse Inputs"
 version: "0.1.0"
 date-released: 2026-08-26
+doi: "10.5281/zenodo.22111274"
 authors:
   - family-names: "Donike"
     given-names: "Simon"
