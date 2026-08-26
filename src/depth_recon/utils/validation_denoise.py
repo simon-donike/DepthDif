@@ -57,8 +57,9 @@ def log_wandb_average_depth_profiles(
     image_key: str = "average_profile_by_depth",
     value_label: str = "Temperature (deg C)",
     title: str = "Average profile by depth",
+    error_reference_label: str | None = None,
 ) -> None:
-    """Log depth-wise finite means for prediction and reference profile tensors."""
+    """Log depth-wise finite means and optional absolute errors for profiles."""
     if logger is None or not hasattr(logger, "experiment") or not profiles:
         return
     experiment = logger.experiment
@@ -73,6 +74,31 @@ def log_wandb_average_depth_profiles(
         str(label): _finite_mean_profile(values, depth_dimension=depth_dimension)
         for label, values in profiles.items()
     }
+    mean_absolute_errors: dict[str, np.ndarray] = {}
+    if error_reference_label is not None:
+        if error_reference_label not in profiles:
+            raise ValueError(
+                f"Error reference profile {error_reference_label!r} is missing."
+            )
+        reference = profiles[error_reference_label]
+        reference_np = (
+            reference.detach().float().cpu().numpy()
+            if torch.is_tensor(reference)
+            else np.asarray(reference)
+        )
+        for label, values in profiles.items():
+            if label == error_reference_label:
+                continue
+            values_np = (
+                values.detach().float().cpu().numpy()
+                if torch.is_tensor(values)
+                else np.asarray(values)
+            )
+            # Average absolute paired errors so opposite-signed errors do not cancel.
+            mean_absolute_errors[str(label)] = _finite_mean_profile(
+                np.abs(values_np - reference_np),
+                depth_dimension=depth_dimension,
+            )
     profile_sizes = {int(values.size) for values in mean_profiles.values()}
     if len(profile_sizes) != 1:
         raise ValueError("Average profile traces must share the same depth dimension.")
@@ -110,7 +136,13 @@ def log_wandb_average_depth_profiles(
     }
     figure = None
     try:
-        figure, axis = plt.subplots(1, 1, figsize=(6.5, 8.0))
+        figure, axes = plt.subplots(
+            1,
+            2 if error_reference_label is not None else 1,
+            figsize=(12.0, 8.0) if error_reference_label is not None else (6.5, 8.0),
+            squeeze=False,
+        )
+        axis = axes[0, 0]
         for label, mean_profile in mean_profiles.items():
             if not bool(np.any(np.isfinite(mean_profile))):
                 continue
@@ -127,6 +159,24 @@ def log_wandb_average_depth_profiles(
         axis.invert_yaxis()
         axis.grid(True, alpha=0.25)
         axis.legend(loc="best")
+        if error_reference_label is not None:
+            error_axis = axes[0, 1]
+            for label, mean_error in mean_absolute_errors.items():
+                if not bool(np.any(np.isfinite(mean_error))):
+                    continue
+                error_axis.plot(
+                    mean_error,
+                    depth_values,
+                    label=f"{label} vs {error_reference_label}",
+                    color=colors.get(label),
+                    linewidth=1.8,
+                )
+            error_axis.set_xlabel(f"Mean absolute error in {value_label}")
+            error_axis.set_ylabel(depth_label)
+            error_axis.set_title("Total error by depth")
+            error_axis.invert_yaxis()
+            error_axis.grid(True, alpha=0.25)
+            error_axis.legend(loc="best")
         figure.tight_layout()
         experiment.log({f"{prefix}/{image_key}": wandb.Image(figure)})
     finally:

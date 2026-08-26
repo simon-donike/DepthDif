@@ -565,6 +565,10 @@ class TestPaperMetricsExport(unittest.TestCase):
                     np.testing.assert_array_equal(
                         axis.lines[0].get_ydata(), callback.depth_axis_m
                     )
+                    self.assertEqual(len(figure.axes), 2)
+                    error_axis = figure.axes[1]
+                    self.assertEqual(error_axis.get_title(), "Total error by depth")
+                    self.assertEqual(len(error_axis.lines), 2)
             logged = next(
                 payload
                 for payload in logged_payloads
@@ -808,6 +812,29 @@ class TestPaperMetricsExport(unittest.TestCase):
         self.assertEqual(level_axis.get_ylabel(), "Depth level index")
         np.testing.assert_array_equal(
             level_axis.lines[0].get_ydata(), np.asarray([0.0, 1.0])
+        )
+
+    def test_average_profile_error_panel_uses_paired_absolute_errors(self) -> None:
+        logged_payloads: list[dict[str, object]] = []
+        logger = SimpleNamespace(experiment=SimpleNamespace(log=logged_payloads.append))
+        fake_wandb = SimpleNamespace(Image=lambda figure: figure)
+        profiles = {
+            "Prediction": np.asarray([[3.0, 1.0], [1.0, 5.0]]),
+            "EN4": np.asarray([[1.0, 3.0], [2.0, 2.0]]),
+        }
+
+        with patch.dict(sys.modules, {"wandb": fake_wandb}):
+            log_wandb_average_depth_profiles(
+                logger=logger,
+                profiles=profiles,
+                depth_axis_m=np.asarray([0.0, 10.0]),
+                error_reference_label="EN4",
+            )
+
+        figure = logged_payloads[0]["val_imgs/average_profile_by_depth"]
+        self.assertEqual(len(figure.axes), 2)
+        np.testing.assert_allclose(
+            figure.axes[1].lines[0].get_xdata(), np.asarray([1.5, 2.5])
         )
 
     def test_metrics_math_and_equal_depth_average(self) -> None:
