@@ -978,19 +978,14 @@ def _load_en4_candidate_profile_keys(
     return pd.MultiIndex.from_frame(candidates[list(EN4_CANDIDATE_KEY_COLUMNS)])
 
 
-def select_en4_holdout_locations(
+def load_en4_candidate_profiles(
     *,
     context: DatasetContext,
     date_value: int,
-    fraction: float,
-    seed: int,
     candidate_profiles_path: Path | None = None,
     profile_store: ArgoGeoTIFFProfileStore | None = None,
 ) -> pd.DataFrame:
-    """Select deterministic held-out EN4/ARGO date-location profiles."""
-    frac = float(fraction)
-    if frac <= 0.0 or frac >= 1.0:
-        raise ValueError("EN4 holdout fraction must be in (0, 1).")
+    """Load usable EN4/ARGO profiles, optionally restricted by provenance keys."""
     owns_store = profile_store is None
     store = profile_store or ArgoGeoTIFFProfileStore(
         _manifest_argo_path(context), include_salinity=True
@@ -1072,32 +1067,12 @@ def select_en4_holdout_locations(
         loc_df = pd.DataFrame(
             {"date": int(date_value), "grid_row": rows, "grid_col": cols}
         ).drop_duplicates(ignore_index=True)
-        holdout_count = int(round(float(len(loc_df)) * frac))
-        holdout_count = min(max(holdout_count, 1), int(len(loc_df)))
-        rng = np.random.default_rng(int(seed))
-        selected_loc_indices = set(
-            int(value)
-            for value in rng.choice(
-                np.arange(int(len(loc_df))), size=holdout_count, replace=False
-            ).tolist()
-        )
-        selected_keys = {
-            (
-                int(loc_df.iloc[idx].date),
-                int(loc_df.iloc[idx].grid_row),
-                int(loc_df.iloc[idx].grid_col),
-            )
-            for idx in selected_loc_indices
-        }
         records: list[dict[str, Any]] = []
         temp_counts = temp_counts[usable]
         sal_counts = sal_counts[usable]
         for local_idx, profile_idx in enumerate(profile_indices.tolist()):
             grid_row = int(rows[int(local_idx)])
             grid_col = int(cols[int(local_idx)])
-            key = (int(date_value), grid_row, grid_col)
-            if key not in selected_keys:
-                continue
             lon, lat = transform_xy(
                 context.transform, grid_row, grid_col, offset="center"
             )
@@ -1111,8 +1086,6 @@ def select_en4_holdout_locations(
                     "profile_index": int(profile_idx),
                     "temperature_valid_depth_count": int(temp_counts[int(local_idx)]),
                     "salinity_valid_depth_count": int(sal_counts[int(local_idx)]),
-                    "holdout_fraction": frac,
-                    "split_seed": int(seed),
                     **(
                         {
                             "profile_source_file": str(
@@ -1133,11 +1106,11 @@ def select_en4_holdout_locations(
         if owns_store:
             store.close()
     if not records:
-        raise RuntimeError("EN4 holdout selection produced no profile records.")
-    holdout_df = pd.DataFrame.from_records(records).sort_values(
+        raise RuntimeError("EN4 candidate loading produced no profile records.")
+    candidate_df = pd.DataFrame.from_records(records).sort_values(
         ["date", "grid_row", "grid_col", "profile_index"]
     )
-    holdout_df.attrs.update(
+    candidate_df.attrs.update(
         {
             "selection_pool": (
                 EN4_CANDIDATE_EVIDENCE
@@ -1151,9 +1124,54 @@ def select_en4_holdout_locations(
             ),
             "eligible_profile_count": int(profile_indices.size),
             "eligible_location_count": int(len(loc_df)),
+        }
+    )
+    return candidate_df
+
+
+def select_en4_holdout_locations(
+    *,
+    context: DatasetContext,
+    date_value: int,
+    fraction: float,
+    seed: int,
+    candidate_profiles_path: Path | None = None,
+    profile_store: ArgoGeoTIFFProfileStore | None = None,
+) -> pd.DataFrame:
+    """Select deterministic held-out EN4/ARGO date-location profiles."""
+    frac = float(fraction)
+    if frac <= 0.0 or frac >= 1.0:
+        raise ValueError("EN4 holdout fraction must be in (0, 1).")
+    candidate_df = load_en4_candidate_profiles(
+        context=context,
+        date_value=date_value,
+        candidate_profiles_path=candidate_profiles_path,
+        profile_store=profile_store,
+    )
+    loc_df = candidate_df[["date", "grid_row", "grid_col"]].drop_duplicates(
+        ignore_index=True
+    )
+    holdout_count = int(round(float(len(loc_df)) * frac))
+    holdout_count = min(max(holdout_count, 1), int(len(loc_df)))
+    rng = np.random.default_rng(int(seed))
+    selected_loc_indices = rng.choice(
+        np.arange(int(len(loc_df))), size=holdout_count, replace=False
+    )
+    selected_locations = loc_df.iloc[selected_loc_indices]
+    holdout_df = candidate_df.merge(
+        selected_locations,
+        on=["date", "grid_row", "grid_col"],
+        how="inner",
+        validate="many_to_one",
+    ).sort_values(["date", "grid_row", "grid_col", "profile_index"])
+    holdout_df["holdout_fraction"] = frac
+    holdout_df["split_seed"] = int(seed)
+    holdout_df.attrs.update(candidate_df.attrs)
+    holdout_df.attrs.update(
+        {
             "selected_location_count": int(holdout_count),
             "selected_profile_count": int(len(holdout_df)),
-            "holdout_fraction": float(frac),
+            "holdout_fraction": frac,
             "split_seed": int(seed),
         }
     )

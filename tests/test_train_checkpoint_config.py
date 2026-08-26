@@ -142,7 +142,7 @@ class TestTrainCheckpointConfig(unittest.TestCase):
             val_dataset._rows = pd.DataFrame({"date": [20160624]})
             val_dataset.root_dir = Path(tmpdir)
             val_dataset.argo_store = object()
-            holdout = pd.DataFrame(
+            candidates = pd.DataFrame(
                 {"date": [20160624], "grid_row": [1], "grid_col": [2]}
             )
             expected_callback = object()
@@ -152,17 +152,19 @@ class TestTrainCheckpointConfig(unittest.TestCase):
                         "enabled": True,
                         "candidate_profiles_path": str(candidate_path),
                         "iso_week": 25,
+                        "min_input_profiles": 8,
+                        "image_depths_m": [0.0, 100.0, 500.0],
                     }
                 }
             }
 
             with (
                 patch("train.load_dataset_context", return_value=object()),
-                patch("train.select_en4_holdout_locations", return_value=holdout),
+                patch("train.load_en4_candidate_profiles", return_value=candidates),
                 patch(
                     "train.EN4CandidateValidationCallback",
                     return_value=expected_callback,
-                ),
+                ) as callback_cls,
             ):
                 callback = build_en4_candidate_validation_callback(
                     val_dataset=val_dataset,
@@ -171,9 +173,11 @@ class TestTrainCheckpointConfig(unittest.TestCase):
                 )
 
             self.assertIs(callback, expected_callback)
-            val_dataset.set_heldout_argo_locations.assert_called_once_with(
-                [(20160624, 1, 2)]
-            )
+            callback_cls.assert_called_once()
+            callback_kwargs = callback_cls.call_args.kwargs
+            self.assertIs(callback_kwargs["candidate_df"], candidates)
+            self.assertEqual(callback_kwargs["min_input_profiles"], 8)
+            self.assertEqual(callback_kwargs["image_depths_m"], (0.0, 100.0, 500.0))
 
     def test_resume_checkpoint_false_starts_from_scratch(self) -> None:
         model_cfg = {"model": {"resume_checkpoint": False}}

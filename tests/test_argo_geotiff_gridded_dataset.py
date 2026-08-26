@@ -313,7 +313,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
                 val_year=2018,
                 require_argo_for_train=True,
                 include_salinity=True,
-                surface_conditioning={"sources": ["sst", "sss", "adt"]},
+                surface_conditioning={"sources": ["sst"]},
                 synthetic_target={
                     "enabled": True,
                     "statistics_path": prior_path.name,
@@ -327,10 +327,12 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             y_c = temperature_normalize(mode="denorm", tensor=sample["y"])
             y_salinity = salinity_normalize(mode="denorm", tensor=sample["y_salinity"])
             eo_sst_c = temperature_normalize(mode="denorm", tensor=sample["eo"][0])
-            eo_sss = salinity_normalize(mode="denorm", tensor=sample["eo"][1])
+            prior_surface_fields = dataset._load_surface_fields(dataset._rows.iloc[0])
+            eo_sss = prior_surface_fields["sss"]
 
             self.assertTrue(dataset.synthetic_target_enabled)
-            self.assertEqual(sample["eo"].shape, (3, 2, 2))
+            self.assertEqual(sample["eo"].shape, (1, 2, 2))
+            self.assertEqual(set(dataset.surface_stores), {"sst", "sss", "adt"})
             self.assertEqual(sample["info"]["target_kind"], "vertical_offset_prior")
             self.assertNotIn("y_supervision_weight", sample)
             self.assertNotIn("y_salinity_supervision_weight", sample)
@@ -998,10 +1000,11 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
         selection = payload["data"]["dataset"]["selection"]
-        self.assertTrue(selection["filter_bad_argo_quality"])
+        self.assertFalse(selection["require_argo_for_train"])
+        self.assertFalse(selection["filter_bad_argo_quality"])
         self.assertEqual(selection["accepted_argo_qc_flags"], [1, 2])
         finetune = payload["data"]["dataset"]["finetune_sampling"]
-        self.assertTrue(finetune["enabled"])
+        self.assertFalse(finetune["enabled"])
         self.assertAlmostEqual(float(finetune["hard_fraction"]), 0.5)
         self.assertEqual(finetune["apply_to_splits"], ["train", "val"])
         self.assertTrue(finetune["relax_land_filter"])
@@ -1032,6 +1035,6 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
         self.assertNotIn("target_source", payload["data"]["dataset"]["sampling"])
         self.assertEqual(
             payload["data"]["dataset"]["surface_conditioning"]["sources"],
-            ["sst", "sss", "adt"],
+            ["sst"],
         )
         self.assertEqual(payload["data"]["split"]["val_year"], 2016)

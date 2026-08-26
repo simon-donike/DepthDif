@@ -21,6 +21,7 @@ from depth_recon.inference.export_paper_metrics import (
     _metric_stats,
     export_paper_metrics,
     idw_fill_2d,
+    load_en4_candidate_profiles,
     load_dataset_context,
     load_method_runs,
     prediction_specs_by_method,
@@ -436,29 +437,20 @@ class TestPaperMetricsExport(unittest.TestCase):
                     "source_profile_idx": [7],
                 }
             ).to_parquet(candidate_path, index=False)
-            holdout = select_en4_holdout_locations(
+            candidates = load_en4_candidate_profiles(
                 context=load_dataset_context(output_dir),
                 date_value=20240108,
-                fraction=0.2,
-                seed=7,
                 candidate_profiles_path=candidate_path,
                 profile_store=dataset.argo_store,
             )
-            dataset.set_heldout_argo_locations(
-                [
-                    (
-                        20240108,
-                        int(holdout.iloc[0].grid_row),
-                        int(holdout.iloc[0].grid_col),
-                    )
-                ]
-            )
             callback = EN4CandidateValidationCallback(
                 dataset=dataset,
-                holdout_df=holdout,
+                candidate_df=candidates,
+                min_input_profiles=0,
                 max_patches=1,
                 max_profiles_to_plot=1,
                 random_seed=7,
+                image_depths_m=(0.0, 10.0),
             )
 
             class ExactGlorysModel(torch.nn.Module):
@@ -582,6 +574,162 @@ class TestPaperMetricsExport(unittest.TestCase):
             self.assertIn("en4_candidate_eval/temperature_glorys_rmse", logged)
             self.assertIn("en4_candidate_eval/temperature_profiles", logged)
             self.assertIn("en4_candidate_eval/salinity_profiles", logged)
+            self.assertIn(
+                "en4_candidate_eval/temperature_patch_0_full_reconstruction", logged
+            )
+            self.assertIn(
+                "en4_candidate_eval/salinity_patch_0_full_reconstruction", logged
+            )
+            self.assertEqual(logged["en4_candidate_eval/min_input_profiles"], 0)
+            self.assertGreaterEqual(
+                logged["en4_candidate_eval/retained_input_profile_count_min"], 0
+            )
+
+            reconstruction = logged[
+                "en4_candidate_eval/temperature_patch_0_full_reconstruction"
+            ]
+            panel_titles = {axis.get_title() for axis in reconstruction.axes}
+            self.assertIn("Sparse EN4 input | 0 m", panel_titles)
+            self.assertIn("GLORYS12 | 10 m", panel_titles)
+            self.assertIn("Reconstruction | 10 m", panel_titles)
+            self.assertIn("Absolute error | 10 m", panel_titles)
+            self.assertTrue(reconstruction.axes[0].collections)
+
+    def test_candidate_patch_selection_retains_minimum_and_holds_out_duplicates(
+        self,
+    ) -> None:
+        """Patch-first selection counts remaining records and withholds a full cell."""
+
+        class FakeStore:
+            include_salinity = False
+            depth_axis_m = np.asarray([0.0, 10.0], dtype=np.float32)
+            target_date = np.full((10,), 20160624, dtype=np.int32)
+            grid_row = np.zeros((10,), dtype=np.int32)
+            grid_col = np.asarray([0, 0] + [1] * 8, dtype=np.int32)
+
+            def query_indices(self, *, target_date, grid_y0, grid_x0, tile_size):
+                indices = np.arange(10, dtype=np.int64)
+                keep = (
+                    (self.grid_row >= grid_y0)
+                    & (self.grid_row < grid_y0 + tile_size)
+                    & (self.grid_col >= grid_x0)
+                    & (self.grid_col < grid_x0 + tile_size)
+                )
+                return indices[keep]
+
+            def load_temperature_profiles(self, indices):
+                return np.ones((len(indices), 2), dtype=np.float32)
+
+        class FakeDataset:
+            tile_size = 2
+            argo_store = FakeStore()
+            _rows = pd.DataFrame({"date": [20160624], "grid_y0": [0], "grid_x0": [0]})
+
+            def set_heldout_argo_locations(self, locations):
+                self.heldout_locations = set(locations)
+
+        candidates = pd.DataFrame(
+            {
+                "date": [20160624, 20160624],
+                "grid_row": [0, 0],
+                "grid_col": [0, 0],
+                "lat": [0.0, 0.0],
+                "lon": [0.0, 0.0],
+                "profile_index": [0, 1],
+                "profile_source_file": ["profiles.nc", "profiles.nc"],
+                "source_profile_idx": [0, 1],
+            }
+        )
+        dataset = FakeDataset()
+        callback = EN4CandidateValidationCallback(
+            dataset=dataset,
+            candidate_df=candidates,
+            min_input_profiles=8,
+            random_seed=7,
+        )
+
+        self.assertEqual(len(callback.holdout_df), 2)
+        self.assertEqual(callback.selection_metadata["selected_location_count"], 1)
+        self.assertEqual(
+            callback.selection_metadata["retained_input_profile_count_min"], 8
+        )
+        self.assertEqual(dataset.heldout_locations, {(20160624, 0, 0)})
+        with self.assertRaisesRegex(RuntimeError, "retains at least 9"):
+            EN4CandidateValidationCallback(
+                dataset=FakeDataset(),
+                candidate_df=candidates,
+                min_input_profiles=9,
+                random_seed=7,
+            )
+
+    def test_candidate_patch_selection_is_seeded_and_patch_uniform(self) -> None:
+        """Qualifying patch selection is reproducible and not coverage-ranked."""
+
+        class FakeStore:
+            include_salinity = False
+            depth_axis_m = np.asarray([0.0], dtype=np.float32)
+            target_date = np.full((27,), 20160624, dtype=np.int32)
+            grid_row = np.zeros((27,), dtype=np.int32)
+            grid_col = np.asarray(
+                [0] + [1] * 8 + [2] + [3] * 8 + [4] + [5] * 8,
+                dtype=np.int32,
+            )
+
+            def query_indices(self, *, target_date, grid_y0, grid_x0, tile_size):
+                indices = np.arange(27, dtype=np.int64)
+                keep = (
+                    (self.grid_row >= grid_y0)
+                    & (self.grid_row < grid_y0 + tile_size)
+                    & (self.grid_col >= grid_x0)
+                    & (self.grid_col < grid_x0 + tile_size)
+                )
+                return indices[keep]
+
+            def load_temperature_profiles(self, indices):
+                return np.ones((len(indices), 1), dtype=np.float32)
+
+        class FakeDataset:
+            tile_size = 2
+            argo_store = FakeStore()
+            _rows = pd.DataFrame(
+                {
+                    "date": [20160624] * 3,
+                    "grid_y0": [0, 0, 0],
+                    "grid_x0": [0, 2, 4],
+                }
+            )
+
+            def set_heldout_argo_locations(self, locations):
+                self.heldout_locations = set(locations)
+
+        candidates = pd.DataFrame(
+            {
+                "date": [20160624] * 3,
+                "grid_row": [0, 0, 0],
+                "grid_col": [0, 2, 4],
+                "lat": [0.0] * 3,
+                "lon": [0.0, 2.0, 4.0],
+                "profile_index": [0, 9, 18],
+                "profile_source_file": ["profiles.nc"] * 3,
+                "source_profile_idx": [0, 9, 18],
+            }
+        )
+        first = EN4CandidateValidationCallback(
+            dataset=FakeDataset(),
+            candidate_df=candidates,
+            min_input_profiles=8,
+            random_seed=7,
+        )
+        second = EN4CandidateValidationCallback(
+            dataset=FakeDataset(),
+            candidate_df=candidates,
+            min_input_profiles=8,
+            random_seed=7,
+        )
+
+        self.assertEqual(first.patch_indices, second.patch_indices)
+        self.assertEqual(first.selection_metadata["candidate_patch_count"], 3)
+        self.assertEqual(first.selection_metadata["qualifying_patch_count"], 3)
 
     def test_candidate_metric_summary_reports_positive_skill(self) -> None:
         """Candidate skill is positive only when prediction improves on GLORYS."""

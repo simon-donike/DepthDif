@@ -36,8 +36,8 @@ from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.inference.export_paper_metrics import (
+    load_en4_candidate_profiles,
     load_dataset_context,
-    select_en4_holdout_locations,
 )
 from depth_recon.models.baselines import (
     IDWInterpolationBaseline,
@@ -98,28 +98,24 @@ def build_en4_candidate_validation_callback(
             f"ISO {validation_year}-W{iso_week:02d}, found {dates}."
         )
     context = load_dataset_context(val_dataset.root_dir)
-    holdout_df = select_en4_holdout_locations(
+    candidate_df = load_en4_candidate_profiles(
         context=context,
         date_value=dates[0],
-        fraction=float(validation_cfg.get("holdout_fraction", 0.2)),
-        seed=int(validation_cfg.get("seed", 7)),
         candidate_profiles_path=candidate_path,
         profile_store=val_dataset.argo_store,
     )
-    # Apply the location holdout to the shared validation dataset so every
-    # overlapping patch and both sparse variables use the same leakage-free input.
-    val_dataset.set_heldout_argo_locations(
-        [
-            (int(row.date), int(row.grid_row), int(row.grid_col))
-            for row in holdout_df.itertuples(index=False)
-        ]
-    )
     return EN4CandidateValidationCallback(
         dataset=val_dataset,
-        holdout_df=holdout_df,
+        candidate_df=candidate_df,
+        holdout_fraction=float(validation_cfg.get("holdout_fraction", 0.2)),
+        min_input_profiles=int(validation_cfg.get("min_input_profiles", 8)),
         max_patches=int(validation_cfg.get("max_patches", 1)),
         max_profiles_to_plot=int(validation_cfg.get("max_profiles_to_plot", 6)),
         random_seed=int(validation_cfg.get("seed", 7)),
+        image_depths_m=tuple(
+            float(value)
+            for value in validation_cfg.get("image_depths_m", (0.0, 100.0, 500.0))
+        ),
     )
 
 

@@ -9,27 +9,29 @@ this page records the maintained presets and stable ownership of settings.
 
 | Preset | Target/objective | Runtime defaults |
 | --- | --- | --- |
-| `training_super_config.yaml` | Real sparse ARGO support with ambient occlusion; synthetic target off. | 100 epochs, 2 devices, `strategy: auto`, W&B online, train batch 32/workers 2. |
+| `training_super_config.yaml` | Ambient occlusion over all eligible patches; synthetic target and regional row sampling off. | 100 epochs, 2 devices, `strategy: auto`, W&B online, train batch 32/workers 2. |
 | `training_super_config_standard.yaml` | Explicit copy of the standard local preset. | Same resource and objective defaults as the local preset. |
 | `training_super_config_hpc.yaml` | Dense deterministic `synthetic_target`; ambient and hard-region sampling off. | 10,000-epoch ceiling, `devices: auto`, DDP, W&B offline, train batch 96/workers 48. |
-| `training_super_config_spacehpc_glorys.yaml` | Direct paired-GLORYS supervision; synthetic and ambient targets off. | 10,000-epoch ceiling, `devices: auto`, DDP, W&B offline, train batch 96/workers 48. |
+| `training_super_config_spacehpc_glorys.yaml` | Direct paired-GLORYS supervision over all eligible patches; synthetic, ambient, and regional row sampling off. | 10,000-epoch ceiling, `devices: auto`, DDP, W&B offline, train batch 96/workers 48. |
 | `inference_super_config.yaml` | No synthetic target or ambient objective; DDPM reconstruction default. | Grid stride 96, minimum ocean fraction 0.05, batch 64/workers 6. |
 
-All pixel presets use the ordered surface sources `[sst, sss, adt]`, coordinate
-conditioning, EMA, a 1,000-step training diffusion schedule, and validation year
-2016. Validation sampling in training uses 100-step DDIM. Validation loaders stay
-shuffled by design.
+All pixel presets provide one scenario-derived surface channel to the model: SST
+for temperature (and joint) runs or SSS for salinity runs. Training keeps patches
+without ARGO profiles, retains ARGO observations regardless of QC flags, and does
+not apply hard/easy regional row sampling. Coordinate conditioning, EMA, the
+1,000-step training diffusion schedule, validation year 2016, 100-step DDIM
+validation, and shuffled validation loaders remain configured.
 
 ## Scenario-derived contract
 
 | Scenario | Generated channels | Condition channels | Fields |
 | --- | ---: | ---: | --- |
-| `temperature` | 50 | 55 | Temperature only. |
-| `salinity` | 50 | 55 | Salinity only. |
-| `joint` | 100 | 105 | Temperature followed by salinity. |
+| `temperature` | 50 | 53 | Temperature only; SST surface input. |
+| `salinity` | 50 | 53 | Salinity only; SSS surface input. |
+| `joint` | 100 | 103 | Temperature followed by salinity; SST surface input. |
 
-The five non-generated condition channels are the three dense surfaces, sparse
-observation support, and the associated mask channel used by the pixel contract.
+The three non-generated condition channels are the scenario-derived dense surface,
+sparse observation support, and the associated mask channel used by the pixel contract.
 Do not set channel counts independently of the scenario resolver.
 
 ## Key ownership
@@ -45,8 +47,11 @@ Do not set channel counts independently of the scenario resolver.
 - `training.dataloader`: training/validation batch and worker settings. These take
   precedence where the datamodule reads the training-specific section.
 - `training.validation_sampling`: validation sampler and reconstruction cadence.
-- `training.en4_candidate_eval` and `training.hard_region_eval`: optional callback
-  configuration; both are enabled in current pixel presets.
+- `training.en4_candidate_eval`: optional patch-first EN4 callback; use
+  `min_input_profiles` to set the post-holdout density floor and `image_depths_m`
+  to choose full-reconstruction figure depths.
+- `training.hard_region_eval`: optional hard-region callback. Both validation
+  callbacks are enabled in current pixel presets.
 - `inference.sampling`: reconstruction sampler overrides.
 - `inference.grid`: stitched export stride and ocean-coverage filter.
 - `inference.dataloader`: inference batch, workers, and prefetch settings.

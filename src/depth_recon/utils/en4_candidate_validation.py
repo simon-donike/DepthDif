@@ -30,6 +30,20 @@ class CandidateProfileResult:
     en4: np.ndarray
 
 
+@dataclass(frozen=True)
+class CandidatePatchImageData:
+    """Physical full-patch fields used for one candidate reconstruction figure."""
+
+    variable: str
+    patch_number: int
+    date: int
+    input_values: np.ndarray
+    prediction: np.ndarray
+    glorys: np.ndarray
+    heldout_rows: np.ndarray
+    heldout_cols: np.ndarray
+
+
 def _metric_summary(results: list[CandidateProfileResult]) -> dict[str, float]:
     """Compute pooled prediction and GLORYS errors against EN4 profiles."""
     prediction_errors: list[np.ndarray] = []
@@ -144,10 +158,13 @@ class EN4CandidateValidationCallback(pl.Callback):
         self,
         *,
         dataset: Any,
-        holdout_df: pd.DataFrame,
+        candidate_df: pd.DataFrame,
+        holdout_fraction: float = 0.2,
+        min_input_profiles: int = 8,
         max_patches: int = 1,
         max_profiles_to_plot: int = 6,
         random_seed: int = 7,
+        image_depths_m: tuple[float, ...] = (0.0, 100.0, 500.0),
     ) -> None:
         """Prepare deterministic patches and exact EN4 profiles for epoch evaluation."""
         super().__init__()
@@ -159,13 +176,34 @@ class EN4CandidateValidationCallback(pl.Callback):
             raise RuntimeError(
                 "EN4 candidate validation requires a compact profile store."
             )
+        fraction = float(holdout_fraction)
+        if fraction <= 0.0 or fraction >= 1.0:
+            raise ValueError("EN4 holdout fraction must be in (0, 1).")
+        if int(min_input_profiles) < 0:
+            raise ValueError("min_input_profiles cannot be negative.")
+        if candidate_df.empty:
+            raise ValueError("candidate_df must contain at least one EN4 profile.")
         self.dataset = dataset
-        self.selection_metadata = dict(holdout_df.attrs)
-        self.holdout_df = holdout_df.reset_index(drop=True).copy()
+        self.candidate_df = candidate_df.reset_index(drop=True).copy()
+        self.candidate_metadata = dict(candidate_df.attrs)
+        self.holdout_fraction = fraction
+        self.min_input_profiles = int(min_input_profiles)
         self.max_profiles_to_plot = max(1, int(max_profiles_to_plot))
         self.random_seed = int(random_seed)
-        self.patch_indices, self.profile_assignments = self._select_eval_patches(
-            max_patches=max_patches
+        self.image_depths_m = tuple(float(value) for value in image_depths_m)
+        if not self.image_depths_m:
+            raise ValueError("image_depths_m cannot be empty.")
+        (
+            self.patch_indices,
+            self.holdout_df,
+            self.profile_assignments,
+            self.selection_metadata,
+        ) = self._select_eval_patches(max_patches=max_patches)
+        dataset.set_heldout_argo_locations(
+            [
+                (int(row.date), int(row.grid_row), int(row.grid_col))
+                for row in self.holdout_df.itertuples(index=False)
+            ]
         )
         profile_indices = self.profile_assignments["profile_index"].to_numpy(
             dtype=np.int64
@@ -181,23 +219,27 @@ class EN4CandidateValidationCallback(pl.Callback):
         self.depth_axis_m = np.asarray(
             dataset.argo_store.depth_axis_m, dtype=np.float64
         )
+        self._latest_patch_images: dict[str, list[CandidatePatchImageData]] = {}
         self._last_logged_global_step: int | None = None
 
     def _select_eval_patches(
         self, *, max_patches: int
-    ) -> tuple[list[int], pd.DataFrame]:
-        """Greedily choose deterministic patches covering the most holdout locations."""
+    ) -> tuple[list[int], pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+        """Uniformly select patches that retain enough profiles after local holdout."""
         limit = max(1, int(max_patches))
         rows = self.dataset._rows.reset_index(drop=True)
-        selected_date = int(self.holdout_df["date"].iloc[0])
+        selected_dates = self.candidate_df["date"].astype(np.int64).unique()
+        if int(selected_dates.size) != 1:
+            raise ValueError("candidate_df must contain exactly one target date.")
+        selected_date = int(selected_dates[0])
         candidate_rows = rows.index[rows["date"].astype(np.int64) == selected_date]
         locations = {
             (int(row.grid_row), int(row.grid_col))
-            for row in self.holdout_df.itertuples(index=False)
+            for row in self.candidate_df.itertuples(index=False)
         }
-        uncovered = set(locations)
-        chosen: list[int] = []
         coverage_by_patch: dict[int, set[tuple[int, int]]] = {}
+        profile_indices_by_patch: dict[int, np.ndarray] = {}
+        local_holdouts_by_patch: dict[int, set[tuple[int, int]]] = {}
         tile_size = int(self.dataset.tile_size)
         for patch_idx in candidate_rows.tolist():
             patch = rows.iloc[int(patch_idx)]
@@ -210,27 +252,96 @@ class EN4CandidateValidationCallback(pl.Callback):
             }
             if covered:
                 coverage_by_patch[int(patch_idx)] = covered
-        while uncovered and len(chosen) < limit:
-            ranked = sorted(
+                profile_indices = self.dataset.argo_store.query_indices(
+                    target_date=selected_date,
+                    grid_y0=y0,
+                    grid_x0=x0,
+                    tile_size=tile_size,
+                )
+                profile_indices_by_patch[int(patch_idx)] = profile_indices
+                holdout_count = int(round(len(covered) * self.holdout_fraction))
+                holdout_count = min(max(holdout_count, 1), len(covered))
+                ordered_locations = sorted(covered)
+                # A patch-derived seed makes each local holdout stable independently
+                # of row ordering and of how many other patches qualify.
+                patch_rng = np.random.default_rng(
+                    np.random.SeedSequence(
+                        [self.random_seed, selected_date, max(y0, 0), max(x0, 0)]
+                    )
+                )
+                selected_positions = patch_rng.choice(
+                    np.arange(len(ordered_locations)),
+                    size=holdout_count,
+                    replace=False,
+                )
+                local_holdouts_by_patch[int(patch_idx)] = {
+                    ordered_locations[int(position)]
+                    for position in selected_positions.tolist()
+                }
+
+        def retained_profile_count(
+            patch_idx: int, heldout_locations: set[tuple[int, int]]
+        ) -> int:
+            """Count source profiles left in a patch after removing locations."""
+            indices = profile_indices_by_patch[patch_idx]
+            store = self.dataset.argo_store
+            return sum(
                 (
-                    (len(covered & uncovered), patch_idx)
-                    for patch_idx, covered in coverage_by_patch.items()
-                    if patch_idx not in chosen
-                ),
-                key=lambda item: (-item[0], item[1]),
-            )
-            if not ranked or ranked[0][0] <= 0:
-                break
-            patch_idx = int(ranked[0][1])
-            chosen.append(patch_idx)
-            uncovered -= coverage_by_patch[patch_idx]
-        if not chosen:
-            raise RuntimeError(
-                "No validation patch covers the selected EN4 candidate locations."
+                    int(store.grid_row[int(profile_idx)]),
+                    int(store.grid_col[int(profile_idx)]),
+                )
+                not in heldout_locations
+                for profile_idx in indices.tolist()
             )
 
+        qualifying = [
+            patch_idx
+            for patch_idx in sorted(coverage_by_patch)
+            if retained_profile_count(patch_idx, local_holdouts_by_patch[patch_idx])
+            >= self.min_input_profiles
+        ]
+        if not qualifying:
+            raise RuntimeError(
+                "No EN4 candidate validation patch retains at least "
+                f"{self.min_input_profiles} QC-valid input profiles after holdout."
+            )
+
+        rng = np.random.default_rng(self.random_seed)
+        randomized_candidates = rng.permutation(np.asarray(qualifying, dtype=np.int64))
+        chosen: list[int] = []
+        heldout_locations: set[tuple[int, int]] = set()
+        retained_counts: dict[int, int] = {}
+        for raw_patch_idx in randomized_candidates.tolist():
+            patch_idx = int(raw_patch_idx)
+            proposed_holdouts = heldout_locations | local_holdouts_by_patch[patch_idx]
+            proposed_patches = chosen + [patch_idx]
+            proposed_counts = {
+                selected_patch: retained_profile_count(
+                    selected_patch, proposed_holdouts
+                )
+                for selected_patch in proposed_patches
+            }
+            if min(proposed_counts.values()) < self.min_input_profiles:
+                continue
+            chosen.append(patch_idx)
+            heldout_locations = proposed_holdouts
+            retained_counts = proposed_counts
+            if len(chosen) >= limit:
+                break
+        if not chosen:
+            raise RuntimeError(
+                "No EN4 candidate validation patch satisfies the retained-profile "
+                "minimum after combining held-out locations."
+            )
+
+        holdout_df = self.candidate_df.loc[
+            [
+                (int(row.grid_row), int(row.grid_col)) in heldout_locations
+                for row in self.candidate_df.itertuples(index=False)
+            ]
+        ].copy()
         assignments: list[dict[str, Any]] = []
-        for row in self.holdout_df.to_dict(orient="records"):
+        for row in holdout_df.to_dict(orient="records"):
             location = (int(row["grid_row"]), int(row["grid_col"]))
             for batch_idx, patch_idx in enumerate(chosen):
                 if location not in coverage_by_patch[patch_idx]:
@@ -245,7 +356,23 @@ class EN4CandidateValidationCallback(pl.Callback):
                     }
                 )
                 break
-        return chosen, pd.DataFrame.from_records(assignments)
+        profile_assignments = pd.DataFrame.from_records(assignments)
+        selection_metadata = {
+            **self.candidate_metadata,
+            "candidate_patch_count": int(len(coverage_by_patch)),
+            "qualifying_patch_count": int(len(qualifying)),
+            "selected_patch_count": int(len(chosen)),
+            "selected_location_count": int(len(heldout_locations)),
+            "selected_profile_count": int(len(holdout_df)),
+            "min_input_profiles": int(self.min_input_profiles),
+            "retained_input_profile_count_min": int(min(retained_counts.values())),
+            "retained_input_profile_count_max": int(max(retained_counts.values())),
+            "retained_input_profile_count_total": int(sum(retained_counts.values())),
+            "holdout_fraction": float(self.holdout_fraction),
+            "split_seed": int(self.random_seed),
+        }
+        holdout_df.attrs.update(selection_metadata)
+        return chosen, holdout_df, profile_assignments, selection_metadata
 
     def _build_batch(self) -> dict[str, Any]:
         """Load the fixed evaluation patches through the normal validation dataset."""
@@ -257,6 +384,92 @@ class EN4CandidateValidationCallback(pl.Callback):
         if variable == "salinity":
             return salinity_normalize(mode="denorm", tensor=tensor)
         return temperature_normalize(mode="denorm", tensor=tensor)
+
+    def _image_depth_indices(self, depth_count: int) -> list[int]:
+        """Map requested image depths to unique nearest output channels."""
+        available_depths = self.depth_axis_m[: int(depth_count)]
+        indices: list[int] = []
+        for requested_depth_m in self.image_depths_m:
+            index = int(np.argmin(np.abs(available_depths - requested_depth_m)))
+            if index not in indices:
+                indices.append(index)
+        return indices
+
+    @staticmethod
+    def _shared_value_limits(*arrays: np.ndarray) -> tuple[float, float]:
+        """Return robust shared limits for physical input/reference/prediction fields."""
+        finite_parts = [values[np.isfinite(values)] for values in arrays]
+        finite_parts = [values for values in finite_parts if values.size > 0]
+        if not finite_parts:
+            return 0.0, 1.0
+        vmin, vmax = np.percentile(np.concatenate(finite_parts), [2.0, 98.0])
+        if vmax <= vmin:
+            padding = max(abs(float(vmin)) * 0.01, 1.0e-6)
+            return float(vmin - padding), float(vmax + padding)
+        return float(vmin), float(vmax)
+
+    def _reconstruction_figure(self, image_data: CandidatePatchImageData) -> plt.Figure:
+        """Build sparse-input, GLORYS, prediction, and error full-patch panels."""
+        depth_indices = self._image_depth_indices(image_data.prediction.shape[0])
+        figure, axes = plt.subplots(
+            len(depth_indices),
+            4,
+            figsize=(16.0, max(3.5, 3.4 * len(depth_indices))),
+            squeeze=False,
+        )
+        value_cmap = "viridis" if image_data.variable == "salinity" else "coolwarm"
+        units = "PSU" if image_data.variable == "salinity" else "deg C"
+        for row_index, depth_index in enumerate(depth_indices):
+            input_values = image_data.input_values[depth_index]
+            glorys = image_data.glorys[depth_index]
+            prediction = image_data.prediction[depth_index]
+            absolute_error = np.abs(prediction - glorys)
+            vmin, vmax = self._shared_value_limits(input_values, glorys, prediction)
+            finite_error = absolute_error[np.isfinite(absolute_error)]
+            error_max = (
+                float(np.percentile(finite_error, 98.0))
+                if finite_error.size > 0
+                else 1.0
+            )
+            panels = (
+                (input_values, "Sparse EN4 input", value_cmap, vmin, vmax),
+                (glorys, "GLORYS12", value_cmap, vmin, vmax),
+                (prediction, "Reconstruction", value_cmap, vmin, vmax),
+                (absolute_error, "Absolute error", "magma", 0.0, max(error_max, 1e-6)),
+            )
+            for column_index, (values, title, cmap, panel_min, panel_max) in enumerate(
+                panels
+            ):
+                axis = axes[row_index, column_index]
+                image = axis.imshow(
+                    values,
+                    cmap=cmap,
+                    vmin=panel_min,
+                    vmax=panel_max,
+                    interpolation="nearest",
+                )
+                axis.scatter(
+                    image_data.heldout_cols,
+                    image_data.heldout_rows,
+                    marker="x",
+                    s=36,
+                    linewidths=1.5,
+                    color="red",
+                    label="Held-out EN4",
+                )
+                actual_depth_m = float(self.depth_axis_m[depth_index])
+                axis.set_title(f"{title} | {actual_depth_m:g} m")
+                axis.set_xticks([])
+                axis.set_yticks([])
+                figure.colorbar(image, ax=axis, fraction=0.046, pad=0.04, label=units)
+                if row_index == 0 and column_index == 0:
+                    axis.legend(loc="best", fontsize=8)
+        figure.suptitle(
+            f"EN4 candidate full reconstruction: {image_data.variable} | "
+            f"patch {image_data.patch_number} | {image_data.date}"
+        )
+        figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.97))
+        return figure
 
     @torch.no_grad()
     def evaluate(
@@ -280,6 +493,7 @@ class EN4CandidateValidationCallback(pl.Callback):
             prediction = pl_module.predict_step(batch, batch_idx=0)
 
         results: dict[str, list[CandidateProfileResult]] = {}
+        self._latest_patch_images = {}
         fields = tuple(getattr(pl_module, "output_fields", ("temperature",)))
         for variable in fields:
             profile_values = (
@@ -303,6 +517,10 @@ class EN4CandidateValidationCallback(pl.Callback):
                 if variable == "salinity"
                 else "y_glorys_valid_mask"
             )
+            input_key = "x_salinity" if variable == "salinity" else "x"
+            input_valid_key = (
+                "x_salinity_valid_mask" if variable == "salinity" else "x_valid_mask"
+            )
             if not torch.is_tensor(predicted) or target_key not in batch:
                 continue
             glorys_target = batch.get(glorys_key)
@@ -321,6 +539,60 @@ class EN4CandidateValidationCallback(pl.Callback):
                     glorys,
                     torch.full_like(glorys, float("nan")),
                 )
+            input_values = batch.get(input_key)
+            input_valid_mask = batch.get(input_valid_key)
+            variable_images: list[CandidatePatchImageData] = []
+            if torch.is_tensor(input_values):
+                input_physical = self._denormalize_target(variable, input_values)
+                if torch.is_tensor(input_valid_mask):
+                    input_physical = torch.where(
+                        input_valid_mask.to(
+                            device=input_physical.device, dtype=torch.bool
+                        ),
+                        input_physical,
+                        torch.full_like(input_physical, float("nan")),
+                    )
+                rows = self.dataset._rows.reset_index(drop=True)
+                for batch_idx, patch_idx in enumerate(self.patch_indices):
+                    patch = rows.iloc[int(patch_idx)]
+                    y0, x0 = int(patch.grid_y0), int(patch.grid_x0)
+                    glorys_image = glorys[batch_idx]
+                    # Restrict the reconstruction panel to the same valid-ocean
+                    # support as GLORYS so land/nodata predictions are not visualized.
+                    prediction_image = torch.where(
+                        torch.isfinite(glorys_image),
+                        predicted[batch_idx],
+                        torch.full_like(predicted[batch_idx], float("nan")),
+                    )
+                    patch_holdouts = self.holdout_df.loc[
+                        self.holdout_df["grid_row"].between(
+                            y0, y0 + int(self.dataset.tile_size) - 1
+                        )
+                        & self.holdout_df["grid_col"].between(
+                            x0, x0 + int(self.dataset.tile_size) - 1
+                        )
+                    ][["grid_row", "grid_col"]].drop_duplicates()
+                    variable_images.append(
+                        CandidatePatchImageData(
+                            variable=str(variable),
+                            patch_number=int(batch_idx),
+                            date=int(patch.date),
+                            input_values=(
+                                input_physical[batch_idx].detach().float().cpu().numpy()
+                            ),
+                            prediction=(
+                                prediction_image.detach().float().cpu().numpy()
+                            ),
+                            glorys=(glorys_image.detach().float().cpu().numpy()),
+                            heldout_rows=(
+                                patch_holdouts["grid_row"].to_numpy(dtype=np.int64) - y0
+                            ),
+                            heldout_cols=(
+                                patch_holdouts["grid_col"].to_numpy(dtype=np.int64) - x0
+                            ),
+                        )
+                    )
+            self._latest_patch_images[str(variable)] = variable_images
             variable_results: list[CandidateProfileResult] = []
             for profile_row, assignment in self.profile_assignments.iterrows():
                 batch_idx = int(assignment["eval_batch_index"])
@@ -388,6 +660,13 @@ class EN4CandidateValidationCallback(pl.Callback):
                 "eligible_location_count",
                 "selected_profile_count",
                 "selected_location_count",
+                "candidate_patch_count",
+                "qualifying_patch_count",
+                "selected_patch_count",
+                "min_input_profiles",
+                "retained_input_profile_count_min",
+                "retained_input_profile_count_max",
+                "retained_input_profile_count_total",
             ):
                 if count_name in self.selection_metadata:
                     payload[f"en4_candidate_eval/{count_name}"] = int(
@@ -399,6 +678,14 @@ class EN4CandidateValidationCallback(pl.Callback):
                     summary = _metric_summary(variable_results)
                     for metric, value in summary.items():
                         payload[f"en4_candidate_eval/{variable}_{metric}"] = value
+                    for image_data in self._latest_patch_images.get(variable, []):
+                        reconstruction_figure = self._reconstruction_figure(image_data)
+                        figures.append(reconstruction_figure)
+                        payload[
+                            "en4_candidate_eval/"
+                            f"{variable}_patch_{image_data.patch_number}_"
+                            "full_reconstruction"
+                        ] = wandb.Image(reconstruction_figure)
                     if variable_results:
                         figure = _profile_figure(
                             variable_results,
