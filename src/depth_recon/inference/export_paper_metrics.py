@@ -89,6 +89,7 @@ DEFAULT_PROFILE_CHUNK_SIZE = 100_000
 DEFAULT_VALIDATION_YEAR = 2016
 DEFAULT_METRICS_MAX_DEPTH_M = 2000.0
 EN4_CANDIDATE_EVIDENCE = "no_nearby_glorys_source_candidate"
+EN4_CANDIDATE_AUDIT_STATUS = "no_spatiotemporal_candidate"
 EN4_CANDIDATE_KEY_COLUMNS = ("profile_source_file", "source_profile_idx")
 
 
@@ -950,8 +951,9 @@ def _load_en4_candidate_profile_keys(
     path: Path,
     *,
     relevant_source_files: Sequence[str],
+    audit_status: str | None = None,
 ) -> pd.MultiIndex:
-    """Load unique EN4 candidate provenance keys for relevant source files."""
+    """Load unique EN4 keys for relevant source files and optional status."""
     candidate_path = Path(path)
     if not candidate_path.is_file():
         raise FileNotFoundError(
@@ -965,10 +967,18 @@ def _load_en4_candidate_profile_keys(
             + ", ".join(missing)
         )
     source_files = sorted({str(value) for value in relevant_source_files})
+    filters = [("profile_source_file", "in", source_files)]
+    if audit_status is not None:
+        if "audit_status" not in schema_names:
+            raise ValueError(
+                "EN4 candidate profile parquet is missing required column: "
+                "audit_status"
+            )
+        filters.insert(0, ("audit_status", "=", str(audit_status)))
     candidates = pd.read_parquet(
         candidate_path,
         columns=list(EN4_CANDIDATE_KEY_COLUMNS),
-        filters=[("profile_source_file", "in", source_files)],
+        filters=filters,
     )
     candidates["profile_source_file"] = candidates["profile_source_file"].astype(str)
     candidates["source_profile_idx"] = pd.to_numeric(
@@ -983,6 +993,7 @@ def load_en4_candidate_profiles(
     context: DatasetContext,
     date_value: int,
     candidate_profiles_path: Path | None = None,
+    audit_status: str | None = None,
     profile_store: ArgoGeoTIFFProfileStore | None = None,
 ) -> pd.DataFrame:
     """Load usable EN4/ARGO profiles, optionally restricted by provenance keys."""
@@ -1018,6 +1029,7 @@ def load_en4_candidate_profiles(
             candidate_keys = _load_en4_candidate_profile_keys(
                 Path(candidate_profiles_path),
                 relevant_source_files=profile_source_files.tolist(),
+                audit_status=audit_status,
             )
             profile_keys = pd.MultiIndex.from_arrays(
                 [profile_source_files, source_profile_indices],
@@ -1122,6 +1134,7 @@ def load_en4_candidate_profiles(
                 if candidate_profiles_path is None
                 else str(Path(candidate_profiles_path).resolve())
             ),
+            "audit_status_filter": audit_status,
             "eligible_profile_count": int(profile_indices.size),
             "eligible_location_count": int(len(loc_df)),
         }

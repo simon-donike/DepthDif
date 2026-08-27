@@ -36,6 +36,7 @@ from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.inference.export_paper_metrics import (
+    EN4_CANDIDATE_AUDIT_STATUS,
     load_en4_candidate_profiles,
     load_dataset_context,
 )
@@ -102,6 +103,7 @@ def build_en4_candidate_validation_callback(
         context=context,
         date_value=dates[0],
         candidate_profiles_path=candidate_path,
+        audit_status=EN4_CANDIDATE_AUDIT_STATUS,
         profile_store=val_dataset.argo_store,
     )
     return EN4CandidateValidationCallback(
