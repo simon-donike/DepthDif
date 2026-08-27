@@ -47,6 +47,31 @@ def _finite_mean_profile(
     )
 
 
+def _finite_mean_absolute_error(
+    prediction: np.ndarray | torch.Tensor,
+    reference: np.ndarray | torch.Tensor,
+    *,
+    depth_dimension: int,
+) -> np.ndarray:
+    """Average absolute prediction error over finite paired values by depth."""
+    if torch.is_tensor(prediction):
+        prediction_np = prediction.detach().float().cpu().numpy()
+    else:
+        prediction_np = np.asarray(prediction, dtype=np.float64)
+    if torch.is_tensor(reference):
+        reference_np = reference.detach().float().cpu().numpy()
+    else:
+        reference_np = np.asarray(reference, dtype=np.float64)
+    if prediction_np.shape != reference_np.shape:
+        raise ValueError(
+            "Prediction and reference profiles must have the same shape: "
+            f"{prediction_np.shape} != {reference_np.shape}."
+        )
+    valid = np.isfinite(prediction_np) & np.isfinite(reference_np)
+    error = np.where(valid, np.abs(prediction_np - reference_np), np.nan)
+    return _finite_mean_profile(error, depth_dimension=depth_dimension)
+
+
 def log_wandb_average_depth_profiles(
     *,
     logger: Any,
@@ -122,6 +147,90 @@ def log_wandb_average_depth_profiles(
                 linewidth=1.8,
             )
         axis.set_xlabel(value_label)
+        axis.set_ylabel(depth_label)
+        axis.set_title(title)
+        axis.invert_yaxis()
+        axis.grid(True, alpha=0.25)
+        axis.legend(loc="best")
+        figure.tight_layout()
+        experiment.log({f"{prefix}/{image_key}": wandb.Image(figure)})
+    finally:
+        if figure is not None:
+            plt.close(figure)
+
+
+def log_wandb_average_depth_errors(
+    *,
+    logger: Any,
+    predictions: dict[str, np.ndarray | torch.Tensor],
+    reference: np.ndarray | torch.Tensor,
+    depth_axis_m: np.ndarray | torch.Tensor | None = None,
+    depth_dimension: int = 1,
+    prefix: str = "val_imgs",
+    image_key: str = "average_absolute_error_by_depth",
+    error_label: str = "Mean absolute error",
+    title: str = "Average absolute error by depth",
+) -> None:
+    """Log depth-wise mean absolute errors against one reference profile set."""
+    if logger is None or not hasattr(logger, "experiment") or not predictions:
+        return
+    experiment = logger.experiment
+    if not hasattr(experiment, "log"):
+        return
+    try:
+        import wandb
+    except Exception:
+        return
+
+    mean_errors = {
+        str(label): _finite_mean_absolute_error(
+            values, reference, depth_dimension=depth_dimension
+        )
+        for label, values in predictions.items()
+    }
+    error_sizes = {int(values.size) for values in mean_errors.values()}
+    if len(error_sizes) != 1:
+        raise ValueError("Average error traces must share the same depth dimension.")
+    error_size = next(iter(error_sizes))
+    if depth_axis_m is None:
+        depth_values = np.arange(error_size, dtype=np.float64)
+        depth_label = "Depth level index"
+    else:
+        if torch.is_tensor(depth_axis_m):
+            depth_values = depth_axis_m.detach().float().cpu().numpy().reshape(-1)
+        else:
+            depth_values = np.asarray(depth_axis_m, dtype=np.float64).reshape(-1)
+        if int(depth_values.size) != error_size:
+            raise ValueError(
+                "depth_axis_m must match the average error depth dimension: "
+                f"{int(depth_values.size)} != {error_size}."
+            )
+        if not bool(np.all(np.isfinite(depth_values))):
+            raise ValueError("depth_axis_m must contain only finite meter values.")
+        if bool(np.any(depth_values < 0.0)) or bool(
+            np.any(np.diff(depth_values) < 0.0)
+        ):
+            raise ValueError(
+                "depth_axis_m must contain non-negative, monotonically increasing "
+                "meter values."
+            )
+        depth_label = "Depth (m)"
+
+    colors = {"Prediction": "tab:orange", "GLORYS": "black"}
+    figure = None
+    try:
+        figure, axis = plt.subplots(1, 1, figsize=(6.5, 8.0))
+        for label, mean_error in mean_errors.items():
+            if not bool(np.any(np.isfinite(mean_error))):
+                continue
+            axis.plot(
+                mean_error,
+                depth_values,
+                label=label,
+                color=colors.get(label),
+                linewidth=1.8,
+            )
+        axis.set_xlabel(error_label)
         axis.set_ylabel(depth_label)
         axis.set_title(title)
         axis.invert_yaxis()
