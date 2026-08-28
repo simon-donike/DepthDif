@@ -89,6 +89,7 @@ DEFAULT_PROFILE_CHUNK_SIZE = 100_000
 DEFAULT_VALIDATION_YEAR = 2016
 DEFAULT_METRICS_MAX_DEPTH_M = 2000.0
 EN4_CANDIDATE_EVIDENCE = "no_nearby_glorys_source_candidate"
+EN4_CANDIDATE_AUDIT_STATUS = "no_spatiotemporal_candidate"
 EN4_CANDIDATE_KEY_COLUMNS = ("profile_source_file", "source_profile_idx")
 
 
@@ -950,8 +951,10 @@ def _load_en4_candidate_profile_keys(
     path: Path,
     *,
     relevant_source_files: Sequence[str],
+    audit_status: str | None = None,
+    date_year: int | None = None,
 ) -> pd.MultiIndex:
-    """Load unique EN4 candidate provenance keys for relevant source files."""
+    """Load unique EN4 keys for relevant files, status, and optional year."""
     candidate_path = Path(path)
     if not candidate_path.is_file():
         raise FileNotFoundError(
@@ -965,11 +968,30 @@ def _load_en4_candidate_profile_keys(
             + ", ".join(missing)
         )
     source_files = sorted({str(value) for value in relevant_source_files})
+    filters = [("profile_source_file", "in", source_files)]
+    if audit_status is not None:
+        if "audit_status" not in schema_names:
+            raise ValueError(
+                "EN4 candidate profile parquet is missing required column: "
+                "audit_status"
+            )
+        filters.insert(0, ("audit_status", "=", str(audit_status)))
+    columns = list(EN4_CANDIDATE_KEY_COLUMNS)
+    if date_year is not None:
+        if "datetime_utc" not in schema_names:
+            raise ValueError(
+                "EN4 candidate profile parquet is missing required column: "
+                "datetime_utc"
+            )
+        columns.append("datetime_utc")
     candidates = pd.read_parquet(
         candidate_path,
-        columns=list(EN4_CANDIDATE_KEY_COLUMNS),
-        filters=[("profile_source_file", "in", source_files)],
+        columns=columns,
+        filters=filters,
     )
+    if date_year is not None:
+        candidate_dates = pd.to_datetime(candidates["datetime_utc"], utc=True)
+        candidates = candidates.loc[candidate_dates.dt.year.eq(int(date_year))]
     candidates["profile_source_file"] = candidates["profile_source_file"].astype(str)
     candidates["source_profile_idx"] = pd.to_numeric(
         candidates["source_profile_idx"], errors="raise"
@@ -981,21 +1003,33 @@ def _load_en4_candidate_profile_keys(
 def load_en4_candidate_profiles(
     *,
     context: DatasetContext,
-    date_value: int,
+    date_value: int | None = None,
+    date_year: int | None = None,
     candidate_profiles_path: Path | None = None,
+    audit_status: str | None = None,
     profile_store: ArgoGeoTIFFProfileStore | None = None,
 ) -> pd.DataFrame:
-    """Load usable EN4/ARGO profiles, optionally restricted by provenance keys."""
+    """Load usable EN4/ARGO profiles for one date or an entire year."""
+    if date_value is None and date_year is None:
+        raise ValueError("Either date_value or date_year must be provided.")
+    if date_value is not None and date_year is not None:
+        raise ValueError("date_value and date_year are mutually exclusive.")
     owns_store = profile_store is None
     store = profile_store or ArgoGeoTIFFProfileStore(
         _manifest_argo_path(context), include_salinity=True
     )
     try:
-        all_indices = np.flatnonzero(
-            np.asarray(store.target_date, dtype=np.int32) == int(date_value)
-        ).astype(np.int64)
+        target_dates = np.asarray(store.target_date, dtype=np.int32)
+        if date_value is not None:
+            date_mask = target_dates == int(date_value)
+        else:
+            date_mask = (target_dates // 10000) == int(date_year)
+        all_indices = np.flatnonzero(date_mask).astype(np.int64)
         if all_indices.size == 0:
-            raise RuntimeError(f"No EN4/ARGO profiles found for date {date_value}.")
+            selection_label = (
+                f"date {date_value}" if date_value is not None else f"year {date_year}"
+            )
+            raise RuntimeError(f"No EN4/ARGO profiles found for {selection_label}.")
         group = store._ensure_zarr_group()
         profile_source_files: np.ndarray | None = None
         source_profile_indices: np.ndarray | None = None
@@ -1018,6 +1052,8 @@ def load_en4_candidate_profiles(
             candidate_keys = _load_en4_candidate_profile_keys(
                 Path(candidate_profiles_path),
                 relevant_source_files=profile_source_files.tolist(),
+                audit_status=audit_status,
+                date_year=date_year,
             )
             profile_keys = pd.MultiIndex.from_arrays(
                 [profile_source_files, source_profile_indices],
@@ -1028,8 +1064,13 @@ def load_en4_candidate_profiles(
             profile_source_files = profile_source_files[candidate_mask]
             source_profile_indices = source_profile_indices[candidate_mask]
             if all_indices.size == 0:
+                selection_label = (
+                    f"date {date_value}"
+                    if date_value is not None
+                    else f"year {date_year}"
+                )
                 raise RuntimeError(
-                    f"No EN4/ARGO profiles for date {date_value} matched the "
+                    f"No EN4/ARGO profiles for {selection_label} matched the "
                     "candidate profile parquet."
                 )
         temp_valid = np.asarray(
@@ -1052,6 +1093,7 @@ def load_en4_candidate_profiles(
         sal_counts = sal_valid.sum(axis=1).astype(np.int64)
         usable = (temp_counts > 0) | (sal_counts > 0)
         profile_indices = all_indices[usable]
+        target_dates = target_dates[profile_indices]
         if profile_source_files is not None:
             profile_source_files = profile_source_files[usable]
         if source_profile_indices is not None:
@@ -1065,7 +1107,7 @@ def load_en4_candidate_profiles(
         rows = np.asarray(store.grid_row[profile_indices], dtype=np.int64)
         cols = np.asarray(store.grid_col[profile_indices], dtype=np.int64)
         loc_df = pd.DataFrame(
-            {"date": int(date_value), "grid_row": rows, "grid_col": cols}
+            {"date": target_dates, "grid_row": rows, "grid_col": cols}
         ).drop_duplicates(ignore_index=True)
         records: list[dict[str, Any]] = []
         temp_counts = temp_counts[usable]
@@ -1078,7 +1120,7 @@ def load_en4_candidate_profiles(
             )
             records.append(
                 {
-                    "date": int(date_value),
+                    "date": int(target_dates[int(local_idx)]),
                     "grid_row": grid_row,
                     "grid_col": grid_col,
                     "lon": float(lon),
@@ -1122,6 +1164,7 @@ def load_en4_candidate_profiles(
                 if candidate_profiles_path is None
                 else str(Path(candidate_profiles_path).resolve())
             ),
+            "audit_status_filter": audit_status,
             "eligible_profile_count": int(profile_indices.size),
             "eligible_location_count": int(len(loc_df)),
         }

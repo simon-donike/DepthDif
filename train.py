@@ -36,6 +36,7 @@ from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.inference.export_paper_metrics import (
+    EN4_CANDIDATE_AUDIT_STATUS,
     load_en4_candidate_profiles,
     load_dataset_context,
 )
@@ -53,7 +54,6 @@ from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
     PIXEL_SCENARIOS,
     load_pixel_training_config,
-    load_yaml,
 )
 
 PIXEL_TRAINING_CONFIG_PATH = DEFAULT_PIXEL_TRAINING_CONFIG_PATH
@@ -83,25 +83,12 @@ def build_en4_candidate_validation_callback(
             f"EN4 candidate profile parquet does not exist: {candidate_path}"
         )
     validation_year = int(data_cfg.get("split", {}).get("val_year", 2016))
-    iso_week = int(validation_cfg.get("iso_week", 25))
-    dates = sorted(
-        {
-            int(value)
-            for value in val_dataset._rows["date"].to_numpy(dtype=np.int64).tolist()
-            if datetime.strptime(str(int(value)), "%Y%m%d").isocalendar()[:2]
-            == (validation_year, iso_week)
-        }
-    )
-    if len(dates) != 1:
-        raise RuntimeError(
-            "EN4 candidate validation expected exactly one dataset target date for "
-            f"ISO {validation_year}-W{iso_week:02d}, found {dates}."
-        )
     context = load_dataset_context(val_dataset.root_dir)
     candidate_df = load_en4_candidate_profiles(
         context=context,
-        date_value=dates[0],
+        date_year=validation_year,
         candidate_profiles_path=candidate_path,
+        audit_status=EN4_CANDIDATE_AUDIT_STATUS,
         profile_store=val_dataset.argo_store,
     )
     return EN4CandidateValidationCallback(
@@ -109,8 +96,17 @@ def build_en4_candidate_validation_callback(
         candidate_df=candidate_df,
         holdout_fraction=float(validation_cfg.get("holdout_fraction", 0.2)),
         min_input_profiles=int(validation_cfg.get("min_input_profiles", 8)),
-        max_patches=int(validation_cfg.get("max_patches", 1)),
-        max_profiles_to_plot=int(validation_cfg.get("max_profiles_to_plot", 6)),
+        max_patches=(
+            None
+            if validation_cfg.get("max_patches") is None
+            else int(validation_cfg["max_patches"])
+        ),
+        max_profiles_to_plot=(
+            None
+            if validation_cfg.get("max_profiles_to_plot") is None
+            else int(validation_cfg["max_profiles_to_plot"])
+        ),
+        patch_batch_size=int(validation_cfg.get("patch_batch_size", 8)),
         random_seed=int(validation_cfg.get("seed", 7)),
         image_depths_m=tuple(
             float(value)

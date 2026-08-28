@@ -28,6 +28,7 @@ from depth_recon.utils.normalizations import (
 from depth_recon.utils.stretching import minmax_stretch
 from depth_recon.utils.validation_denoise import (
     average_observed_argo_pixels_per_image,
+    log_wandb_average_depth_errors,
     build_evenly_spaced_capture_steps,
     log_wandb_average_depth_profiles,
     log_wandb_diffusion_schedule_profile,
@@ -338,6 +339,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Cached validation mini-batch used for one validation-end full
         # reverse-diffusion reconstruction pass.
         self._cached_val_example: dict[str, Any] | None = None
+        self._validation_en4_error_sums: dict[str, np.ndarray] | None = None
+        self._validation_en4_error_counts: np.ndarray | None = None
         self._logged_schedule_profile_in_sanity = False
 
     @classmethod
@@ -2467,6 +2470,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Reset cache every validation run to avoid carrying stale tensors forward.
         """Reset full-reconstruction state for the new validation epoch."""
         self._cached_val_example = None
+        self._validation_en4_error_sums = None
+        self._validation_en4_error_counts = None
         if not self.full_reconstruction_logging_enabled:
             self._cached_val_example = None
             return
@@ -2488,7 +2493,119 @@ class PixelDiffusionConditional(pl.LightningModule):
                     total_steps=int(sampler_for_profile.num_timesteps),
                     prefix="val_imgs",
                 )
-                self._logged_schedule_profile_in_sanity = True
+            self._logged_schedule_profile_in_sanity = True
+
+    @torch.no_grad()
+    def _accumulate_validation_en4_errors(
+        self, batch: dict[str, Any], prediction: dict[str, Any]
+    ) -> None:
+        """Accumulate sparse EN4 errors for one complete validation batch."""
+        if "temperature" not in self.output_fields:
+            return
+        x = batch.get("x")
+        x_valid_mask = batch.get("x_valid_mask")
+        if not torch.is_tensor(x) or not torch.is_tensor(x_valid_mask):
+            return
+        predicted = prediction.get("y_hat_temperature_denorm")
+        if predicted is None and len(self.output_fields) == 1:
+            predicted = prediction.get("y_hat_denorm")
+        if not torch.is_tensor(predicted):
+            return
+        reference = temperature_normalize(mode="denorm", tensor=x)
+        if predicted.shape != reference.shape:
+            return
+        reference_mask = self._align_valid_mask_to_reference(
+            x_valid_mask.to(dtype=reference.dtype, device=reference.device),
+            reference,
+            mask_name="x_valid_mask",
+        )
+        glorys_source = batch.get("y_glorys")
+        glorys_valid_mask = batch.get("y_glorys_valid_mask")
+        if glorys_source is None:
+            glorys_source = batch.get("y")
+            glorys_valid_mask = batch.get("y_valid_mask")
+        if not torch.is_tensor(glorys_source):
+            return
+        glorys = temperature_normalize(mode="denorm", tensor=glorys_source)
+        if glorys.shape != reference.shape:
+            return
+        if torch.is_tensor(glorys_valid_mask):
+            glorys_mask = self._align_valid_mask_to_reference(
+                glorys_valid_mask.to(dtype=glorys.dtype, device=glorys.device),
+                glorys,
+                mask_name="y_glorys_valid_mask",
+            )
+        else:
+            glorys_mask = torch.ones_like(glorys)
+        valid = (
+            (reference_mask > 0.5)
+            & (glorys_mask > 0.5)
+            & torch.isfinite(reference)
+            & torch.isfinite(predicted)
+            & torch.isfinite(glorys)
+        )
+        prediction_error = torch.where(
+            valid, torch.abs(predicted - reference), torch.zeros_like(reference)
+        )
+        glorys_error = torch.where(
+            valid, torch.abs(glorys - reference), torch.zeros_like(reference)
+        )
+        batch_sums = {
+            "Prediction": prediction_error.sum(dim=(0, 2, 3)).detach().cpu().numpy(),
+            "GLORYS": glorys_error.sum(dim=(0, 2, 3)).detach().cpu().numpy(),
+        }
+        batch_counts = valid.sum(dim=(0, 2, 3)).detach().cpu().numpy()
+        if self._validation_en4_error_sums is None:
+            self._validation_en4_error_sums = {
+                label: np.zeros_like(values, dtype=np.float64)
+                for label, values in batch_sums.items()
+            }
+            self._validation_en4_error_counts = np.zeros_like(
+                batch_counts, dtype=np.float64
+            )
+        for label, values in batch_sums.items():
+            self._validation_en4_error_sums[label] += values
+        self._validation_en4_error_counts += batch_counts
+
+    def _log_all_validation_en4_errors(self) -> None:
+        """Log the main EN4 error plot aggregated over all validation batches."""
+        if (
+            self._validation_en4_error_sums is None
+            or self._validation_en4_error_counts is None
+        ):
+            return
+        sum_tensors = {
+            label: torch.as_tensor(values, device=self.device, dtype=torch.float64)
+            for label, values in self._validation_en4_error_sums.items()
+        }
+        counts = torch.as_tensor(
+            self._validation_en4_error_counts, device=self.device, dtype=torch.float64
+        )
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            for values in sum_tensors.values():
+                torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(counts, op=torch.distributed.ReduceOp.SUM)
+        mean_errors = {
+            label: torch.where(
+                counts > 0.0,
+                values / counts.clamp_min(1.0),
+                torch.full_like(values, float("nan")),
+            )
+            for label, values in sum_tensors.items()
+        }
+        log_wandb_average_depth_errors(
+            logger=self.logger,
+            predictions=mean_errors,
+            reference=torch.zeros_like(next(iter(mean_errors.values()))),
+            depth_axis_m=self._validation_depth_axis_m(
+                depth_count=int(counts.numel())
+            ),
+            depth_dimension=0,
+            prefix="val_imgs",
+            image_key="average_temperature_absolute_error_vs_en4_by_depth",
+            error_label="Mean absolute error vs EN4 (deg C)",
+            title="Average validation temperature absolute error vs EN4",
+        )
 
     def _get_ema_callback(self) -> Any | None:
         """Return the active EMA callback, if one is attached to the trainer."""
@@ -3062,6 +3179,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         primary_profile_x_label = (
             "Salinity (PSU)" if primary_is_salinity else "Temperature (deg C)"
         )
+        depth_axis_m = self._validation_depth_axis_m(
+            depth_count=int(y_hat_denorm_for_plot.size(1))
+        )
 
         # This is the one expensive full reconstruction for this validation run.
         log_wandb_conditional_reconstruction_grid(
@@ -3124,9 +3244,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 ),
                 sample_idx=0,
                 profile_x_label=primary_profile_x_label,
-            )
-            depth_axis_m = self._validation_depth_axis_m(
-                depth_count=int(y_hat_denorm_for_plot.size(1))
+                depth_axis_m=depth_axis_m,
             )
             log_wandb_average_depth_profiles(
                 logger=self.logger,
@@ -3262,6 +3380,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             self._cached_val_example = None
             return
         self._run_single_image_full_reconstruction_and_log()
+        self._log_all_validation_en4_errors()
         self._cached_val_example = None
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -3652,6 +3771,16 @@ class PixelDiffusionConditional(pl.LightningModule):
                 sync_dist=True,
                 batch_size=y.size(0),
             )
+
+        if self.full_reconstruction_logging_enabled and "temperature" in self.output_fields:
+            try:
+                full_prediction = self.predict_step(batch, batch_idx=batch_idx)
+                self._accumulate_validation_en4_errors(batch, full_prediction)
+            except Exception as exc:
+                warnings.warn(
+                    f"All-batch EN4 validation error accumulation failed: {exc}",
+                    stacklevel=2,
+                )
 
         if (
             self.full_reconstruction_logging_enabled
