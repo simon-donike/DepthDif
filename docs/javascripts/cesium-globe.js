@@ -1272,6 +1272,9 @@
     viewer.resolutionScale = window.devicePixelRatio || 1;
     addBaseMap(viewer, config, configUrl);
     viewer.scene.globe.enableLighting = false;
+    viewer.scene.globe.showGroundAtmosphere = false;
+    viewer.scene.skyAtmosphere.show = false;
+    viewer.scene.fog.enabled = false;
     viewer.clock.shouldAnimate = false;
     return viewer;
   }
