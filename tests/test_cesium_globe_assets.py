@@ -766,6 +766,8 @@ class TestCesiumGlobeAssets(unittest.TestCase):
         self.assertIn("Salinity · GLORYS reference", globe_script)
         self.assertIn("Salinity · DepthDif prediction", globe_script)
         self.assertIn("runRecordingLoopRotation", globe_script)
+        self.assertIn("preloadRecordingDepthLevels", globe_script)
+        self.assertIn("state.recordingMode ? true : visible", globe_script)
         self.assertIn("Full-depth ARGO profile comparison", globe_script)
         self.assertIn("findRecordingPointWithPng", globe_script)
         self.assertIn('id="globe-recording-depth"', html)

@@ -166,6 +166,10 @@
   display: none;
 }
 
+.globe-stage.is-recording-tour .globe-point-legend__item:nth-child(2) {
+  display: none;
+}
+
 .globe-stage.is-recording-tour .globe-canvas {
   pointer-events: none;
 }

@@ -40,7 +40,7 @@
   const BACKGROUND_PRELOAD_DELAY_MS = 180;
   const RECORDING_SLIDE_DURATION_MS = 8500;
   const RECORDING_PROFILE_DURATION_MS = 10000;
-  const RECORDING_DEPTH_DURATION_MS = 3500;
+  const RECORDING_DEPTH_DURATION_MS = 1500;
   const RECORDING_LOOP_ROTATION_DURATION_MS = 24000;
   const RECORDING_OVERVIEW_HEIGHT_SCALE = 1.3;
   const RECORDING_POINT_HEIGHT_M = 450000.0;
@@ -827,14 +827,14 @@
     return markerKindForEntity(entity, now) === "full_depth_profile";
   }
 
-  function styleArgoSampleEntities(dataSource) {
+  function styleArgoSampleEntities(dataSource, unifiedMarkers) {
     const now = Cesium.JulianDate.now();
     dataSource.entities.values.forEach(function (entity) {
       if (!entity.billboard) {
         return;
       }
 
-      const isFullDepthProfile = entityHasFullDepthGraph(entity, now);
+      const isFullDepthProfile = !unifiedMarkers && entityHasFullDepthGraph(entity, now);
       stylePointEntity(entity, {
         image: isFullDepthProfile ? FULL_SAMPLE_MARKER_IMAGE : ARGO_POINT_MARKER_IMAGE,
         width: isFullDepthProfile ? 34 : 24,
@@ -1937,7 +1937,7 @@
       strokeWidth: 1,
       credit: activeConfig.credits && activeConfig.credits.points,
     });
-    styleArgoSampleEntities(dataSource);
+    styleArgoSampleEntities(dataSource, state.recordingMode);
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.pointsToggle.checked;
     updateArgoLegendVisibility(state);
@@ -2217,7 +2217,7 @@
     }
   }
 
-  async function reloadRasterDepthLayers(state) {
+  async function reloadRasterDepthLayers(state, preservePreviousUntilLoaded) {
     const imageryLayers = state.viewer.imageryLayers;
     const showPrediction = state.elements.predictionToggle.checked;
     const showGroundTruth = state.elements.groundTruthToggle.checked;
@@ -2225,23 +2225,29 @@
     const showUncertainty = state.elements.uncertaintyToggle.checked;
     const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
     state.rasterDepthReloadToken = rasterDepthReloadToken;
+    const previousLayers = {
+      predictionLayer: state.predictionLayer,
+      groundTruthLayer: state.groundTruthLayer,
+      absoluteErrorLayer: state.absoluteErrorLayer,
+      uncertaintyLayer: state.uncertaintyLayer,
+    };
 
-    if (state.predictionLayer) {
+    if (state.predictionLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.predictionLayer, true);
-      state.predictionLayer = null;
     }
-    if (state.groundTruthLayer) {
+    if (state.groundTruthLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.groundTruthLayer, true);
-      state.groundTruthLayer = null;
     }
-    if (state.absoluteErrorLayer) {
+    if (state.absoluteErrorLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.absoluteErrorLayer, true);
-      state.absoluteErrorLayer = null;
     }
-    if (state.uncertaintyLayer) {
+    if (state.uncertaintyLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.uncertaintyLayer, true);
-      state.uncertaintyLayer = null;
     }
+    state.predictionLayer = null;
+    state.groundTruthLayer = null;
+    state.absoluteErrorLayer = null;
+    state.uncertaintyLayer = null;
     state.predictionLayerLoadPromise = null;
     state.groundTruthLayerLoadPromise = null;
     state.absoluteErrorLayerLoadPromise = null;
@@ -2301,7 +2307,23 @@
       enforceOverlayOrder(state);
       updateAbsoluteErrorLegend(state);
       requestRender(state);
+      if (preservePreviousUntilLoaded) {
+        await waitForRecordingTiles(state, 6000);
+        Object.keys(previousLayers).forEach(function (layerKey) {
+          const previousLayer = previousLayers[layerKey];
+          if (previousLayer && previousLayer !== state[layerKey]) {
+            imageryLayers.remove(previousLayer, true);
+          }
+        });
+      }
     } catch (error) {
+      if (preservePreviousUntilLoaded && rasterDepthReloadToken === state.rasterDepthReloadToken) {
+        Object.keys(previousLayers).forEach(function (layerKey) {
+          if (!state[layerKey] && previousLayers[layerKey]) {
+            state[layerKey] = previousLayers[layerKey];
+          }
+        });
+      }
       console.error(error);
     }
   }
@@ -2382,6 +2404,8 @@
     if (!elements.pointsToggle) {
       return Promise.resolve(null);
     }
+    // Recording mode uses one persistent location layer across every scene.
+    visible = state.recordingMode ? true : visible;
     elements.pointsRadios.forEach(function (radio) {
       radio.checked = radio.value === (visible ? "on" : "off");
     });
@@ -2554,7 +2578,7 @@
 
   async function runRecordingDepthStep(state, step, stepNumber, stepCount, runId) {
     closeProfilePopup(state);
-    setSpinEnabled(state, false);
+    setSpinEnabled(state, true);
     await selectRecordingVariable(state, "temperature");
     await setRecordingPointsVisible(state, false);
     const depthLevels = getDepthLevels(activeVariableConfig(state))
@@ -2579,7 +2603,7 @@
       updateRecordingDepthVisualization(state, depthLevel, index, depthLevels.length);
       state.selectedDepthIndex = entry.selectedDepthIndex;
       updateDepthControl(state);
-      await reloadRasterDepthLayers(state);
+      await reloadRasterDepthLayers(state, true);
       await selectRecordingRaster(state, "prediction");
       await waitForRecordingTiles(state, 6000);
       await recordingTourDelay(state, RECORDING_DEPTH_DURATION_MS);
@@ -2587,7 +2611,7 @@
     // Return later overview scenes to the familiar surface layer after the sweep.
     state.selectedDepthIndex = 0;
     updateDepthControl(state);
-    await reloadRasterDepthLayers(state);
+    await reloadRasterDepthLayers(state, true);
     await selectRecordingRaster(state, "prediction");
     await waitForRecordingTiles(state, 6000);
     if (state.elements.recordingDepth) {
@@ -2612,9 +2636,29 @@
     if (!recordingTourIsCurrent(state, runId)) {
       return;
     }
-    // Keep the tour's only complete rotation deterministic in the loop-closing scene.
-    setSpinEnabled(state, false);
+    setSpinEnabled(state, true);
     await recordingTourDelay(state, step.duration);
+  }
+
+  async function preloadRecordingDepthLevels(state) {
+    await selectRecordingVariable(state, "temperature");
+    await selectRecordingRaster(state, "prediction");
+    const depthLevels = getDepthLevels(activeVariableConfig(state));
+    for (let index = 0; index < depthLevels.length; index += 1) {
+      if (!depthLevels[index].prediction_tiles_url) {
+        continue;
+      }
+      state.selectedDepthIndex = index;
+      updateDepthControl(state);
+      await reloadRasterDepthLayers(state);
+      await selectRecordingRaster(state, "prediction");
+      await waitForRecordingTiles(state, 6000);
+    }
+    state.selectedDepthIndex = 0;
+    updateDepthControl(state);
+    await reloadRasterDepthLayers(state);
+    await selectRecordingRaster(state, "prediction");
+    await waitForRecordingTiles(state, 6000);
   }
 
   function runRecordingLoopRotation(state, runId) {
@@ -2869,6 +2913,14 @@
         if (await selectRecordingRaster(state, rasterKey)) {
           await waitForRecordingTiles(state, 6000);
         }
+      }
+      if (variableKey === "temperature") {
+        updateRecordingPanel(
+          state,
+          "Preparing temperature depths…",
+          "Warming every depth layer to keep the recorded sweep smooth."
+        );
+        await preloadRecordingDepthLevels(state);
       }
     }
 

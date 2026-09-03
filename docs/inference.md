@@ -130,6 +130,8 @@ ARGO location only when its full-profile comparison image is available. When a
 salinity export is present, its GLORYS and DepthDif views follow at the end. A
 final full rotation restores the opening temperature/GLORYS frame so the trimmed
 presentation can loop seamlessly.
+All ARGO locations remain visible with one shared marker style during recording,
+and the temperature depth tiles are preloaded before the countdown.
 
 Append the usual encoded `config` query parameter when recording a different
 manifest, for example `/spatial-globe/?recording=1&config=<url>`.
