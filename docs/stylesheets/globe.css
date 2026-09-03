@@ -762,6 +762,24 @@
   color: rgba(215, 233, 247, 0.84);
 }
 
+.globe-mobile-continue {
+  min-height: 48px;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(124, 200, 255, 0.46);
+  border-radius: 12px;
+  color: #03111c;
+  background: #7cc8ff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.globe-mobile-continue:hover,
+.globe-mobile-continue:focus-visible {
+  background: #a8dcff;
+}
+
 @media screen and (max-width: 900px) {
   .standalone-globe-shell {
     padding: 0;

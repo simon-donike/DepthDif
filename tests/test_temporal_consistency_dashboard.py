@@ -812,6 +812,8 @@ class TestTemporalConsistencyDashboard(unittest.TestCase):
         self.assertIn("Temporal Globe", html)
         self.assertIn('href="../analysis/">Back to Analysis</a>', html)
         self.assertIn('id="temporal-globe-week-slider"', html)
+        self.assertIn('id="globe-mobile-continue"', html)
+        self.assertIn("mobileOverrideAccepted", loader)
         self.assertIn('id="temporal-globe-play-toggle"', html)
         self.assertIn('name="temporal-globe-variable"', html)
         self.assertIn('name="temporal-globe-layer"', html)

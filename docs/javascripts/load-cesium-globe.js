@@ -9,6 +9,7 @@
   const CESIUM_CSS_LINK_ID = "depthdif-cesium-css";
   const CESIUM_APP_SCRIPT_ID = "depthdif-cesium-app";
   const MOBILE_BLOCK_MEDIA_QUERY = "(max-width: 900px), (pointer: coarse) and (max-width: 1024px)";
+  let mobileOverrideAccepted = false;
 
   function resolveLoaderScriptBaseUrl() {
     if (document.currentScript && document.currentScript.src) {
@@ -52,6 +53,9 @@
   }
 
   function shouldBlockOnMobile() {
+    if (mobileOverrideAccepted) {
+      return false;
+    }
     if (isLikelyIPad()) {
       return true;
     }
@@ -75,6 +79,18 @@
       return;
     }
     container.hidden = !visible;
+  }
+
+  function bindMobileOverride() {
+    const continueButton = document.getElementById("globe-mobile-continue");
+    if (!continueButton) {
+      return;
+    }
+    continueButton.onclick = function () {
+      // Keep the opt-in active when an iPad rotation triggers the resize handler.
+      mobileOverrideAccepted = true;
+      maybeInitCesiumGlobe();
+    };
   }
 
   function ensureCesiumStylesheet() {
@@ -181,6 +197,7 @@
     if (shouldBlockOnMobile()) {
       setMobileBlockVisible(true);
       setGlobeCanvasVisible(false);
+      bindMobileOverride();
       if (typeof window.destroyDepthDifCesiumGlobe === "function") {
         window.destroyDepthDifCesiumGlobe();
       }

@@ -203,14 +203,17 @@
           <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif comparison Cesium globe viewer"></div>
           <div id="globe-mobile-block" class="globe-mobile-block" hidden>
             <div class="globe-mobile-block__card">
-              <span class="globe-mobile-block__eyebrow">Desktop Only</span>
+              <span class="globe-mobile-block__eyebrow">Tablet preview</span>
               <h2 id="globe-mobile-block-title" class="globe-mobile-block__title">
-                Comparison globe visualization is disabled on mobile
+                This comparison globe works best on a desktop
               </h2>
               <p id="globe-mobile-block-text" class="globe-mobile-block__text">
-                This view is intentionally blocked on phones and tablets. Open the page on a desktop
-                or laptop to load Cesium and inspect the weekly comparison globe.
+                On a tablet it may load more slowly and some controls may feel cramped. You can still
+                continue to inspect the comparison and ARGO locations.
               </p>
+              <button id="globe-mobile-continue" class="globe-mobile-continue" type="button">
+                Continue on this device
+              </button>
               <nav class="standalone-globe-links" aria-label="Comparison globe links">
                 <a class="standalone-globe-back-link" href="../analysis/">Back to Analysis</a>
               </nav>
