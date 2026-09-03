@@ -121,13 +121,29 @@ temporal dashboards, temporal globes, and wavenumber spectra. See the
 Open `/spatial-globe/?recording=1` on a desktop to prepare a deterministic
 recording tour. The page warms the required GLORYS, prediction, error, and ARGO
 assets before showing `READY TO RECORD`. Start OBS or the operating-system
-screen recorder, select **Begin 3-second countdown**, and stop the external
+screen recorder, select **Begin 5-second countdown**, and stop the external
 recorder only when the page displays `STOP RECORDING NOW`. The countdown and
 start/stop cards provide clear trim points and audible cues; the page does not
-control the external recorder itself.
+control the external recorder itself. The main tour sweeps the available
+temperature depth layers with an on-screen depth indicator and zooms into an
+ARGO location only when its full-profile comparison image is available. When a
+salinity export is present, its GLORYS and DepthDif views follow at the end. A
+final full rotation restores the opening temperature/GLORYS frame so the trimmed
+presentation can loop seamlessly.
 
 Append the usual encoded `config` query parameter when recording a different
 manifest, for example `/spatial-globe/?recording=1&config=<url>`.
+
+Encode the saved recording at the conference iPad's 2160×1620 resolution with:
+
+```bash
+src/depth_recon/scripts/encode_conference_video.sh \
+  --input depthdif-tour.mkv \
+  --output depthdif-conference-loop.mp4
+```
+
+The encoder preserves the recording's aspect ratio and pads non-4:3 input
+instead of stretching the globe.
 
 ## Host the comparison globe
 
