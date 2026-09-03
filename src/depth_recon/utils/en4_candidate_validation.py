@@ -12,7 +12,10 @@ import torch
 from torch.utils.data import default_collate
 
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
-from depth_recon.utils.validation_denoise import log_wandb_average_depth_profiles
+from depth_recon.utils.validation_denoise import (
+    log_wandb_average_depth_errors,
+    log_wandb_average_depth_profiles,
+)
 
 
 @dataclass(frozen=True)
@@ -721,6 +724,30 @@ class EN4CandidateValidationCallback(pl.Callback):
                             title=f"Average EN4 candidate profile: {variable}",
                             error_reference_label="EN4",
                         )
+                        if variable == "temperature":
+                            log_wandb_average_depth_errors(
+                                logger=logger,
+                                predictions={
+                                    "Prediction": np.stack(
+                                        [
+                                            result.prediction
+                                            for result in variable_results
+                                        ]
+                                    ),
+                                    "GLORYS": np.stack(
+                                        [result.glorys for result in variable_results]
+                                    ),
+                                },
+                                reference=np.stack(
+                                    [result.en4 for result in variable_results]
+                                ),
+                                depth_axis_m=self.depth_axis_m,
+                                depth_dimension=1,
+                                prefix="en4_candidate_eval",
+                                image_key="temperature_average_absolute_error_by_depth",
+                                error_label="Mean absolute error vs EN4 (deg C)",
+                                title="Average temperature absolute error vs EN4",
+                            )
                 experiment.log(payload)
             finally:
                 for figure in figures:
