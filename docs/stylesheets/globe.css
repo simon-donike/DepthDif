@@ -160,6 +160,16 @@
   display: none;
 }
 
+.globe-stage.is-recording-tour .standalone-globe-header,
+.globe-stage.is-recording-tour .globe-toolbar,
+.globe-stage.is-recording-tour .globe-cinematic-exit {
+  display: none;
+}
+
+.globe-stage.is-recording-tour .globe-canvas {
+  pointer-events: none;
+}
+
 .globe-toolbar {
   position: absolute;
   bottom: 1rem;
@@ -778,6 +788,126 @@
 .globe-mobile-continue:hover,
 .globe-mobile-continue:focus-visible {
   background: #a8dcff;
+}
+
+.globe-recording-caption {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 4;
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  min-width: 16rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(124, 200, 255, 0.22);
+  border-radius: 16px;
+  background: rgba(5, 20, 32, 0.84);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+}
+
+.globe-recording-caption[hidden],
+.globe-recording-panel[hidden],
+.globe-recording-countdown[hidden] {
+  display: none !important;
+}
+
+.globe-recording-caption__dot {
+  width: 0.72rem;
+  height: 0.72rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 0.28rem rgba(239, 68, 68, 0.18);
+}
+
+.globe-recording-caption__progress {
+  display: block;
+  margin-top: 0.15rem;
+  color: rgba(215, 233, 247, 0.76);
+  font-size: 0.8rem;
+}
+
+.globe-recording-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at top, rgba(79, 195, 247, 0.2), transparent 34%),
+    rgba(3, 12, 20, 0.94);
+}
+
+.globe-recording-panel__card {
+  display: grid;
+  gap: 1rem;
+  width: min(38rem, 100%);
+  padding: 1.8rem;
+  box-sizing: border-box;
+  border: 1px solid rgba(124, 200, 255, 0.24);
+  border-radius: 24px;
+  background: rgba(5, 20, 32, 0.96);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.44);
+  text-align: center;
+}
+
+.globe-recording-panel__eyebrow {
+  color: #7cc8ff;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.globe-recording-panel__title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.8rem);
+  line-height: 1.05;
+}
+
+.globe-recording-panel__text {
+  margin: 0 auto;
+  max-width: 32rem;
+  color: rgba(215, 233, 247, 0.84);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.globe-recording-countdown {
+  color: #a8dcff;
+  font-size: clamp(5rem, 13vw, 10rem);
+  font-weight: 700;
+  line-height: 0.9;
+}
+
+.globe-recording-button {
+  min-height: 56px;
+  padding: 0.9rem 1.25rem;
+  border: 1px solid rgba(124, 200, 255, 0.46);
+  border-radius: 14px;
+  color: #03111c;
+  background: #7cc8ff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.globe-recording-button:hover,
+.globe-recording-button:focus-visible {
+  background: #a8dcff;
+}
+
+.globe-recording-panel.is-start-signal .globe-recording-panel__title {
+  color: #86efac;
+}
+
+.globe-recording-panel.is-stop-signal .globe-recording-panel__title {
+  color: #fca5a5;
 }
 
 @media screen and (max-width: 900px) {

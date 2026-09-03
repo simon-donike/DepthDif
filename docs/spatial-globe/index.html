@@ -199,6 +199,31 @@
             </div>
           </div>
           <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
+          <div id="globe-recording-caption" class="globe-recording-caption" hidden>
+            <span class="globe-recording-caption__dot" aria-hidden="true"></span>
+            <span>
+              <strong id="globe-recording-caption-title">DepthDif recording tour</strong>
+              <span id="globe-recording-caption-progress" class="globe-recording-caption__progress"></span>
+            </span>
+          </div>
+          <div id="globe-recording-panel" class="globe-recording-panel" hidden>
+            <div class="globe-recording-panel__card">
+              <span class="globe-recording-panel__eyebrow">Desktop recording mode</span>
+              <h2 id="globe-recording-status" class="globe-recording-panel__title">
+                Preparing the tour…
+              </h2>
+              <p id="globe-recording-instructions" class="globe-recording-panel__text">
+                Loading the presentation layers and ARGO locations.
+              </p>
+              <div id="globe-recording-countdown" class="globe-recording-countdown" hidden></div>
+              <button id="globe-recording-start" class="globe-recording-button" type="button" hidden>
+                Begin 3-second countdown
+              </button>
+              <button id="globe-recording-replay" class="globe-recording-button" type="button" hidden>
+                Prepare another take
+              </button>
+            </div>
+          </div>
           <div id="globe-mobile-block" class="globe-mobile-block" hidden>
             <div class="globe-mobile-block__card">
               <span class="globe-mobile-block__eyebrow">Tablet preview</span>

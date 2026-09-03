@@ -116,6 +116,19 @@ The repository also provides standalone exporters for spatial error analysis,
 temporal dashboards, temporal globes, and wavenumber spectra. See the
 [CLI reference](cli.md) for their module names and canonical entry points.
 
+### Record an automated globe tour
+
+Open `/spatial-globe/?recording=1` on a desktop to prepare a deterministic
+recording tour. The page warms the required GLORYS, prediction, error, and ARGO
+assets before showing `READY TO RECORD`. Start OBS or the operating-system
+screen recorder, select **Begin 3-second countdown**, and stop the external
+recorder only when the page displays `STOP RECORDING NOW`. The countdown and
+start/stop cards provide clear trim points and audible cues; the page does not
+control the external recorder itself.
+
+Append the usual encoded `config` query parameter when recording a different
+manifest, for example `/spatial-globe/?recording=1&config=<url>`.
+
 ## Host the comparison globe
 
 The standalone comparison viewer at `docs/comparison-globe/index.html` compares
