@@ -435,8 +435,12 @@ class IDWInterpolationBaseline(pl.LightningModule):
             ),
         )
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(
+        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+    ) -> Any:
         """Log IDW validation loss and cache one reconstruction batch."""
+        if bool(batch.get("_en4_candidate_eval", False)):
+            return self.predict_step(batch, batch_idx=batch_idx)
         loss = self._shared_step(
             batch,
             prefix="val",

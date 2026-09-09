@@ -9,10 +9,12 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import default_collate
+from torch.utils.data import Subset, default_collate
 
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
 from depth_recon.utils.validation_denoise import (
+    _finite_mean_profile,
+    _finite_std_profile,
     log_wandb_average_depth_errors,
     log_wandb_average_depth_profiles,
 )
@@ -225,6 +227,43 @@ def _profile_figure(
     return figure
 
 
+def _aggregate_profile_figure(
+    results: list[CandidateProfileResult], *, depth_axis_m: np.ndarray
+) -> plt.Figure:
+    """Build aggregate mean and standard-deviation profile traces."""
+    if not results:
+        raise ValueError("At least one candidate profile result is required.")
+    profiles = {
+        "Prediction": np.stack([result.prediction for result in results]),
+        "GLORYS": np.stack([result.glorys for result in results]),
+        "EN4": np.stack([result.en4 for result in results]),
+    }
+    colors = {"Prediction": "tab:orange", "GLORYS": "black", "EN4": "tab:blue"}
+    figure, axis = plt.subplots(1, 1, figsize=(7.0, 8.0))
+    for label, values in profiles.items():
+        mean_profile = _finite_mean_profile(values, depth_dimension=1)
+        std_profile = _finite_std_profile(values, depth_dimension=1)
+        color = colors[label]
+        axis.plot(mean_profile, depth_axis_m, label=label, color=color, linewidth=1.8)
+        axis.fill_betweenx(
+            depth_axis_m,
+            mean_profile - std_profile,
+            mean_profile + std_profile,
+            color=color,
+            alpha=0.18,
+            linewidth=0.0,
+        )
+    units = "PSU" if results[0].variable == "salinity" else "deg C"
+    axis.set_xlabel(f"Profile value ({units})")
+    axis.set_ylabel("Depth (m)")
+    axis.set_title(f"Aggregate validated held-out EN4 profiles (n={len(results)})")
+    axis.invert_yaxis()
+    axis.grid(True, alpha=0.25)
+    axis.legend(loc="best")
+    figure.tight_layout()
+    return figure
+
+
 class EN4CandidateValidationCallback(pl.Callback):
     """Evaluate a deterministic candidate-profile patch set during validation."""
 
@@ -237,6 +276,7 @@ class EN4CandidateValidationCallback(pl.Callback):
         min_input_profiles: int = 8,
         max_patches: int | None = None,
         max_profiles_to_plot: int | None = None,
+        max_patch_images_to_log: int = 3,
         patch_batch_size: int = 8,
         random_seed: int = 7,
         image_depths_m: tuple[float, ...] = (0.0, 100.0, 500.0),
@@ -268,6 +308,7 @@ class EN4CandidateValidationCallback(pl.Callback):
             if max_profiles_to_plot is None
             else max(1, int(max_profiles_to_plot))
         )
+        self.max_patch_images_to_log = max(1, int(max_patch_images_to_log))
         self.patch_batch_size = max(1, int(patch_batch_size))
         self.random_seed = int(random_seed)
         self.image_depths_m = tuple(float(value) for value in image_depths_m)
@@ -300,7 +341,14 @@ class EN4CandidateValidationCallback(pl.Callback):
             dataset.argo_store.depth_axis_m, dtype=np.float64
         )
         self._latest_patch_images: dict[str, list[CandidatePatchImageData]] = {}
+        self._epoch_results: dict[str, list[CandidateProfileResult]] = {}
+        self._candidate_loader_batches_seen = 0
         self._last_logged_global_step: int | None = None
+
+    @property
+    def validation_dataset(self) -> Subset[Any]:
+        """Return selected candidate patches for the second validation loader."""
+        return Subset(self.dataset, self.patch_indices)
 
     def _select_eval_patches(
         self, *, max_patches: int | None
@@ -540,6 +588,162 @@ class EN4CandidateValidationCallback(pl.Callback):
         if variable == "salinity":
             return salinity_normalize(mode="denorm", tensor=tensor)
         return temperature_normalize(mode="denorm", tensor=tensor)
+
+    @torch.no_grad()
+    def _consume_validation_batch(
+        self,
+        batch: dict[str, Any],
+        prediction: dict[str, Any],
+        *,
+        patch_start: int,
+    ) -> None:
+        """Collect profile results and patch images from one Lightning val batch."""
+        fields = tuple(
+            variable
+            for variable in ("temperature", "salinity")
+            if f"y_hat_{variable}_denorm" in prediction
+        )
+        if not fields and "y_hat_denorm" in prediction:
+            fields = ("temperature",)
+        rows = self.dataset._rows.reset_index(drop=True)
+        batch_tensor = batch.get("x")
+        if batch_tensor is None:
+            batch_tensor = batch.get("x_salinity")
+        if not torch.is_tensor(batch_tensor):
+            return
+        patch_indices = self.patch_indices[
+            patch_start : patch_start + int(batch_tensor.size(0))
+        ]
+        for variable in fields:
+            profile_values = (
+                self.salinity_profiles
+                if variable == "salinity"
+                else self.temperature_profiles
+            )
+            if profile_values is None:
+                continue
+            prediction_key = f"y_hat_{variable}_denorm"
+            predicted = prediction.get(prediction_key)
+            if predicted is None and len(fields) == 1:
+                predicted = prediction.get("y_hat_denorm")
+            target_key = "y_salinity" if variable == "salinity" else "y"
+            glorys_key = "y_salinity_glorys" if variable == "salinity" else "y_glorys"
+            target_valid_key = (
+                "y_salinity_valid_mask" if variable == "salinity" else "y_valid_mask"
+            )
+            glorys_valid_key = (
+                "y_salinity_glorys_valid_mask"
+                if variable == "salinity"
+                else "y_glorys_valid_mask"
+            )
+            input_key = "x_salinity" if variable == "salinity" else "x"
+            input_valid_key = (
+                "x_salinity_valid_mask" if variable == "salinity" else "x_valid_mask"
+            )
+            if not torch.is_tensor(predicted) or target_key not in batch:
+                continue
+            glorys_target = batch.get(glorys_key)
+            if glorys_target is None:
+                glorys_target = batch[target_key]
+                glorys_valid_mask = batch.get(target_valid_key)
+            else:
+                glorys_valid_mask = batch.get(glorys_valid_key)
+            glorys = self._denormalize_target(variable, glorys_target)
+            if torch.is_tensor(glorys_valid_mask):
+                glorys = torch.where(
+                    glorys_valid_mask.to(device=glorys.device, dtype=torch.bool),
+                    glorys,
+                    torch.full_like(glorys, float("nan")),
+                )
+            input_values = batch.get(input_key)
+            input_valid_mask = batch.get(input_valid_key)
+            if torch.is_tensor(input_values):
+                input_physical = self._denormalize_target(variable, input_values)
+                if torch.is_tensor(input_valid_mask):
+                    input_physical = torch.where(
+                        input_valid_mask.to(
+                            device=input_physical.device, dtype=torch.bool
+                        ),
+                        input_physical,
+                        torch.full_like(input_physical, float("nan")),
+                    )
+                for local_idx, patch_idx in enumerate(patch_indices):
+                    patch = rows.iloc[int(patch_idx)]
+                    y0, x0 = int(patch.grid_y0), int(patch.grid_x0)
+                    glorys_image = glorys[local_idx]
+                    prediction_image = torch.where(
+                        torch.isfinite(glorys_image),
+                        predicted[local_idx],
+                        torch.full_like(predicted[local_idx], float("nan")),
+                    )
+                    patch_holdouts = self.holdout_df.loc[
+                        self.holdout_df["date"].eq(int(patch.date))
+                        & self.holdout_df["grid_row"].between(
+                            y0, y0 + int(self.dataset.tile_size) - 1
+                        )
+                        & self.holdout_df["grid_col"].between(
+                            x0, x0 + int(self.dataset.tile_size) - 1
+                        )
+                    ][["grid_row", "grid_col"]].drop_duplicates()
+                    if (
+                        len(self._latest_patch_images[str(variable)])
+                        < self.max_patch_images_to_log
+                    ):
+                        self._latest_patch_images[str(variable)].append(
+                            CandidatePatchImageData(
+                                variable=str(variable),
+                                patch_number=int(patch_start + local_idx),
+                                date=int(patch.date),
+                                input_values=input_physical[local_idx]
+                                .detach()
+                                .float()
+                                .cpu()
+                                .numpy(),
+                                prediction=prediction_image.detach()
+                                .float()
+                                .cpu()
+                                .numpy(),
+                                glorys=glorys_image.detach().float().cpu().numpy(),
+                                heldout_rows=patch_holdouts["grid_row"].to_numpy(
+                                    dtype=np.int64
+                                )
+                                - y0,
+                                heldout_cols=patch_holdouts["grid_col"].to_numpy(
+                                    dtype=np.int64
+                                )
+                                - x0,
+                            )
+                        )
+            assignments = self.profile_assignments.loc[
+                self.profile_assignments["eval_batch_index"].between(
+                    patch_start, patch_start + len(patch_indices) - 1
+                )
+            ]
+            for profile_row, assignment in assignments.iterrows():
+                local_idx = int(assignment["eval_batch_index"]) - patch_start
+                row_idx = int(assignment["local_grid_row"])
+                col_idx = int(assignment["local_grid_col"])
+                self._epoch_results.setdefault(str(variable), []).append(
+                    CandidateProfileResult(
+                        variable=str(variable),
+                        date=int(assignment["date"]),
+                        latitude=float(assignment["lat"]),
+                        longitude=float(assignment["lon"]),
+                        profile_source_file=str(assignment["profile_source_file"]),
+                        source_profile_idx=int(assignment["source_profile_idx"]),
+                        prediction=predicted[local_idx, :, row_idx, col_idx]
+                        .detach()
+                        .float()
+                        .cpu()
+                        .numpy(),
+                        glorys=glorys[local_idx, :, row_idx, col_idx]
+                        .detach()
+                        .float()
+                        .cpu()
+                        .numpy(),
+                        en4=np.asarray(profile_values[int(profile_row)], dtype=np.float32),
+                    )
+                )
 
     def _image_depth_indices(self, depth_count: int) -> list[int]:
         """Map requested image depths to unique nearest output channels."""
@@ -821,6 +1025,38 @@ class EN4CandidateValidationCallback(pl.Callback):
                         )
         return results
 
+    def on_validation_epoch_start(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        """Reset candidate results before Lightning starts the second val loader."""
+        del trainer
+        fields = tuple(getattr(pl_module, "output_fields", ("temperature",)))
+        self._epoch_results = {str(variable): [] for variable in fields}
+        self._latest_patch_images = {str(variable): [] for variable in fields}
+        self._candidate_loader_batches_seen = 0
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        """Collect predictions produced by the candidate validation dataloader."""
+        del trainer, pl_module
+        if int(dataloader_idx) != 1:
+            return
+        self._candidate_loader_batches_seen += 1
+        if not isinstance(outputs, dict):
+            return
+        self._consume_validation_batch(
+            batch,
+            outputs,
+            patch_start=int(batch_idx) * self.patch_batch_size,
+        )
+
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
@@ -837,17 +1073,29 @@ class EN4CandidateValidationCallback(pl.Callback):
         try:
             import wandb
 
-            results = self.evaluate(pl_module)
+            results = self._epoch_results
+            if self._candidate_loader_batches_seen == 0:
+                # Preserve direct callback use in tests/tools that do not attach the
+                # optional candidate dataloader to a LightningDataModule.
+                results = self.evaluate(pl_module)
             payload: dict[str, Any] = {
-                "en4_candidate_eval/monitored_profile_count": int(
+                "en4_candidate_eval/selected_profile_count": int(
                     len(self.profile_assignments)
                 ),
-                "en4_candidate_eval/monitored_location_count": int(
+                "en4_candidate_eval/selected_location_count": int(
                     self.profile_assignments[["date", "grid_row", "grid_col"]]
                     .drop_duplicates()
                     .shape[0]
                 ),
+                "en4_candidate_eval/validated_batch_count": int(
+                    self._candidate_loader_batches_seen
+                ),
             }
+            configured_val_limit = getattr(trainer, "limit_val_batches", None)
+            if isinstance(configured_val_limit, (int, float)) and not isinstance(
+                configured_val_limit, bool
+            ):
+                payload["en4_candidate_eval/limit_val_batches"] = configured_val_limit
             for count_name in (
                 "eligible_profile_count",
                 "eligible_location_count",
@@ -874,6 +1122,19 @@ class EN4CandidateValidationCallback(pl.Callback):
             try:
                 for variable, variable_results in results.items():
                     summary = _metric_summary(variable_results)
+                    payload[
+                        f"en4_candidate_eval/{variable}_validated_profile_count"
+                    ] = int(len(variable_results))
+                    payload[
+                        f"en4_candidate_eval/{variable}_validated_location_count"
+                    ] = int(
+                        len(
+                            {
+                                (result.date, result.latitude, result.longitude)
+                                for result in variable_results
+                            }
+                        )
+                    )
                     for metric, value in summary.items():
                         payload[f"en4_candidate_eval/{variable}_{metric}"] = value
                     for image_data in self._latest_patch_images.get(variable, []):
@@ -885,14 +1146,25 @@ class EN4CandidateValidationCallback(pl.Callback):
                             "full_reconstruction"
                         ] = wandb.Image(reconstruction_figure)
                     if variable_results:
-                        figure = _profile_figure(
-                            variable_results,
-                            depth_axis_m=self.depth_axis_m,
-                            max_profiles=self.max_profiles_to_plot,
+                        figure = _aggregate_profile_figure(
+                            variable_results, depth_axis_m=self.depth_axis_m
                         )
                         figures.append(figure)
                         payload[f"en4_candidate_eval/{variable}_profiles"] = (
                             wandb.Image(figure)
+                        )
+                        example_figure = _profile_figure(
+                            variable_results,
+                            depth_axis_m=self.depth_axis_m,
+                            max_profiles=(
+                                5
+                                if self.max_profiles_to_plot is None
+                                else self.max_profiles_to_plot
+                            ),
+                        )
+                        figures.append(example_figure)
+                        payload[f"en4_candidate_eval/{variable}_profile_examples"] = (
+                            wandb.Image(example_figure)
                         )
                         log_wandb_average_depth_profiles(
                             logger=logger,
@@ -938,10 +1210,13 @@ class EN4CandidateValidationCallback(pl.Callback):
                                 depth_axis_m=self.depth_axis_m,
                                 depth_dimension=1,
                                 prefix="en4_candidate_eval",
-                                image_key="temperature_average_absolute_error_by_depth",
-                                error_label="Mean absolute error vs EN4 (deg C)",
-                                title="Average temperature absolute error vs EN4",
-                            )
+                            image_key="temperature_average_absolute_error_by_depth",
+                            error_label="Mean absolute error vs EN4 (deg C)",
+                            title=(
+                                "Average temperature absolute error vs EN4 "
+                                f"(n={len(variable_results)} held-out profiles)"
+                            ),
+                        )
                 experiment.log(payload)
             finally:
                 for figure in figures:

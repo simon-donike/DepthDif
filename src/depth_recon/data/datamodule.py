@@ -4,7 +4,14 @@ from typing import Any
 
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader, Dataset, Subset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset, default_collate, random_split
+
+
+def _collate_candidate_validation_batch(samples: list[object]) -> dict[str, Any]:
+    """Mark batches from the optional EN4 validation dataloader."""
+    batch = default_collate(samples)
+    batch["_en4_candidate_eval"] = True
+    return batch
 
 
 class DepthTileDataModule(pl.LightningDataModule):
@@ -45,6 +52,15 @@ class DepthTileDataModule(pl.LightningDataModule):
         )
         self._train_val_split_done = val_dataset is not None
         self._val_generator = torch.Generator().manual_seed(self.seed)
+        self.candidate_val_dataset: Dataset | None = None
+        self.candidate_val_batch_size: int | None = None
+
+    def set_candidate_validation_dataset(
+        self, dataset: Dataset, *, batch_size: int
+    ) -> None:
+        """Attach the optional EN4 candidate dataset as a second val loader."""
+        self.candidate_val_dataset = dataset
+        self.candidate_val_batch_size = max(1, int(batch_size))
 
     def setup(self, stage: str | None = None) -> None:
         # Reuse existing split when a dedicated val_dataset was provided.
@@ -82,7 +98,15 @@ class DepthTileDataModule(pl.LightningDataModule):
         )
         self._train_val_split_done = True
 
-    def _build_loader(self, dataset: Dataset, is_val: bool = False) -> DataLoader:
+    def _build_loader(
+        self,
+        dataset: Dataset,
+        is_val: bool = False,
+        *,
+        batch_size: int | None = None,
+        shuffle: bool | None = None,
+        collate_fn: Any | None = None,
+    ) -> DataLoader:
         """Helper that computes build loader.
 
         Args:
@@ -94,7 +118,11 @@ class DepthTileDataModule(pl.LightningDataModule):
         """
         cfg = self.dataloader_cfg
         # Resolve train/val-specific overrides with sensible defaults.
-        batch_size = int(cfg.get("val_batch_size" if is_val else "batch_size", 16))
+        batch_size = int(
+            batch_size
+            if batch_size is not None
+            else cfg.get("val_batch_size" if is_val else "batch_size", 16)
+        )
         num_workers_key = "val_num_workers" if is_val else "num_workers"
         num_workers = int(cfg.get(num_workers_key, 0 if is_val else 4))
         persistent_workers = (
@@ -108,7 +136,11 @@ class DepthTileDataModule(pl.LightningDataModule):
         )
         pin_memory = bool(cfg.get("pin_memory", True))
         # Default to shuffling both train and validation unless explicitly disabled.
-        shuffle = bool(cfg.get("val_shuffle" if is_val else "shuffle", True))
+        shuffle = bool(
+            cfg.get("val_shuffle" if is_val else "shuffle", True)
+            if shuffle is None
+            else shuffle
+        )
         prefetch_factor = cfg.get("prefetch_factor", 2)
         kwargs: dict[str, Any] = dict(
             dataset=dataset,
@@ -127,6 +159,8 @@ class DepthTileDataModule(pl.LightningDataModule):
         multiprocessing_context = cfg.get("multiprocessing_context")
         if num_workers > 0 and multiprocessing_context:
             kwargs["multiprocessing_context"] = str(multiprocessing_context)
+        if collate_fn is not None:
+            kwargs["collate_fn"] = collate_fn
         return DataLoader(**kwargs)
 
     def train_dataloader(self) -> DataLoader:
@@ -140,4 +174,14 @@ class DepthTileDataModule(pl.LightningDataModule):
         if not self._train_val_split_done:
             self.setup("fit")
         # Lightning sanity checking: force single-worker if trainer requests it (handled in trainer configs)
-        return self._build_loader(self.val_dataset, is_val=True)
+        main_loader = self._build_loader(self.val_dataset, is_val=True)
+        if self.candidate_val_dataset is None:
+            return main_loader
+        candidate_loader = self._build_loader(
+            self.candidate_val_dataset,
+            is_val=True,
+            batch_size=self.candidate_val_batch_size,
+            shuffle=False,
+            collate_fn=_collate_candidate_validation_batch,
+        )
+        return [main_loader, candidate_loader]

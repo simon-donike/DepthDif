@@ -106,6 +106,9 @@ def build_en4_candidate_validation_callback(
             if validation_cfg.get("max_profiles_to_plot") is None
             else int(validation_cfg["max_profiles_to_plot"])
         ),
+        max_patch_images_to_log=int(
+            validation_cfg.get("max_patch_images_to_log", 3)
+        ),
         patch_batch_size=int(validation_cfg.get("patch_batch_size", 8)),
         random_seed=int(validation_cfg.get("seed", 7)),
         image_depths_m=tuple(
@@ -694,6 +697,11 @@ def main(
         data_cfg=data_cfg,
         training_cfg=training_cfg,
     )
+    if en4_candidate_callback is not None:
+        datamodule.set_candidate_validation_dataset(
+            en4_candidate_callback.validation_dataset,
+            batch_size=en4_candidate_callback.patch_batch_size,
+        )
     hard_region_callback = build_hard_region_validation_callback(
         val_dataset=val_dataset,
         data_cfg=data_cfg,

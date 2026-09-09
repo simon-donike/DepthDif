@@ -3576,7 +3576,9 @@ class PixelDiffusionConditional(pl.LightningModule):
             )
         return loss
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(
+        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+    ) -> Any:
         """Compute validation step and return the result.
 
         Args:
@@ -3586,6 +3588,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         Returns:
             torch.Tensor: Tensor output produced by this call.
         """
+        if bool(batch.get("_en4_candidate_eval", False)):
+            return self.predict_step(batch, batch_idx=batch_idx)
         model_batch = self._prepare_model_batch_tensors(batch, include_y=True)
         x = model_batch["x"]
         y = model_batch["y"]

@@ -47,6 +47,41 @@ def _finite_mean_profile(
     )
 
 
+def _finite_std_profile(
+    values: np.ndarray | torch.Tensor, *, depth_dimension: int
+) -> np.ndarray:
+    """Compute population standard deviation of finite values independently by depth."""
+    if torch.is_tensor(values):
+        values_np = values.detach().float().cpu().numpy()
+    else:
+        values_np = np.asarray(values, dtype=np.float64)
+    if values_np.ndim < 1:
+        raise ValueError("Profile values must have at least one dimension.")
+    depth_axis = int(depth_dimension) % int(values_np.ndim)
+    depth_first = np.moveaxis(values_np, depth_axis, 0).reshape(
+        int(values_np.shape[depth_axis]), -1
+    )
+    finite = np.isfinite(depth_first)
+    counts = finite.sum(axis=1)
+    totals = np.where(finite, depth_first, 0.0).sum(axis=1, dtype=np.float64)
+    means = np.divide(
+        totals,
+        counts,
+        out=np.full(totals.shape, np.nan, dtype=np.float64),
+        where=counts > 0,
+    )
+    squared_deviations = np.where(
+        finite, np.square(depth_first - means[:, None]), 0.0
+    ).sum(axis=1, dtype=np.float64)
+    variance = np.divide(
+        squared_deviations,
+        counts,
+        out=np.full(squared_deviations.shape, np.nan, dtype=np.float64),
+        where=counts > 0,
+    )
+    return np.sqrt(variance)
+
+
 def _finite_mean_absolute_error(
     prediction: np.ndarray | torch.Tensor,
     reference: np.ndarray | torch.Tensor,
@@ -70,6 +105,31 @@ def _finite_mean_absolute_error(
     valid = np.isfinite(prediction_np) & np.isfinite(reference_np)
     error = np.where(valid, np.abs(prediction_np - reference_np), np.nan)
     return _finite_mean_profile(error, depth_dimension=depth_dimension)
+
+
+def _finite_std_absolute_error(
+    prediction: np.ndarray | torch.Tensor,
+    reference: np.ndarray | torch.Tensor,
+    *,
+    depth_dimension: int,
+) -> np.ndarray:
+    """Compute depth-wise standard deviation of finite absolute errors."""
+    if torch.is_tensor(prediction):
+        prediction_np = prediction.detach().float().cpu().numpy()
+    else:
+        prediction_np = np.asarray(prediction, dtype=np.float64)
+    if torch.is_tensor(reference):
+        reference_np = reference.detach().float().cpu().numpy()
+    else:
+        reference_np = np.asarray(reference, dtype=np.float64)
+    if prediction_np.shape != reference_np.shape:
+        raise ValueError(
+            "Prediction and reference profiles must have the same shape: "
+            f"{prediction_np.shape} != {reference_np.shape}."
+        )
+    valid = np.isfinite(prediction_np) & np.isfinite(reference_np)
+    error = np.where(valid, np.abs(prediction_np - reference_np), np.nan)
+    return _finite_std_profile(error, depth_dimension=depth_dimension)
 
 
 def log_wandb_average_depth_profiles(
@@ -188,6 +248,12 @@ def log_wandb_average_depth_errors(
         )
         for label, values in predictions.items()
     }
+    std_errors = {
+        str(label): _finite_std_absolute_error(
+            values, reference, depth_dimension=depth_dimension
+        )
+        for label, values in predictions.items()
+    }
     error_sizes = {int(values.size) for values in mean_errors.values()}
     if len(error_sizes) != 1:
         raise ValueError("Average error traces must share the same depth dimension.")
@@ -230,6 +296,17 @@ def log_wandb_average_depth_errors(
                 color=colors.get(label),
                 linewidth=1.8,
             )
+            std_error = std_errors[label]
+            color = colors.get(label)
+            if color is not None:
+                axis.fill_betweenx(
+                    depth_values,
+                    mean_error - std_error,
+                    mean_error + std_error,
+                    color=color,
+                    alpha=0.18,
+                    linewidth=0.0,
+                )
         axis.set_xlabel(error_label)
         axis.set_ylabel(depth_label)
         axis.set_title(title)

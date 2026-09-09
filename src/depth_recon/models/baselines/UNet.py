@@ -772,8 +772,12 @@ class UNetInfillingBaseline(IDWInterpolationBaseline):
                 cached[key] = value
         self._cached_val_example = cached
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
+    def validation_step(
+        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+    ) -> Any:
         """Log validation loss and cache one batch for full-reconstruction metrics."""
+        if bool(batch.get("_en4_candidate_eval", False)):
+            return self.predict_step(batch, batch_idx=batch_idx)
         loss = self._shared_step(
             batch,
             prefix="val",
