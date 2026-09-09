@@ -1,0 +1,62 @@
+oceandepths:
+  repository: ESA-philab/OceanDepths
+  revision: 4fd0400c40283073257246b26a7432b7e43a1da3
+  source_product: EN4.2.2 profile archive
+  local_root: /scratch/rcartuyvels/ocean_data
+italian_xbt:
+  zenodo_record: 14848849
+  primary_qf: [1]
+  sensitivity_qf: [1, 2]
+matching:
+  primary_minutes: 10
+  primary_km: 5
+  recovery_minutes: 60
+  recovery_km: 10
+  broad_hours: 24
+  broad_km: 25
+  near_exact_min_levels: 30
+  near_exact_mae_c: 0.15
+  probable_min_levels: 15
+  probable_correlation: 0.95
+  probable_mae_c: 0.5
+  ambiguity_score_delta: 0.05
+glorys_sources:
+  - start: 1993-01-01
+    end: 2013-12-31
+    archive: CORA4.1
+    status: documented_with_2003_2013_typo_pending_confirmation
+  - start: 2014-01-01
+    end: 2015-12-31
+    archive: CORA5.0
+    status: documented
+  - start: 2016-01-01
+    end: 2016-12-31
+    archive: CORA5.1
+    status: documented
+  - start: 2017-01-01
+    end: 2021-06-30
+    archive: unresolved
+    status: unresolved
+  - start: 2021-07-01
+    end: 2100-12-31
+    archive: INSITU_GLO_PHY_TSASSIM_DISCRETE_NRT_013_047
+    status: documented_internal_snapshot_unavailable
+historical_archive_downloads:
+  CORA4.1:
+    url: https://www.seanoe.org/data/00351/46219/data/45999.tar.gz
+    size_bytes: 51397219166
+    doi: 10.17882/46219#45999
+  CORA5.0:
+    url: https://www.seanoe.org/data/00351/46219/data/56697.tar
+    size_bytes: 18416660480
+    doi: 10.17882/46219#56697
+  CORA5.1:
+    url: https://www.seanoe.org/data/00351/46219/data/56698.tar
+    size_bytes: 16786544640
+    doi: 10.17882/46219#56698
+current_proxy:
+  product_id: INSITU_GLO_PHYBGCWAV_DISCRETE_MYNRT_013_030
+  dataset_id: cmems_obs-ins_glo_phybgcwav_mynrt_na_irr
+  dataset_version: "202311"
+  doi: 10.48670/moi-00036
+  evidence_scope: current_nonhistorical_proxy
