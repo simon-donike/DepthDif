@@ -591,6 +591,37 @@ class TestModelDryRuns(unittest.TestCase):
 
             trainer.fit(model, datamodule=_make_datamodule(include_eo=True))
 
+    def test_pixel_trainer_fit_processes_second_candidate_validation_loader(self) -> None:
+        seen_loader_indices: list[int] = []
+        candidate_markers: list[bool] = []
+
+        class _ValidationLoaderTracker(pl.Callback):
+            def on_validation_batch_end(
+                self,
+                trainer: pl.Trainer,
+                pl_module: pl.LightningModule,
+                outputs: Any,
+                batch: dict[str, Any],
+                batch_idx: int,
+                dataloader_idx: int = 0,
+            ) -> None:
+                del trainer, pl_module, outputs, batch_idx
+                seen_loader_indices.append(int(dataloader_idx))
+                candidate_markers.append(bool(batch.get("_en4_candidate_eval", False)))
+
+        datamodule = _make_datamodule()
+        datamodule.set_candidate_validation_dataset(
+            _StaticBatchDataset(length=2, channels=2), batch_size=1
+        )
+        model = _make_pixel_model(datamodule=datamodule)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = pl.Trainer(**_trainer_kwargs(Path(tmpdir)))
+            trainer.callbacks.append(_ValidationLoaderTracker())
+            trainer.fit(model, datamodule=datamodule)
+
+        self.assertEqual(seen_loader_indices, [0, 1])
+        self.assertEqual(candidate_markers, [False, True])
+
     def test_lstm_baseline_joint_outputs_split_fields(self) -> None:
         model = PointwiseLSTMBaseline(
             hidden_size=4,
@@ -1617,7 +1648,7 @@ class TestModelDryRuns(unittest.TestCase):
         self.assertTrue(torch.equal(metric_masks[0][:, :, 0, 0], torch.ones(1, 2)))
 
     def test_full_reconstruction_logs_distinct_glorys_profile_reference(self) -> None:
-        model = _make_pixel_model()
+        model = _make_pixel_model(datamodule=_make_datamodule())
         batch = _make_pixel_batch()
         batch["y_glorys"] = batch["y"] + 0.5
         batch["y_glorys_valid_mask"] = batch["y_valid_mask"].clone()
@@ -1669,6 +1700,10 @@ class TestModelDryRuns(unittest.TestCase):
                 equal_nan=True,
             )
         )
+        np.testing.assert_array_equal(
+            profile_calls[0]["depth_axis_m"],
+            np.asarray([0.0, 10.0], dtype=np.float64),
+        )
         self.assertEqual(len(average_profile_calls), 1)
         average_call = average_profile_calls[0]
         self.assertEqual(average_call["prefix"], "val_imgs")
@@ -1681,6 +1716,43 @@ class TestModelDryRuns(unittest.TestCase):
                 temperature_denorm.masked_fill(~batch["y_valid_mask"], torch.nan),
                 equal_nan=True,
             )
+        )
+
+    def test_validation_en4_error_accumulator_uses_all_batches(self) -> None:
+        model = _make_pixel_model()
+        batch = _make_pixel_batch()
+        batch["x_valid_mask"] = torch.ones_like(batch["x_valid_mask"])
+        batch["y_glorys"] = batch["y"] + 0.25
+        batch["y_glorys_valid_mask"] = torch.ones_like(batch["y_valid_mask"])
+        reference = temperature_normalize(mode="denorm", tensor=batch["x"])
+        glorys = temperature_normalize(mode="denorm", tensor=batch["y_glorys"])
+        predicted = reference + 0.5
+        prediction = {"y_hat_temperature_denorm": predicted}
+
+        model._accumulate_validation_en4_errors(batch, prediction)
+        model._accumulate_validation_en4_errors(batch, prediction)
+
+        valid = torch.isfinite(reference) & torch.isfinite(glorys) & torch.isfinite(
+            predicted
+        )
+        expected_prediction_sum = (torch.abs(predicted - reference) * valid).sum(
+            dim=(0, 2, 3)
+        )
+        expected_glorys_sum = (torch.abs(glorys - reference) * valid).sum(
+            dim=(0, 2, 3)
+        )
+        expected_count = valid.sum(dim=(0, 2, 3))
+        np.testing.assert_allclose(
+            model._validation_en4_error_sums["Prediction"],
+            (2.0 * expected_prediction_sum).numpy(),
+        )
+        np.testing.assert_allclose(
+            model._validation_en4_error_sums["GLORYS"],
+            (2.0 * expected_glorys_sum).numpy(),
+        )
+        np.testing.assert_allclose(
+            model._validation_en4_error_counts,
+            (2.0 * expected_count).numpy(),
         )
 
     def test_full_reconstruction_logs_separate_salinity_grid(self) -> None:

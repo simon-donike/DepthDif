@@ -122,10 +122,14 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
 
 class TestPixelConfig(unittest.TestCase):
     def test_active_pixel_presets_reserve_2016_for_validation(self) -> None:
-        """Every active train/inference preset must use the same validation year."""
+        """Active presets preserve validation settings and their documented data mode."""
         config_dir = Path("src/depth_recon/configs/px_space")
         config_paths = sorted(config_dir.glob("training_super_config*.yaml"))
         config_paths.append(config_dir / "inference_super_config.yaml")
+        ambient_stage_configs = {
+            "training_super_config_hpc.yaml",
+            "training_super_config_spacehpc_glorys.yaml",
+        }
 
         for config_path in config_paths:
             with self.subTest(config_path=config_path):
@@ -133,10 +137,16 @@ class TestPixelConfig(unittest.TestCase):
                 self.assertEqual(payload["data"]["split"]["val_year"], 2016)
                 self.assertTrue(payload["data"]["dataloader"]["val_shuffle"])
                 dataset_cfg = payload["data"]["dataset"]
-                self.assertFalse(dataset_cfg["selection"]["require_argo_for_train"])
+                self.assertEqual(
+                    dataset_cfg["selection"]["require_argo_for_train"],
+                    config_path.name in ambient_stage_configs,
+                )
                 self.assertFalse(dataset_cfg["selection"]["filter_bad_argo_quality"])
                 self.assertEqual(
-                    dataset_cfg["surface_conditioning"]["sources"], ["sst"]
+                    dataset_cfg["surface_conditioning"]["sources"],
+                    ["sst", "sss", "adt"]
+                    if config_path.name.endswith("_3eo.yaml")
+                    else ["sst"],
                 )
                 self.assertEqual(payload["model"]["condition_eo_channels"], 1)
                 if config_path.name.startswith("training_"):
@@ -158,12 +168,18 @@ class TestPixelConfig(unittest.TestCase):
                         candidate_eval["candidate_profiles_path"],
                         "instructions/en4_no_spatiotemporal_candidate_profiles.parquet",
                     )
-                    self.assertEqual(candidate_eval["iso_week"], 25)
                     self.assertEqual(candidate_eval["holdout_fraction"], 0.2)
                     self.assertEqual(candidate_eval["seed"], 7)
                     self.assertEqual(candidate_eval["min_input_profiles"], 8)
                     self.assertEqual(
                         candidate_eval["image_depths_m"], [0.0, 100.0, 500.0]
+                    )
+                    self.assertIsNone(candidate_eval["max_patches"])
+                    self.assertEqual(candidate_eval["max_profiles_to_plot"], 5)
+                    self.assertEqual(candidate_eval["max_patch_images_to_log"], 3)
+                    self.assertEqual(candidate_eval["patch_batch_size"], 8)
+                    self.assertEqual(
+                        payload["training"]["trainer"]["limit_val_batches"], 64
                     )
 
     def test_super_config_derives_temperature_contract(self) -> None:

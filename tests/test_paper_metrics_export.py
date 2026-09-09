@@ -16,7 +16,10 @@ from rasterio.transform import from_origin
 import torch
 import yaml
 
-from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.data.dataset_argo_geotiff_gridded import (
+    ArgoGeoTIFFGriddedPatchDataset,
+    ArgoGeoTIFFProfileStore,
+)
 from depth_recon.inference.export_paper_metrics import (
     _metric_stats,
     export_paper_metrics,
@@ -31,12 +34,14 @@ from depth_recon.inference.export_paper_metrics import (
 from depth_recon.utils.en4_candidate_validation import (
     CandidateProfileResult,
     EN4CandidateValidationCallback,
+    _aggregate_profile_figure,
     _metric_summary,
     _profile_figure,
 )
 from depth_recon.utils.normalizations import salinity_normalize, temperature_normalize
 from depth_recon.utils.validation_denoise import (
     _finite_mean_profile,
+    _finite_std_profile,
     log_wandb_average_depth_profiles,
 )
 from tests.test_argo_geotiff_gridded_dataset import _make_geotiff_dataset
@@ -378,6 +383,58 @@ class TestPaperMetricsExport(unittest.TestCase):
             self.assertEqual(holdout.attrs["eligible_location_count"], 1)
             self.assertEqual(holdout.attrs["selected_location_count"], 1)
 
+    def test_candidate_loader_filters_audit_status_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir, _cache_dir, _land_mask_path = _make_geotiff_dataset(root)
+            candidate_path = root / "candidate_profiles.parquet"
+            pd.DataFrame(
+                {
+                    "profile_source_file": [
+                        "EN.4.2.2.f.profiles.g10.202401.nc",
+                        "EN.4.2.2.f.profiles.g10.202401.nc",
+                    ],
+                    "source_profile_idx": [7, 8],
+                    "datetime_utc": [
+                        pd.Timestamp("2024-01-08T00:00:00Z"),
+                        pd.Timestamp("2023-01-08T00:00:00Z"),
+                    ],
+                    "audit_status": [
+                        "no_spatiotemporal_candidate",
+                        "candidate_requires_fingerprint",
+                    ],
+                }
+            ).to_parquet(candidate_path, index=False)
+
+            profile_store = ArgoGeoTIFFProfileStore(
+                output_dir / "argo" / "argo_profiles_on_grid.zarr",
+                include_salinity=True,
+                filter_bad_quality=False,
+            )
+            candidates = load_en4_candidate_profiles(
+                context=load_dataset_context(output_dir),
+                date_value=20240108,
+                candidate_profiles_path=candidate_path,
+                profile_store=profile_store,
+            )
+
+            self.assertEqual(candidates["source_profile_idx"].tolist(), [7, 8])
+
+            filtered = load_en4_candidate_profiles(
+                context=load_dataset_context(output_dir),
+                date_year=2024,
+                candidate_profiles_path=candidate_path,
+                audit_status="no_spatiotemporal_candidate",
+                profile_store=profile_store,
+            )
+
+            self.assertEqual(filtered["source_profile_idx"].tolist(), [7])
+            self.assertEqual(
+                filtered.attrs["audit_status_filter"],
+                "no_spatiotemporal_candidate",
+            )
+            profile_store.close()
+
     def test_candidate_holdout_rejects_malformed_or_unmatched_parquet(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -401,6 +458,7 @@ class TestPaperMetricsExport(unittest.TestCase):
                 {
                     "profile_source_file": ["EN.4.2.2.f.profiles.g10.202401.nc"],
                     "source_profile_idx": [999],
+                    "audit_status": ["no_spatiotemporal_candidate"],
                 }
             ).to_parquet(unmatched_path, index=False)
             with self.assertRaisesRegex(RuntimeError, "matched"):
@@ -542,7 +600,7 @@ class TestPaperMetricsExport(unittest.TestCase):
             with patch.dict(sys.modules, {"wandb": fake_wandb}):
                 callback.on_validation_epoch_end(trainer, ExactGlorysModel())
 
-            self.assertEqual(len(logged_payloads), 3)
+            self.assertEqual(len(logged_payloads), 4)
             aggregate_keys = {
                 key
                 for payload in logged_payloads
@@ -556,9 +614,40 @@ class TestPaperMetricsExport(unittest.TestCase):
                     "en4_candidate_eval/salinity_average_profile_by_depth",
                 },
             )
+            error_keys = {
+                key
+                for payload in logged_payloads
+                for key in payload
+                if key.endswith("_average_absolute_error_by_depth")
+            }
+            self.assertEqual(
+                error_keys,
+                {"en4_candidate_eval/temperature_average_absolute_error_by_depth"},
+            )
+            error_figure = next(
+                figure
+                for payload in logged_payloads
+                for key, figure in payload.items()
+                if key
+                == "en4_candidate_eval/temperature_average_absolute_error_by_depth"
+            )
+            error_axis = error_figure.axes[0]
+            self.assertEqual(
+                [line.get_label() for line in error_axis.lines],
+                ["Prediction", "GLORYS"],
+            )
+            np.testing.assert_array_equal(
+                error_axis.lines[0].get_ydata(), callback.depth_axis_m
+            )
+            np.testing.assert_array_equal(
+                error_axis.lines[1].get_ydata(), callback.depth_axis_m
+            )
             for payload in logged_payloads:
                 for key, figure in payload.items():
-                    if not key.endswith("_average_profile_by_depth"):
+                    if not (
+                        key.endswith("_average_profile_by_depth")
+                        or key.endswith("_average_absolute_error_by_depth")
+                    ):
                         continue
                     axis = figure.axes[0]
                     self.assertEqual(axis.get_ylabel(), "Depth (m)")
@@ -574,6 +663,8 @@ class TestPaperMetricsExport(unittest.TestCase):
             self.assertIn("en4_candidate_eval/temperature_glorys_rmse", logged)
             self.assertIn("en4_candidate_eval/temperature_profiles", logged)
             self.assertIn("en4_candidate_eval/salinity_profiles", logged)
+            self.assertIn("en4_candidate_eval/temperature_profile_examples", logged)
+            self.assertIn("en4_candidate_eval/salinity_profile_examples", logged)
             self.assertIn(
                 "en4_candidate_eval/temperature_patch_0_full_reconstruction", logged
             )
@@ -583,6 +674,13 @@ class TestPaperMetricsExport(unittest.TestCase):
             self.assertEqual(logged["en4_candidate_eval/min_input_profiles"], 0)
             self.assertGreaterEqual(
                 logged["en4_candidate_eval/retained_input_profile_count_min"], 0
+            )
+            self.assertIn(
+                "n=", logged["en4_candidate_eval/temperature_profiles"].axes[0].get_title()
+            )
+            self.assertIn(
+                "held-out profiles",
+                error_figure.axes[0].get_title(),
             )
 
             reconstruction = logged[
@@ -645,6 +743,7 @@ class TestPaperMetricsExport(unittest.TestCase):
             dataset=dataset,
             candidate_df=candidates,
             min_input_profiles=8,
+            max_patches=1,
             random_seed=7,
         )
 
@@ -659,6 +758,7 @@ class TestPaperMetricsExport(unittest.TestCase):
                 dataset=FakeDataset(),
                 candidate_df=candidates,
                 min_input_profiles=9,
+                max_patches=1,
                 random_seed=7,
             )
 
@@ -730,6 +830,106 @@ class TestPaperMetricsExport(unittest.TestCase):
         self.assertEqual(first.patch_indices, second.patch_indices)
         self.assertEqual(first.selection_metadata["candidate_patch_count"], 3)
         self.assertEqual(first.selection_metadata["qualifying_patch_count"], 3)
+        self.assertEqual(first.selection_metadata["selected_patch_count"], 1)
+        self.assertEqual(first.selection_metadata["selected_profile_count"], 1)
+        self.assertEqual(len(first.profile_assignments), 1)
+
+    def test_candidate_evaluation_processes_all_patches_in_chunks(self) -> None:
+        class FakeStore:
+            include_salinity = False
+            depth_axis_m = np.asarray([0.0], dtype=np.float32)
+            target_date = np.full((2,), 20160624, dtype=np.int32)
+            grid_row = np.zeros((2,), dtype=np.int32)
+            grid_col = np.asarray([0, 1], dtype=np.int32)
+
+            def query_indices(self, *, target_date, grid_y0, grid_x0, tile_size):
+                del target_date
+                keep = (
+                    (self.grid_row >= grid_y0)
+                    & (self.grid_row < grid_y0 + tile_size)
+                    & (self.grid_col >= grid_x0)
+                    & (self.grid_col < grid_x0 + tile_size)
+                )
+                return np.flatnonzero(keep).astype(np.int64)
+
+            def load_temperature_profiles(self, indices):
+                return np.ones((len(indices), 1), dtype=np.float32)
+
+        class FakeDataset:
+            tile_size = 1
+            argo_store = FakeStore()
+            _rows = pd.DataFrame(
+                {
+                    "date": [20160624, 20160624],
+                    "grid_y0": [0, 0],
+                    "grid_x0": [0, 1],
+                }
+            )
+
+            def set_heldout_argo_locations(self, locations):
+                self.heldout_locations = set(locations)
+
+            def __getitem__(self, index):
+                value = float(index + 1)
+                return {
+                    "x": torch.zeros((1, 1, 1), dtype=torch.float32),
+                    "x_valid_mask": torch.zeros((1, 1, 1), dtype=torch.bool),
+                    "y": torch.full((1, 1, 1), value),
+                    "y_valid_mask": torch.ones((1, 1, 1), dtype=torch.bool),
+                    "y_glorys": torch.full((1, 1, 1), value + 1.0),
+                    "y_glorys_valid_mask": torch.ones((1, 1, 1), dtype=torch.bool),
+                    "date": 20160624,
+                }
+
+        class FakeModel(torch.nn.Module):
+            output_fields = ("temperature",)
+            device = torch.device("cpu")
+
+            def __init__(self):
+                super().__init__()
+                self.predict_calls = 0
+
+            def transfer_batch_to_device(self, batch, device, dataloader_idx):
+                return batch
+
+            def predict_step(self, batch, batch_idx):
+                del batch_idx
+                self.predict_calls += 1
+                return {"y_hat_temperature_denorm": temperature_normalize(
+                    mode="denorm", tensor=batch["y"]
+                )}
+
+        candidates = pd.DataFrame(
+            {
+                "date": [20160624, 20160624],
+                "grid_row": [0, 0],
+                "grid_col": [0, 1],
+                "lat": [0.0, 0.0],
+                "lon": [0.0, 1.0],
+                "profile_index": [0, 1],
+                "profile_source_file": ["profiles.nc", "profiles.nc"],
+                "source_profile_idx": [0, 1],
+            }
+        )
+        callback = EN4CandidateValidationCallback(
+            dataset=FakeDataset(),
+            candidate_df=candidates,
+            min_input_profiles=0,
+            holdout_fraction=0.99,
+            patch_batch_size=1,
+            random_seed=7,
+        )
+        model = FakeModel()
+
+        results = callback.evaluate(model)
+
+        self.assertEqual(model.predict_calls, 2)
+        self.assertEqual(len(results["temperature"]), 2)
+        self.assertEqual(len(callback._latest_patch_images["temperature"]), 2)
+        self.assertEqual(
+            sorted(result.source_profile_idx for result in results["temperature"]),
+            [0, 1],
+        )
 
     def test_candidate_metric_summary_reports_positive_skill(self) -> None:
         """Candidate skill is positive only when prediction improves on GLORYS."""
@@ -771,6 +971,31 @@ class TestPaperMetricsExport(unittest.TestCase):
         finally:
             plt.close(figure)
 
+    def test_candidate_profile_figure_uncapped_includes_all_profiles(self) -> None:
+        results = [
+            CandidateProfileResult(
+                variable="temperature",
+                date=20160624,
+                latitude=0.0,
+                longitude=float(index),
+                profile_source_file="profiles.nc",
+                source_profile_idx=index,
+                prediction=np.asarray([1.0, 2.0]),
+                glorys=np.asarray([1.5, 2.5]),
+                en4=np.asarray([1.0, 2.0]),
+            )
+            for index in range(3)
+        ]
+        figure = _profile_figure(
+            results, depth_axis_m=np.asarray([0.0, 10.0]), max_profiles=None
+        )
+        try:
+            self.assertEqual(len(figure.axes), 2)
+            self.assertEqual(len(figure.axes[0].lines), 6)
+            self.assertEqual(len(figure.axes[1].lines), 6)
+        finally:
+            plt.close(figure)
+
     def test_finite_mean_profile_aggregates_each_depth_independently(self) -> None:
         values = np.asarray(
             [
@@ -784,6 +1009,45 @@ class TestPaperMetricsExport(unittest.TestCase):
             _finite_mean_profile(values, depth_dimension=1),
             np.asarray([2.0, 4.0]),
         )
+
+    def test_finite_std_profile_aggregates_each_depth_independently(self) -> None:
+        values = np.asarray(
+            [
+                [[[1.0]], [[np.nan]]],
+                [[[3.0]], [[4.0]]],
+            ],
+            dtype=np.float32,
+        )
+
+        np.testing.assert_allclose(
+            _finite_std_profile(values, depth_dimension=1),
+            np.asarray([1.0, 0.0]),
+        )
+
+    def test_candidate_aggregate_profile_figure_does_not_overlay_profiles(self) -> None:
+        results = [
+            CandidateProfileResult(
+                variable="temperature",
+                date=20160624,
+                latitude=0.0,
+                longitude=float(index),
+                profile_source_file="profiles.nc",
+                source_profile_idx=index,
+                prediction=np.asarray([1.0 + index, 2.0 + index]),
+                glorys=np.asarray([1.5 + index, 2.5 + index]),
+                en4=np.asarray([1.0 + index, 2.0 + index]),
+            )
+            for index in range(100)
+        ]
+        figure = _aggregate_profile_figure(
+            results, depth_axis_m=np.asarray([0.0, 10.0])
+        )
+        try:
+            self.assertEqual(len(figure.axes[0].lines), 3)
+            self.assertIn("n=100", figure.axes[0].get_title())
+            self.assertEqual(len(figure.axes[0].collections), 3)
+        finally:
+            plt.close(figure)
 
     def test_average_profile_axis_labels_match_coordinates(self) -> None:
         logged_payloads: list[dict[str, object]] = []

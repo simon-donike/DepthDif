@@ -134,7 +134,7 @@ class TestTrainCheckpointConfig(unittest.TestCase):
                     training_cfg=training_cfg,
                 )
 
-    def test_en4_candidate_callback_builder_selects_configured_week(self) -> None:
+    def test_en4_candidate_callback_builder_selects_validation_year(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             candidate_path = Path(tmpdir) / "candidates.parquet"
             candidate_path.touch()
@@ -160,7 +160,9 @@ class TestTrainCheckpointConfig(unittest.TestCase):
 
             with (
                 patch("train.load_dataset_context", return_value=object()),
-                patch("train.load_en4_candidate_profiles", return_value=candidates),
+                patch(
+                    "train.load_en4_candidate_profiles", return_value=candidates
+                ) as load_candidates,
                 patch(
                     "train.EN4CandidateValidationCallback",
                     return_value=expected_callback,
@@ -173,10 +175,19 @@ class TestTrainCheckpointConfig(unittest.TestCase):
                 )
 
             self.assertIs(callback, expected_callback)
+            load_candidates.assert_called_once()
+            self.assertEqual(
+                load_candidates.call_args.kwargs["audit_status"],
+                "no_spatiotemporal_candidate",
+            )
+            self.assertEqual(load_candidates.call_args.kwargs["date_year"], 2016)
             callback_cls.assert_called_once()
             callback_kwargs = callback_cls.call_args.kwargs
             self.assertIs(callback_kwargs["candidate_df"], candidates)
             self.assertEqual(callback_kwargs["min_input_profiles"], 8)
+            self.assertIsNone(callback_kwargs["max_patches"])
+            self.assertIsNone(callback_kwargs["max_profiles_to_plot"])
+            self.assertEqual(callback_kwargs["patch_batch_size"], 8)
             self.assertEqual(callback_kwargs["image_depths_m"], (0.0, 100.0, 500.0))
 
     def test_resume_checkpoint_false_starts_from_scratch(self) -> None:
