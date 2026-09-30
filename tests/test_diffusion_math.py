@@ -463,6 +463,7 @@ class TestDiffusionMath(unittest.TestCase):
         self.assertTrue(torch.isclose(loss, expected))
 
     def test_p_loss_returns_zero_when_mask_selects_nothing(self) -> None:
+        """Empty observation support must allow backward with zero gradients."""
         process = _make_conditional_process(parameterization="x0")
         output = torch.ones((1, 2, 2, 2), dtype=torch.float32)
         condition = torch.zeros((1, 2, 2, 2), dtype=torch.float32)
@@ -470,13 +471,14 @@ class TestDiffusionMath(unittest.TestCase):
         process.forward_process = _FakeForward(
             noisy_offset=0.0, noise=torch.zeros_like(output)
         )
-        process.model = _CapturingPredictor(torch.zeros_like(output))
+        prediction = nn.Parameter(torch.zeros_like(output))
+        process.model = _CapturingPredictor(prediction)
 
         loss = process.p_loss(
             output,
             condition,
             loss_mask=torch.zeros((1, 2, 2), dtype=torch.float32),
-            land_mask=torch.zeros((1, 2, 2), dtype=torch.float32),
+            land_mask=torch.ones((1, 2, 2), dtype=torch.float32),
             mask_loss=True,
             coastal_loss_enabled=True,
             coastal_loss_radius_px=2,
@@ -485,6 +487,37 @@ class TestDiffusionMath(unittest.TestCase):
         )
 
         self.assertEqual(loss.item(), 0.0)
+        self.assertTrue(loss.requires_grad)
+        loss.backward()
+        self.assertIsNotNone(prediction.grad)
+        self.assertTrue(torch.equal(prediction.grad, torch.zeros_like(prediction)))
+
+    def test_p_loss_ignores_empty_samples_in_a_mixed_batch(self) -> None:
+        """Unobserved samples must not dilute loss or receive supervised gradients."""
+        process = _make_conditional_process(parameterization="x0")
+        output = torch.ones((2, 2, 2, 2), dtype=torch.float32)
+        output[1] = 100.0
+        prediction = nn.Parameter(torch.zeros_like(output))
+        process.model = _CapturingPredictor(prediction)
+        process.forward_process = _FakeForward(
+            noisy_offset=0.0, noise=torch.zeros_like(output)
+        )
+        loss_mask = torch.ones_like(output)
+        loss_mask[1] = 0.0
+
+        loss = process.p_loss(
+            output,
+            torch.zeros_like(output),
+            loss_mask=loss_mask,
+            mask_loss=True,
+        )
+
+        self.assertEqual(loss.item(), 1.0)
+        loss.backward()
+        self.assertTrue(torch.all(prediction.grad[0] != 0.0))
+        self.assertTrue(
+            torch.equal(prediction.grad[1], torch.zeros_like(prediction[1]))
+        )
 
     def test_from_config_loads_coastal_loss_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

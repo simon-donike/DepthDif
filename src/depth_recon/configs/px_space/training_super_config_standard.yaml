@@ -46,7 +46,7 @@ data:  # dataset, split, and loader inputs
       eo_source: ostia  # scenario-derived EO raster group: ostia or sss
       eo_var_name: analysed_sst  # scenario-derived EO raster variable
     selection:  # row filtering by split
-      require_argo_for_train: false  # include train patches without observed ARGO support
+      require_argo_for_train: true  # reproduce the original GLORYS scratch run's ARGO-containing rows
       require_argo_for_val: true  # keep val rows with ARGO
       require_argo_for_all: false  # allow no-ARGO inference rows
       filter_bad_argo_quality: false  # retain all compact ARGO levels regardless of QC
@@ -166,7 +166,7 @@ data:  # dataset, split, and loader inputs
     val_year: 2016  # year reserved for validation
     val_fraction: 0.2  # fallback random val fraction
   dataloader:  # dataset-side loader defaults
-    num_workers: 4  # worker process count
+    num_workers: 2  # local loader workers per GPU; overrides training.dataloader
     prefetch_factor: 2  # batches prefetched per worker when workers are enabled
     val_shuffle: true  # intentionally shuffle validation
 
@@ -191,13 +191,13 @@ model:  # pixel diffusion model settings
   log_intermediates: false  # log reverse-chain images
   ema:  # exponential moving average
     enabled: true  # enable EMA callback
-    decay: 0.9999  # EMA decay factor
+    decay: 0.999  # shorter ~1000-update averaging timescale for scratch training
     apply_every_n_steps: 1  # EMA update cadence
     start_step: 0  # first EMA step
     save_ema_weights_in_callback_state: true  # save EMA in checkpoints
     evaluate_ema_weights_instead: true  # validate using EMA weights
   ambient_occlusion:  # ambient objective controls
-    enabled: true  # train with the ambient sparse-observation objective
+    enabled: false  # reproduce dense GLORYS supervision before ambient fine-tuning
     further_drop_prob: 0.25  # hide a moderate share of observed pixels
     apply_to_noisy_branch: true  # mask noisy target branch
     shared_spatial_mask: true  # share mask across channels
@@ -307,16 +307,16 @@ training:  # optimizer, trainer, and logging
       beta_start: 0.0001  # starting beta
       beta_end: 0.02  # ending beta
     validation_sampling:  # validation sampler settings
-      sampler: ddim  # faster validation reconstruction sampler
+      sampler: ddpm  # full 1000-step reconstruction, matching the original globe run
       ddim_num_timesteps: 100  # DDIM validation steps
       ddim_eta: 0.0  # DDIM stochasticity
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
       full_reconstruction_logging_enabled: true  # log reconstruction and independent GLORYS/supervision profile plots
-      max_full_reconstruction_samples: 6  # log the full shuffled validation batch
+      max_full_reconstruction_samples: 1  # one patch per GPU for each of raw and EMA weights
     en4_candidate_eval:  # leakage-free EN4-versus-GLORYS validation monitor
-      enabled: true  # log a fixed candidate-profile comparison each validation run
+      enabled: false  # keep DDPM validation affordable; enable separately for evaluation
       candidate_profiles_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet  # external audit file
       iso_week: 25  # fixed monitoring week within the 2016 validation year
       holdout_fraction: 0.2  # location-level candidate holdout
@@ -326,19 +326,19 @@ training:  # optimizer, trainer, and logging
       max_profiles_to_plot: 6  # cap rows in each W&B profile figure
       image_depths_m: [0.0, 100.0, 500.0]  # full-patch reconstruction figure depths
     hard_region_eval:  # fixed difficult-area prediction-versus-GLORYS monitor
-      enabled: true  # run as part of each Lightning validation epoch
+      enabled: false  # avoid additional regional DDPM chains during this reproduction
       regions_path: src/depth_recon/configs/evaluation/hard_regions_2016.yaml  # named provisional polygons
       evaluation_year: 2016  # must match data.split.val_year
       max_patches_per_region: 1  # one deterministic 2016 patch per region
       seed: 7  # deterministic reconstruction seed
       image_depths_m: [0.0, 100.0, 500.0]  # GLORYS/prediction/error figure depths
   trainer:  # PyTorch Lightning trainer
-    seed: null  # optional global model/loader seed; suite overrides to 7
+    seed: 7  # record initialization, sampling, and loader RNGs for this experiment
     max_epochs: 100  # epoch limit
     accelerator: auto  # accelerator selection
     devices: 2  # use both local GPUs with reduced worker fan-out
     num_gpus: null  # legacy GPU count override
-    strategy: auto  # distributed strategy
+    strategy: ddp  # local two-GPU training
     precision: 16-mixed  # numeric precision
     matmul_precision: high  # torch matmul precision
     suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
@@ -347,7 +347,7 @@ training:  # optimizer, trainer, and logging
     lr_logging_interval: step  # LR log cadence
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches
-    val_check_interval: 0.1  # validation cadence
+    val_check_interval: 0.25  # four checks per epoch, each with bounded DDPM images
     limit_train_batches: 1.0  # full dataset by default; suite uses short logical epochs
     limit_val_batches: 64  # validation batch cap
     checkpoint_every_n_train_steps: null  # optional recovery-checkpoint cadence
@@ -366,7 +366,7 @@ training:  # optimizer, trainer, and logging
     offline: false  # use online W&B logging for the standard preset
     project: DepthDif_Simon  # W&B project
     entity: esa-phi-lab  # W&B entity
-    run_name: ostia_argo_geotiff_px  # run display name
+    run_name: glorys_dense_reproduction_2016_2x3090  # local scratch experiment
     run_id: null  # optional stable W&B id for resumable suite tasks
     resume: null  # null starts normally; suite uses allow
     group: null  # optional W&B run group
@@ -381,7 +381,7 @@ training:  # optimizer, trainer, and logging
     log_stats_every_n_steps: 200  # scalar stats cadence
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
-    batch_size: 32  # train batch size
+    batch_size: 48  # per GPU; effective batch 96 matches the original local scratch run
     val_batch_size: 6  # validation batch size
     num_workers: 2  # train loader workers
     val_num_workers: 0  # validation loader workers
@@ -403,7 +403,7 @@ training:  # optimizer, trainer, and logging
       interval: step  # scheduler interval unit
       mode: min  # optimize lower metric
       factor: 0.5  # LR decay factor
-      patience: 50000  # plateau patience
+      patience: 25000  # optimizer-step patience from the original scratch recipe
       threshold: 0.0001  # improvement threshold
       threshold_mode: rel  # threshold mode
       cooldown: 0  # cooldown intervals

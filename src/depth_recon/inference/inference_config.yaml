@@ -7,6 +7,6 @@ inference:
     land_mask_path: "src/depth_recon/data/dataset_creation/data_download_raw/get_world/world_land_mask_glorys_0p1.tif"
 
   dataloader:
-    batch_size: 64
-    num_workers: 6
+    batch_size: 2
+    num_workers: 2
     prefetch_factor: 2

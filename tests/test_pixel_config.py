@@ -130,10 +130,17 @@ class TestPixelConfig(unittest.TestCase):
         for config_path in config_paths:
             with self.subTest(config_path=config_path):
                 payload = load_yaml(config_path)
+                local_reproduction = config_path.name in {
+                    "training_super_config.yaml",
+                    "training_super_config_standard.yaml",
+                }
                 self.assertEqual(payload["data"]["split"]["val_year"], 2016)
                 self.assertTrue(payload["data"]["dataloader"]["val_shuffle"])
                 dataset_cfg = payload["data"]["dataset"]
-                self.assertFalse(dataset_cfg["selection"]["require_argo_for_train"])
+                self.assertEqual(
+                    dataset_cfg["selection"]["require_argo_for_train"],
+                    local_reproduction,
+                )
                 self.assertFalse(dataset_cfg["selection"]["filter_bad_argo_quality"])
                 self.assertEqual(
                     dataset_cfg["surface_conditioning"]["sources"], ["sst"]
@@ -153,7 +160,7 @@ class TestPixelConfig(unittest.TestCase):
                     candidate_eval = payload["training"]["training"][
                         "en4_candidate_eval"
                     ]
-                    self.assertTrue(candidate_eval["enabled"])
+                    self.assertEqual(candidate_eval["enabled"], not local_reproduction)
                     self.assertEqual(
                         candidate_eval["candidate_profiles_path"],
                         "instructions/en4_no_spatiotemporal_candidate_profiles.parquet",
