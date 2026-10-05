@@ -115,6 +115,10 @@ class PixelDiffusionConditional(pl.LightningModule):
         log_stats_every_n_steps: int = 1,
         log_images_every_n_steps: int = 200,
         losses_config: dict[str, Any] | None = None,
+        condition_per_depth_valid_mask: bool = False,
+        condition_use_wet_mask: bool = False,
+        mask_diffusion_with_wet_mask: bool = False,
+        climatology_residual: bool = False,
     ) -> None:
         """Initialize PixelDiffusionConditional with configured parameters.
 
@@ -188,6 +192,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             log_stats_every_n_steps (int): Step or timestep value.
             log_images_every_n_steps (int): Step or timestep value.
             losses_config (dict[str, Any] | None): Optional auxiliary loss config.
+            condition_per_depth_valid_mask (bool): Preserve each depth's observation support.
+            condition_use_wet_mask (bool): Condition on depth-specific physical ocean support.
+            mask_diffusion_with_wet_mask (bool): Keep dry diffusion cells fixed at zero.
+            climatology_residual (bool): Diffuse departures from a training-only background.
 
         Returns:
             None: No value is returned.
@@ -274,8 +282,23 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         self.condition_use_valid_mask = bool(condition_use_valid_mask)
         self.condition_use_land_mask = bool(condition_use_land_mask)
+        self.condition_per_depth_valid_mask = bool(condition_per_depth_valid_mask)
+        self.condition_use_wet_mask = bool(condition_use_wet_mask)
+        self.mask_diffusion_with_wet_mask = bool(mask_diffusion_with_wet_mask)
+        self.climatology_residual = bool(climatology_residual)
+        if self.condition_per_depth_valid_mask and (
+            not self.condition_use_valid_mask
+            or self.condition_mask_channels != generated_channels
+        ):
+            raise ValueError(
+                "Per-depth observation masks require one mask per output channel."
+            )
         self.clamp_known_pixels = bool(clamp_known_pixels)
         self.mask_loss_with_valid_pixels = bool(mask_loss_with_valid_pixels)
+        if self.mask_diffusion_with_wet_mask and not self.mask_loss_with_valid_pixels:
+            raise ValueError(
+                "Wet-domain diffusion requires the existing valid-pixel loss mask."
+            )
         self.coastal_loss_enabled = bool(coastal_loss_enabled)
         self.coastal_loss_radius_px = int(coastal_loss_radius_px)
         if self.coastal_loss_radius_px < 0:
@@ -410,6 +433,14 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_eo_channels=int(m.get("condition_eo_channels", 1)),
             condition_use_valid_mask=bool(m.get("condition_use_valid_mask", True)),
             condition_use_land_mask=bool(m.get("condition_use_land_mask", False)),
+            condition_per_depth_valid_mask=bool(
+                m.get("condition_per_depth_valid_mask", False)
+            ),
+            condition_use_wet_mask=bool(m.get("condition_use_wet_mask", False)),
+            mask_diffusion_with_wet_mask=bool(
+                m.get("mask_diffusion_with_wet_mask", False)
+            ),
+            climatology_residual=bool(m.get("climatology_residual", False)),
             clamp_known_pixels=bool(m.get("clamp_known_pixels", True)),
             mask_loss_with_valid_pixels=bool(
                 m.get("mask_loss_with_valid_pixels", False)
@@ -979,6 +1010,11 @@ class PixelDiffusionConditional(pl.LightningModule):
             temperature=0.0,
         )
         example: dict[str, Any] = {"condition": condition, "sampler": sampler}
+        if self.mask_diffusion_with_wet_mask:
+            example["wet_mask"] = torch.ones(
+                (1, self.model.generated_channels, input_size, input_size),
+                dtype=torch.bool,
+            )
         if self.model.coord_conditioning_enabled:
             # Provide neutral coordinates so coordinate-conditioned models trace
             # the same denoiser path as a real batch.
@@ -1294,6 +1330,62 @@ class PixelDiffusionConditional(pl.LightningModule):
             weights.append(weight)
         return weights[0] if len(weights) == 1 else torch.cat(weights, dim=1)
 
+    def _prepare_depth_context(
+        self, batch: dict[str, Any], reference: torch.Tensor
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Load physical domain and background without deriving either from observations."""
+        wet_mask = None
+        background = None
+        if self.condition_use_wet_mask or self.mask_diffusion_with_wet_mask:
+            wet_mask = self._stack_output_tensor(
+                batch, temperature_key="wet_mask", salinity_key="wet_mask_salinity"
+            )
+            self._validate_stack_shape(
+                reference, wet_mask, reference_key="x", key="wet_mask"
+            )
+            if wet_mask.shape != reference.shape or not torch.isfinite(wet_mask).all():
+                raise ValueError(
+                    "wet_mask must be finite with one channel per output depth."
+                )
+            wet_mask = wet_mask.to(device=reference.device) > 0.5
+            # A mismatched bathymetry must fail, never silently discard supervised water.
+            target_mask = self._stack_output_tensor(
+                batch,
+                temperature_key="y_valid_mask",
+                salinity_key="y_salinity_valid_mask",
+            )
+            if bool(((target_mask > 0.5) & ~wet_mask).any()):
+                raise ValueError(
+                    "Target-valid water lies outside the configured static wet domain."
+                )
+        if self.climatology_residual:
+            background = self._stack_output_tensor(
+                batch,
+                temperature_key="climatology",
+                salinity_key="climatology_salinity",
+            ).to(device=reference.device, dtype=reference.dtype)
+            if (
+                background.shape != reference.shape
+                or not torch.isfinite(background).all()
+            ):
+                raise ValueError(
+                    "climatology must be finite and match the output field shape."
+                )
+            if wet_mask is not None:
+                background = torch.where(wet_mask, background, 0.0)
+        return wet_mask, background
+
+    @staticmethod
+    def _subtract_background(
+        values: torch.Tensor,
+        valid_mask: torch.Tensor,
+        background: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Express valid values as anomalies while leaving missing-value fill at zero."""
+        if background is None:
+            return values
+        return torch.where(valid_mask > 0.5, values - background, 0.0)
+
     def _split_output_tensor(
         self, tensor: torch.Tensor, batch: dict[str, Any]
     ) -> dict[str, torch.Tensor]:
@@ -1474,6 +1566,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             "land_mask",
             "coords",
             "date",
+            "wet_mask",
+            "climatology",
         ]
         if self.predicts_salinity:
             keys.extend(
@@ -1484,6 +1578,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                     "x_salinity_valid_mask",
                     "y_salinity_valid_mask",
                     "y_salinity_glorys_valid_mask",
+                    "wet_mask_salinity",
+                    "climatology_salinity",
                 ]
             )
 
@@ -1740,6 +1836,8 @@ class PixelDiffusionConditional(pl.LightningModule):
         *,
         eo: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
+        wet_mask: torch.Tensor | None = None,
+        background: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # Keep conditioning data in the same normalized range as diffusion targets.
         """Helper that computes prepare condition for model.
@@ -1749,6 +1847,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             valid_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             eo (torch.Tensor | None): Tensor input for the computation.
             land_mask (torch.Tensor | None): GLORYS spatial-support mask.
+            wet_mask (torch.Tensor | None): Physical ocean support at each depth.
+            background (torch.Tensor | None): Absolute normalized climatology channels.
 
         Returns:
             torch.Tensor: Tensor output produced by this call.
@@ -1766,6 +1866,8 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_parts.append(self.input_T(eo))
 
         data_t = self.input_T(x)
+        if wet_mask is not None:
+            data_t = torch.where(wet_mask > 0.5, data_t, 0.0)
         condition_parts.append(data_t)
 
         mask_t = self._prepare_condition_mask(
@@ -1790,6 +1892,21 @@ class PixelDiffusionConditional(pl.LightningModule):
             # This channel marks the GLORYS model domain, not ARGO observation support.
             land_t = land_t.to(device=data_t.device, dtype=data_t.dtype)
             condition_parts.append(land_t)
+
+        if self.condition_use_wet_mask:
+            if wet_mask is None:
+                raise ValueError(
+                    "condition_use_wet_mask requires a static per-depth wet_mask."
+                )
+            condition_parts.append(
+                wet_mask.to(dtype=data_t.dtype, device=data_t.device)
+            )
+        if self.climatology_residual:
+            if background is None:
+                raise ValueError(
+                    "climatology_residual requires a fitted climatology background."
+                )
+            condition_parts.append(background)
 
         condition = torch.cat(condition_parts, dim=1)
         expected_channels = int(getattr(self.model, "condition_channels", 0))
@@ -1865,6 +1982,7 @@ class PixelDiffusionConditional(pl.LightningModule):
         *,
         known_mask: torch.Tensor | None = None,
         known_values: torch.Tensor | None = None,
+        wet_mask: torch.Tensor | None = None,
         coords: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
         return_intermediates: bool = False,
@@ -1888,6 +2006,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             clamp_known_pixels (bool | None): Boolean flag controlling behavior.
             known_mask (torch.Tensor | None): Mask tensor controlling valid or known pixels.
             known_values (torch.Tensor | None): Tensor input for the computation.
+            wet_mask (torch.Tensor | None): Physical ocean support for the reverse chain.
             coords (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
             return_intermediates (bool): Boolean flag controlling behavior.
@@ -1902,6 +2021,10 @@ class PixelDiffusionConditional(pl.LightningModule):
             intermediate_step_indices = None
         if not return_intermediates:
             return_x0_intermediates = False
+        if self.mask_diffusion_with_wet_mask and wet_mask is None:
+            raise ValueError(
+                "Wet-domain sampling requires a static per-depth wet_mask."
+            )
         if clamp_known_pixels is None:
             clamp_known_pixels = self.clamp_known_pixels
         if not clamp_known_pixels:
@@ -1917,6 +2040,7 @@ class PixelDiffusionConditional(pl.LightningModule):
             verbose=verbose,
             known_mask=known_mask,
             known_values=known_values,
+            wet_mask=wet_mask if self.mask_diffusion_with_wet_mask else None,
             coord=coords,
             date=date,
             return_intermediates=return_intermediates,
@@ -2160,8 +2284,20 @@ class PixelDiffusionConditional(pl.LightningModule):
             condition_x = x * further_valid_mask
             condition_valid_mask = further_valid_mask
 
+        wet_mask, background = self._prepare_depth_context(batch, x)
+        condition_x = self._subtract_background(
+            condition_x, condition_valid_mask, background
+        )
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
+            condition_x,
+            condition_valid_mask,
+            eo=eo,
+            land_mask=land_mask,
+            **(
+                {"wet_mask": wet_mask, "background": background}
+                if wet_mask is not None or background is not None
+                else {}
+            ),
         )
         known_values, known_mask = self._extract_known_values_and_mask(
             condition_x, condition_valid_mask
@@ -2177,6 +2313,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 clamp_known_pixels=clamp_known_pixels,
                 known_mask=known_mask,
                 known_values=known_values,
+                wet_mask=wet_mask,
                 coords=coords,
                 date=date,
                 return_intermediates=True,
@@ -2191,9 +2328,38 @@ class PixelDiffusionConditional(pl.LightningModule):
                 clamp_known_pixels=clamp_known_pixels,
                 known_mask=known_mask,
                 known_values=known_values,
+                wet_mask=wet_mask,
                 coords=coords,
                 date=date,
             )
+
+        if background is not None:
+            # Restore the physical background exactly once, in the existing normalized units.
+            y_hat = y_hat + background
+            x0_denoise_samples = [
+                (step, sample + background) for step, sample in x0_denoise_samples
+            ]
+            active_sampler = sampler if sampler is not None else self.model.sampler
+            total_steps = int(active_sampler.num_timesteps)
+            restored_samples = []
+            for step, sample in denoise_samples:
+                if step >= total_steps:
+                    scale = background.new_tensor(1.0)
+                else:
+                    local_t = torch.tensor(
+                        [total_steps - step - 1], device=background.device
+                    )
+                    train_t = self.model._sampler_train_timestep(
+                        active_sampler, local_t
+                    )
+                    scale = (
+                        self.model.forward_process.alphas_cumprod[train_t]
+                        .sqrt()
+                        .view(1, 1, 1, 1)
+                    )
+                # Noisy intermediates carry the forward-noised background, not clean x0.
+                restored_samples.append((step, sample + scale * background))
+            denoise_samples = restored_samples
 
         # Keep all post-processing centralized in Lightning inference. The final returned
         # fields are split back into their physical units when joint mode is enabled.
@@ -2745,6 +2911,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                 "coords": coords,
                 "date": date,
                 "sampler": self.val_sampler,
+                "wet_mask": cached.get("wet_mask"),
+                "climatology": cached.get("climatology"),
             }
             if self.predicts_salinity:
                 pred_batch.update(
@@ -2752,6 +2920,8 @@ class PixelDiffusionConditional(pl.LightningModule):
                         "x_salinity": cached.get("x_salinity"),
                         "x_salinity_valid_mask": cached.get("x_salinity_valid_mask"),
                         "y_salinity_valid_mask": cached.get("y_salinity_valid_mask"),
+                        "wet_mask_salinity": cached.get("wet_mask_salinity"),
+                        "climatology_salinity": cached.get("climatology_salinity"),
                     }
                 )
             if self.log_intermediates:
@@ -3124,6 +3294,9 @@ class PixelDiffusionConditional(pl.LightningModule):
                 ),
                 sample_idx=0,
                 profile_x_label=primary_profile_x_label,
+                depth_axis_m=self._validation_depth_axis_m(
+                    depth_count=int(y_hat_denorm_for_plot.size(1))
+                ),
             )
             depth_axis_m = self._validation_depth_axis_m(
                 depth_count=int(y_hat_denorm_for_plot.size(1))
@@ -3311,13 +3484,30 @@ class PixelDiffusionConditional(pl.LightningModule):
             x_valid_mask=valid_mask,
             y_valid_mask=y_valid_mask,
         )
+        wet_mask, background = self._prepare_depth_context(batch, x)
+        condition_x = self._subtract_background(
+            condition_x, condition_valid_mask, background
+        )
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
+            condition_x,
+            condition_valid_mask,
+            eo=eo,
+            land_mask=land_mask,
+            **(
+                {"wet_mask": wet_mask, "background": background}
+                if wet_mask is not None or background is not None
+                else {}
+            ),
         )
         target_t = self.input_T(target)
+        diffusion_target = self._subtract_background(
+            target_t,
+            valid_mask if self.ambient_occlusion_enabled else y_valid_mask,
+            background,
+        )
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            target_t, prefix="train_target", batch_size=int(target.size(0))
+            diffusion_target, prefix="train_target", batch_size=int(target.size(0))
         )
         self._log_pre_diffusion_stats(
             model_condition, prefix="train_condition", batch_size=int(target.size(0))
@@ -3346,8 +3536,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         # Conditional p_loss uses x as context while learning selected denoising target.
         loss_result = self.model.p_loss(
-            target_t,
+            diffusion_target,
             model_condition,
+            wet_mask=wet_mask if self.mask_diffusion_with_wet_mask else None,
             loss_mask=loss_mask,
             loss_weight=loss_weight,
             mask_loss=self.mask_loss_with_valid_pixels,
@@ -3361,6 +3552,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         if isinstance(loss_result, tuple):
             loss_ambient, diffusion_context = loss_result
+            if background is not None:
+                # Auxiliary terms still see absolute fields; the existing loss is unchanged.
+                diffusion_context["x0_pred"] = diffusion_context["x0_pred"] + background
         else:
             loss_ambient = loss_result
             diffusion_context = None
@@ -3504,13 +3698,30 @@ class PixelDiffusionConditional(pl.LightningModule):
             x_valid_mask=valid_mask,
             y_valid_mask=y_valid_mask,
         )
+        wet_mask, background = self._prepare_depth_context(batch, x)
+        condition_x = self._subtract_background(
+            condition_x, condition_valid_mask, background
+        )
         model_condition = self._prepare_condition_for_model(
-            condition_x, condition_valid_mask, eo=eo, land_mask=land_mask
+            condition_x,
+            condition_valid_mask,
+            eo=eo,
+            land_mask=land_mask,
+            **(
+                {"wet_mask": wet_mask, "background": background}
+                if wet_mask is not None or background is not None
+                else {}
+            ),
         )
         target_t = self.input_T(target)
+        diffusion_target = self._subtract_background(
+            target_t,
+            valid_mask if self.ambient_occlusion_enabled else y_valid_mask,
+            background,
+        )
         # Log target and condition stats in the exact space seen by diffusion.
         self._log_pre_diffusion_stats(
-            target_t, prefix="val_target", batch_size=int(target.size(0))
+            diffusion_target, prefix="val_target", batch_size=int(target.size(0))
         )
         self._log_pre_diffusion_stats(
             model_condition, prefix="val_condition", batch_size=int(target.size(0))
@@ -3540,8 +3751,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         # Same training objective for validation; full reverse-chain recon is logged once
         # at validation end.
         loss_result = self.model.p_loss(
-            target_t,
+            diffusion_target,
             model_condition,
+            wet_mask=wet_mask if self.mask_diffusion_with_wet_mask else None,
             loss_mask=loss_mask,
             loss_weight=loss_weight,
             mask_loss=self.mask_loss_with_valid_pixels,
@@ -3555,6 +3767,9 @@ class PixelDiffusionConditional(pl.LightningModule):
         )
         if isinstance(loss_result, tuple):
             loss_ambient, diffusion_context = loss_result
+            if background is not None:
+                # Auxiliary terms still see absolute fields; the existing loss is unchanged.
+                diffusion_context["x0_pred"] = diffusion_context["x0_pred"] + background
         else:
             loss_ambient = loss_result
             diffusion_context = None

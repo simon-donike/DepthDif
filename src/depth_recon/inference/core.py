@@ -442,6 +442,10 @@ def build_random_batch(
     x_channels = (
         condition_channels - condition_mask_channels - eo_channels - land_channels
     )
+    if bool(getattr(m, "condition_use_wet_mask", False)):
+        x_channels -= generated_channels
+    if bool(getattr(m, "climatology_residual", False)):
+        x_channels -= generated_channels
     if x_channels <= 0:
         x_channels = generated_channels
 
@@ -465,6 +469,13 @@ def build_random_batch(
         "x_valid_mask_1d": x_valid_mask_1d,
         "land_mask": land_mask,
     }
+    if bool(getattr(m, "condition_use_wet_mask", False)) or bool(
+        getattr(m, "mask_diffusion_with_wet_mask", False)
+    ):
+        batch["wet_mask"] = y_valid_mask.clone()
+    if bool(getattr(m, "climatology_residual", False)):
+        # Synthetic dry runs use a neutral background in the existing normalized units.
+        batch["climatology"] = torch.zeros_like(x)
 
     if include_eo:
         batch["eo"] = torch.randn(batch_size, eo_channels, height, width, device=device)

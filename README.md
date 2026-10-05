@@ -77,6 +77,12 @@ the HPC preset instead enables deterministic synthetic targets built from the
 fitted monthly, spatial GLORYS-delta prior. Configuration overrides use repeated
 `--set section.path=value` arguments.
 
+The maintained diffusion presets also pass depth-wise observation and physical
+wet-domain masks (configured with `data.dataset.wet_domain`) into the model. This changes the input-channel contract, so
+those presets require fresh checkpoints. An optional climatology-residual mode
+is available when a training-year-only climatology artifact is configured; it
+does not alter the diffusion loss.
+
 ```bash
 /work/envs/depth/bin/python train.py \
   --scenario temperature \

@@ -454,6 +454,84 @@ class TestPixelConfig(unittest.TestCase):
         self.assertEqual(bundle.model_cfg["model"]["condition_mask_channels"], 4)
         self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 10)
 
+    def test_depth_aware_diffusion_contract_derives_mask_and_wet_channels(self) -> None:
+        """Depth-aware diffusion channels are derived for every pixel scenario."""
+        for scenario in ("temperature", "salinity", "joint"):
+            with (
+                self.subTest(scenario=scenario),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                tmp_path = Path(tmpdir)
+                config = _minimal_super_config(tmp_path, scenario=scenario)
+                config["model"]["depth_channels"] = 4
+                config["model"]["condition_per_depth_valid_mask"] = True
+                config["model"]["condition_use_wet_mask"] = True
+                config["model"]["mask_diffusion_with_wet_mask"] = True
+                config["data"]["dataset"]["wet_domain"] = {"enabled": True}
+                config_path = tmp_path / "super.yaml"
+                _write_yaml(config_path, config)
+
+                bundle = load_pixel_training_config(
+                    config_path_value=config_path,
+                    runtime_config_dir=tmp_path / "runtime",
+                    write_snapshots=False,
+                )
+
+                generated = 4 * len(bundle.model_cfg["model"]["output_fields"])
+                # Generated + EO + per-depth valid + land + wet-domain channels.
+                self.assertEqual(
+                    bundle.model_cfg["model"]["condition_mask_channels"], generated
+                )
+                self.assertEqual(
+                    bundle.model_cfg["model"]["condition_channels"],
+                    generated * 3 + 2,
+                )
+
+    def test_diffusion_contract_validates_climatology_and_baseline_isolated(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config = _minimal_super_config(tmp_path)
+            config["model"]["climatology_residual"] = True
+            config_path = tmp_path / "invalid.yaml"
+            _write_yaml(config_path, config)
+            with self.assertRaisesRegex(ValueError, "climatology_residual"):
+                load_pixel_training_config(
+                    config_path_value=config_path,
+                    runtime_config_dir=tmp_path / "runtime-invalid",
+                    write_snapshots=False,
+                )
+
+            baseline = _minimal_super_config(tmp_path)
+            baseline["model"]["model_type"] = "unet2d_baseline"
+            baseline["model"]["depth_channels"] = 4
+            baseline["model"]["condition_use_wet_mask"] = True
+            baseline["model"]["mask_diffusion_with_wet_mask"] = True
+            baseline["model"]["unet_baseline"] = {"per_channel_valid_mask": True}
+            baseline_path = tmp_path / "baseline.yaml"
+            _write_yaml(baseline_path, baseline)
+            bundle = load_pixel_training_config(
+                config_path_value=baseline_path,
+                runtime_config_dir=tmp_path / "runtime-baseline",
+                write_snapshots=False,
+            )
+            self.assertEqual(bundle.model_cfg["model"]["condition_channels"], 10)
+
+            for model_type in ("idw_baseline", "lstm_baseline"):
+                with self.subTest(model_type=model_type):
+                    legacy_baseline = _minimal_super_config(tmp_path)
+                    legacy_baseline["model"]["model_type"] = model_type
+                    legacy_baseline["model"]["condition_use_wet_mask"] = True
+                    legacy_baseline["model"]["mask_diffusion_with_wet_mask"] = True
+                    legacy_path = tmp_path / f"{model_type}.yaml"
+                    _write_yaml(legacy_path, legacy_baseline)
+                    load_pixel_training_config(
+                        config_path_value=legacy_path,
+                        runtime_config_dir=tmp_path / f"runtime-{model_type}",
+                        write_snapshots=False,
+                    )
+
     def test_invalid_scenario_and_override_fail_clearly(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported pixel scenario"):
             resolve_pixel_scenario({"scenario": "oxygen"})

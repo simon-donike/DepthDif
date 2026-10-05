@@ -336,6 +336,98 @@ def apply_surface_conditioning_contract(
     model_section["condition_channels"] = condition_channels
 
 
+def apply_depth_aware_condition_contract(
+    model_cfg: dict[str, Any],
+    data_cfg: dict[str, Any],
+    override_keys: set[str],
+) -> None:
+    """Resolve depth-wise masks and climatology channels for pixel diffusion.
+
+    These options intentionally apply only to ``cond_px_dif``.  The baseline
+    models have separate channel contracts and must remain comparable when a
+    diffusion configuration happens to contain these keys.
+    """
+    model_section = model_cfg.get("model", {})
+    if not isinstance(model_section, dict):
+        return
+    model_type = str(model_section.get("model_type", "cond_px_dif")).strip()
+    if model_type != "cond_px_dif":
+        return
+
+    # Missing flags preserve the effective contract of old configs/checkpoints.
+    has_new_contract = any(
+        key in model_section
+        for key in (
+            "condition_per_depth_valid_mask",
+            "condition_use_wet_mask",
+            "mask_diffusion_with_wet_mask",
+            "climatology_residual",
+        )
+    )
+    if not has_new_contract:
+        return
+
+    generated_channels = int(model_section.get("generated_channels", 1))
+    if generated_channels < 1:
+        raise ValueError("model.generated_channels must be >= 1.")
+    dataset_section = data_cfg.get("dataset", {})
+    if not isinstance(dataset_section, dict):
+        dataset_section = {}
+    static_mask_cfg = dataset_section.get("wet_domain", {})
+    static_mask_enabled = (
+        bool(static_mask_cfg)
+        if isinstance(static_mask_cfg, bool)
+        else isinstance(static_mask_cfg, dict)
+        and bool(static_mask_cfg.get("enabled", False))
+    )
+    use_wet_mask = bool(model_section.get("condition_use_wet_mask", False))
+    mask_diffusion = bool(model_section.get("mask_diffusion_with_wet_mask", False))
+    if (use_wet_mask or mask_diffusion) and not static_mask_enabled:
+        raise ValueError(
+            "Depth-aware wet-mask conditioning/masking requires "
+            "data.dataset.wet_domain.enabled=true."
+        )
+    if mask_diffusion and not bool(
+        model_section.get("mask_loss_with_valid_pixels", False)
+    ):
+        raise ValueError(
+            "model.mask_diffusion_with_wet_mask=true requires "
+            "model.mask_loss_with_valid_pixels=true."
+        )
+
+    if bool(model_section.get("condition_per_depth_valid_mask", False)):
+        if "model.condition_mask_channels" not in override_keys:
+            model_section["condition_mask_channels"] = generated_channels
+
+    climatology_cfg = dataset_section.get("climatology", {})
+    climatology_enabled = (
+        isinstance(climatology_cfg, dict)
+        and bool(climatology_cfg.get("enabled", False))
+        and bool(climatology_cfg.get("path"))
+    )
+    residual = bool(model_section.get("climatology_residual", False))
+    if residual and not climatology_enabled:
+        raise ValueError(
+            "model.climatology_residual=true requires "
+            "data.dataset.climatology.enabled=true and a non-empty path."
+        )
+
+    if "model.condition_channels" in override_keys:
+        return
+    condition_channels = generated_channels
+    if bool(model_section.get("condition_include_eo", False)):
+        condition_channels += int(model_section.get("condition_eo_channels", 1))
+    if bool(model_section.get("condition_use_valid_mask", True)):
+        condition_channels += int(model_section.get("condition_mask_channels", 1))
+    if bool(model_section.get("condition_use_land_mask", False)):
+        condition_channels += 1
+    if use_wet_mask:
+        condition_channels += generated_channels
+    if residual:
+        condition_channels += generated_channels
+    model_section["condition_channels"] = condition_channels
+
+
 def resolve_pixel_scenario(
     super_cfg: dict[str, Any], scenario_override: str | None = None
 ) -> str:
@@ -492,6 +584,7 @@ def load_pixel_training_config(
         },
     )
     apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
+    apply_depth_aware_condition_contract(model_cfg, data_cfg, override_keys)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (
@@ -566,6 +659,7 @@ def load_pixel_inference_config(
         },
     )
     apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
+    apply_depth_aware_condition_contract(model_cfg, data_cfg, override_keys)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (

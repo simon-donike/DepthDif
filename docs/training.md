@@ -14,6 +14,28 @@ The resolver applies the scenario first and explicit `--set` overrides afterward
 This keeps dataset fields, salinity loading, generated channels, and condition
 channels aligned.
 
+The maintained pixel diffusion presets enable three depth-aware domain options:
+`condition_per_depth_valid_mask` supplies one sparse-observation mask per output
+field/depth, `condition_use_wet_mask` supplies one static physical wet-domain
+channel per output field/depth, and `mask_diffusion_with_wet_mask` keeps dry
+cells outside the diffusion domain during training and sampling. These options require
+`data.dataset.wet_domain.enabled=true` and change the denoiser input
+contract, so these options require a fresh model initialization. Evaluate existing
+checkpoints using their original saved configurations. Baseline
+models ignore these diffusion-only flags and retain their own channel contracts.
+
+`model.climatology_residual=true` is an optional mode that predicts departures
+from a monthly/spatial climatology. It requires
+`data.dataset.climatology.enabled=true` and a non-empty artifact `path`; the
+climatology must be fitted from training years only, excluding the validation
+year. Fit an artifact with `depth_recon.data.fit_climatology`, then compare
+fixed-sample per-depth baselines with
+`depth_recon.scripts.evaluate_depth_baselines`. The current presets leave this
+mode disabled. These changes affect diffusion inputs and the optional output
+representation; the loss formula, weights, and supervised support remain unchanged.
+
+See [depth diagnostics](depth-diagnostics.md) for fitting and evaluation commands.
+
 ## Maintained presets
 
 The default local `training_super_config.yaml` and explicit

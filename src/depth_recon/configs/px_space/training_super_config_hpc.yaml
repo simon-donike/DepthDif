@@ -159,6 +159,8 @@ data:  # dataset, split, and loader inputs
     output:  # optional batch outputs
       return_info: false  # include metadata dictionaries
       return_coords: true  # include patch center coords
+    wet_domain:  # depth-wise physical wet-domain support from each sample
+      enabled: true
     runtime:  # dataset runtime knobs
       random_seed: 7  # deterministic split/sampling seed
       cache_size: 8  # open raster/source cache size
@@ -176,9 +178,13 @@ model:  # pixel diffusion model settings
   resume_checkpoint: false  # checkpoint path or false
   load_checkpoint_only: false  # weights-only checkpoint load
   condition_eo_channels: 1  # one scenario-derived SST or SSS channel
-  condition_mask_channels: 1  # valid-mask condition channels
+  condition_mask_channels: 1  # valid-mask condition channels (resolver derives per-depth count)
   condition_include_eo: true  # add configured surface channels
   condition_use_valid_mask: true  # add ARGO support mask
+  condition_per_depth_valid_mask: true  # preserve one observation mask per field/depth
+  condition_use_wet_mask: true  # condition on static physical wet-domain support
+  mask_diffusion_with_wet_mask: true  # keep dry cells outside the diffusion domain
+  climatology_residual: false  # enable only with dataset.climatology artifacts
   condition_use_land_mask: true  # add GLORYS land mask
   clamp_known_pixels: false  # clamp known pixels while sampling
   mask_loss_with_valid_pixels: true  # mask loss to valid support
