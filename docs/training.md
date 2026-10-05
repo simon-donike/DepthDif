@@ -40,7 +40,7 @@ See [depth diagnostics](depth-diagnostics.md) for fitting and evaluation command
 
 The default local `training_super_config.yaml` and explicit
 `training_super_config_standard.yaml` select the
-`glorys_dense_reproduction_2016_2x3090` scratch experiment. They hold out **2016**
+`glorys_dense_reproduction_2016_2x3090_slow_lr` scratch experiment. They hold out **2016**
 and learn dense GLORYS targets from ARGO-containing patches, matching the original
 scratch run's row selection. Ambient training, synthetic targets, regional
 fine-tuning, and coastal loss are disabled. Temperature uses one SST conditioning
@@ -48,7 +48,10 @@ channel; the salinity scenario uses SSS.
 
 The local recipe uses two GPUs with DDP, mixed precision, batch size 48 per GPU
 (effective batch 96), two training workers per GPU, and seed 7. The learning rate
-starts at `1e-4` with the original step-based plateau patience of 25,000.
+starts at `1e-4`. The plateau scheduler checks validation loss once per epoch,
+with patience 5 before halving the LR. This avoids counting a stale validation
+metric as a new non-improvement on every optimizer step. ARGO filtering remains
+enabled for both splits and counts temperature-valid profiles.
 The HPC presets remain separate; the command below selects the local recipe.
 
 ```bash

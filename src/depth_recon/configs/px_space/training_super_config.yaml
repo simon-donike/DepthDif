@@ -372,7 +372,7 @@ training:  # optimizer, trainer, and logging
     offline: false  # use online W&B logging for the standard preset
     project: DepthDif_Simon  # W&B project
     entity: esa-phi-lab  # W&B entity
-    run_name: glorys_dense_reproduction_2016_2x3090  # local scratch experiment
+    run_name: glorys_dense_reproduction_2016_2x3090_slow_lr  # fresh scratch experiment
     run_id: null  # optional stable W&B id for resumable suite tasks
     resume: null  # null starts normally; suite uses allow
     group: null  # optional W&B run group
@@ -406,10 +406,10 @@ training:  # optimizer, trainer, and logging
     reduce_on_plateau:  # plateau LR scheduler
       enabled: true  # enable plateau schedule
       monitor: val/loss_ckpt  # monitored metric
-      interval: step  # scheduler interval unit
+      interval: epoch  # check validation loss once per epoch, not on stale metrics each step
       mode: min  # optimize lower metric
       factor: 0.5  # LR decay factor
-      patience: 25000  # optimizer-step patience from the original scratch recipe
+      patience: 5  # tolerate five non-improving epochs before halving LR
       threshold: 0.0001  # improvement threshold
       threshold_mode: rel  # threshold mode
       cooldown: 0  # cooldown intervals
