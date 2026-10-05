@@ -206,7 +206,7 @@ training:  # optimizer, trainer, and logging
       ddim_temperature: 1.0  # sampler noise scale
       log_intermediates: false  # log denoising intermediates
       skip_full_reconstruction_in_sanity_check: true  # skip costly sanity pass
-      max_full_reconstruction_samples: 5  # max full recon samples
+      max_full_reconstruction_samples: 1  # keep diagnostic DDPM reconstruction bounded
   trainer:  # PyTorch Lightning trainer
     max_epochs: 1500  # epoch limit
     accelerator: auto  # accelerator selection
@@ -239,7 +239,7 @@ training:  # optimizer, trainer, and logging
     log_images_every_n_steps: 200  # image log cadence
   dataloader:  # Lightning dataloader settings
     batch_size: 4  # train batch size
-    val_batch_size: 2  # validation batch size
+    val_batch_size: 1  # one patch for the local run_single inference preview
     num_workers: 0  # train loader workers
     val_num_workers: 0  # validation loader workers
     persistent_workers: false  # keep train workers alive
@@ -271,13 +271,13 @@ inference:  # inference-only overrides
     sampler: ddpm  # null uses training.validation_sampling.sampler; set ddpm or ddim
     ddim_num_timesteps: null  # null uses training.validation_sampling.ddim_num_timesteps
   uncertainty_sampling:  # sampler overrides only for ensemble uncertainty exports
-    sampler: ddim  # null uses inference.sampling.sampler
-    ddim_num_timesteps: 100  # null uses inference.sampling.ddim_num_timesteps
+    sampler: ddpm  # use DDPM for uncertainty inference as well
+    ddim_num_timesteps: null  # unused by DDPM
   grid:  # inference patch grid
     patch_stride: 96  # prediction patch stride
     min_ocean_fraction: 0.05  # minimum ocean coverage
     land_mask_path: masks/world_land_mask_glorys_0p1.tif  # dataset-root-relative inference land mask
   dataloader:  # prediction loader settings
-    batch_size: 64  # prediction batch size
-    num_workers: 6  # prediction workers
+    batch_size: 2  # small local prediction batch for the 3090
+    num_workers: 2  # local prediction workers
     prefetch_factor: 2  # batches prefetched per worker when workers are enabled

@@ -186,7 +186,7 @@
               <div class="globe-point-legend">
                 <div class="globe-point-legend__item">
                   <span class="globe-point-legend__marker globe-point-legend__marker--argo" aria-hidden="true"></span>
-                  <span>ARGO</span>
+                  <span>ARGO Locations</span>
                 </div>
                 <div class="globe-point-legend__item">
                   <span
@@ -199,16 +199,51 @@
             </div>
           </div>
           <div id="depthdif-cesium-globe" class="globe-canvas" aria-label="DepthDif Cesium globe viewer"></div>
+          <div id="globe-recording-caption" class="globe-recording-caption" hidden>
+            <span class="globe-recording-caption__dot" aria-hidden="true"></span>
+            <span>
+              <strong id="globe-recording-caption-title">DepthDif recording tour</strong>
+              <span id="globe-recording-caption-progress" class="globe-recording-caption__progress"></span>
+            </span>
+          </div>
+          <div id="globe-recording-depth" class="globe-recording-depth" hidden>
+            <span class="globe-recording-depth__eyebrow">Temperature depth</span>
+            <strong id="globe-recording-depth-label">Surface</strong>
+            <span class="globe-recording-depth__track" aria-hidden="true">
+              <span id="globe-recording-depth-progress" class="globe-recording-depth__progress"></span>
+            </span>
+          </div>
+          <div id="globe-recording-panel" class="globe-recording-panel" hidden>
+            <div class="globe-recording-panel__card">
+              <span class="globe-recording-panel__eyebrow">Desktop recording mode</span>
+              <h2 id="globe-recording-status" class="globe-recording-panel__title">
+                Preparing the tour…
+              </h2>
+              <p id="globe-recording-instructions" class="globe-recording-panel__text">
+                Loading the presentation layers and ARGO locations.
+              </p>
+              <div id="globe-recording-countdown" class="globe-recording-countdown" hidden></div>
+              <button id="globe-recording-start" class="globe-recording-button" type="button" hidden>
+                Begin 5-second countdown
+              </button>
+              <button id="globe-recording-replay" class="globe-recording-button" type="button" hidden>
+                Prepare another take
+              </button>
+            </div>
+          </div>
           <div id="globe-mobile-block" class="globe-mobile-block" hidden>
             <div class="globe-mobile-block__card">
-              <span class="globe-mobile-block__eyebrow">Desktop Only</span>
+              <span class="globe-mobile-block__eyebrow">Tablet preview</span>
               <h2 id="globe-mobile-block-title" class="globe-mobile-block__title">
-                3D globe visualization is disabled on mobile
+                This 3D globe works best on a desktop
               </h2>
               <p id="globe-mobile-block-text" class="globe-mobile-block__text">
-                This view is intentionally blocked on phones and tablets. Open the page on a desktop
-                or laptop to load Cesium and inspect the weekly prediction globe.
+                On a tablet it may load more slowly and some controls may feel cramped. You can still
+                continue to inspect the dataset and ARGO locations.
               </p>
+              <button id="globe-mobile-continue" class="globe-mobile-continue" type="button">
+                Continue on this device
+              </button>
               <nav class="standalone-globe-links" aria-label="Globe links">
                 <a class="standalone-globe-back-link" href="../analysis/">Back to Analysis</a>
               </nav>

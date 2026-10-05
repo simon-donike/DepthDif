@@ -593,10 +593,12 @@ class TestEMA(unittest.TestCase):
         self.assertEqual(model.calls[0][1]["image_key_suffix"], "standard")
         self.assertFalse(model.calls[0][1]["log_default_metrics"])
         self.assertFalse(model.calls[0][1]["log_common_metrics"])
+        self.assertTrue(model.calls[0][1]["log_profile"])
         self.assertEqual(model.calls[1][1]["metric_prefix"], "val_ema")
         self.assertEqual(model.calls[1][1]["image_key_suffix"], "ema")
         self.assertTrue(model.calls[1][1]["log_default_metrics"])
         self.assertTrue(model.calls[1][1]["log_common_metrics"])
+        self.assertTrue(model.calls[1][1]["log_profile"])
 
     def test_validation_logging_applies_and_restores_ema_when_eval_uses_standard(
         self,
@@ -617,9 +619,11 @@ class TestEMA(unittest.TestCase):
         self.assertEqual(model.calls[0][1]["metric_prefix"], "val_standard")
         self.assertTrue(model.calls[0][1]["log_default_metrics"])
         self.assertTrue(model.calls[0][1]["log_common_metrics"])
+        self.assertTrue(model.calls[0][1]["log_profile"])
         self.assertEqual(model.calls[1][1]["metric_prefix"], "val_ema")
         self.assertFalse(model.calls[1][1]["log_default_metrics"])
         self.assertFalse(model.calls[1][1]["log_common_metrics"])
+        self.assertTrue(model.calls[1][1]["log_profile"])
 
 
 if __name__ == "__main__":

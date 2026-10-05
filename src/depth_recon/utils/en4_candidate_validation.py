@@ -1189,6 +1189,7 @@ class EN4CandidateValidationCallback(pl.Callback):
                                 else "Temperature (deg C)"
                             ),
                             title=f"Average EN4 candidate profile: {variable}",
+                            error_reference_label="EN4",
                         )
                         if variable == "temperature":
                             log_wandb_average_depth_errors(

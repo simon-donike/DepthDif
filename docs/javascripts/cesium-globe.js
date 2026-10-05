@@ -38,6 +38,12 @@
   const PATCH_OUTLINE_WIDTH = 2.75;
   const PROFILE_POPUP_CLOSE_DELAY_MS = 180;
   const BACKGROUND_PRELOAD_DELAY_MS = 180;
+  const RECORDING_SLIDE_DURATION_MS = 8500;
+  const RECORDING_PROFILE_DURATION_MS = 10000;
+  const RECORDING_DEPTH_DURATION_MS = 1500;
+  const RECORDING_LOOP_ROTATION_DURATION_MS = 24000;
+  const RECORDING_OVERVIEW_HEIGHT_SCALE = 1.3;
+  const RECORDING_POINT_HEIGHT_M = 450000.0;
   const MONTH_ABBREVIATIONS = [
     "Jan",
     "Feb",
@@ -120,7 +126,24 @@
       profilePopupSubtitle: document.getElementById("globe-profile-popup-subtitle"),
       profilePopupImage: document.getElementById("globe-profile-popup-image"),
       profilePopupClose: document.getElementById("globe-profile-popup-close"),
+      recordingPanel: document.getElementById("globe-recording-panel"),
+      recordingStatus: document.getElementById("globe-recording-status"),
+      recordingInstructions: document.getElementById("globe-recording-instructions"),
+      recordingCountdown: document.getElementById("globe-recording-countdown"),
+      recordingStart: document.getElementById("globe-recording-start"),
+      recordingReplay: document.getElementById("globe-recording-replay"),
+      recordingCaption: document.getElementById("globe-recording-caption"),
+      recordingCaptionTitle: document.getElementById("globe-recording-caption-title"),
+      recordingCaptionProgress: document.getElementById("globe-recording-caption-progress"),
+      recordingDepth: document.getElementById("globe-recording-depth"),
+      recordingDepthLabel: document.getElementById("globe-recording-depth-label"),
+      recordingDepthProgress: document.getElementById("globe-recording-depth-progress"),
     };
+  }
+
+  function recordingTourRequested() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("recording") === "1";
   }
 
   function nextInitToken() {
@@ -804,14 +827,14 @@
     return markerKindForEntity(entity, now) === "full_depth_profile";
   }
 
-  function styleArgoSampleEntities(dataSource) {
+  function styleArgoSampleEntities(dataSource, unifiedMarkers) {
     const now = Cesium.JulianDate.now();
     dataSource.entities.values.forEach(function (entity) {
       if (!entity.billboard) {
         return;
       }
 
-      const isFullDepthProfile = entityHasFullDepthGraph(entity, now);
+      const isFullDepthProfile = !unifiedMarkers && entityHasFullDepthGraph(entity, now);
       stylePointEntity(entity, {
         image: isFullDepthProfile ? FULL_SAMPLE_MARKER_IMAGE : ARGO_POINT_MARKER_IMAGE,
         width: isFullDepthProfile ? 34 : 24,
@@ -1272,6 +1295,9 @@
     viewer.resolutionScale = window.devicePixelRatio || 1;
     addBaseMap(viewer, config, configUrl);
     viewer.scene.globe.enableLighting = false;
+    viewer.scene.globe.showGroundAtmosphere = false;
+    viewer.scene.skyAtmosphere.show = false;
+    viewer.scene.fog.enabled = false;
     viewer.clock.shouldAnimate = false;
     return viewer;
   }
@@ -1321,36 +1347,61 @@
     return DEFAULT_CAMERA_DESTINATION;
   }
 
-  function flyToConfig(state) {
+  function flyToConfig(state, heightScale) {
     const destination = resolveCameraDestination(state.config);
     if (
       !Number.isFinite(destination.lon) ||
       !Number.isFinite(destination.lat) ||
       !Number.isFinite(destination.height)
     ) {
-      return;
+      return Promise.resolve();
     }
 
-    state.viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(
-        destination.lon,
-        destination.lat,
-        destination.height
-      ),
-      orientation: {
-        heading: 0.0,
-        pitch: -Cesium.Math.PI_OVER_TWO,
-        roll: 0.0,
-      },
-      duration: 1.8,
-      complete: function () {
-        requestRender(state);
-      },
-      cancel: function () {
-        requestRender(state);
-      },
+    return new Promise(function (resolve) {
+      state.viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(
+          destination.lon,
+          destination.lat,
+          destination.height * Number(heightScale || 1.0)
+        ),
+        orientation: {
+          heading: 0.0,
+          pitch: -Cesium.Math.PI_OVER_TWO,
+          roll: 0.0,
+        },
+        duration: 1.8,
+        complete: function () {
+          requestRender(state);
+          resolve();
+        },
+        cancel: function () {
+          requestRender(state);
+          resolve();
+        },
+      });
+      requestRender(state);
     });
-    requestRender(state);
+  }
+
+  function flyToRecordingPoint(state, entity) {
+    const lonLat = positionToLonLat(entity, Cesium.JulianDate.now());
+    if (!lonLat) {
+      return Promise.resolve();
+    }
+    return new Promise(function (resolve) {
+      state.viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lonLat.lon, lonLat.lat, RECORDING_POINT_HEIGHT_M),
+        orientation: {
+          heading: 0.0,
+          pitch: -Cesium.Math.PI_OVER_TWO,
+          roll: 0.0,
+        },
+        duration: 2.4,
+        complete: resolve,
+        cancel: resolve,
+      });
+      requestRender(state);
+    });
   }
 
   function setSpinEnabled(state, enabled) {
@@ -1886,7 +1937,7 @@
       strokeWidth: 1,
       credit: activeConfig.credits && activeConfig.credits.points,
     });
-    styleArgoSampleEntities(dataSource);
+    styleArgoSampleEntities(dataSource, state.recordingMode);
     state.viewer.dataSources.add(dataSource);
     dataSource.show = state.elements.pointsToggle.checked;
     updateArgoLegendVisibility(state);
@@ -2166,7 +2217,7 @@
     }
   }
 
-  async function reloadRasterDepthLayers(state) {
+  async function reloadRasterDepthLayers(state, preservePreviousUntilLoaded) {
     const imageryLayers = state.viewer.imageryLayers;
     const showPrediction = state.elements.predictionToggle.checked;
     const showGroundTruth = state.elements.groundTruthToggle.checked;
@@ -2174,23 +2225,29 @@
     const showUncertainty = state.elements.uncertaintyToggle.checked;
     const rasterDepthReloadToken = state.rasterDepthReloadToken + 1;
     state.rasterDepthReloadToken = rasterDepthReloadToken;
+    const previousLayers = {
+      predictionLayer: state.predictionLayer,
+      groundTruthLayer: state.groundTruthLayer,
+      absoluteErrorLayer: state.absoluteErrorLayer,
+      uncertaintyLayer: state.uncertaintyLayer,
+    };
 
-    if (state.predictionLayer) {
+    if (state.predictionLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.predictionLayer, true);
-      state.predictionLayer = null;
     }
-    if (state.groundTruthLayer) {
+    if (state.groundTruthLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.groundTruthLayer, true);
-      state.groundTruthLayer = null;
     }
-    if (state.absoluteErrorLayer) {
+    if (state.absoluteErrorLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.absoluteErrorLayer, true);
-      state.absoluteErrorLayer = null;
     }
-    if (state.uncertaintyLayer) {
+    if (state.uncertaintyLayer && !preservePreviousUntilLoaded) {
       imageryLayers.remove(state.uncertaintyLayer, true);
-      state.uncertaintyLayer = null;
     }
+    state.predictionLayer = null;
+    state.groundTruthLayer = null;
+    state.absoluteErrorLayer = null;
+    state.uncertaintyLayer = null;
     state.predictionLayerLoadPromise = null;
     state.groundTruthLayerLoadPromise = null;
     state.absoluteErrorLayerLoadPromise = null;
@@ -2250,7 +2307,23 @@
       enforceOverlayOrder(state);
       updateAbsoluteErrorLegend(state);
       requestRender(state);
+      if (preservePreviousUntilLoaded) {
+        await waitForRecordingTiles(state, 6000);
+        Object.keys(previousLayers).forEach(function (layerKey) {
+          const previousLayer = previousLayers[layerKey];
+          if (previousLayer && previousLayer !== state[layerKey]) {
+            imageryLayers.remove(previousLayer, true);
+          }
+        });
+      }
     } catch (error) {
+      if (preservePreviousUntilLoaded && rasterDepthReloadToken === state.rasterDepthReloadToken) {
+        Object.keys(previousLayers).forEach(function (layerKey) {
+          if (!state[layerKey] && previousLayers[layerKey]) {
+            state[layerKey] = previousLayers[layerKey];
+          }
+        });
+      }
       console.error(error);
     }
   }
@@ -2284,6 +2357,589 @@
     }
     updateArgoLegendVisibility(state);
     requestRender(state);
+  }
+
+  function recordingTourDelay(state, delayMs) {
+    return new Promise(function (resolve) {
+      const timeoutId = window.setTimeout(function () {
+        state.recordingTourTimeoutIds.delete(timeoutId);
+        resolve();
+      }, delayMs);
+      state.recordingTourTimeoutIds.add(timeoutId);
+    });
+  }
+
+  function recordingTourIsCurrent(state, runId) {
+    return Boolean(
+      window.__depthdifCesiumGlobeState === state &&
+        state.recordingTourRunId === runId &&
+        state.viewer &&
+        !state.viewer.isDestroyed()
+    );
+  }
+
+  function updateRecordingPanel(state, status, instructions) {
+    const elements = state.elements;
+    if (elements.recordingStatus) {
+      elements.recordingStatus.textContent = status;
+    }
+    if (elements.recordingInstructions) {
+      elements.recordingInstructions.textContent = instructions;
+    }
+  }
+
+  function updateRecordingCaption(state, title, stepNumber, stepCount) {
+    const elements = state.elements;
+    if (elements.recordingCaptionTitle) {
+      elements.recordingCaptionTitle.textContent = title;
+    }
+    if (elements.recordingCaptionProgress) {
+      elements.recordingCaptionProgress.textContent =
+        "Scene " + String(stepNumber) + " of " + String(stepCount);
+    }
+  }
+
+  function setRecordingPointsVisible(state, visible) {
+    const elements = state.elements;
+    if (!elements.pointsToggle) {
+      return Promise.resolve(null);
+    }
+    // Recording mode uses one persistent location layer across every scene.
+    visible = state.recordingMode ? true : visible;
+    elements.pointsRadios.forEach(function (radio) {
+      radio.checked = radio.value === (visible ? "on" : "off");
+    });
+    elements.pointsToggle.checked = visible;
+    if (!visible) {
+      if (state.pointsDataSource) {
+        state.pointsDataSource.show = false;
+      }
+      updateArgoLegendVisibility(state);
+      requestRender(state);
+      return Promise.resolve(state.pointsDataSource);
+    }
+    return ensurePointsLayer(state).then(function (dataSource) {
+      if (dataSource) {
+        dataSource.show = true;
+      }
+      updateArgoLegendVisibility(state);
+      requestRender(state);
+      return dataSource;
+    });
+  }
+
+  async function selectRecordingVariable(state, variableKey) {
+    const variables = getVariableConfigs(state.config);
+    if (variables && !variables[variableKey]) {
+      return false;
+    }
+    if (state.selectedVariable === variableKey) {
+      return true;
+    }
+    state.selectedVariable = variableKey;
+    state.elements.variableRadios.forEach(function (radio) {
+      radio.checked = radio.value === variableKey;
+    });
+    await reloadVariableLayers(state);
+    return true;
+  }
+
+  async function selectRecordingRaster(state, rasterKey) {
+    const toggleByKey = {
+      prediction: state.elements.predictionToggle,
+      glorys: state.elements.groundTruthToggle,
+      error: state.elements.absoluteErrorToggle,
+    };
+    const targetToggle = toggleByKey[rasterKey];
+    if (!targetToggle || targetToggle.disabled) {
+      return false;
+    }
+    // Load the next provider behind the current raster so the recorded tour does
+    // not show a blank globe while a layer's metadata is being fetched.
+    let layer = state.predictionLayer;
+    if (rasterKey === "glorys") {
+      layer = await ensureGroundTruthLayer(state);
+    } else if (rasterKey === "error") {
+      layer = await ensureAbsoluteErrorLayer(state);
+    } else if (!layer) {
+      layer = await addPredictionLayer(state);
+      state.predictionLayer = layer;
+    }
+    rasterLayerToggles(state).forEach(function (toggle) {
+      toggle.checked = toggle === targetToggle;
+    });
+    syncRasterLayerVisibility(state);
+    enforceOverlayOrder(state);
+    return Boolean(layer);
+  }
+
+  async function waitForRecordingTiles(state, maximumWaitMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < maximumWaitMs) {
+      if (!state.viewer || state.viewer.isDestroyed()) {
+        return;
+      }
+      requestRender(state);
+      if (state.viewer.scene.globe.tilesLoaded && Date.now() - startedAt >= 300) {
+        return;
+      }
+      await recordingTourDelay(state, 150);
+    }
+  }
+
+  function playRecordingCue(state, frequencies) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      return;
+    }
+    if (!state.recordingAudioContext) {
+      state.recordingAudioContext = new AudioContextClass();
+    }
+    const context = state.recordingAudioContext;
+    if (context.state === "suspended") {
+      context.resume();
+    }
+    frequencies.forEach(function (frequency, index) {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const startTime = context.currentTime + index * 0.22;
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, startTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.16);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(startTime);
+      oscillator.stop(startTime + 0.18);
+    });
+  }
+
+  function recordingProfileImageLoads(state, graphPath) {
+    return new Promise(function (resolve) {
+      const image = new Image();
+      let timeoutId = null;
+      const finish = function (loaded) {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+        image.onload = null;
+        image.onerror = null;
+        resolve(loaded);
+      };
+      timeoutId = window.setTimeout(function () {
+        finish(false);
+      }, 5000);
+      image.onload = function () {
+        finish(true);
+      };
+      image.onerror = function () {
+        finish(false);
+      };
+      image.src = new URL(String(graphPath), state.configUrl).toString();
+    });
+  }
+
+  async function findRecordingPointWithPng(state) {
+    if (!state.pointsDataSource) {
+      return null;
+    }
+    const now = Cesium.JulianDate.now();
+    const candidates = state.pointsDataSource.entities.values.filter(function (entity) {
+      const properties = entity.properties;
+      const graphPath = properties && properties.graph_png_path
+        ? properties.graph_png_path.getValue(now)
+        : null;
+      return entity.billboard && entityHasFullDepthGraph(entity, now) && Boolean(graphPath);
+    });
+    for (const entity of candidates) {
+      const graphPath = entity.properties.graph_png_path.getValue(now);
+      // Confirm the hosted image loads before the automated tour opens its popup.
+      if (await recordingProfileImageLoads(state, graphPath)) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  function updateRecordingDepthVisualization(state, depthLevel, index, count) {
+    const elements = state.elements;
+    if (!elements.recordingDepth) {
+      return;
+    }
+    elements.recordingDepth.hidden = false;
+    if (elements.recordingDepthLabel) {
+      elements.recordingDepthLabel.textContent = String(depthLevel.label || formatDepthMeters(depthLevel));
+    }
+    if (elements.recordingDepthProgress) {
+      const progress = count <= 1 ? 100 : (index / (count - 1)) * 100;
+      elements.recordingDepthProgress.style.width = String(progress) + "%";
+    }
+  }
+
+  async function runRecordingDepthStep(state, step, stepNumber, stepCount, runId) {
+    closeProfilePopup(state);
+    setSpinEnabled(state, true);
+    await selectRecordingVariable(state, "temperature");
+    await setRecordingPointsVisible(state, false);
+    const depthLevels = getDepthLevels(activeVariableConfig(state))
+      .map(function (depthLevel, selectedDepthIndex) {
+        return { depthLevel: depthLevel, selectedDepthIndex: selectedDepthIndex };
+      })
+      .filter(function (entry) {
+        return Boolean(entry.depthLevel.prediction_tiles_url);
+      });
+    for (let index = 0; index < depthLevels.length; index += 1) {
+      if (!recordingTourIsCurrent(state, runId)) {
+        return;
+      }
+      const entry = depthLevels[index];
+      const depthLevel = entry.depthLevel;
+      updateRecordingCaption(
+        state,
+        step.title + " · " + String(depthLevel.label || formatDepthMeters(depthLevel)),
+        stepNumber,
+        stepCount
+      );
+      updateRecordingDepthVisualization(state, depthLevel, index, depthLevels.length);
+      state.selectedDepthIndex = entry.selectedDepthIndex;
+      updateDepthControl(state);
+      await reloadRasterDepthLayers(state, true);
+      await selectRecordingRaster(state, "prediction");
+      await waitForRecordingTiles(state, 6000);
+      await recordingTourDelay(state, RECORDING_DEPTH_DURATION_MS);
+    }
+    // Return later overview scenes to the familiar surface layer after the sweep.
+    state.selectedDepthIndex = 0;
+    updateDepthControl(state);
+    await reloadRasterDepthLayers(state, true);
+    await selectRecordingRaster(state, "prediction");
+    await waitForRecordingTiles(state, 6000);
+    if (state.elements.recordingDepth) {
+      state.elements.recordingDepth.hidden = true;
+    }
+  }
+
+  async function runRecordingRasterStep(state, step, stepNumber, stepCount, runId) {
+    closeProfilePopup(state);
+    if (state.elements.recordingDepth) {
+      state.elements.recordingDepth.hidden = true;
+    }
+    updateRecordingCaption(state, step.title, stepNumber, stepCount);
+    if (!(await selectRecordingVariable(state, step.variable))) {
+      return;
+    }
+    await setRecordingPointsVisible(state, step.points);
+    if (!(await selectRecordingRaster(state, step.raster))) {
+      return;
+    }
+    await waitForRecordingTiles(state, 6000);
+    if (!recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+    setSpinEnabled(state, true);
+    await recordingTourDelay(state, step.duration);
+  }
+
+  async function preloadRecordingDepthLevels(state) {
+    await selectRecordingVariable(state, "temperature");
+    await selectRecordingRaster(state, "prediction");
+    const depthLevels = getDepthLevels(activeVariableConfig(state));
+    for (let index = 0; index < depthLevels.length; index += 1) {
+      if (!depthLevels[index].prediction_tiles_url) {
+        continue;
+      }
+      state.selectedDepthIndex = index;
+      updateDepthControl(state);
+      await reloadRasterDepthLayers(state);
+      await selectRecordingRaster(state, "prediction");
+      await waitForRecordingTiles(state, 6000);
+    }
+    state.selectedDepthIndex = 0;
+    updateDepthControl(state);
+    await reloadRasterDepthLayers(state);
+    await selectRecordingRaster(state, "prediction");
+    await waitForRecordingTiles(state, 6000);
+  }
+
+  function runRecordingLoopRotation(state, runId) {
+    return new Promise(function (resolve) {
+      const startedAt = performance.now();
+      let appliedAngle = 0.0;
+      const rotateFrame = function (now) {
+        if (!recordingTourIsCurrent(state, runId)) {
+          resolve();
+          return;
+        }
+        const progress = clamp((now - startedAt) / RECORDING_LOOP_ROTATION_DURATION_MS, 0.0, 1.0);
+        const targetAngle = Cesium.Math.TWO_PI * progress;
+        state.viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -(targetAngle - appliedAngle));
+        appliedAngle = targetAngle;
+        requestRender(state);
+        if (progress < 1.0) {
+          window.requestAnimationFrame(rotateFrame);
+          return;
+        }
+        resolve();
+      };
+      window.requestAnimationFrame(rotateFrame);
+    });
+  }
+
+  async function runRecordingPointStep(state, step, stepNumber, stepCount, runId) {
+    updateRecordingCaption(state, step.title, stepNumber, stepCount);
+    setSpinEnabled(state, false);
+    await selectRecordingVariable(state, "temperature");
+    await setRecordingPointsVisible(state, true);
+    await selectRecordingRaster(state, "prediction");
+    const entity = await findRecordingPointWithPng(state);
+    if (!entity || !recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+    await flyToRecordingPoint(state, entity);
+    if (!recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+    showProfilePopup(state, entity);
+    await recordingTourDelay(state, step.duration);
+    closeProfilePopup(state);
+    await flyToConfig(state, RECORDING_OVERVIEW_HEIGHT_SCALE);
+  }
+
+  function buildRecordingTourSteps(state) {
+    const steps = [
+      {
+        title: "Temperature · GLORYS reference",
+        variable: "temperature",
+        raster: "glorys",
+        points: false,
+        duration: RECORDING_SLIDE_DURATION_MS,
+      },
+      {
+        title: "Temperature · DepthDif prediction",
+        variable: "temperature",
+        raster: "prediction",
+        points: false,
+        duration: RECORDING_SLIDE_DURATION_MS,
+      },
+      {
+        title: "Temperature · Depth levels",
+        kind: "depths",
+      },
+      {
+        title: "Temperature · Absolute error",
+        variable: "temperature",
+        raster: "error",
+        points: false,
+        duration: RECORDING_SLIDE_DURATION_MS,
+      },
+      {
+        title: "Temperature · ARGO observation locations",
+        variable: "temperature",
+        raster: "prediction",
+        points: true,
+        duration: RECORDING_SLIDE_DURATION_MS,
+      },
+      {
+        title: "Full-depth ARGO profile comparison",
+        kind: "point",
+        duration: RECORDING_PROFILE_DURATION_MS,
+      },
+    ];
+    const variables = getVariableConfigs(state.config);
+    if (variables && variables.salinity) {
+      steps.push(
+        {
+          title: "Salinity · GLORYS reference",
+          variable: "salinity",
+          raster: "glorys",
+          points: false,
+          duration: RECORDING_SLIDE_DURATION_MS,
+        },
+        {
+          title: "Salinity · DepthDif prediction",
+          variable: "salinity",
+          raster: "prediction",
+          points: false,
+          duration: RECORDING_SLIDE_DURATION_MS,
+        }
+      );
+    }
+    return steps;
+  }
+
+  async function runRecordingTour(state, runId) {
+    const elements = state.elements;
+    const steps = buildRecordingTourSteps(state);
+    elements.recordingPanel.hidden = true;
+    elements.recordingCaption.hidden = false;
+
+    for (let index = 0; index < steps.length; index += 1) {
+      if (!recordingTourIsCurrent(state, runId)) {
+        return;
+      }
+      const step = steps[index];
+      if (step.kind === "point") {
+        await runRecordingPointStep(state, step, index + 1, steps.length, runId);
+      } else if (step.kind === "depths") {
+        await runRecordingDepthStep(state, step, index + 1, steps.length, runId);
+      } else {
+        await runRecordingRasterStep(state, step, index + 1, steps.length, runId);
+      }
+    }
+
+    if (!recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+    closeProfilePopup(state);
+    setSpinEnabled(state, false);
+    await selectRecordingVariable(state, "temperature");
+    await selectRecordingRaster(state, "glorys");
+    await setRecordingPointsVisible(state, false);
+    await flyToConfig(state, RECORDING_OVERVIEW_HEIGHT_SCALE);
+    await waitForRecordingTiles(state, 6000);
+    updateRecordingCaption(state, "Temperature · GLORYS reference", 1, steps.length);
+    await runRecordingLoopRotation(state, runId);
+    // Hold the matching opening frame briefly so editors have a clean loop cut.
+    await recordingTourDelay(state, 1000);
+    if (!recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+
+    elements.recordingCaption.hidden = true;
+    elements.recordingPanel.hidden = false;
+    elements.recordingPanel.classList.remove("is-start-signal");
+    elements.recordingPanel.classList.add("is-stop-signal");
+    elements.recordingCountdown.hidden = true;
+    elements.recordingReplay.hidden = false;
+    updateRecordingPanel(
+      state,
+      "STOP RECORDING NOW",
+      "The complete tour has finished. Stop and save your screen recording now."
+    );
+    playRecordingCue(state, [660, 440, 330]);
+  }
+
+  async function startRecordingCountdown(state) {
+    const elements = state.elements;
+    const runId = state.recordingTourRunId + 1;
+    state.recordingTourRunId = runId;
+    elements.recordingStart.hidden = true;
+    elements.recordingReplay.hidden = true;
+    elements.recordingCountdown.hidden = false;
+    elements.recordingPanel.classList.remove("is-stop-signal");
+
+    for (let count = 5; count >= 1; count -= 1) {
+      if (!recordingTourIsCurrent(state, runId)) {
+        return;
+      }
+      updateRecordingPanel(state, "Starting in…", "The countdown can be trimmed from the finished video.");
+      elements.recordingCountdown.textContent = String(count);
+      playRecordingCue(state, [440]);
+      await recordingTourDelay(state, 1000);
+    }
+    if (!recordingTourIsCurrent(state, runId)) {
+      return;
+    }
+    elements.recordingPanel.classList.add("is-start-signal");
+    elements.recordingCountdown.textContent = "START";
+    updateRecordingPanel(state, "START RECORDING", "The automated DepthDif tour is beginning now.");
+    playRecordingCue(state, [660, 880]);
+    await recordingTourDelay(state, 1400);
+    if (recordingTourIsCurrent(state, runId)) {
+      elements.recordingPanel.classList.remove("is-start-signal");
+      runRecordingTour(state, runId);
+    }
+  }
+
+  function showRecordingReady(state) {
+    const elements = state.elements;
+    elements.recordingPanel.hidden = false;
+    elements.recordingCaption.hidden = true;
+    if (elements.recordingDepth) {
+      elements.recordingDepth.hidden = true;
+    }
+    elements.recordingCountdown.hidden = true;
+    elements.recordingStart.hidden = false;
+    elements.recordingReplay.hidden = true;
+    elements.recordingPanel.classList.remove("is-start-signal", "is-stop-signal");
+    updateRecordingPanel(
+      state,
+      "READY TO RECORD",
+      "Start OBS or your screen recorder now, then select Begin 5-second countdown. Stop only when this page displays STOP RECORDING NOW."
+    );
+  }
+
+  async function prepareRecordingTour(state) {
+    const elements = state.elements;
+    if (!elements.recordingPanel || !elements.recordingStart) {
+      return;
+    }
+    elements.stage.classList.add("is-recording-tour");
+    elements.recordingPanel.hidden = false;
+    updateRecordingPanel(
+      state,
+      "Preparing the tour…",
+      "Loading the presentation layers and ARGO locations. This may take a moment."
+    );
+    setSpinEnabled(state, false);
+
+    const variables = getVariableConfigs(state.config);
+    const variableKeys = !variables
+      ? ["temperature"]
+      : ["temperature", "salinity"].filter(function (key) {
+          return Boolean(variables[key]);
+        });
+    if (variableKeys.length === 0) {
+      updateRecordingPanel(
+        state,
+        "TEMPERATURE UNAVAILABLE",
+        "This recording tour requires a globe manifest with temperature layers."
+      );
+      return;
+    }
+    for (let variableIndex = 0; variableIndex < variableKeys.length; variableIndex += 1) {
+      const variableKey = variableKeys[variableIndex];
+      updateRecordingPanel(
+        state,
+        "Preparing " + variableKey + "…",
+        "Warming GLORYS, prediction, error, and ARGO assets before recording."
+      );
+      await selectRecordingVariable(state, variableKey);
+      await setRecordingPointsVisible(state, true);
+      const rasterKeys = variableKey === "temperature"
+        ? ["glorys", "prediction", "error"]
+        : ["glorys", "prediction"];
+      for (const rasterKey of rasterKeys) {
+        if (await selectRecordingRaster(state, rasterKey)) {
+          await waitForRecordingTiles(state, 6000);
+        }
+      }
+      if (variableKey === "temperature") {
+        updateRecordingPanel(
+          state,
+          "Preparing temperature depths…",
+          "Warming every depth layer to keep the recorded sweep smooth."
+        );
+        await preloadRecordingDepthLevels(state);
+      }
+    }
+
+    const initialVariable = variableKeys.includes("temperature")
+      ? "temperature"
+      : variableKeys[0];
+    await selectRecordingVariable(state, initialVariable);
+    await selectRecordingRaster(state, "glorys");
+    await setRecordingPointsVisible(state, false);
+    await flyToConfig(state, RECORDING_OVERVIEW_HEIGHT_SCALE);
+    await recordingTourDelay(state, 2000);
+
+    elements.recordingStart.onclick = function () {
+      startRecordingCountdown(state);
+    };
+    elements.recordingReplay.onclick = function () {
+      showRecordingReady(state);
+    };
+    showRecordingReady(state);
   }
 
   function wireUi(state) {
@@ -2432,12 +3088,21 @@
     }
     clearProfilePopupCloseTimer(state);
     clearToolbarCollapseTimer(state);
+    state.recordingTourRunId += 1;
+    state.recordingTourTimeoutIds.forEach(function (timeoutId) {
+      window.clearTimeout(timeoutId);
+    });
+    state.recordingTourTimeoutIds.clear();
+    if (state.recordingAudioContext) {
+      state.recordingAudioContext.close();
+      state.recordingAudioContext = null;
+    }
     if (state.pictureExportStatusTimer !== null) {
       window.clearTimeout(state.pictureExportStatusTimer);
       state.pictureExportStatusTimer = null;
     }
     if (state.elements && state.elements.stage) {
-      state.elements.stage.classList.remove("is-cinematic");
+      state.elements.stage.classList.remove("is-cinematic", "is-recording-tour");
     }
     if (state.elements && state.elements.cinematicExit) {
       state.elements.cinematicExit.hidden = true;
@@ -2520,6 +3185,10 @@
         handleWindowResize: null,
         spinTickListener: null,
         preloadTaskId: null,
+        recordingMode: recordingTourRequested(),
+        recordingTourRunId: 0,
+        recordingTourTimeoutIds: new Set(),
+        recordingAudioContext: null,
       };
       window.__depthdifCesiumGlobeState = state;
       updatePageHeader(elements, loaded.config);
@@ -2570,7 +3239,18 @@
       };
       window.addEventListener("resize", state.handleWindowResize);
       elements.container.dataset.globeInitialized = "true";
-      preloadOptionalLayers(state);
+      if (state.recordingMode) {
+        prepareRecordingTour(state).catch(function (error) {
+          updateRecordingPanel(
+            state,
+            "TOUR PREPARATION FAILED",
+            "Check the browser console and hosted globe assets, then reload this page."
+          );
+          console.error(error);
+        });
+      } else {
+        preloadOptionalLayers(state);
+      }
       requestRender(state);
       return true;
     } catch (error) {

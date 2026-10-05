@@ -824,7 +824,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
                 masked_diff = diff * weighted_mask
                 denom = weighted_mask.sum()
                 if denom.item() <= 0:
-                    loss = torch.zeros((), device=diff.device, dtype=diff.dtype)
+                    # Empty support contributes zero gradients, but must stay connected
+                    # to the denoiser so backward and DDP still run on this rank.
+                    loss = masked_diff.sum()
                 else:
                     loss = masked_diff.sum() / denom
 

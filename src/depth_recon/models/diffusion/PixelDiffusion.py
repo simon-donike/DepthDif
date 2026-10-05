@@ -3340,7 +3340,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 image_key_suffix="standard",
                 log_default_metrics=not evaluate_with_ema,
                 log_common_metrics=not evaluate_with_ema,
-                log_profile=not evaluate_with_ema,
+                log_profile=True,  # reuse this reconstruction for raw-weight profile plots
                 log_denoise=not evaluate_with_ema,
             )
         finally:
@@ -3358,7 +3358,7 @@ class PixelDiffusionConditional(pl.LightningModule):
                 image_key_suffix="ema",
                 log_default_metrics=evaluate_with_ema,
                 log_common_metrics=evaluate_with_ema,
-                log_profile=evaluate_with_ema,
+                log_profile=True,  # both weight sets get plots without extra sampling
                 log_denoise=evaluate_with_ema,
             )
         finally:

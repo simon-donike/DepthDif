@@ -1000,7 +1000,7 @@ class TestArgoGeoTIFFGriddedPatchDataset(unittest.TestCase):
             ["mediterranean", "baltic", "red_sea", "hudson_bay"],
         )
         selection = payload["data"]["dataset"]["selection"]
-        self.assertFalse(selection["require_argo_for_train"])
+        self.assertTrue(selection["require_argo_for_train"])
         self.assertFalse(selection["filter_bad_argo_quality"])
         self.assertEqual(selection["accepted_argo_qc_flags"], [1, 2])
         finetune = payload["data"]["dataset"]["finetune_sampling"]

@@ -16,16 +16,50 @@ channels aligned.
 
 ## Maintained presets
 
-The local `training_super_config.yaml` and explicit standard preset train on real
-sparse EN4/ARGO support. They enable the ambient objective, EMA, a 50/50
-hard-region/easy-region row mix for both training and validation, and 100-step
-DDIM validation reconstruction. Synthetic targets and coastal loss are disabled.
+The default local `training_super_config.yaml` and explicit
+`training_super_config_standard.yaml` select the
+`glorys_dense_reproduction_2016_2x3090` scratch experiment. They hold out **2016**
+and learn dense GLORYS targets from ARGO-containing patches, matching the original
+scratch run's row selection. Ambient training, synthetic targets, regional
+fine-tuning, and coastal loss are disabled. Temperature uses one SST conditioning
+channel; the salinity scenario uses SSS.
+
+The local recipe uses two GPUs with DDP, mixed precision, batch size 48 per GPU
+(effective batch 96), two training workers per GPU, and seed 7. The learning rate
+starts at `1e-4` with the original step-based plateau patience of 25,000.
+The HPC presets remain separate; the command below selects the local recipe.
 
 ```bash
 /work/envs/depth/bin/python train.py \
   --config src/depth_recon/configs/px_space/training_super_config.yaml \
   --scenario temperature
 ```
+
+Validation stays shuffled and runs four times per epoch. Cheap denoising loss
+uses at most 64 batches per GPU. Full DDPM-1000 reconstruction uses only **one
+cached patch per GPU for each of raw and EMA weights**: two chains per GPU per
+validation check. The EN4 candidate and hard-region inference callbacks are
+disabled for this experiment, and sanity checking skips full reconstruction.
+W&B logs both `val_imgs/x_y_full_reconstruction_standard` and
+`val_imgs/x_y_full_reconstruction_ema`, plus separate profile plots, reusing
+those same predictions. The local inference preset also selects DDPM, with
+one preview patch and export batches of two.
+
+EMA decay is `0.999`, reducing its approximate averaging timescale from 10,000
+to 1,000 optimizer updates compared with `0.9999`. This reduces startup lag at
+the cost of less smoothing. EMA still updates every optimizer step and remains
+the default validation/checkpoint metric; compare the raw and EMA panels during
+training. The original larger decay can be restored with
+`--set model.ema.decay=0.9999`.
+
+If ambient training is enabled later, samples without usable observations
+contribute no supervised gradient. An entirely empty masked batch returns a
+graph-connected zero so backward/DDP can complete on every rank. Keep
+`require_argo_for_train=true` to avoid spending training compute on empty rows.
+
+The configured dataset root is `/work/data/OceanVariableReconstruction`; it must
+be mounted or downloaded before launching. Configuring this experiment does not
+start training.
 
 The HPC preset enables deterministic synthetic targets and disables ambient and
 hard-region modes. It uses automatic visible devices with DDP, offline W&B,
