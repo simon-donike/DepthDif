@@ -1,0 +1,174 @@
+dataset:
+  core:
+    dataset_variant: argo_geotiff_gridded
+    dataloader_type: light
+    geotiff_root_dir: /work/data/OceanVariableReconstruction
+    metadata_cache_dir: /work/data/OceanVariableReconstruction/depthdif_cache
+  grid:
+    tile_size: 128
+    resolution_deg: 0.1
+    patch_grid_source: land_mask
+    land_mask_path: masks/world_land_mask_glorys_0p1.tif
+    patch_stride: 32
+    max_land_fraction: 0.3
+    force_include_regions:
+    - name: mediterranean
+      lon_min: -6.0
+      lon_max: 37.0
+      lat_min: 30.0
+      lat_max: 46.0
+      max_land_fraction: 0.6
+    - name: baltic
+      lon_min: 9.0
+      lon_max: 31.0
+      lat_min: 53.0
+      lat_max: 66.0
+      max_land_fraction: 0.85
+    - name: red_sea
+      lon_min: 32.0
+      lon_max: 44.0
+      lat_min: 12.0
+      lat_max: 30.0
+      max_land_fraction: 0.85
+    - name: hudson_bay
+      lon_min: -96.0
+      lon_max: -74.0
+      lat_min: 50.0
+      lat_max: 65.0
+      max_land_fraction: 0.95
+  sampling:
+    temporal_window_days: 7
+    glorys_var_name: thetao
+    ostia_var_name: analysed_sst
+    eo_source: ostia
+    eo_var_name: analysed_sst
+  selection:
+    require_argo_for_train: true
+    require_argo_for_val: true
+    require_argo_for_all: false
+    filter_bad_argo_quality: false
+    accepted_argo_qc_flags:
+    - 1
+    - 2
+  surface_conditioning:
+    sources:
+    - sst
+  synthetic_target:
+    enabled: false
+    statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz
+    bathymetry_reference_date: null
+  finetune_sampling:
+    enabled: false
+    hard_fraction: 0.5
+    apply_to_splits:
+    - train
+    - val
+    relax_land_filter: true
+    default_max_land_fraction: 0.85
+    hard_regions:
+    - name: mediterranean
+      lon_min: -6.0
+      lon_max: 37.0
+      lat_min: 30.0
+      lat_max: 46.0
+    - name: black_sea
+      lon_min: 27.0
+      lon_max: 42.0
+      lat_min: 40.0
+      lat_max: 47.0
+    - name: russian_arctic_west
+      lon_min: 20.0
+      lon_max: 180.0
+      lat_min: 66.0
+      lat_max: 82.0
+    - name: russian_arctic_east
+      lon_min: -180.0
+      lon_max: -160.0
+      lat_min: 66.0
+      lat_max: 82.0
+    - name: hudson_bay
+      lon_min: -96.0
+      lon_max: -74.0
+      lat_min: 50.0
+      lat_max: 65.0
+    - name: baja_california
+      lon_min: -122.0
+      lon_max: -104.0
+      lat_min: 18.0
+      lat_max: 33.0
+    - name: greenland
+      lon_min: -75.0
+      lon_max: -10.0
+      lat_min: 58.0
+      lat_max: 84.0
+    - name: svalbard_barents
+      lon_min: 0.0
+      lon_max: 45.0
+      lat_min: 70.0
+      lat_max: 82.0
+    - name: european_atlantic
+      lon_min: -16.0
+      lon_max: 16.0
+      lat_min: 35.0
+      lat_max: 70.0
+    - name: persian_gulf
+      lon_min: 47.0
+      lon_max: 57.0
+      lat_min: 23.0
+      lat_max: 31.0
+    - name: red_sea
+      lon_min: 32.0
+      lon_max: 44.0
+      lat_min: 12.0
+      lat_max: 30.0
+    - name: yellow_sea
+      lon_min: 117.0
+      lon_max: 127.0
+      lat_min: 31.0
+      lat_max: 41.0
+    - name: sea_of_japan
+      lon_min: 127.0
+      lon_max: 142.0
+      lat_min: 34.0
+      lat_max: 52.0
+    - name: sea_of_okhotsk
+      lon_min: 140.0
+      lon_max: 164.0
+      lat_min: 43.0
+      lat_max: 62.0
+    - name: northern_alaska
+      lon_min: -170.0
+      lon_max: -135.0
+      lat_min: 68.0
+      lat_max: 75.0
+    - name: bay_of_benin_west
+      lon_min: -1.5
+      lon_max: 1.5
+      lat_min: 4.8
+      lat_max: 6.8
+    - name: bay_of_benin_east
+      lon_min: 1.5
+      lon_max: 4.5
+      lat_min: 4.2
+      lat_max: 6.8
+    - name: new_york_nova_scotia
+      lon_min: -75.0
+      lon_max: -59.0
+      lat_min: 40.0
+      lat_max: 47.0
+  output:
+    return_info: false
+    return_coords: true
+    fields:
+    - temperature
+    include_salinity: false
+  runtime:
+    random_seed: 7
+    cache_size: 8
+split:
+  val_year: 2016
+  val_fraction: 0.2
+dataloader:
+  num_workers: 2
+  prefetch_factor: 2
+  val_shuffle: true

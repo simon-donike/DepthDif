@@ -1,0 +1,132 @@
+model:
+  model_type: cond_px_dif
+  depth_channels: 50
+  resume_checkpoint: false
+  load_checkpoint_only: false
+  condition_eo_channels: 1
+  condition_mask_channels: 1
+  condition_include_eo: true
+  condition_use_valid_mask: true
+  condition_use_land_mask: true
+  clamp_known_pixels: false
+  mask_loss_with_valid_pixels: true
+  coastal_loss:
+    enabled: false
+    radius_px: 5
+    weight: 3.0
+    ramp: linear
+  parameterization: x0
+  log_intermediates: false
+  ema:
+    enabled: true
+    decay: 0.999
+    apply_every_n_steps: 1
+    start_step: 0
+    save_ema_weights_in_callback_state: true
+    evaluate_ema_weights_instead: true
+  ambient_occlusion:
+    enabled: false
+    further_drop_prob: 0.25
+    apply_to_noisy_branch: true
+    shared_spatial_mask: true
+    min_kept_observed_pixels: 50
+    require_x0_parameterization: true
+  losses:
+    ambient:
+      weight: 1.0
+    aux_timestep_weighting:
+      enabled: false
+      mode: snr
+      min_weight: 0.1
+      max_weight: 1.0
+      snr_gamma: 5.0
+      linear_start_weight: 0.0
+      linear_end_weight: 1.0
+    sparse_observation:
+      enabled: false
+      weight: 0.25
+      eps: 0.001
+    increment:
+      enabled: false
+      weight: 0.1
+      eps: 0.001
+      max_pairs_per_sample: 4096
+      vertical_pairs: true
+      horizontal_pairs: false
+      horizontal_max_distance: null
+    structure_function_prior:
+      enabled: false
+      target: reference
+      weight: 0.1
+      reference_path: null
+      num_pairs: 8192
+      num_bins: 16
+      eps: 1.0e-06
+      per_depth: true
+    spectral_energy_floor:
+      enabled: false
+      target: reference
+      weight: 0.05
+      reference_path: null
+      eps: 1.0e-08
+      margin: 0.0
+      min_band: 1
+      max_band: null
+      per_depth: true
+    feature_gram_prior:
+      enabled: false
+      weight: 0.01
+      encoder_checkpoint: null
+      reference_path: null
+  post_process:
+    gaussian_blur:
+      enabled: false
+      sigma: 0.75
+      kernel_size: 5
+  coord_conditioning:
+    enabled: true
+    encoding: unit_sphere
+    include_date: true
+    date_encoding: day_of_year_sincos
+    embed_dim: null
+  cnn_baseline:
+    hidden_channels: 64
+    seed_length: 8
+    transpose_layers: null
+    conv_layers: 3
+    kernel_size: 3
+    batch_norm_momentum: 0.3
+    dropout: 0.0
+    activation: selu
+    lr: null
+    weight_decay: 0.0001
+    include_valid_mask: true
+    include_eo: null
+    include_land_mask: null
+  unet_baseline:
+    base_channels: 32
+    channel_mults:
+    - 1
+    - 2
+    - 4
+    - 8
+    norm_groups: 8
+    dropout: 0.0
+    lr: null
+    weight_decay: 0.0001
+    per_channel_valid_mask: true
+  unet:
+    dim: 64
+    dim_mults:
+    - 1
+    - 2
+    - 4
+    - 8
+    with_time_emb: true
+    output_mean_scale: false
+    residual: false
+  scenario: temperature
+  output_fields:
+  - temperature
+  generated_channels: 50
+  condition_channels: 53

@@ -1,0 +1,82 @@
+experiment_id: 2026-10-05-hard-region-qc-finetune
+created_at_utc: '2026-10-05T13:09:15.771646+00:00'
+status: prepared; not launched
+reason: User requested parallel standard and climatology-residual fine-tuning with
+  hard-region sampling and ARGO QC enabled.
+initial_stage_hours: 24
+duration_basis: 24-hour initial stage selected as the stated default after leaving
+  the optional preference question open; no duration response received at preparation
+  time.
+mode: weights-only fine-tuning; fresh optimizer, scheduler and EMA; new global_step
+  starts at zero
+learning_rate: 1.0e-05
+hard_fraction: 0.5
+hard_sampling_splits:
+- train
+qc_filter: true
+qc_accepted_flags:
+- 1
+- 2
+qc_missing_flag_policy: Existing loader accepts missing negative flags; rejects known
+  flags outside 1/2.
+selection_metric: val/full_reconstruction_score
+checkpoint_retention:
+  best: 3
+  recovery_every_train_steps: 1000
+new_sampling_seed: 7
+runs:
+  standard:
+    physical_gpu: 0
+    parent_checkpoint: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/checkpoints/standard_parent_step56652.ckpt
+    parent_sha256: 99c20e1c59e1d7a5ba7febde4d7f311bee84d6867c51136c0c5eb3db774087fe
+    parent_global_step: 56652
+    parent_weights: ema
+    parent_wandb_run: 0sb6ykmx
+    initial_weights_checkpoint: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/checkpoints/standard_ema_step56652_weights.ckpt
+    initial_weights_sha256: c3d1b287a84d6b0efefc64ab7e8e0626730b3b5cfeca8010858dfceffef404fd
+    config: /work/code/DepthDif/docs/experiments/2026-10-05-hard-region-qc-finetune/standard.yaml
+    config_sha256: db4e1e79933af3d5745cd79c6850f204a5685276776c73db2bb51a8884f9b26b
+    run_dir: /work/code/DepthDif/logs/2026-10-05_hard_region_qc_standard
+    wandb_id: cc38592a
+    wandb_url: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/cc38592a
+    tmux_session: depthdif_ft_standard_20261005
+    stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/standard.log
+    status: prepared
+  residual:
+    physical_gpu: 1
+    parent_checkpoint: /work/code/DepthDif/outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    parent_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    parent_global_step: 113304
+    parent_weights: standard
+    parent_wandb_run: 062mpmkd
+    initial_weights_checkpoint: /work/code/DepthDif/outputs/checkpoint_selection_20261005/selected_inference.ckpt
+    initial_weights_sha256: 05a9bb836a9dd225de65ee30f76f8eba75d0be87667bc58cf65a55f7f767b1a0
+    config: /work/code/DepthDif/docs/experiments/2026-10-05-hard-region-qc-finetune/residual.yaml
+    config_sha256: 1f6d237abe4dae023d506d01837b7b8c66dcb3cfb10143daff366f60410ea3ca
+    run_dir: /work/code/DepthDif/logs/2026-10-05_hard_region_qc_residual
+    wandb_id: 1419568d
+    wandb_url: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/1419568d
+    tmux_session: depthdif_ft_residual_20261005
+    stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/residual.log
+    status: prepared
+validation:
+  test_suite: bash tests/run_tests.sh
+  tests_passed: 389
+  elapsed_seconds: 19.688
+  formatter: /work/envs/depth/bin/python -m black .
+  production_code_edits: false
+provenance_sha256:
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_model.yaml: 3d80b54144d39e91968a896a77e63554881b1e531354371f197b3c2dbd5fc498
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_training.yaml: f57e179efaebb666aa108476dc342b81e9afd3701fb596da38b48f6e7e0e40c2
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_data.yaml: bfbafb9aaf87feaf2987b819b451ccbc8eeb945ca8ba1e45c713c838ca2d6dca
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_model.yaml: f20bc1a0ba76d7c244275ee9c984c3d4258d097366cca3c2d67bab5bcbc40709
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_training.yaml: 61ce1c448541d84d6a9eaad190b0bfc58bc5e6df211884a1bd9f7625f1f5c3e5
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_data.yaml: 9e0a86207bfac60a3839f36fb66d58114200071ead66c20919d8e234048eac3a
+  src/depth_recon/configs/evaluation/hard_regions_2016.yaml: 18e1d8df29e6e1d9e15ff8f521906d1f6cd1ed6721ffd3ce5953612dcdbdedc4
+  outputs/hard_region_qc_finetune_20261005/provenance/source_before_launch.tar.gz: a6ccdd18869a7fd4f99492e3f3ef872a1b3f332c7dc95b67cc34be7b725f0423
+  outputs/hard_region_qc_finetune_20261005/provenance/preflight.py: 2205edab7e8713f1d96dd3a931dbd1c88d72358359c4075c6a0710b4cbf60630
+residual_climatology:
+  path: outputs/checkpoint_selection_20261005/baselines/temperature_monthly_stride4.npz
+  sha256: 6125c6bd8af1b813bb61bc55c08d5cc39f8b95f8f63e1be68c55083dd30b87c0
+  excluded_year: 2016
+  source: outputs/climatology_2016_comparison/temperature_monthly_stride4.npz
