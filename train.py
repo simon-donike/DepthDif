@@ -48,6 +48,10 @@ from depth_recon.models.baselines import (
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
+from depth_recon.utils.en4_archive_holdout import (
+    AUDIT_STATUS,
+    EN4ArchiveHoldoutValidation,
+)
 from depth_recon.utils.hard_region_validation import HardRegionValidationCallback
 from depth_recon.utils.reconstruction_validation import FullReconstructionValidation
 from depth_recon.configs.config_resolver_pixel import (
@@ -59,6 +63,54 @@ from depth_recon.configs.config_resolver_pixel import (
 )
 
 PIXEL_TRAINING_CONFIG_PATH = DEFAULT_PIXEL_TRAINING_CONFIG_PATH
+
+
+def build_en4_archive_holdout_callback(
+    *,
+    val_dataset: ArgoGeoTIFFGriddedPatchDataset,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+    output_dir: Path,
+) -> EN4ArchiveHoldoutValidation | None:
+    """Build an opt-in annual archive holdout without modifying validation inputs."""
+    settings = training_cfg.get("training", {})
+    cfg = settings.get("en4_archive_holdout", {})
+    if not bool(cfg.get("enabled", False)):
+        return None
+    if settings.get("en4_candidate_eval", {}).get("enabled", False):
+        raise ValueError(
+            "Disable training.training.en4_candidate_eval.enabled when enabling "
+            "en4_archive_holdout; the legacy callback changes shared validation inputs."
+        )
+    validation_year = data_cfg.get("split", {}).get("val_year")
+    if validation_year is None:
+        raise ValueError("EN4 archive holdout requires an explicit validation year.")
+    path_value = cfg.get("candidate_profiles_path")
+    if not path_value:
+        raise ValueError("EN4 archive holdout requires candidate_profiles_path.")
+    path = Path(path_value).expanduser()
+    if not path.is_absolute() and not path.exists():
+        path = Path(__file__).resolve().parent / path
+    candidates = load_en4_candidate_profiles(
+        context=load_dataset_context(val_dataset.root_dir),
+        date_year=int(validation_year),
+        candidate_profiles_path=path,
+        profile_store=val_dataset.argo_store,
+        audit_status=AUDIT_STATUS,
+        require_quality=True,
+    )
+    return EN4ArchiveHoldoutValidation(
+        dataset=val_dataset,
+        candidate_df=candidates,
+        audit_path=path,
+        output_dir=output_dir,
+        sample_count=int(cfg.get("sample_count", 32)),
+        batch_size=int(cfg.get("batch_size", 4)),
+        seed=int(cfg.get("seed", 7)),
+        holdout_fraction=float(cfg.get("holdout_fraction", 0.2)),
+        min_input_profiles=int(cfg.get("min_input_profiles", 8)),
+        max_profiles_to_plot=int(cfg.get("max_profiles_to_plot", 4)),
+    )
 
 
 def build_en4_candidate_validation_callback(
@@ -695,6 +747,12 @@ def main(
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         seed=int(ds_cfg_value(ds_cfg, "runtime.random_seed", "random_seed", default=7)),
     )
+    en4_archive_callback = build_en4_archive_holdout_callback(
+        val_dataset=val_dataset,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+        output_dir=run_dir,
+    )
     en4_candidate_callback = build_en4_candidate_validation_callback(
         val_dataset=val_dataset,
         data_cfg=data_cfg,
@@ -838,6 +896,8 @@ def main(
             callbacks.append(early_stopping_callback)
     if en4_candidate_callback is not None:
         callbacks.append(en4_candidate_callback)
+    if en4_archive_callback is not None:
+        callbacks.append(en4_archive_callback)
     if hard_region_callback is not None:
         callbacks.append(hard_region_callback)
     callbacks.append(

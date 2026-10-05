@@ -287,6 +287,108 @@ def log_wandb_average_depth_profiles(
             plt.close(figure)
 
 
+def log_wandb_depth_errors(
+    *,
+    logger: Any,
+    statistics: dict[str, torch.Tensor],
+    depth_axis_m: np.ndarray | None = None,
+    prefix: str = "val/full_reconstruction",
+    image_key: str = "absolute_error_by_depth",
+    error_label: str = "Mean absolute error",
+    title: str = "Average absolute error by depth",
+) -> None:
+    """Plot pooled depth MAE with population-standard-deviation bands and a metric table.
+
+    Each trace supplies squared-error sums, absolute-error sums and counts with
+    shape ``(3, D)``. Reducing these statistics before plotting preserves pixel
+    weighting across unequal batches and ranks without retaining reconstructions.
+    """
+    if logger is None or not statistics:
+        return
+    experiment = getattr(logger, "experiment", None)
+    if experiment is None or not hasattr(experiment, "log"):
+        return
+    try:
+        import wandb
+    except ImportError:
+        return
+
+    depth_count = next(iter(statistics.values())).shape[-1]
+    depths, depth_label = _resolve_profile_depth_axis(
+        profile_size=depth_count, depth_axis=depth_axis_m
+    )
+    colors = {"Prediction": "tab:orange", "GLORYS": "black"}
+    figure = None
+    rows = []
+    try:
+        figure, axis = plt.subplots(1, 1, figsize=(6.5, 8.0))
+        for label, stats in statistics.items():
+            if stats.shape != (3, depth_count):
+                raise ValueError("Depth error statistics must share shape (3, D).")
+            squared, absolute, counts = stats.detach().double().cpu().numpy()
+            supported = counts > 0
+            mae = np.divide(
+                absolute, counts, out=np.full_like(counts, np.nan), where=supported
+            )
+            mse = np.divide(
+                squared, counts, out=np.full_like(counts, np.nan), where=supported
+            )
+            # E[|error|²] = E[error²]; pool second moments, not batch standard deviations.
+            with np.errstate(invalid="ignore"):
+                std = np.sqrt(np.maximum(mse - mae**2, 0.0))
+            rmse = np.sqrt(mse)
+            if np.isfinite(mae).any():
+                line = axis.plot(
+                    mae, depths, label=label, color=colors.get(label), linewidth=1.8
+                )[0]
+                axis.fill_betweenx(
+                    depths,
+                    mae - std,
+                    mae + std,
+                    color=line.get_color(),
+                    alpha=0.18,
+                    linewidth=0.0,
+                )
+            for index, depth in enumerate(depths):
+                rows.append(
+                    [
+                        label,
+                        float(depth),
+                        float(mae[index]) if supported[index] else None,
+                        float(rmse[index]) if supported[index] else None,
+                        float(std[index]) if supported[index] else None,
+                        int(counts[index]),
+                    ]
+                )
+        axis.set_xlabel(error_label)
+        axis.set_ylabel(depth_label)
+        axis.set_title(title)
+        axis.invert_yaxis()
+        axis.grid(True, alpha=0.25)
+        if axis.lines:
+            axis.legend(loc="best")
+        figure.tight_layout()
+        experiment.log(
+            {
+                f"{prefix}/{image_key}": wandb.Image(figure),
+                f"{prefix}/{image_key}_metrics": wandb.Table(
+                    columns=[
+                        "method",
+                        "depth_m" if depth_axis_m is not None else "depth_index",
+                        "mae",
+                        "rmse",
+                        "absolute_error_std",
+                        "valid_values",
+                    ],
+                    data=rows,
+                ),
+            }
+        )
+    finally:
+        if figure is not None:
+            plt.close(figure)
+
+
 def _overlay_profile_graph_logo(
     *,
     output_path: str | Path,

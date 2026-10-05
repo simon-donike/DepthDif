@@ -104,6 +104,20 @@ class _EvaluationModel(pl.LightningModule):
         return torch.optim.SGD(self.parameters(), lr=0.0)
 
 
+class _ObservationDataset(_EvaluationDataset):
+    """Add conditioning observations one normalized unit below each target."""
+
+    depth_axis_m = np.array([0.0, 100.0, 500.0])
+
+    def __getitem__(self, index):
+        """Supply identical observation support for both output fields."""
+        sample = super().__getitem__(index)
+        for field in ("", "_salinity"):
+            sample[f"x{field}"] = sample[f"y{field}"] - 1.0
+            sample[f"x{field}_valid_mask"] = sample[f"y{field}_valid_mask"]
+        return sample
+
+
 class _SaveDistributedMetrics(pl.Callback):
     """Write each rank's reduced results for the parent test process."""
 
@@ -204,6 +218,91 @@ class TestReconstructionValidation(unittest.TestCase):
                         trainer.callback_metrics[FULL_RECONSTRUCTION_MONITOR]
                     )
                 )
+
+    def test_depth_diagnostics_reuse_only_the_128_selected_predictions(self):
+        """New diagnostics must never run inference over the full validation set."""
+
+        class LargeDataset(_ObservationDataset):
+            def __len__(self):
+                """Expose more patches than the fixed reconstruction budget."""
+                return 257
+
+        dataset = LargeDataset()
+        callback = FullReconstructionValidation(dataset=dataset)
+        model = _EvaluationModel(fields=("temperature", "salinity"))
+        trainer = self._trainer(callbacks=[callback], enable_checkpointing=False)
+        with patch(
+            "depth_recon.utils.reconstruction_validation.log_wandb_depth_errors"
+        ) as plot:
+            trainer.validate(
+                model, dataloaders=DataLoader(dataset, batch_size=1), verbose=False
+            )
+        self.assertEqual(len(model.seen), 128)
+        self.assertEqual(len(set(model.seen)), 128)
+        self.assertEqual(model.seen, callback.patch_indices)
+        self.assertEqual(plot.call_count, 4)
+        self.assertAlmostEqual(
+            float(trainer.callback_metrics[FULL_RECONSTRUCTION_MONITOR]), 1.5, places=5
+        )
+        for call in plot.call_args_list:
+            np.testing.assert_equal(call.kwargs["depth_axis_m"], dataset.depth_axis_m)
+            for stats in call.kwargs["statistics"].values():
+                torch.testing.assert_close(
+                    stats[2], torch.tensor([512.0, 128.0, 0.0], dtype=torch.float64)
+                )
+
+    def test_observation_errors_use_paired_masks_and_separate_glorys_reference(self):
+        """Use real GLORYS rather than synthetic targets, retaining failed predictions."""
+        observed = torch.tensor([[[[1.0, 2.0]], [[3.0, 4.0]], [[5.0, 6.0]]]])
+        error = torch.tensor([[[[1.0, 3.0]], [[2.0, 4.0]], [[0.0, 0.0]]]])
+        observation_mask = torch.ones_like(observed, dtype=torch.bool)
+        observation_mask[:, 2] = False
+        glorys_mask = torch.ones_like(observation_mask)
+        glorys_mask[:, 1, :, 1] = False
+        for field, normalize in (
+            ("temperature", temperature_normalize),
+            ("salinity", salinity_normalize),
+        ):
+            with self.subTest(field=field):
+                suffix = "_salinity" if field == "salinity" else ""
+                target_key = f"y{suffix}"
+                batch = {
+                    target_key: torch.full_like(observed, -999.0),
+                    f"{target_key}_valid_mask": torch.ones_like(observation_mask),
+                    f"x{suffix}": normalize(mode="norm", tensor=observed),
+                    f"x{suffix}_valid_mask": observation_mask,
+                    f"{target_key}_glorys": normalize(mode="norm", tensor=observed + 2),
+                    f"{target_key}_glorys_valid_mask": glorys_mask,
+                    "land_mask": torch.ones(1, 1, 1, 2),
+                }
+                prediction = {f"y_hat_{field}_denorm": observed + error}
+                stats = FullReconstructionValidation._observation_statistics(
+                    batch, prediction, field, single_field=False
+                )
+                torch.testing.assert_close(
+                    stats,
+                    torch.tensor(
+                        [
+                            [[10.0, 4.0, 0.0], [4.0, 2.0, 0.0], [2.0, 1.0, 0.0]],
+                            [[8.0, 4.0, 0.0], [4.0, 2.0, 0.0], [2.0, 1.0, 0.0]],
+                        ],
+                        dtype=torch.float64,
+                    ),
+                    atol=1e-4,
+                    rtol=1e-4,
+                )
+                prediction[f"y_hat_{field}_denorm"][0, 0, 0, 0] = float("nan")
+                bad = FullReconstructionValidation._observation_statistics(
+                    batch, prediction, field, single_field=False
+                )
+                self.assertTrue(torch.isinf(bad[0, 0, 0]))
+                torch.testing.assert_close(bad[0, 2], bad[1, 2])
+                torch.testing.assert_close(bad[1], stats[1])
+                batch["land_mask"].zero_()
+                dry = FullReconstructionValidation._observation_statistics(
+                    batch, prediction, field, single_field=False
+                )
+                self.assertFalse(dry.any())
 
     def test_best_checkpoint_follows_reconstruction_even_when_loss_improves(self):
         dataset = _EvaluationDataset()
@@ -405,7 +504,7 @@ class TestReconstructionValidation(unittest.TestCase):
         self.assertTrue(torch.equal(torch.get_rng_state(), torch_state))
 
     def test_two_ranks_pool_uneven_batches_without_duplicate_patches(self):
-        dataset = _EvaluationDataset()
+        dataset = _ObservationDataset()
         with tempfile.TemporaryDirectory() as tmp:
             callback = FullReconstructionValidation(
                 dataset=dataset, sample_count=5, batch_size=2
@@ -417,7 +516,9 @@ class TestReconstructionValidation(unittest.TestCase):
                 callbacks=[callback, _SaveDistributedMetrics(tmp)],
             )
             trainer.validate(
-                _EvaluationModel(varying_errors=True),
+                _EvaluationModel(
+                    fields=("temperature", "salinity"), varying_errors=True
+                ),
                 dataloaders=DataLoader(dataset, batch_size=1),
                 verbose=False,
             )
@@ -434,6 +535,19 @@ class TestReconstructionValidation(unittest.TestCase):
                     result[FULL_RECONSTRUCTION_MONITOR], expected, places=5
                 )
                 self.assertEqual(result["val/full_reconstruction/sample_count"], 5)
+                for field, scale in (
+                    ("temperature", Y_STD),
+                    ("salinity", SALINITY_STD),
+                ):
+                    prefix = "val/full_reconstruction/en4_conditioning"
+                    self.assertAlmostEqual(
+                        result[f"{prefix}/prediction_{field}_mae"],
+                        4.6 * scale,
+                        places=4,
+                    )
+                    self.assertAlmostEqual(
+                        result[f"{prefix}/glorys_{field}_mae"], scale, places=4
+                    )
 
 
 if __name__ == "__main__":

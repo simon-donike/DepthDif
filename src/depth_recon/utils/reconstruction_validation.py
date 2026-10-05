@@ -20,6 +20,7 @@ from depth_recon.utils.normalizations import (
     salinity_normalize,
     temperature_normalize,
 )
+from depth_recon.utils.validation_denoise import log_wandb_depth_errors
 
 
 @contextmanager
@@ -209,6 +210,100 @@ class FullReconstructionValidation(pl.Callback):
         metrics[FULL_RECONSTRUCTION_MONITOR] = torch.stack(scores).mean()
         return metrics
 
+    @classmethod
+    def _observation_statistics(
+        cls,
+        batch: dict[str, Any],
+        prediction: dict[str, Any],
+        field: str,
+        *,
+        single_field: bool,
+    ) -> torch.Tensor:
+        """Compare prediction and GLORYS with gridded conditioning observations.
+
+        Both methods use identical observed, GLORYS-valid ocean support. These
+        are input-consistency diagnostics, not scores on independent holdouts.
+        """
+        target_key, target_mask_key = cls._target_keys(field)
+        observed_key = "x_salinity" if field == "salinity" else "x"
+        observed = batch.get(observed_key)
+        observed_mask = batch.get(f"{observed_key}_valid_mask")
+        empty = torch.zeros(
+            (2, 3, batch[target_key].shape[1]),
+            dtype=torch.float64,
+            device=batch[target_key].device,
+        )
+        if not torch.is_tensor(observed) or not torch.is_tensor(observed_mask):
+            return empty
+        glorys_key = "y_salinity_glorys" if field == "salinity" else "y_glorys"
+        glorys = batch.get(glorys_key)
+        if glorys is None:
+            glorys = batch[target_key]
+            glorys_mask = batch[target_mask_key]
+        else:
+            glorys_mask = batch[f"{glorys_key}_valid_mask"]
+        support = (
+            cls._mask(observed_mask, observed)
+            & cls._mask(glorys_mask, observed)
+            & torch.isfinite(observed)
+            & torch.isfinite(glorys)
+        )
+        reference_batch = {
+            target_key: observed,
+            target_mask_key: support,
+            "land_mask": batch.get("land_mask"),
+        }
+        denormalize = (
+            salinity_normalize if field == "salinity" else temperature_normalize
+        )
+        glorys_prediction = {
+            f"y_hat_{field}_denorm": denormalize(mode="denorm", tensor=glorys.float())
+        }
+        return torch.stack(
+            [
+                cls._batch_statistics(
+                    reference_batch, values, field, single_field=single_field
+                )
+                for values in (prediction, glorys_prediction)
+            ]
+        )
+
+    def _log_depth_errors(
+        self,
+        trainer: pl.Trainer,
+        statistics: dict[str, torch.Tensor],
+        observations: dict[str, torch.Tensor],
+    ) -> None:
+        """Render globally pooled diagnostics once, reusing the scored predictions."""
+        if not trainer.is_global_zero:
+            return
+        dataset = self.dataset
+        depth_axis = None
+        while dataset is not None:
+            depth_axis = getattr(dataset, "depth_axis_m", None)
+            if depth_axis is not None:
+                break
+            dataset = getattr(dataset, "dataset", None)
+        for field, stats in statistics.items():
+            unit = "PSU" if field == "salinity" else "deg C"
+            log_wandb_depth_errors(
+                logger=getattr(trainer, "logger", None),
+                statistics={"Prediction": stats},
+                depth_axis_m=depth_axis,
+                image_key=f"{field}_absolute_error_by_depth",
+                error_label=f"Mean absolute error vs validation target ({unit})",
+                title=f"Fixed-subset {field} reconstruction error",
+            )
+            if bool((observations[field][0, 2] > 0).any()):
+                log_wandb_depth_errors(
+                    logger=getattr(trainer, "logger", None),
+                    statistics=dict(zip(("Prediction", "GLORYS"), observations[field])),
+                    depth_axis_m=depth_axis,
+                    image_key=f"{field}_absolute_error_vs_en4_by_depth",
+                    error_label=f"Mean absolute error vs gridded EN4 ({unit})",
+                    title=f"{field.capitalize()} conditioning consistency (not held out)",
+                )
+
     @torch.no_grad()
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
@@ -219,6 +314,7 @@ class FullReconstructionValidation(pl.Callback):
         self._select_patches(trainer)
         fields = tuple(getattr(pl_module, "output_fields", ("temperature",)))
         statistics = {}
+        observations = {}
         # Every rank creates the same accumulator layout, including ranks with no
         # assigned batches. Only sufficient statistics cross the distributed boundary.
         with _evaluation_rng(pl_module.device, self.seed):
@@ -227,6 +323,11 @@ class FullReconstructionValidation(pl.Callback):
             target_key, _ = self._target_keys(field)
             statistics[field] = torch.zeros(
                 (3, example[target_key].shape[0]),
+                dtype=torch.float64,
+                device=pl_module.device,
+            )
+            observations[field] = torch.zeros(
+                (2, 3, example[target_key].shape[0]),
                 dtype=torch.float64,
                 device=pl_module.device,
             )
@@ -245,12 +346,32 @@ class FullReconstructionValidation(pl.Callback):
                     statistics[field] += self._batch_statistics(
                         batch, prediction, field, single_field=len(fields) == 1
                     )
+                    observations[field] += self._observation_statistics(
+                        batch, prediction, field, single_field=len(fields) == 1
+                    )
                 del prediction, batch
         for field in fields:
             statistics[field] = trainer.strategy.reduce(
                 statistics[field], reduce_op="sum"
             )
+            observations[field] = trainer.strategy.reduce(
+                observations[field], reduce_op="sum"
+            )
         metrics = self._metrics(statistics)
+        for field, comparison in observations.items():
+            for label, stats in zip(("prediction", "glorys"), comparison):
+                if not bool((stats[2] > 0).any()):
+                    continue
+                # Reuse physical-unit metrics, keeping observation diagnostics out
+                # of the reconstruction checkpoint score and the training loss.
+                for key, value in self._metrics({field: stats}).items():
+                    if key != FULL_RECONSTRUCTION_MONITOR:
+                        metrics[
+                            key.replace(
+                                "val/full_reconstruction/",
+                                f"val/full_reconstruction/en4_conditioning/{label}_",
+                            )
+                        ] = value
         metrics["val/full_reconstruction/sample_count"] = torch.tensor(
             float(len(self.patch_indices)), device=pl_module.device
         )
@@ -264,3 +385,4 @@ class FullReconstructionValidation(pl.Callback):
             logger=True,
             batch_size=1,
         )
+        self._log_depth_errors(trainer, statistics, observations)

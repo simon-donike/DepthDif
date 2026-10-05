@@ -64,6 +64,21 @@ Non-finite predictions on valid water produce an infinite score, never an
 artificial improvement. Physical MAE, RMSE, equal-depth errors, valid counts and
 the actual patch count are also logged under `val/full_reconstruction/`.
 
+The same 128 reconstructions also produce depth-wise mean absolute error plots
+with ±1 population-standard-deviation bands, and tables of MAE, RMSE, error
+standard deviation and valid counts. Temperature uses °C; salinity uses PSU.
+Each field has a plot against its validation target and, where observations are
+available, a paired **Prediction / GLORYS versus gridded EN4** plot. The latter
+uses the conditioning observations on common observed, GLORYS-valid ocean support;
+it is a conditioning-consistency diagnostic, **not independent held-out EN4
+validation**. Synthetic-target runs use the separate GLORYS reference for this
+comparison. Observation MAE/RMSE and equal-depth metrics are logged under
+`val/full_reconstruction/en4_conditioning/`; these do not change the checkpoint
+score or training loss. Statistics are pooled across GPUs before plotting on
+rank zero. Unsupported depths remain empty, and invalid scored predictions are
+penalized rather than dropped. These diagnostics add no inference passes and do
+not change the fixed sample count, regular shuffled loader or existing previews.
+
 Patch selection and sampling noise are seeded separately from training, with
 no duplicate patches between ranks. The selected indices are recorded in
 `full_reconstruction_selection.json` beside the checkpoints. When EMA evaluation
@@ -96,6 +111,69 @@ configs using `val/loss` or `val/loss_ckpt` for checkpoint selection are migrate
 to the new score when loaded. The old loss-based best score is not comparable and
 is not reused when resuming. Recovery `last.ckpt` saving and loss-based learning-rate
 scheduling/early stopping retain their existing behavior.
+
+## Held-out EN4 with no historical archive candidate
+
+An opt-in benchmark logs under `val/en4_archive_holdout/`, separately from the
+128-patch checkpoint evaluator and the conditioning-consistency plots. It uses
+up to **32 fixed patches globally**, in inference batches of four, at the **first
+non-sanity validation check of each epoch**. Later checks in that epoch skip it;
+the callback saves its last evaluated epoch for mid-epoch resume. It uses the
+active validation weights, including EMA when configured, and logs that choice.
+
+```bash
+/work/envs/depth/bin/python train.py --scenario temperature \
+  --set training.training.en4_archive_holdout.enabled=true \
+  --set training.training.en4_candidate_eval.enabled=false
+```
+
+Configure the audit file with
+`training.training.en4_archive_holdout.candidate_profiles_path`. The default is
+`instructions/en4_no_spatiotemporal_candidate_profiles.parquet`. The file must
+contain `profile_source_file`, `source_profile_idx`, `datetime_utc` and
+`audit_status`. Only `no_spatiotemporal_candidate` rows in the validation year
+are eligible; `proxy_no_spatiotemporal_candidate` is explicitly excluded. Exact
+provenance keys must match the local compact profile store. Scored references
+always apply the configured accepted ARGO QC flags, even if training disables
+QC filtering; the existing treatment of missing QC flags is preserved.
+
+Selection cycles through seeded, shuffled validation dates and patch candidates
+to spread the bounded subset across the year. Each patch holds out 20% of its
+available candidate locations, rounded with a minimum of one, while retaining
+at least eight observed grid locations. A global date/location holdout set
+removes every depth of temperature and salinity, including colocated duplicate
+records and overlapping patches. Only copied conditioning tensors and their
+masks are edited. The shared dataset, training inputs, normal shuffled loader,
+128-patch checkpoint score and loss remain unchanged. If fewer patches qualify,
+the actual count is logged; an empty selection fails explicitly.
+
+The benchmark scores the stored individual EN4 profiles on common finite
+EN4/GLORYS ocean support. Each profile is assigned to exactly one reconstruction
+patch. Prediction failures on scored support produce infinite error rather than
+being discarded. DDP distributes explicit global batch indices without sampler
+padding and pools error sums/counts across all ranks. It logs physical MAE/RMSE,
+equal-depth errors, `1 - prediction_RMSE / GLORYS_RMSE` skill, supported profile
+and location counts, depth MAE plots with standard-deviation bands, per-depth
+metric tables and up to four profile examples per field. Temperature, salinity
+and joint scenarios use the same evaluation machinery.
+
+`en4_archive_holdout_selection.json` beside the checkpoints records the audit
+file SHA-256, evidence label, QC flags, seed, budget, retained support, patch
+coordinates and exact held-out source-profile identities. W&B also receives
+the audit hash, selection seed and a date/location/profile table. Rank selections
+must agree, and resuming into an existing run cannot silently replace its cohort.
+The display label is **Held-out EN4 — no historical archive candidate**: the
+audit indicates absence within its declared archive/time/distance search, not
+confirmed non-assimilation by GLORYS. This selected cohort is not a claim of
+uniform geographic or instrument coverage.
+
+`sample_count`, `batch_size`, `seed`, `holdout_fraction`, `min_input_profiles`
+(counted as distinct grid locations) and `max_profiles_to_plot` are configurable
+under `training.training.en4_archive_holdout`. The legacy `en4_candidate_eval`
+callback must be disabled because it changes the shared validation dataset.
+Enabling the new benchmark adds at most 32 reconstruction patches per epoch with
+the defaults; it never reconstructs the entire validation set. It does not
+change or restart already-running jobs.
 
 ## Maintained presets
 

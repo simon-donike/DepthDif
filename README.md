@@ -95,6 +95,9 @@ Best checkpoints use full reconstructions of 128 fixed validation patches across
 all scenarios, rather than denoising loss. The regular validation loader stays
 shuffled. See [checkpoint selection](docs/training.md#checkpoint-selection-from-full-reconstructions)
 for the metric, sampling budget and GPU distribution.
+An optional [archive-screened EN4 holdout benchmark](docs/training.md#held-out-en4-with-no-historical-archive-candidate)
+evaluates up to 32 additional fixed patches once per epoch in its own W&B
+namespace, without changing checkpoint selection or shared validation inputs.
 
 ## Documentation and validation
 

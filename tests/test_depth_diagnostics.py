@@ -1,14 +1,18 @@
 """Tests for mask-aware depth diagnostics."""
 
 import unittest
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import matplotlib.pyplot as plt
+import torch
 
 from depth_recon.utils.validation_denoise import (
     compute_depth_diagnostics,
+    log_wandb_depth_errors,
 )
 from depth_recon.scripts.evaluate_depth_baselines import evaluate_configured_methods
 
@@ -42,6 +46,43 @@ class DepthDiagnosticsTests(unittest.TestCase):
         self.assertEqual(int(result["valid_count"][1]), 0)
         self.assertTrue(np.isnan(result["mae"][1]))
         self.assertAlmostEqual(float(result["equal_depth_mae"]), 1.0)
+
+    def test_error_plot_uses_pooled_moments_and_keeps_unsupported_depths_empty(self):
+        """The ribbon measures error spread, and tables retain RMSE and support."""
+        payloads = []
+        fake_wandb = SimpleNamespace(
+            Image=lambda figure: figure,
+            Table=lambda **kwargs: kwargs,
+        )
+        statistics = {
+            "Prediction": torch.tensor(
+                [[10.0, 4.0, 0.0], [4.0, 2.0, 0.0], [2.0, 1.0, 0.0]],
+                dtype=torch.float64,
+            ),
+            "GLORYS": torch.tensor(
+                [[8.0, 4.0, 0.0], [4.0, 2.0, 0.0], [2.0, 1.0, 0.0]], dtype=torch.float64
+            ),
+        }
+        with patch.dict(sys.modules, {"wandb": fake_wandb}):
+            log_wandb_depth_errors(
+                logger=SimpleNamespace(experiment=SimpleNamespace(log=payloads.append)),
+                statistics=statistics,
+                depth_axis_m=np.array([0.0, 100.0, 500.0]),
+            )
+        figure = payloads[0]["val/full_reconstruction/absolute_error_by_depth"]
+        axis = figure.axes[0]
+        np.testing.assert_allclose(axis.lines[0].get_xdata(), [2.0, 2.0, np.nan])
+        np.testing.assert_equal(axis.lines[0].get_ydata(), [0.0, 100.0, 500.0])
+        self.assertTrue(axis.yaxis_inverted())
+        self.assertEqual(axis.get_ylabel(), "Depth (m)")
+        self.assertEqual(len(axis.collections), 2)
+        self.assertFalse(plt.fignum_exists(figure.number))
+        table = payloads[0]["val/full_reconstruction/absolute_error_by_depth_metrics"]
+        self.assertEqual(
+            table["data"][0], ["Prediction", 0.0, 2.0, np.sqrt(5.0), 1.0, 2]
+        )
+        self.assertEqual(table["data"][2], ["Prediction", 500.0, None, None, None, 0])
+        self.assertEqual(table["data"][3], ["GLORYS", 0.0, 2.0, 2.0, 0.0, 2])
 
     def test_configured_evaluation_reuses_fixed_indices(self) -> None:
         """Configured mode evaluates mocked models on the same selected rows."""
