@@ -1,0 +1,40 @@
+captured_at_utc: '2026-10-05T11:53:52.718468+00:00'
+wandb_run: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/062mpmkd
+checkpoints:
+  residual_early:
+    source: outputs/residual_comparison_20261004/residual_snapshot.ckpt
+    source_mtime_ns: 1791113387052778435
+    path: outputs/checkpoint_selection_20261005/checkpoints/residual_early_step37768.ckpt
+    sha256: 516fbac95760cef390a37a67c6cdc8d4786f780ecaf5ed6e8852620ee18c6c02
+    bytes: 922427091
+    global_step: 37768
+    epoch_zero_based: 0
+    evaluated_in_this_experiment: true
+  residual_previous:
+    source: outputs/residual_comparison_20261005/residual_snapshot.ckpt
+    source_mtime_ns: 1791195006394622134
+    path: outputs/checkpoint_selection_20261005/checkpoints/residual_previous_step84978.ckpt
+    sha256: 4b80715ab5990cdc43b3a210db3cf454679514e7cf9b7b257b9ac770ed039964
+    bytes: 922427155
+    global_step: 84978
+    epoch_zero_based: 2
+    evaluated_in_this_experiment: false
+  residual_latest_best:
+    source: logs/2026-10-03_21-41-50_climatology_residual/best-epochepoch=002.ckpt
+    source_mtime_ns: 1791196210383134165
+    path: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    bytes: 922427155
+    global_step: 113304
+    epoch_zero_based: 2
+    evaluated_in_this_experiment: true
+  residual_latest_recovery:
+    source: logs/2026-10-03_21-41-50_climatology_residual/last.ckpt
+    source_mtime_ns: 1791198058350542531
+    path: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_recovery_step114773.ckpt
+    sha256: 23821cdaa16d32107070ea97705bbfe4dc2d67fafd5619fab095d19edffce639
+    bytes: 922427155
+    global_step: 114773
+    epoch_zero_based: 3
+    evaluated_in_this_experiment: false
+config_source: logs/2026-10-03_21-41-50_climatology_residual/training_super_config_climatology.yaml

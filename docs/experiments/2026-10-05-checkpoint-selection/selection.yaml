@@ -1,0 +1,15 @@
+selected_diffusion_method: residual_latest_best_standard
+selection_metric: field equal_depth_rmse_c
+source:
+  checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+  checkpoint_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+  global_step: 113304
+  weights: standard
+  config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+  config_sha256: 0c9a42fc42de5e177230910bdab31e89e2a0a9052d4f28bdc1f39e3640cf2eed
+inference_export: outputs/checkpoint_selection_20261005/selected_inference.ckpt
+inference_export_sha256: 05a9bb836a9dd225de65ee30f76f8eba75d0be87667bc58cf65a55f7f767b1a0
+exact_tensor_equality_verified: true
+resume_training_from_export: false
+overall_field_winner: climatology/field
+status: provisional_diffusion_reference; not promoted over climatology

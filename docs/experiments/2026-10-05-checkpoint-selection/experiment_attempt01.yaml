@@ -1,0 +1,52 @@
+experiment_id: 2026-10-05-residual-checkpoint-selection
+purpose: Select retained residual weights against climatology before any further training.
+  HPC sgp7apkx is pending an accessible checkpoint.
+sample_count: 128
+seed: 20261005
+batch_size: 4
+holdout_fraction: 0.2
+sampler: ddpm
+timesteps: 1000
+precision: float32; TF32 disabled
+primary_metric: field equal_depth_rmse_c
+secondary_metrics:
+- field equal_depth_mae_c
+- field pixel_rmse_c
+- heldout_profiles pixel_mae_c
+- heldout_profiles pixel_rmse_c
+profile_reference: Gridded ARGO at entirely hidden spatial columns; not independent
+  raw EN4. At least one input column is retained.
+climatology:
+  path: outputs/checkpoint_selection_20261005/baselines/temperature_monthly_stride4.npz
+  sha256: 6125c6bd8af1b813bb61bc55c08d5cc39f8b95f8f63e1be68c55083dd30b87c0
+  excluded_year: 2016
+  source: outputs/climatology_2016_comparison/temperature_monthly_stride4.npz
+methods:
+  residual_early_ema:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_early_step37768.ckpt
+    checkpoint_sha256: 516fbac95760cef390a37a67c6cdc8d4786f780ecaf5ed6e8852620ee18c6c02
+    global_step: 37768
+    weights: ema
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 42a3f32384b539680eedccb29990baa3f69d45a5c9f1d739e0fa78d003a005f9
+  residual_early_standard:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_early_step37768.ckpt
+    checkpoint_sha256: 516fbac95760cef390a37a67c6cdc8d4786f780ecaf5ed6e8852620ee18c6c02
+    global_step: 37768
+    weights: standard
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 42a3f32384b539680eedccb29990baa3f69d45a5c9f1d739e0fa78d003a005f9
+  residual_latest_best_ema:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    checkpoint_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    global_step: 113304
+    weights: ema
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 42a3f32384b539680eedccb29990baa3f69d45a5c9f1d739e0fa78d003a005f9
+  residual_latest_best_standard:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    checkpoint_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    global_step: 113304
+    weights: standard
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 42a3f32384b539680eedccb29990baa3f69d45a5c9f1d739e0fa78d003a005f9

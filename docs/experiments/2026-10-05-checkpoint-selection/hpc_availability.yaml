@@ -1,0 +1,14 @@
+checked_at_utc: '2026-10-05T12:25:34.169460+00:00'
+run_url: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/sgp7apkx
+file_count: 238
+checkpoint_files: []
+logged_artifacts:
+- name: run-sgp7apkx-val_absolute_band_errorrecon_l1_generated_deg_by_band_table-sVeDlg:v0
+  type: run_table
+- name: run-sgp7apkx-history:v2
+  type: wandb-history
+- name: run-sgp7apkx-events:v2
+  type: wandb-events
+status: pending_user_checkpoint_location
+reason: No checkpoint file or model artifact is attached to this run; no matching
+  local checkpoint was found.

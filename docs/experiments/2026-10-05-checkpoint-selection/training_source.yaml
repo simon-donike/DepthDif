@@ -1,0 +1,426 @@
+scenario: temperature
+data:
+  dataset:
+    core:
+      dataset_variant: argo_geotiff_gridded
+      dataloader_type: light
+      geotiff_root_dir: /work/data/OceanVariableReconstruction
+      metadata_cache_dir: /work/data/OceanVariableReconstruction/depthdif_cache
+    grid:
+      tile_size: 128
+      resolution_deg: 0.1
+      patch_grid_source: land_mask
+      land_mask_path: masks/world_land_mask_glorys_0p1.tif
+      patch_stride: 32
+      max_land_fraction: 0.3
+      force_include_regions:
+      - name: mediterranean
+        lon_min: -6.0
+        lon_max: 37.0
+        lat_min: 30.0
+        lat_max: 46.0
+        max_land_fraction: 0.6
+      - name: baltic
+        lon_min: 9.0
+        lon_max: 31.0
+        lat_min: 53.0
+        lat_max: 66.0
+        max_land_fraction: 0.85
+      - name: red_sea
+        lon_min: 32.0
+        lon_max: 44.0
+        lat_min: 12.0
+        lat_max: 30.0
+        max_land_fraction: 0.85
+      - name: hudson_bay
+        lon_min: -96.0
+        lon_max: -74.0
+        lat_min: 50.0
+        lat_max: 65.0
+        max_land_fraction: 0.95
+    sampling:
+      temporal_window_days: 7
+      glorys_var_name: thetao
+      ostia_var_name: analysed_sst
+      eo_source: ostia
+      eo_var_name: analysed_sst
+    selection:
+      require_argo_for_train: true
+      require_argo_for_val: true
+      require_argo_for_all: false
+      filter_bad_argo_quality: false
+      accepted_argo_qc_flags:
+      - 1
+      - 2
+    surface_conditioning:
+      sources:
+      - sst
+    synthetic_target:
+      enabled: false
+      statistics_path: src/depth_recon/data/synthetic_dataset_creation/vertical_offset_prior.npz
+      bathymetry_reference_date: null
+    finetune_sampling:
+      enabled: false
+      hard_fraction: 0.5
+      apply_to_splits:
+      - train
+      - val
+      relax_land_filter: true
+      default_max_land_fraction: 0.85
+      hard_regions:
+      - name: mediterranean
+        lon_min: -6.0
+        lon_max: 37.0
+        lat_min: 30.0
+        lat_max: 46.0
+      - name: black_sea
+        lon_min: 27.0
+        lon_max: 42.0
+        lat_min: 40.0
+        lat_max: 47.0
+      - name: russian_arctic_west
+        lon_min: 20.0
+        lon_max: 180.0
+        lat_min: 66.0
+        lat_max: 82.0
+      - name: russian_arctic_east
+        lon_min: -180.0
+        lon_max: -160.0
+        lat_min: 66.0
+        lat_max: 82.0
+      - name: hudson_bay
+        lon_min: -96.0
+        lon_max: -74.0
+        lat_min: 50.0
+        lat_max: 65.0
+      - name: baja_california
+        lon_min: -122.0
+        lon_max: -104.0
+        lat_min: 18.0
+        lat_max: 33.0
+      - name: greenland
+        lon_min: -75.0
+        lon_max: -10.0
+        lat_min: 58.0
+        lat_max: 84.0
+      - name: svalbard_barents
+        lon_min: 0.0
+        lon_max: 45.0
+        lat_min: 70.0
+        lat_max: 82.0
+      - name: european_atlantic
+        lon_min: -16.0
+        lon_max: 16.0
+        lat_min: 35.0
+        lat_max: 70.0
+      - name: persian_gulf
+        lon_min: 47.0
+        lon_max: 57.0
+        lat_min: 23.0
+        lat_max: 31.0
+      - name: red_sea
+        lon_min: 32.0
+        lon_max: 44.0
+        lat_min: 12.0
+        lat_max: 30.0
+      - name: yellow_sea
+        lon_min: 117.0
+        lon_max: 127.0
+        lat_min: 31.0
+        lat_max: 41.0
+      - name: sea_of_japan
+        lon_min: 127.0
+        lon_max: 142.0
+        lat_min: 34.0
+        lat_max: 52.0
+      - name: sea_of_okhotsk
+        lon_min: 140.0
+        lon_max: 164.0
+        lat_min: 43.0
+        lat_max: 62.0
+      - name: northern_alaska
+        lon_min: -170.0
+        lon_max: -135.0
+        lat_min: 68.0
+        lat_max: 75.0
+      - name: bay_of_benin_west
+        lon_min: -1.5
+        lon_max: 1.5
+        lat_min: 4.8
+        lat_max: 6.8
+      - name: bay_of_benin_east
+        lon_min: 1.5
+        lon_max: 4.5
+        lat_min: 4.2
+        lat_max: 6.8
+      - name: new_york_nova_scotia
+        lon_min: -75.0
+        lon_max: -59.0
+        lat_min: 40.0
+        lat_max: 47.0
+    output:
+      return_info: false
+      return_coords: true
+    wet_domain:
+      enabled: true
+    runtime:
+      random_seed: 7
+      cache_size: 8
+    climatology:
+      enabled: true
+      path: /work/code/DepthDif/outputs/climatology_2016_comparison/temperature_monthly_stride4.npz
+  split:
+    val_year: 2016
+    val_fraction: 0.2
+  dataloader:
+    num_workers: 2
+    prefetch_factor: 2
+    val_shuffle: true
+model:
+  model_type: cond_px_dif
+  depth_channels: 50
+  resume_checkpoint: false
+  load_checkpoint_only: false
+  condition_eo_channels: 1
+  condition_mask_channels: 1
+  condition_include_eo: true
+  condition_use_valid_mask: true
+  condition_per_depth_valid_mask: true
+  condition_use_wet_mask: true
+  mask_diffusion_with_wet_mask: true
+  climatology_residual: false
+  condition_use_land_mask: true
+  clamp_known_pixels: false
+  mask_loss_with_valid_pixels: true
+  coastal_loss:
+    enabled: false
+    radius_px: 5
+    weight: 3.0
+    ramp: linear
+  parameterization: x0
+  log_intermediates: false
+  ema:
+    enabled: true
+    decay: 0.999
+    apply_every_n_steps: 1
+    start_step: 0
+    save_ema_weights_in_callback_state: true
+    evaluate_ema_weights_instead: true
+  ambient_occlusion:
+    enabled: false
+    further_drop_prob: 0.25
+    apply_to_noisy_branch: true
+    shared_spatial_mask: true
+    min_kept_observed_pixels: 50
+    require_x0_parameterization: true
+  losses:
+    ambient:
+      weight: 1.0
+    aux_timestep_weighting:
+      enabled: false
+      mode: snr
+      min_weight: 0.1
+      max_weight: 1.0
+      snr_gamma: 5.0
+      linear_start_weight: 0.0
+      linear_end_weight: 1.0
+    sparse_observation:
+      enabled: false
+      weight: 0.25
+      eps: 0.001
+    increment:
+      enabled: false
+      weight: 0.1
+      eps: 0.001
+      max_pairs_per_sample: 4096
+      vertical_pairs: true
+      horizontal_pairs: false
+      horizontal_max_distance: null
+    structure_function_prior:
+      enabled: false
+      target: reference
+      weight: 0.1
+      reference_path: null
+      num_pairs: 8192
+      num_bins: 16
+      eps: 1.0e-06
+      per_depth: true
+    spectral_energy_floor:
+      enabled: false
+      target: reference
+      weight: 0.05
+      reference_path: null
+      eps: 1.0e-08
+      margin: 0.0
+      min_band: 1
+      max_band: null
+      per_depth: true
+    feature_gram_prior:
+      enabled: false
+      weight: 0.01
+      encoder_checkpoint: null
+      reference_path: null
+  post_process:
+    gaussian_blur:
+      enabled: false
+      sigma: 0.75
+      kernel_size: 5
+  coord_conditioning:
+    enabled: true
+    encoding: unit_sphere
+    include_date: true
+    date_encoding: day_of_year_sincos
+    embed_dim: null
+  cnn_baseline:
+    hidden_channels: 64
+    seed_length: 8
+    transpose_layers: null
+    conv_layers: 3
+    kernel_size: 3
+    batch_norm_momentum: 0.3
+    dropout: 0.0
+    activation: selu
+    lr: null
+    weight_decay: 0.0001
+    include_valid_mask: true
+    include_eo: null
+    include_land_mask: null
+  unet_baseline:
+    base_channels: 32
+    channel_mults:
+    - 1
+    - 2
+    - 4
+    - 8
+    norm_groups: 8
+    dropout: 0.0
+    lr: null
+    weight_decay: 0.0001
+    per_channel_valid_mask: true
+  unet:
+    dim: 64
+    dim_mults:
+    - 1
+    - 2
+    - 4
+    - 8
+    with_time_emb: true
+    output_mean_scale: false
+    residual: false
+training:
+  training:
+    lr: 0.0001
+    noise:
+      num_timesteps: 1000
+      schedule: cosine
+      beta_start: 0.0001
+      beta_end: 0.02
+    validation_sampling:
+      sampler: ddpm
+      ddim_num_timesteps: 100
+      ddim_eta: 0.0
+      ddim_temperature: 1.0
+      log_intermediates: false
+      skip_full_reconstruction_in_sanity_check: true
+      full_reconstruction_logging_enabled: true
+      max_full_reconstruction_samples: 1
+    en4_candidate_eval:
+      enabled: false
+      candidate_profiles_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet
+      iso_week: 25
+      holdout_fraction: 0.2
+      seed: 7
+      min_input_profiles: 8
+      max_patches: 1
+      max_profiles_to_plot: 6
+      image_depths_m:
+      - 0.0
+      - 100.0
+      - 500.0
+    hard_region_eval:
+      enabled: false
+      regions_path: src/depth_recon/configs/evaluation/hard_regions_2016.yaml
+      evaluation_year: 2016
+      max_patches_per_region: 1
+      seed: 7
+      image_depths_m:
+      - 0.0
+      - 100.0
+      - 500.0
+  trainer:
+    seed: 7
+    max_epochs: 100
+    accelerator: auto
+    devices: 2
+    num_gpus: null
+    strategy: ddp
+    precision: 16-mixed
+    matmul_precision: high
+    suppress_accumulate_grad_stream_mismatch_warning: true
+    suppress_lightning_pytree_warning: true
+    ckpt_monitor: val/loss_ckpt
+    lr_logging_interval: step
+    log_every_n_steps: 25
+    num_sanity_val_steps: 1
+    val_check_interval: 0.25
+    limit_train_batches: 1.0
+    limit_val_batches: 64
+    checkpoint_every_n_train_steps: null
+    max_time: null
+    enable_model_summary: true
+    gradient_clip_val: 1.0
+    early_stopping:
+      enabled: false
+      monitor: val/loss_ckpt
+      mode: min
+      patience: 5
+      min_delta: 0.0
+      check_finite: true
+      verbose: true
+  wandb:
+    offline: false
+    project: DepthDif_Simon
+    entity: esa-phi-lab
+    run_name: glorys_dense_reproduction_2016_2x3090_slow_lr
+    run_id: null
+    resume: null
+    group: null
+    job_type: null
+    tags: null
+    log_model: 'false'
+    verbose: true
+    watch_gradients: false
+    watch_parameters: false
+    watch_log_freq: 100
+    watch_log_graph: false
+    log_stats_every_n_steps: 200
+    log_images_every_n_steps: 200
+  dataloader:
+    batch_size: 48
+    val_batch_size: 6
+    num_workers: 2
+    val_num_workers: 0
+    persistent_workers: false
+    val_persistent_workers: false
+    prefetch_factor: 2
+    multiprocessing_context: spawn
+    shuffle: true
+    val_shuffle: true
+    pin_memory: true
+  scheduler:
+    warmup:
+      enabled: false
+      steps: 2000
+      start_ratio: 0.2
+    reduce_on_plateau:
+      enabled: true
+      monitor: val/loss_ckpt
+      interval: epoch
+      mode: min
+      factor: 0.5
+      patience: 5
+      threshold: 0.0001
+      threshold_mode: rel
+      cooldown: 0
+      min_lr: 1.0e-06
+      eps: 1.0e-08
