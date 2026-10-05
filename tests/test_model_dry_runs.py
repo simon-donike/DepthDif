@@ -996,7 +996,7 @@ class TestModelDryRuns(unittest.TestCase):
                         "parameterization": "x0",
                         "latent": {
                             "ae_config_path": str(ae_config_path),
-                            "ae_checkpoint": False,
+                            "ae_checkpoint": str(tmp_path / "ae.ckpt"),
                             "freeze_autoencoder": True,
                             "latent_channels": 1,
                             "spatial_downsample": 1,
@@ -1009,6 +1009,12 @@ class TestModelDryRuns(unittest.TestCase):
             _write_yaml(data_config_path, {"dataset": {}, "dataloader": {}})
             _write_yaml(training_config_path, {"training": {}, "wandb": {}})
 
+            ae = DepthBandAutoencoder.from_config(str(ae_config_path))
+            ae.latent_calibrated.fill_(True)
+            torch.save(
+                {"state_dict": ae.state_dict(), "ae_contract": ae.contract()},
+                tmp_path / "ae.ckpt",
+            )
             model = LatentDiffusionConditional.from_config(
                 str(model_config_path),
                 str(data_config_path),
@@ -1923,7 +1929,7 @@ class TestModelDryRuns(unittest.TestCase):
                 latent_channels=1,
                 encoder_hidden_channels=(4,),
                 decoder_hidden_channels=(4,),
-                spatial_downsample=2,
+                spatial_downsample=1,
             )
             model = DepthBandAutoencoderLightning(
                 autoencoder=autoencoder,
@@ -1951,7 +1957,7 @@ class TestModelDryRuns(unittest.TestCase):
                     "ae": {
                         "in_channels": 2,
                         "latent_channels": 1,
-                        "spatial_downsample": 2,
+                        "spatial_downsample": 1,
                         "encoder": {"hidden_channels": [4]},
                         "decoder": {"hidden_channels": [4]},
                         "training": {"lr": 3.0e-4, "batch_size": 6},

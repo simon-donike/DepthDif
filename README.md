@@ -61,6 +61,10 @@ Equivalent commands are available as `depth-recon-infer-week`,
 
 ## Repository training
 
+For the two-stage mask-aware autoencoder and latent diffusion workflow, see
+[the latent training guide](docs/autoencoder.md). It uses a fixed 12-channel
+representation and trains the AE on dense fields and sparse observations.
+
 The active dataset is `ArgoGeoTIFFGriddedPatchDataset`. Dense rasters provide
 GLORYS targets and SST/SSS/ADT conditioning; a compact Zarr store supplies
 depth-aligned sparse EN4/ARGO observations.

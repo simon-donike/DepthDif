@@ -47,6 +47,7 @@ from depth_recon.models.baselines import (
     UNetInfillingBaseline,
 )
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
+from depth_recon.models.latent import LatentDiffusionConditional
 from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
 from depth_recon.utils.en4_archive_holdout import (
     AUDIT_STATUS,
@@ -794,6 +795,13 @@ def main(
         )
     elif model_type == "unet2d_baseline":
         model = UNet2DInfillingBaseline.from_config(
+            model_config_path=effective_model_config_path,
+            data_config_path=effective_data_config_path,
+            training_config_path=effective_training_config_path,
+            datamodule=datamodule,
+        )
+    elif model_type == "latent_cond_dif":
+        model = LatentDiffusionConditional.from_config(
             model_config_path=effective_model_config_path,
             data_config_path=effective_data_config_path,
             training_config_path=effective_training_config_path,

@@ -2,6 +2,10 @@
 
 ## Launch
 
+Latent diffusion uses a trained, calibrated mask-aware autoencoder and its own
+super-config. Follow the [two-stage latent workflow](autoencoder.md) before using
+`model_type: latent_cond_dif`; pixel ambient presets cannot be reused unchanged.
+
 Pixel-space training requires one scenario:
 
 ```bash
@@ -49,6 +53,8 @@ limit and the preview-image count do not limit this evaluation. Sanity checks sk
 For diffusion, `predict_step` runs the configured validation sampler from noise to
 the final physical fields (DDPM-1000 in the maintained pixel presets). Baselines
 run their normal prediction path; autoencoders encode and decode the complete target.
+The AE callback additionally reports sparse-input and whole-profile holdout errors
+on the same fixed subset, separately from the dense compression checkpoint score.
 The score uses the existing validation targets and dated validity masks, intersected
 with spatial ocean support. It does not change the training targets, loss or weights.
 Synthetic-target runs are therefore scored against their synthetic validation

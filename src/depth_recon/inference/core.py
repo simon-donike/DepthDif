@@ -386,6 +386,9 @@ def load_checkpoint_weights(
     """Load checkpoint weights into a model, preferring EMA weights when available."""
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
     _validate_checkpoint_variable_scenario(model, checkpoint, checkpoint_path)
+    if isinstance(model, LatentDiffusionConditional):
+        model.on_load_checkpoint(checkpoint)
+        strict = True
     if prefer_ema:
         ema_state_dict = extract_ema_state_dict(checkpoint)
         if ema_state_dict is not None:

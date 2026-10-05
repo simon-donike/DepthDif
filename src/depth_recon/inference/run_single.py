@@ -1,3 +1,4 @@
+# Example: /work/envs/depth/bin/python -m depth_recon.inference.run_single --config src/depth_recon/configs/lat_space/training_super_config.yaml --checkpoint logs/latent_temperature/last.ckpt --set model.latent.ae_checkpoint=logs/ae_latent/autoencoder_calibrated.ckpt
 """Run one-off inference with a configured checkpoint.
 
 This script loads the model and dataset configuration, restores a checkpoint,
@@ -10,6 +11,7 @@ Typical CLI:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -66,14 +68,19 @@ RANDOM_HEIGHT: int | None = None
 RANDOM_WIDTH: int | None = None
 
 
-def main() -> None:
+def main(
+    *,
+    config_path: str = CONFIG_PATH,
+    checkpoint_path: str | None = CHECKPOINT_PATH,
+    overrides: list[str] | None = None,
+) -> None:
     """Run the script entry point."""
     torch.manual_seed(int(SEED))
 
     config_bundle = load_pixel_inference_config(
-        config_path_value=CONFIG_PATH,
+        config_path_value=config_path,
         scenario_override=SCENARIO,
-        overrides=CONFIG_OVERRIDES,
+        overrides=CONFIG_OVERRIDES if overrides is None else overrides,
         runtime_config_dir=Path("/tmp/depthdif_inference_configs") / "run_single",
         write_snapshots=False,
     )
@@ -92,7 +99,13 @@ def main() -> None:
         )
 
     dataset = build_dataset(
-        config_bundle.effective_data_config_path, data_cfg.get("dataset", {})
+        config_bundle.effective_data_config_path,
+        data_cfg.get("dataset", {}),
+        split=(
+            LOADER_SPLIT
+            if resolve_model_type(model_cfg) == "latent_cond_dif"
+            else "all"
+        ),
     )
     datamodule = build_datamodule(
         dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
@@ -107,7 +120,7 @@ def main() -> None:
         datamodule=datamodule,
     )
 
-    ckpt_path = resolve_checkpoint_path(CHECKPOINT_PATH, model_cfg)
+    ckpt_path = resolve_checkpoint_path(checkpoint_path, model_cfg)
     if ckpt_path is not None:
         weight_source = load_checkpoint_weights(
             model,
@@ -163,4 +176,13 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=CONFIG_PATH)
+    parser.add_argument("--checkpoint", default=CHECKPOINT_PATH)
+    parser.add_argument("--set", dest="overrides", action="append", default=None)
+    args = parser.parse_args()
+    main(
+        config_path=args.config,
+        checkpoint_path=args.checkpoint,
+        overrides=args.overrides,
+    )
