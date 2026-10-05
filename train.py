@@ -49,8 +49,10 @@ from depth_recon.models.baselines import (
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
 from depth_recon.utils.hard_region_validation import HardRegionValidationCallback
+from depth_recon.utils.reconstruction_validation import FullReconstructionValidation
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
+    FULL_RECONSTRUCTION_MONITOR,
     PIXEL_SCENARIOS,
     load_pixel_training_config,
     load_yaml,
@@ -777,11 +779,12 @@ def main(
     # Save the best checkpoint by monitored validation metric.
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
-        filename="best-epoch{epoch:03d}",
-        monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss")),
+        filename="best-epoch{epoch:03d}-step{step:09d}",
+        monitor=FULL_RECONSTRUCTION_MONITOR,
         mode="min",
-        save_top_k=1,
+        save_top_k=3,
         save_last=False,
+        save_on_train_epoch_end=False,
     )
     # Keep last.ckpt independent of top-k improvements and save it on failures.
     checkpoint_every_n_train_steps = trainer_cfg.get(
@@ -837,6 +840,13 @@ def main(
         callbacks.append(en4_candidate_callback)
     if hard_region_callback is not None:
         callbacks.append(hard_region_callback)
+    callbacks.append(
+        FullReconstructionValidation(
+            dataset=val_dataset,
+            output_dir=run_dir,
+            **training_cfg["training"]["reconstruction_eval"],
+        )
+    )
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
@@ -915,6 +925,8 @@ def main(
         # Start from scratch or restore the complete optimizer/trainer state.
         fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=fit_ckpt_path)
+        # Preserve the exact final state even when the time limit falls between recovery saves.
+        trainer.save_checkpoint(str(run_dir / "final.ckpt"))
 
 
 def parse_args() -> argparse.Namespace:

@@ -36,6 +36,67 @@ representation; the loss formula, weights, and supervised support remain unchang
 
 See [depth diagnostics](depth-diagnostics.md) for fitting and evaluation commands.
 
+## Checkpoint selection from full reconstructions
+
+All runs launched by `train.py` (temperature, salinity, joint, pixel/latent
+diffusion and baselines) and `train_autoencoder.py` select the best checkpoint by
+`val/full_reconstruction_score`, rather than denoising or training loss.
+At every real validation check, a separate fixed subset of **128 unique validation
+patches globally** is reconstructed in batches of four. Smaller validation datasets
+use every patch. The regular validation loader remains shuffled, and its batch
+limit and the preview-image count do not limit this evaluation. Sanity checks skip it.
+
+For diffusion, `predict_step` runs the configured validation sampler from noise to
+the final physical fields (DDPM-1000 in the maintained pixel presets). Baselines
+run their normal prediction path; autoencoders encode and decode the complete target.
+The score uses the existing validation targets and dated validity masks, intersected
+with spatial ocean support. It does not change the training targets, loss or weights.
+Synthetic-target runs are therefore scored against their synthetic validation
+targets; the separate GLORYS comparison remains a diagnostic.
+
+Squared errors and valid counts are pooled across patches and GPUs **before**
+computing each depth's RMSE. The checkpoint score averages supported depth RMSEs,
+divides each field by its existing normalization scale (10.9334°C for temperature,
+1.15827 PSU for salinity), then averages fields equally. This prevents the large
+number of shallow pixels or different field units from dominating selection.
+Unsupported depths are excluded; an entirely unsupported field fails evaluation.
+Non-finite predictions on valid water produce an infinite score, never an
+artificial improvement. Physical MAE, RMSE, equal-depth errors, valid counts and
+the actual patch count are also logged under `val/full_reconstruction/`.
+
+Patch selection and sampling noise are seeded separately from training, with
+no duplicate patches between ranks. The selected indices are recorded in
+`full_reconstruction_selection.json` beside the checkpoints. When EMA evaluation
+is enabled, the score uses EMA weights; raw weights are restored before saving
+the normal resume checkpoint, which also retains the configured EMA callback state.
+Preview plots remain independent and may use different patches.
+
+Training retains the three lowest-scoring reconstruction checkpoints. Filenames
+include both epoch and optimizer step so checks within one epoch remain distinct.
+The recovery checkpoint is separate. `train.py` also writes `final.ckpt` with
+the exact final training state when fitting returns, including a configured time
+limit that falls between periodic recovery saves. For a comparison or deployment, copy the
+chosen checkpoint, record its SHA-256, step, and raw/EMA weight choice, and use
+that snapshot rather than a mutable `last.ckpt` or historical epoch-only name.
+See the [checkpoint experiment record](experiments/2026-10-05-checkpoint-selection/README.md)
+for the current candidate registry, evaluation protocol, and decisions.
+
+The global sample count is a bounded default, not a guarantee of statistical
+coverage. Increase it when per-depth support or checkpoint rankings are unstable:
+
+```bash
+/work/envs/depth/bin/python train.py --scenario joint \
+  --set training.training.reconstruction_eval.sample_count=256 \
+  --set training.training.reconstruction_eval.batch_size=4 \
+  --set training.training.reconstruction_eval.seed=7
+```
+
+These settings increase validation cost, especially with DDPM. Old saved training
+configs using `val/loss` or `val/loss_ckpt` for checkpoint selection are migrated
+to the new score when loaded. The old loss-based best score is not comparable and
+is not reused when resuming. Recovery `last.ckpt` saving and loss-based learning-rate
+scheduling/early stopping retain their existing behavior.
+
 ## Maintained presets
 
 The default local `training_super_config.yaml` and explicit
@@ -61,9 +122,9 @@ The HPC presets remain separate; the command below selects the local recipe.
 ```
 
 Validation stays shuffled and runs four times per epoch. Cheap denoising loss
-uses at most 64 batches per GPU. Full DDPM-1000 reconstruction uses only **one
-cached patch per GPU for each of raw and EMA weights**: two chains per GPU per
-validation check. The EN4 candidate and hard-region inference callbacks are
+uses at most 64 batches per GPU. Preview logging uses **one cached patch per GPU
+for each of raw and EMA weights**, in addition to the 128-patch checkpoint
+evaluation described above. The EN4 candidate and hard-region inference callbacks are
 disabled for this experiment, and sanity checking skips full reconstruction.
 W&B logs both `val_imgs/x_y_full_reconstruction_standard` and
 `val_imgs/x_y_full_reconstruction_ema`, plus separate profile plots, reusing
@@ -140,7 +201,7 @@ baseline model, validates checkpoint compatibility, and launches Lightning.
 
 Each run writes under `logs/<timestamp>/`:
 
-- `best.ckpt` and `last.ckpt` according to checkpoint configuration;
+- step-specific best checkpoints, recovery `last.ckpt`, and `final.ckpt` when `train.py` finishes;
 - the original super-config;
 - resolved effective data, model, and training YAML snapshots;
 - W&B metadata and callback outputs when enabled.

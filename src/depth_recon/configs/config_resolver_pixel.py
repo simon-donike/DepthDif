@@ -36,6 +36,33 @@ DEFAULT_PIXEL_TRAINING_CONFIG_PATH = str(
 DEFAULT_PIXEL_INFERENCE_CONFIG_PATH = str(
     config_path("px_space", "inference_super_config.yaml")
 )
+FULL_RECONSTRUCTION_MONITOR = "val/full_reconstruction_score"
+
+
+def apply_reconstruction_checkpoint_contract(training_cfg: dict[str, Any]) -> None:
+    """Require reconstruction-based selection, including for saved older configs."""
+    trainer_cfg = training_cfg.setdefault("trainer", {})
+    monitor = trainer_cfg.get("ckpt_monitor", FULL_RECONSTRUCTION_MONITOR)
+    if monitor not in {FULL_RECONSTRUCTION_MONITOR, "val/loss", "val/loss_ckpt"}:
+        raise ValueError(
+            f"Best checkpoints must monitor {FULL_RECONSTRUCTION_MONITOR}, got {monitor!r}."
+        )
+    # Migrate old loss-based presets before writing effective run configurations.
+    trainer_cfg["ckpt_monitor"] = FULL_RECONSTRUCTION_MONITOR
+    evaluation = training_cfg.setdefault("training", {}).setdefault(
+        "reconstruction_eval", {}
+    )
+    for key, default in (("sample_count", 128), ("batch_size", 4), ("seed", 7)):
+        evaluation.setdefault(key, default)
+        value = evaluation[key]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < (0 if key == "seed" else 1)
+        ):
+            raise ValueError(
+                f"training.reconstruction_eval.{key} has an invalid value: {value!r}."
+            )
 
 
 @dataclass(frozen=True)
@@ -573,6 +600,7 @@ def load_pixel_training_config(
     data_cfg, model_cfg, training_cfg = _split_super_config(super_cfg)
     scenario = resolve_pixel_scenario(super_cfg, scenario_override=scenario_override)
 
+    apply_reconstruction_checkpoint_contract(training_cfg)
     apply_pixel_scenario(model_cfg=model_cfg, data_cfg=data_cfg, scenario=scenario)
     override_keys = override_key_set(overrides)
     apply_config_overrides(
@@ -584,6 +612,7 @@ def load_pixel_training_config(
         },
     )
     apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
+    apply_reconstruction_checkpoint_contract(training_cfg)
     apply_depth_aware_condition_contract(model_cfg, data_cfg, override_keys)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)

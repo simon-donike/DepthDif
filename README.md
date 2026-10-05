@@ -91,6 +91,10 @@ does not alter the diffusion loss.
 
 Run artifacts are stored below `logs/<timestamp>/`, including checkpoints and
 resolved data, model, and training configuration snapshots.
+Best checkpoints use full reconstructions of 128 fixed validation patches across
+all scenarios, rather than denoising loss. The regular validation loader stays
+shuffled. See [checkpoint selection](docs/training.md#checkpoint-selection-from-full-reconstructions)
+for the metric, sampling budget and GPU distribution.
 
 ## Documentation and validation
 

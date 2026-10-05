@@ -331,6 +331,10 @@ training:  # optimizer, trainer, and logging
       max_patches: 1  # keep epoch-time reverse diffusion inexpensive
       max_profiles_to_plot: 6  # cap rows in each W&B profile figure
       image_depths_m: [0.0, 100.0, 500.0]  # full-patch reconstruction figure depths
+    reconstruction_eval:  # best-checkpoint evaluation, independent of preview images
+      sample_count: 128  # unique fixed patches globally, distributed across GPUs
+      batch_size: 4  # inference batch size per GPU
+      seed: 7  # fixed patch selection and reverse-diffusion noise
     hard_region_eval:  # fixed difficult-area prediction-versus-GLORYS monitor
       enabled: false  # avoid additional regional DDPM chains during this reproduction
       regions_path: src/depth_recon/configs/evaluation/hard_regions_2016.yaml  # named provisional polygons
@@ -349,7 +353,7 @@ training:  # optimizer, trainer, and logging
     matmul_precision: high  # torch matmul precision
     suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
     suppress_lightning_pytree_warning: true  # hide Lightning warning
-    ckpt_monitor: val/loss_ckpt  # best-checkpoint metric
+    ckpt_monitor: val/full_reconstruction_score  # fixed full-reconstruction metric
     lr_logging_interval: step  # LR log cadence
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches
