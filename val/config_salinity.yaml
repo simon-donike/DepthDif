@@ -1,0 +1,32 @@
+# /work/envs/depth/bin/python -m val.run preflight --config val/config_salinity.yaml --output val/results/salinity_preflight
+# Fill both model paths with a matching salinity or joint residual run before inference.
+model:
+  config: null
+  checkpoint: null
+  checkpoint_sha256: null
+  weights: ema
+data_root: /work/data/OceanVariableReconstruction
+device: cuda:0
+cohort:
+  kind: en4_archive
+  audit_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet
+  year: 2016
+  split_role: discovery
+  max_patches: 256
+  batch_size: 2
+  holdout_fraction: 0.2
+  min_input_profiles: 8
+sampling:
+  variables: [salinity]  # A joint checkpoint also supports [temperature, salinity].
+  members: 20
+  seed: 20261103
+  sampler: ddpm
+  steps: 1000
+baselines: []
+statistics:
+  bootstrap_replicates: 2000
+  min_clusters: 20
+  min_profiles: 30
+evidence:
+  training_split_verified: false
+  confirmation_untouched: false

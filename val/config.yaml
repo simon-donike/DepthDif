@@ -1,0 +1,39 @@
+# Run from the repository root:
+# /work/envs/depth/bin/python -m val.run evaluate --config val/config.yaml --output val/results/en4
+model:
+  config: docs/experiments/2026-10-05-hard-region-qc-finetune/residual.yaml
+  checkpoint: logs/2026-10-05_hard_region_qc_residual/best-epochepoch=000-stepstep=000002000.ckpt
+  checkpoint_sha256: d5c5e7d49b1d4ea286c41b4ee717f112e57dc96d52d96331e654e646cb41b84a
+  weights: ema
+  run: 1419568d
+data_root: /work/data/OceanVariableReconstruction
+device: cuda:0
+cohort:
+  kind: en4_archive
+  audit_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet
+  year: 2016
+  split_role: discovery
+  max_patches: 256
+  batch_size: 2
+  holdout_fraction: 0.2
+  min_input_profiles: 8
+  region_size_deg: 20
+  cluster_size_deg: 5  # spatial/time bootstrap blocks when platform IDs are unavailable
+sampling:
+  variables: [temperature]
+  members: 20
+  seed: 20261103
+  # DDPM matches training selection; use an independently checked DDIM config for a faster scan.
+  sampler: ddpm
+  steps: 1000
+baselines: []  # Add matching trained LSTM/CNN/U-Net configs and checkpoints; see README.
+statistics:
+  bootstrap_replicates: 2000
+  min_clusters: 20
+  min_profiles: 30
+evidence:
+  training_split_verified: false
+  confirmation_untouched: false
+  # Supply evidence paths before enabling either flag; 2016 was used for model selection.
+  training_split_evidence: null
+  confirmation_evidence: null
