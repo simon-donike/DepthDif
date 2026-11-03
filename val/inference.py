@@ -22,6 +22,12 @@ from depth_recon.inference.core import (
     to_device,
 )
 from depth_recon.utils.reconstruction_validation import _evaluation_rng
+from val.conditioning import (
+    local_oi_predictions,
+    nearest_context_distance_km,
+    nested_selections,
+    selection_table,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -211,6 +217,51 @@ def run_model(
     baseline_models: dict[str, tuple[Any, Any, str]] = {}
     baseline_status: dict[str, Any] = {}
     baseline_values: dict[str, dict[str, float]] = {}
+    conditioning_cfg = (
+        config.get("paper", {}).get("conditioning", {})
+        if isinstance(config.get("paper", {}), Mapping)
+        else {}
+    )
+    conditioning_enabled = bool(conditioning_cfg.get("enabled", False))
+    conditioning_budgets = sorted(
+        {int(value) for value in conditioning_cfg.get("budgets", [0, 1, 2, 4, 8])}
+    )
+    if conditioning_enabled and any(value < 0 for value in conditioning_budgets):
+        raise ValueError("paper.conditioning.budgets must be non-negative")
+    conditioning_values: dict[int, list[np.ndarray]] = {
+        budget: [] for budget in conditioning_budgets
+    }
+    conditioning_records: list[dict[str, Any]] = []
+    member_timing_records: list[dict[str, Any]] = []
+    conditioning_covariates: list[dict[str, Any]] = []
+    conditioning_oi_values: dict[str, list[np.ndarray]] = {}
+    oi_errors: list[str] = []
+    oi_cfg = conditioning_cfg.get("local_oi", {})
+    oi_noise = oi_cfg.get("noise", {"temperature": 0.1, "salinity": 0.02})
+    oi_depth_axis = oi_cfg.get("depth_axis_m")
+    if oi_depth_axis is None and dataset is not None:
+        oi_depth_axis = getattr(dataset, "depth_axis_m", None)
+
+    def _oi_or_none(mask: torch.Tensor, assignments: pd.DataFrame, background: str):
+        """Capture OI only when the batch exposes all physical fields."""
+        try:
+            return local_oi_predictions(
+                batch,
+                assignments,
+                mask,
+                background=background,
+                variables=variables,
+                depth_axis_m=oi_depth_axis,
+                horizontal_scale_km=float(oi_cfg.get("horizontal_scale_km", 150.0)),
+                vertical_scale_m=float(oi_cfg.get("vertical_scale_m", 50.0)),
+                grid_spacing_deg=float(oi_cfg.get("grid_spacing_deg", 0.1)),
+                noise_by_variable=oi_noise,
+                max_profiles=int(oi_cfg.get("max_profiles", 32)),
+            )
+        except ValueError as error:
+            oi_errors.append(str(error))
+            return None
+
     for baseline in config.get("baselines", []):
         name = str(baseline.get("name", "baseline"))
         if not re.fullmatch(r"[A-Za-z0-9_]+", name):
@@ -314,14 +365,27 @@ def run_model(
         batch_hash = _batch_fingerprint(batch)
         batch_seeds = []
         member_values = []
+        member_timings = []
         for member in range(members):
             member_seed = seed + batch_number * 100_000 + member
             batch_seeds.append(member_seed)
             batch_fingerprint = _batch_fingerprint(batch)
+            member_started = time.monotonic()
             with _evaluation_rng(device, member_seed), torch.inference_mode():
                 result = model.predict_step(
                     to_device(_clone_batch(batch), device), batch_idx=batch_number
                 )
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            member_timings.append(time.monotonic() - member_started)
+            member_timing_records.append(
+                {
+                    "budget": "full",
+                    "batch": batch_number,
+                    "member": member,
+                    "elapsed_seconds": member_timings[-1],
+                }
+            )
             if _batch_fingerprint(batch) != batch_fingerprint:
                 raise RuntimeError("Model mutated the cohort batch during prediction")
             values = np.full(len(assignments), np.nan, dtype=np.float32)
@@ -344,8 +408,60 @@ def run_model(
                 "batch": batch_number,
                 "input_sha256": batch_hash,
                 "member_seeds": batch_seeds,
+                "member_elapsed_seconds": member_timings,
             }
         )
+        selections = (
+            nested_selections(
+                batch,
+                assignments,
+                conditioning_budgets,
+                seed=seed + batch_number * 100_000,
+            )
+            if conditioning_enabled
+            else []
+        )
+        if conditioning_enabled and selections:
+            available_mask = selections[0].available_mask
+            for background in ("glorys", "climatology"):
+                key = f"baseline_oi_{background}_full"
+                oi = _oi_or_none(available_mask, assignments, background)
+                if oi is not None:
+                    conditioning_oi_values.setdefault(key, []).append(oi[:, None])
+            for point in assignments.to_dict(orient="records"):
+                latitude = pd.to_numeric(point.get("latitude"), errors="coerce")
+                grid_distance = (
+                    nearest_context_distance_km(
+                        available_mask,
+                        int(point["batch_index"]),
+                        int(point["row"]),
+                        int(point["col"]),
+                        float(latitude),
+                    )
+                    if pd.notna(latitude)
+                    else float("nan")
+                )
+                conditioning_covariates.append(
+                    {
+                        "point_id": str(point["point_id"]),
+                        "batch": batch_number,
+                        "budget": "full",
+                        "available_profile_locations": int(
+                            available_mask[int(point["batch_index"])].sum()
+                        ),
+                        "selected_profile_locations": int(
+                            available_mask[int(point["batch_index"])].sum()
+                        ),
+                        "nearest_input_distance_km": grid_distance,
+                        "glorys_context": point.get("glorys", np.nan),
+                        "climatology_context": point.get("climatology", np.nan),
+                        "distance_status": (
+                            "available_grid_estimate"
+                            if pd.notna(latitude)
+                            else "blocked_missing_point_latitude"
+                        ),
+                    }
+                )
         for name, (baseline_model, baseline_bundle, _) in baseline_models.items():
             with _evaluation_rng(device, seed + batch_number), torch.inference_mode():
                 baseline_result = baseline_model.predict_step(
@@ -373,6 +489,120 @@ def run_model(
         points_result["prediction_mean"] = np.mean(member_values, axis=0)
         points_result["member_offset"] = len(collected)
         collected.append(points_result)
+        if conditioning_enabled:
+            for selection in selections:
+                started_budget = time.monotonic()
+                budget_values = []
+                budget_member_timings = []
+                # The member seed is intentionally identical to the full run;
+                # only sparse profile conditioning changes between budgets.
+                for member in range(members):
+                    member_seed = seed + batch_number * 100_000 + member
+                    member_started = time.monotonic()
+                    with _evaluation_rng(device, member_seed), torch.inference_mode():
+                        budget_result = model.predict_step(
+                            to_device(_clone_batch(selection.batch), device),
+                            batch_idx=batch_number,
+                        )
+                    if device.type == "cuda":
+                        torch.cuda.synchronize(device)
+                    budget_member_timings.append(time.monotonic() - member_started)
+                    member_timing_records.append(
+                        {
+                            "budget": selection.budget,
+                            "batch": batch_number,
+                            "member": member,
+                            "elapsed_seconds": budget_member_timings[-1],
+                        }
+                    )
+                    values = np.full(len(assignments), np.nan, dtype=np.float32)
+                    for variable in variables:
+                        selected_points = (
+                            assignments["variable"].astype(str).eq(variable)
+                        )
+                        if selected_points.any():
+                            extracted = _prediction_points(
+                                _physical_output(budget_result, variable),
+                                assignments.loc[selected_points],
+                                batch_offset=0,
+                            )
+                            values[np.flatnonzero(selected_points.to_numpy())] = (
+                                extracted["prediction"].to_numpy()
+                            )
+                    if not np.isfinite(values).all():
+                        raise ValueError(
+                            f"Nonfinite conditioning-ablation prediction at budget {selection.budget}"
+                        )
+                    budget_values.append(values)
+                conditioning_values[selection.budget].append(
+                    np.asarray(budget_values, dtype=np.float32).T
+                )
+                for background in ("glorys", "climatology"):
+                    key = f"baseline_oi_{background}_budget_{selection.budget}"
+                    oi = _oi_or_none(selection.selected_mask, assignments, background)
+                    if oi is not None:
+                        conditioning_oi_values.setdefault(key, []).append(oi[:, None])
+                conditioning_records.append(
+                    {
+                        "batch": batch_number,
+                        "budget": selection.budget,
+                        "selected_profiles": selection.selected,
+                        "available_profiles": selection.available,
+                        "protected_target_locations": selection.protected,
+                        "selection_seed": selection.seed,
+                        "nearest_input_distance_km": selection.nearest_distance_km,
+                        "elapsed_seconds": time.monotonic() - started_budget,
+                        "member_elapsed_seconds": budget_member_timings,
+                    }
+                )
+                for point in assignments.to_dict(orient="records"):
+                    # The current compact batch contract has no profile
+                    # coordinates. Preserve the per-point row and make the
+                    # missing nearest-distance covariate explicit.
+                    distance = point.get("nearest_input_distance_km", np.nan)
+                    latitude = pd.to_numeric(point.get("latitude"), errors="coerce")
+                    grid_distance = (
+                        nearest_context_distance_km(
+                            selection.selected_mask,
+                            int(point["batch_index"]),
+                            int(point["row"]),
+                            int(point["col"]),
+                            float(latitude),
+                        )
+                        if pd.isna(distance) and pd.notna(latitude)
+                        else float("nan")
+                    )
+                    conditioning_covariates.append(
+                        {
+                            "point_id": str(point["point_id"]),
+                            "batch": batch_number,
+                            "budget": selection.budget,
+                            "available_profile_locations": int(
+                                selection.available_mask[
+                                    int(point["batch_index"])
+                                ].sum()
+                            ),
+                            "selected_profile_locations": int(
+                                selection.selected_mask[int(point["batch_index"])].sum()
+                            ),
+                            "nearest_input_distance_km": (
+                                grid_distance
+                                if pd.isna(distance)
+                                else pd.to_numeric(distance, errors="coerce")
+                            ),
+                            "glorys_context": point.get("glorys", np.nan),
+                            "climatology_context": point.get("climatology", np.nan),
+                            "distance_status": (
+                                "available"
+                                if pd.notna(distance)
+                                else (
+                                    "available_grid_estimate"
+                                    if pd.notna(latitude)
+                                    else "blocked_missing_point_latitude"
+                                )
+                            ),
+                        }
+                    )
         if batch_number == 0:
             first_members = np.asarray(member_values, dtype=np.float32).T
         else:
@@ -382,6 +612,18 @@ def run_model(
     if not collected:
         raise ValueError("No selected validation points were supplied")
     points = pd.concat(collected, ignore_index=True)
+    if conditioning_enabled and conditioning_covariates:
+        full_covariates = pd.DataFrame(conditioning_covariates)
+        full_covariates = full_covariates[full_covariates.budget.eq("full")]
+        full_covariates = full_covariates.drop_duplicates("point_id").set_index(
+            "point_id"
+        )
+        points["context_density"] = points.point_id.astype(str).map(
+            full_covariates.available_profile_locations
+        )
+        points["nearest_context_distance_km"] = points.point_id.astype(str).map(
+            full_covariates.nearest_input_distance_km
+        )
     for name, values in baseline_values.items():
         points[f"baseline_{name}"] = points["point_id"].astype(str).map(values)
         if points[f"baseline_{name}"].isna().any():
@@ -389,11 +631,26 @@ def run_model(
     members_array = first_members.astype(np.float32, copy=False)
     points_path = output_dir / "points.csv"
     points.to_csv(points_path, index=False)
-    np.savez_compressed(output_dir / "members.npz", residual=members_array)
+    saved_members = {"residual": members_array}
+    if conditioning_enabled:
+        for budget, values in conditioning_values.items():
+            if values:
+                saved_members[f"conditioning_{budget}"] = np.concatenate(values, axis=0)
+        for name, values in conditioning_oi_values.items():
+            if values:
+                saved_members[name] = np.concatenate(values, axis=0)
+    np.savez_compressed(output_dir / "members.npz", **saved_members)
     selection = pd.concat(all_assignments, ignore_index=True)
     selection.to_csv(output_dir / "selection.csv", index=False)
     exclusions = pd.DataFrame(columns=["point_id", "reason"])
     exclusions.to_csv(output_dir / "exclusions.csv", index=False)
+    if conditioning_enabled:
+        selection_table(conditioning_records).to_csv(
+            output_dir / "conditioning_selection.csv", index=False
+        )
+        pd.DataFrame(conditioning_covariates).to_csv(
+            output_dir / "conditioning_covariates.csv", index=False
+        )
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     metadata = {
@@ -401,6 +658,9 @@ def run_model(
         "members": members,
         "seed": seed,
         "device": str(device),
+        "hardware": (
+            torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
+        ),
         "weight_variant": loaded,
         "checkpoint": str(checkpoint),
         "checkpoint_sha256": actual_digest,
@@ -422,7 +682,34 @@ def run_model(
             "validation_sampling", {}
         ),
         "elapsed_seconds": time.monotonic() - started,
+        "member_timings": member_timing_records,
+        "timing_measured_with_cuda_synchronization": device.type == "cuda",
     }
+    if conditioning_enabled:
+        metadata["conditioning_ablations"] = {
+            "enabled": True,
+            "budgets": conditioning_budgets,
+            "same_member_seeds": True,
+            "selection": "nested_per_batch_seeded_profile_locations",
+            "surface_inputs_preserved": True,
+            "record_count": len(conditioning_records),
+            "local_oi": {
+                "enabled": True,
+                "backgrounds": ["glorys", "climatology"],
+                "horizontal_scale_km": float(oi_cfg.get("horizontal_scale_km", 150.0)),
+                "vertical_scale_m": float(oi_cfg.get("vertical_scale_m", 50.0)),
+                "grid_spacing_deg": float(oi_cfg.get("grid_spacing_deg", 0.1)),
+                "depth_axis_m": (
+                    list(np.asarray(oi_depth_axis, dtype=float))
+                    if oi_depth_axis is not None
+                    else None
+                ),
+                "noise": oi_noise,
+                "max_profiles": int(oi_cfg.get("max_profiles", 32)),
+                "fit_scope": "fixed_config_or_calibration_only; no evaluation-label fitting",
+                "unavailable_reasons": sorted(set(oi_errors)),
+            },
+        }
     if device.type == "cuda":
         metadata["peak_vram_bytes"] = int(torch.cuda.max_memory_allocated(device))
     _write_json(output_dir / "metadata.json", metadata)

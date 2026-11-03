@@ -8,6 +8,15 @@ until a checkpoint with a salinity output is supplied. The locally documented
 QC-finetuning residual checkpoint is temperature-only (`include_salinity: false`);
 that is a capability gate, not evidence about salinity.
 
+Implementation: `val/validation.yaml` runs the complete campaign with one
+`python -m val.run validate` command. `paper_defaults.yaml` freezes the calibration
+partition, conditioning budgets, fixed OI parameters, named stress-test regions
+and extreme thresholds. Ten modules under `val/techniques/` execute sequentially,
+with CSV/LaTeX tables, PDF/SVG/PNG figures and an HTML index. See `README.md` for
+the command, prerequisite gates and saved-bundle rescoring. Crossing-depth
+physical diagnostics explicitly retain their conditional completeness limitation;
+the primary profile comparisons remain on prediction-independent common support.
+
 The primary scientific question is: **does the method improve on GLORYS12V1 at
 withheld observations, and in which regions?** The plan has a cheap global scan
 to discover regional heterogeneity, followed by a frozen confirmation set. The
@@ -267,6 +276,11 @@ checkpoint lacks salinity output. No result should require opening a notebook to
 understand whether the method helped.
 
 ## Execution order and stop gates
+
+Before publication-grade comparison, apply the native-GLORYS, daily-target timing,
+precision, and estimand checks in [Scientific Opportunities](SCIENTIFIC_OPPORTUNITIES.md).
+The repository's GLORYS targets are daily means sampled every seven days, not
+weekly averages. The initial packaged-data scores are development diagnostics.
 
 1. Discover and hash local data; validate profile schema, units, QC, duplicate
    IDs, and temperature type. Stop if no independent cases remain.

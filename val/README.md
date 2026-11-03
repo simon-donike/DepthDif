@@ -14,7 +14,52 @@ data**, even when an input profile is withheld at inference.
 [VERIFICATION.md](VERIFICATION.md) records the completed tests, real checkpoint
 smoke, recovered XBT data, and remaining scientific evidence gates.
 
+[SCIENTIFIC_OPPORTUNITIES.md](SCIENTIFIC_OPPORTUNITIES.md) examines additional
+publication-oriented tests, calibrated GLORYS baselines, joint dependence,
+conditioning value, native-data matching, and the current literature.
+
 ## Quick start
+
+Run the complete campaign with one command:
+
+```bash
+PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate \
+  --config val/validation.yaml --output val/results/paper_all
+```
+
+Open `val/results/paper_all/index.html`. This runs EN4 temperature, Italian XBT,
+CUGN and the salinity configuration in sequence. Missing data and compatible
+salinity weights appear as blocked cohorts. Within each cohort, ten independent
+modules run in sequence. Each stage exports CSV/LaTeX tables and, where applicable,
+vector PDF/SVG figures plus 300 dpi PNG previews. Unexpected errors preserve a
+traceback, allow subsequent stages to finish, and make the command fail.
+
+| Stage | Question | Module |
+| --- | --- | --- |
+| Reference | Do gains survive time matching and native precision? | `techniques/reference.py` |
+| AI comparators | Are trained/published comparator inputs and predictions matched? | `techniques/comparators.py` |
+| Baselines | Does the ensemble beat calibrated GLORYS and climatology? | `techniques/baselines.py` |
+| Regional | Where do paired, profile-balanced gains hold up? | `techniques/regional.py` |
+| Conditioning | What do 0/1/2/4/8 retained context profiles contribute? | `conditioning.py`, `techniques/conditioning.py` |
+| Physical | Are thermal layers and joint T/S quantities better? | `techniques/physical.py` |
+| Dependence | Is vertical, T/S and spatial member dependence useful? | `techniques/dependence.py` |
+| Extremes | Are frozen tail-event probabilities and tail scores better? | `techniques/extremes.py` |
+| Selective | Can forecast uncertainty select reliable cases? | `techniques/selective.py` |
+| Efficiency | How do quality and measured cost change with member count? | `techniques/efficiency.py` |
+
+`paper_defaults.yaml` freezes common scientific options; override individual
+stages under `paper:` in a cohort config. For discovery, 25% of complete bootstrap
+clusters are reserved for calibration by a frozen hash. The paper report scores
+the remaining cases. `paper/partition.csv` records membership. The older `report/`
+scorecard uses all selected profiles as a separate diagnostic. Confirmation data
+never supply automatic calibration labels: configure a disjoint saved bundle as
+`paper.calibration_bundle`. Point, profile, cluster and physical-observation
+overlap checks protect this boundary.
+
+Set `paper.reference.native_paths` to floating-point native GLORYS NetCDF files.
+Until those are supplied, the reference is explicitly **packaged GLORYS**.
+Stage completion does not establish superiority. Independent confirmation,
+adequate cluster support and predeclared endpoints remain necessary evidence.
 
 Inspect data readiness without loading the model:
 
@@ -31,7 +76,8 @@ data or a GPU:
 /work/envs/depth/bin/python -m val.run demo --output val/results/demo
 ```
 
-Open `val/results/demo/report/report.html`. Its results are synthetic and clearly
+Open `val/results/demo/paper/index.html` for all stages, or the original
+`val/results/demo/report/report.html`. Its results are synthetic and clearly
 labelled. Output directories must be new and underneath `val/`; failed runs retain
 their status and error instead of being overwritten.
 
@@ -201,11 +247,28 @@ You can score a saved bundle again without sampling:
   --bundle val/results/en4/bundle --output val/results/rescore
 ```
 
-For extremes, supply training-only `threshold_low`/`threshold_high` columns and
-the required external threshold provenance metadata. Do not estimate thresholds
-from the verification observations. Joint energy scores, physically integrated
-diagnostics, probabilistic climatology fitting, and publication section figures
-are follow-up experiments in the plan, not results supplied by the current runner.
+Rebuild every paper stage from saved inference without loading the model:
+
+```bash
+PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run suite \
+  --bundle val/results/en4/bundle --config val/config.yaml --output val/results/paper_rescore
+```
+
+Conditioning experiments require arrays captured with
+`paper.conditioning.enabled: true` (the default). Old bundles cannot reconstruct
+missing counterfactual predictions. Increase `sampling.members` to 100 for the
+full 10/20/50/100 convergence curve; the default 20-member run reports available
+prefixes. The complete `validation.yaml` campaign overrides this to 100 members
+so all planned prefixes are measured. Lower `sampling.members` in that campaign
+file for a development run. Full DDPM inference across every budget costs substantially more than
+the earlier single-ensemble benchmark. Timing tables use measured local inference
+and do not estimate GLORYS production cost.
+
+Extremes thresholds are fitted only on calibration profiles. Joint density
+diagnostics require paired T/S truth, compatible joint weights and optional
+`gsw`; the frozen checkpoint supplies temperature only. The CUGN importer retains
+explicit archive and deployment provenance and measured salinity for in-situ
+temperature conversion. Archive membership alone does not prove non-assimilation.
 
 ## Verification
 

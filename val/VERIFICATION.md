@@ -1,5 +1,45 @@
 # Verification on 3 November 2026
 
+## Sequential paper validation implementation
+
+The complete campaign is now `val/validation.yaml`, executed with:
+
+```bash
+PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate --config val/validation.yaml --output val/results/paper_all
+```
+
+Every available cohort runs ten separate stages in sequence. The campaign uses
+100 members so all planned member-count prefixes are available; development
+cohort configs retain 20. The final full checks passed **409 repository tests**
+(21.391 s) and **65 validation tests** (34.628 s). Black formatted only `val/`
+files; its final check left all 166 files unchanged. `git diff --check` passed.
+No production source or original test changed.
+
+A real QC-checkpoint smoke including every retained-profile budget and local OI
+passed with 237 values, seven profiles and three bootstrap blocks. The persisted
+bundle contains the full ensemble, five ablation ensembles and twelve OI
+prediction arrays. All 237 points have finite nearest-context distances; measured
+member timings are available. It uses two members and two DDIM steps and is a
+functional test, never an accuracy or publication result. Read the
+[final saved-bundle report](results/paper_reviewed_final/paper/index.html), or inspect
+`results/paper_real_smoke_03/` for original inference provenance. The first
+attempt stalled on restricted-sandbox multiprocessing; the second found a sparse
+DataFrame-index bug in OI, which is fixed and regression-tested.
+
+The native-reference tests include successful CF time bounds, a singleton depth,
+dry bilinear corners, model ensemble alignment and explicit unavailable data.
+CUGN import and in-situ-to-potential temperature conversion succeeded on actual
+2016 line-66 data: a shallow import retained 15,144 rows across 3,788 profiles;
+conversion of 100 temperature rows with colocated measured salinity passed.
+Evidence is under `results/cugn_operator_check/`.
+
+Native floating-point GLORYS and trained external AI comparators remain explicit
+prerequisites. Salinity/joint weights and independence evidence are still missing.
+Full campaign accuracy runs have not been launched. The earlier checks below
+describe the original validation harness and recovered XBT observations.
+
+## Earlier harness checks
+
 The existing application source, tests, configs, and validation-loader shuffle
 setting are unchanged. `git status --short` lists only the new `val/` directory;
 `git diff --check` passes.

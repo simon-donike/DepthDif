@@ -1,0 +1,42 @@
+# Scientific stages run in this fixed order; val/paper.py records availability.
+# Override any section with paper: {stage_name: {option: value}} in a cohort config.
+enabled: true
+calibration_fraction: 0.25
+calibration_bundle: null  # Required for confirmation: never auto-fit confirmation labels.
+reference:
+  native_paths: []  # Floating-point GLORYS thetao/so NetCDF files, when restored.
+  native_spatial_operator: nearest
+  native_max_spatial_distance_deg: 0.15
+baselines:
+  members: 50
+  depth_bin_m: 50
+  shrinkage_count: 5
+comparators:
+  predictions: []  # Optional matched external CSV/NPZ predictions with frozen hashes.
+regional:
+  regions:
+    - {name: southern_ocean, latitude: [-75, -40], longitude: [-180, 180]}
+    - {name: california_current, latitude: [28, 42], longitude: [-130, -115]}
+    - {name: north_atlantic_59n_section, latitude: [59, 60], longitude: [-60, 10]}
+    - {name: weddell_sea, latitude: [-75, -60], longitude: [-60, 0]}
+conditioning:
+  enabled: true
+  budgets: [0, 1, 2, 4, 8]
+  local_oi:
+    horizontal_scale_km: 150
+    vertical_scale_m: 50
+    grid_spacing_deg: 0.1
+    noise: {temperature: 0.1, salinity: 0.02}
+    max_profiles: 32
+dependence:
+  permutations: 5
+physical:
+  layers_m: [[10, 200], [10, 700]]
+  max_model_gap_m: 100
+  thermal_reference_depth_m: 10
+  thermal_departure_deg_c: 0.2
+extremes:
+  quantiles: [0.90, 0.95]
+selective: {}
+efficiency:
+  member_counts: [2, 5, 10, 20, 50, 100]

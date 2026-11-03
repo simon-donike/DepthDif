@@ -3,11 +3,14 @@
 # /work/envs/depth/bin/python -m val.run evaluate --config val/config.yaml --output val/results/en4
 # /work/envs/depth/bin/python -m val.run demo --output val/results/demo
 # /work/envs/depth/bin/python -m val.run score --bundle val/results/en4/bundle --output val/results/rescore
+# /work/envs/depth/bin/python -m val.run suite --bundle val/results/en4/bundle --config val/config.yaml --output val/results/paper
+# /work/envs/depth/bin/python -m val.run validate --config val/validation.yaml --output val/results/paper_all
 """Validate frozen residual models without modifying the training application."""
 
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 from itertools import chain
@@ -51,6 +54,20 @@ def _config(path: Path) -> dict:
     config = yaml.safe_load(path.read_text())
     if not isinstance(config, dict):
         raise ValueError("Validation configuration must be a YAML mapping.")
+    defaults = yaml.safe_load((VAL / "paper_defaults.yaml").read_text())
+
+    def merge(base, overrides):
+        """Apply per-stage options without losing the remaining frozen defaults."""
+        result = deepcopy(base)
+        for key, value in overrides.items():
+            result[key] = (
+                merge(result[key], value)
+                if isinstance(result.get(key), dict) and isinstance(value, dict)
+                else value
+            )
+        return result
+
+    config["paper"] = merge(defaults, config.get("paper", {}))
     variables = config.get("sampling", {}).get("variables", [])
     if not variables or set(variables) - {"temperature", "salinity"}:
         raise ValueError("sampling.variables requires temperature and/or salinity.")
@@ -183,6 +200,12 @@ def preflight(config: dict) -> dict:
     key = "audit_path" if cohort["kind"] == "en4_archive" else "profiles"
     path = Path(cohort[key]) if cohort.get(key) else None
     checks["cohort"] = {"path": str(path), "exists": bool(path and path.is_file())}
+    if cohort["kind"] == "cugn":
+        inputs = [Path(value) for value in cohort.get("inputs", [])]
+        checks["cohort"] = {
+            "paths": [str(value) for value in inputs],
+            "exists": bool(inputs) and all(value.is_file() for value in inputs),
+        }
     if not checks["cohort"]["exists"]:
         issues.append(f"Missing cohort {key}: {path}")
     if (
@@ -203,7 +226,10 @@ def preflight(config: dict) -> dict:
                 issues.append(
                     "TEOS-10 conversion needs the optional gsw dependency; see val/requirements-optional.txt."
                 )
-            if not cohort.get("reference_salinity_provenance"):
+            if (
+                not cohort.get("reference_salinity_provenance")
+                and cohort.get("kind") != "cugn"
+            ):
                 issues.append(
                     "TEOS-10 conversion needs documented per-row reference salinity and its provenance."
                 )
@@ -467,7 +493,27 @@ def evaluate(config: dict, output: Path) -> dict:
     if config["cohort"]["kind"] == "en4_archive":
         cohort = _en4_cohort(dataset, config, output)
     else:
-        points = pd.read_csv(config["cohort"]["profiles"])
+        if config["cohort"]["kind"] == "cugn":
+            from val.cugn import import_cugn
+
+            import_cugn(
+                [Path(value) for value in config["cohort"]["inputs"]],
+                output / "cugn_import",
+                config["cohort"].get("max_depth_m"),
+                year=int(config["cohort"]["year"]),
+            )
+            points = pd.read_csv(output / "cugn_import" / "profiles.csv")
+            config["cohort"]["reference_salinity_provenance"] = {
+                "path": str(output / "cugn_import" / "profiles.csv"),
+                "sha256": _sha256(output / "cugn_import" / "profiles.csv"),
+            }
+            times = pd.to_datetime(points.observation_time, utc=True, format="mixed")
+            points = points.loc[times.dt.year.eq(int(config["cohort"]["year"]))]
+        else:
+            points = pd.read_csv(config["cohort"]["profiles"])
+        points = points.loc[
+            points.variable.isin(config["sampling"]["variables"])
+        ].copy()
         cohort = prepare_external(dataset, points, config["cohort"])
         cohort.assignments["split_role"] = config["cohort"]["split_role"]
         cohort.assignments["target_time"] = pd.to_datetime(
@@ -502,6 +548,7 @@ def evaluate(config: dict, output: Path) -> dict:
             output / "bundle" / "exclusions.csv", index=False
         )
     metadata.update(cohort=cohort.metadata, checkpoint_verified=True, demo=False)
+    metadata["temperature_kind_compared"] = "potential"
     # Incomplete platform exclusion must not become a confirmatory result through a flag.
     metadata["conditioning_exclusion_verified"] = bool(
         cohort.metadata.get("conditioning_exclusion_verified", False)
@@ -547,7 +594,11 @@ def evaluate(config: dict, output: Path) -> dict:
         name: _sha256(output / "bundle" / name)
         for name in ("points.csv", "members.npz")
     }
-    metadata["workflow_sha256"] = {p.name: _sha256(p) for p in VAL.glob("*.py")}
+    metadata["workflow_sha256"] = {
+        str(p.relative_to(VAL)): _sha256(p)
+        for p in VAL.rglob("*.py")
+        if "vendor" not in p.parts and "results" not in p.parts
+    }
     metadata["git_commit"] = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True
     ).strip()
@@ -577,6 +628,10 @@ def evaluate(config: dict, output: Path) -> dict:
         report_path.write_text(
             report_path.read_text().replace("</body>", panel + "</body>")
         )
+    if config.get("paper", {}).get("enabled", True):
+        from val.paper import run_suite
+
+        result["paper_suite"] = run_suite(output / "bundle", output / "paper", config)
     return result
 
 
@@ -605,18 +660,38 @@ def demo(output: Path) -> dict:
         for region, model_error in (("example_gain", 0.25), ("example_loss", 1.5)):
             for profile in range(60):
                 cluster = f"{region}:cruise_{profile // 2}"
-                for depth in (10.0, 75.0, 300.0):
-                    observed = float(rng.normal() * scale)
-                    identifier = f"demo:{variable}:{region}:{profile}"
+                profile_noise = float(rng.normal())
+                for depth in (
+                    10.0,
+                    20.0,
+                    50.0,
+                    75.0,
+                    100.0,
+                    150.0,
+                    200.0,
+                    250.0,
+                    300.0,
+                    400.0,
+                    500.0,
+                    600.0,
+                    700.0,
+                ):
+                    observed = (
+                        (20.0 - depth / 45.0 + profile_noise)
+                        if variable == "temperature"
+                        else (34.3 + depth / 1400.0 + profile_noise * scale)
+                    )
+                    identifier = f"demo:{region}:{profile}"
                     rows.append(
                         dict(
-                            point_id=f"{identifier}:{depth}",
+                            point_id=f"{identifier}:{variable}:{depth}",
                             profile_id=identifier,
                             cluster_id=cluster,
                             source="synthetic_demo",
                             region=region,
-                            latitude=10.0,
-                            longitude=20.0,
+                            latitude=10.0 + profile * 0.01,
+                            longitude=20.0 if region == "example_gain" else 40.0,
+                            patch_index=profile // 2,
                             observation_time="2026-01-01T00:00:00Z",
                             target_time="2026-01-01T00:00:00Z",
                             depth_m=depth,
@@ -639,19 +714,118 @@ def demo(output: Path) -> dict:
         bundle / "metadata.json",
         {"demo": True, "purpose": "software demonstration, never scientific evidence"},
     )
-    return _score(bundle, output / "report", {"bootstrap_replicates": 300})
+    result = _score(bundle, output / "report", {"bootstrap_replicates": 300})
+    from val.paper import run_suite
+
+    result["paper_suite"] = run_suite(
+        bundle,
+        output / "paper",
+        {
+            "sampling": {"seed": 20261103},
+            "statistics": {
+                "bootstrap_replicates": 100,
+                "min_clusters": 3,
+                "min_profiles": 5,
+            },
+            "paper": {
+                "baselines": {"members": 20, "bootstrap_replicates": 100},
+                "dependence": {"permutations": 2},
+            },
+        },
+    )
+    return result
+
+
+def validate(config_path: Path, output: Path) -> dict:
+    """Run every configured cohort, preserving blocked cohorts in one index."""
+    specification = yaml.safe_load(config_path.read_text())
+    cohorts = specification.get("cohorts", [])
+    if not cohorts:
+        raise ValueError("Validation campaign requires a non-empty cohorts list")
+    records, names = [], set()
+    for item in cohorts:
+        name = str(item["name"])
+        if not name.replace("_", "").replace("-", "").isalnum() or name in names:
+            raise ValueError("Cohort names must be unique alphanumeric labels")
+        names.add(name)
+        cohort_output = output / name
+        cohort_output.mkdir()
+        try:
+            config = _config(Path(item["config"]))
+            config["sampling"].update(specification.get("sampling", {}))
+            if int(config["sampling"]["members"]) < 2:
+                raise ValueError("Campaign sampling.members must be at least two")
+            readiness = preflight(config)
+            _write_json(cohort_output / "preflight.json", readiness)
+            if not readiness["ready"]:
+                records.append(
+                    {
+                        "cohort": name,
+                        "status": "blocked",
+                        "reason": "; ".join(readiness["issues"]),
+                    }
+                )
+                continue
+            (cohort_output / "config.yaml").write_text(
+                yaml.safe_dump(config, sort_keys=False)
+            )
+            result = evaluate(config, cohort_output)
+            records.append(
+                {
+                    "cohort": name,
+                    "status": result.get("paper_suite", {}).get("status", "complete"),
+                    "reason": "See cohort paper report",
+                }
+            )
+        except Exception as exc:
+            import traceback
+
+            (cohort_output / "traceback.txt").write_text(traceback.format_exc())
+            records.append(
+                {
+                    "cohort": name,
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+        finally:
+            _write_json(output / "cohorts.json", {"cohorts": records})
+    from val.paper_common import save_table
+
+    save_table(
+        pd.DataFrame(records),
+        output,
+        "cohorts",
+        "Availability and execution status of every validation cohort",
+    )
+    import html
+
+    panels = [
+        "<!doctype html><html><head><meta charset='utf-8'><title>DepthDif validation campaign</title></head><body><h1>DepthDif validation campaign</h1>",
+        pd.DataFrame(records).to_html(index=False),
+    ]
+    for record in records:
+        report = output / record["cohort"] / "paper" / "index.html"
+        if report.is_file():
+            panels.append(
+                f"<p><a href='{record['cohort']}/paper/index.html'>{html.escape(record['cohort'])}: paper tables and figures</a></p>"
+            )
+    (output / "index.html").write_text("\n".join(panels) + "</body></html>")
+    if any(row["status"] == "failed" for row in records):
+        raise RuntimeError(f"Validation cohort failed; inspect {output / 'index.html'}")
+    return {"cohorts": records, "report": str(output / "index.html")}
 
 
 def main() -> None:
     """Expose preflight, evaluation, reproducible scoring, and a data-free demo."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("preflight", "evaluate", "demo", "score"):
+    for name in ("preflight", "evaluate", "demo", "score", "suite", "validate"):
         command = commands.add_parser(name)
         command.add_argument("--output", type=Path, required=True)
-        if name in {"preflight", "evaluate"}:
+        if name in {"preflight", "evaluate", "suite", "validate"}:
             command.add_argument("--config", type=Path, required=True)
-        if name == "score":
+        if name in {"score", "suite"}:
             command.add_argument("--bundle", type=Path, required=True)
     args = parser.parse_args()
     output = _output(args.output)
@@ -665,6 +839,12 @@ def main() -> None:
             result = demo(output)
         elif args.command == "score":
             result = _score(args.bundle, output / "report")
+        elif args.command == "suite":
+            from val.paper import run_suite
+
+            result = run_suite(args.bundle, output / "paper", _config(args.config))
+        elif args.command == "validate":
+            result = validate(args.config, output)
         else:
             config = _config(args.config)
             (output / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
