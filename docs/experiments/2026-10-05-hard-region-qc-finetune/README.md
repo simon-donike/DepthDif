@@ -108,8 +108,8 @@ user was asked about uploading to `esa-phi-lab/DepthDif_Simon`; approval is pend
 Both jobs therefore use `offline: true`, `WANDB_MODE=offline`, and `log_model: false`.
 No model/checkpoint binaries or dataset files are configured for upload. Proposed
 online configs and the blocked attempt remain archived; future syncing must wait
-for explicit approval. The URLs in the manifest are planned destinations, not
-evidence of active remote runs.
+for explicit approval. At launch, the URLs in the manifest were planned destinations; see the subsequent
+tracking update below for verified uploads.
 
 The first offline launcher started the standard session, then failed to record its
 PID because a `tmux display-message` target returned an empty string. The live
@@ -137,3 +137,45 @@ Output is redirected to `outputs/hard_region_qc_finetune_20261005/standard.log`
 and `residual.log`. Fine-tuning checkpoints are written to
 `logs/2026-10-05_hard_region_qc_standard/` and
 `logs/2026-10-05_hard_region_qc_residual/`.
+
+## Subsequent W&B tracking update (2026-10-05)
+
+Following the user's request for individual W&B logging, both one-shot uploads
+completed successfully. The remote API verified standard run
+[cc38592a](https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/cc38592a) through
+global step 5699 and residual run
+[1419568d](https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/1419568d) through
+global step 4449. Both remote states are `finished` because these were snapshot
+uploads; this does not indicate that the training processes finished.
+
+Starting persistent `wandb beta sync --live` sidecars was rejected before execution
+by automatic approval review, which requires explicit approval of the continuous
+upload payload and destination. No sidecars were started and neither training job
+was restarted. The jobs continue producing separate local W&B histories. Live
+logging remains blocked pending the specific confirmation; snapshot upload logs
+are in `outputs/hard_region_qc_finetune_20261005/sync_{standard,residual}.log`.
+
+## Continuous W&B logging enabled (2026-10-05)
+
+The user explicitly approved continuous uploads of metrics, configs, checkpoint
+paths/hashes and validation figures to `esa-phi-lab/DepthDif_Simon`. This supersedes
+the pending approval above. Separate persistent tmux sessions
+`depthdif_wandb_standard_20261005` and `depthdif_wandb_residual_20261005` now run
+`wandb beta sync --live --no-skip-synced` against each pinned local run directory
+and original run ID. The training processes and their executed configs were retained
+without restarting. Dataset and checkpoint binaries remain local.
+
+Both remote states were verified `running`, with standard reaching step 6199 and
+residual step 5149, beyond their original snapshot uploads. Process identities and
+verification time are recorded in [live_sync_verification.json](live_sync_verification.json).
+Sync logs are `outputs/hard_region_qc_finetune_20261005/live_sync_standard.log` and
+`live_sync_residual.log`. The sidecars keep watching for new records and upload
+them as the local W&B writers flush; buffered metrics can appear with a short delay.
+
+## Progress check 2026-10-06 11:50 UTC
+
+Both original training jobs and continuous W&B sync processes remain active after approximately 22.5 hours. Remote histories matched the latest flushed local metrics (standard step 42049; residual step 34424). No restart or additional experiment was performed.
+
+On the fixed reconstruction validation, best checkpoints remain step 2000 for both runs. Standard equal-depth temperature RMSE increased from 3.1946 to 3.4618 degrees C (latest validation at saved-step equivalent 40888); residual increased from 1.8874 to 2.5501 degrees C (latest at 32444). Residual remains better, but neither run has improved on its first validation. This is consistent with degradation during fine-tuning; these curves alone do not establish its cause or improvement over the parent checkpoints.
+
+The three monitored hard-region patches show latest combined RMSE 5.3205 degrees C standard and 2.0519 degrees C residual; this tiny diagnostic is not a broad regional benchmark. Preserve step-2000 checkpoints and avoid selecting the latest weights simply because they trained longer. The existing 24-hour limit is unchanged. Full remote validation histories and SHA256 hashes of the best checkpoints are in [status_20261006T115030Z.json](status_20261006T115030Z.json).

@@ -1,6 +1,6 @@
 experiment_id: 2026-10-05-hard-region-qc-finetune
 created_at_utc: '2026-10-05T13:09:15.771646+00:00'
-status: both training on separate GPUs; offline tracking; online upload approval pending
+status: both training on separate GPUs with continuous W&B sync; both remote runs verified running
 reason: User requested parallel standard and climatology-residual fine-tuning with
   hard-region sampling and ARGO QC enabled.
 initial_stage_hours: 24
@@ -43,7 +43,7 @@ runs:
     stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/standard.log
     status: training; initial finite losses verified
     preflight_config_sha256: db4e1e79933af3d5745cd79c6850f204a5685276776c73db2bb51a8884f9b26b
-    wandb_remote_status: not created; offline records will use the pinned run ID
+    wandb_remote_status: running; continuous sync verified
     pid: 2726741
     launcher: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/launch_standard.sh
     environment:
@@ -98,7 +98,7 @@ runs:
     stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/residual.log
     status: training; initial finite losses verified
     preflight_config_sha256: 1f6d237abe4dae023d506d01837b7b8c66dcb3cfb10143daff366f60410ea3ca
-    wandb_remote_status: not created; offline records will use the pinned run ID
+    wandb_remote_status: running; continuous sync verified
     launched_at_utc: '2026-10-05T13:20:31.735201+00:00'
     launcher: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/launch_residual.sh
     environment:
@@ -245,3 +245,25 @@ preflight:
       - 6467116
       quality_cache_signature: filter1_flags1-2_markers-argo_temp_profile_qc-argo_psal_profile_qc
   status: passed
+
+tracking_update_20261005:
+  request: User explicitly asked why both runs were not individually logged to W&B.
+  snapshot_sync: Both one-shot uploads completed successfully and remote API verified.
+  standard_uploaded_global_step: 5699
+  residual_uploaded_global_step: 4449
+  continuous_sync: Rejected before execution by automatic approval review; no sync sidecars started.
+  rejection_reason: Explicit approval required for continuous uploads of metrics, configurations, paths and hashes to the external W&B destination.
+  destination: esa-phi-lab/DepthDif_Simon
+  training_restarted: false
+
+live_sync_update_20261005:
+  approval: User replied yes i do to the explicit continuous upload payload and destination.
+  status: Both persistent live sync sessions started; remote states verified running.
+  destination: esa-phi-lab/DepthDif_Simon
+  verification: live_sync_verification.json
+  standard_sync_session: depthdif_wandb_standard_20261005
+  residual_sync_session: depthdif_wandb_residual_20261005
+  method: wandb beta sync --live --no-skip-synced with separate pinned run IDs
+  training_restarted: false
+  producer_mode: Existing training jobs retain their executed offline configs; live sidecars continuously upload their records.
+  uploaded_payload: Metrics, configs, checkpoint paths/hashes and validation figures; no dataset or checkpoint binaries.
