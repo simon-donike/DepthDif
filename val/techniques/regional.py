@@ -10,7 +10,13 @@ import numpy as np
 import pandas as pd
 
 from val.metrics import _cluster_bootstrap, _holm, _profile_losses
-from val.paper_common import point_crps, save_figure, save_table, stable_seed
+from val.paper_common import (
+    method_arrays,
+    point_crps,
+    save_figure,
+    save_table,
+    stable_seed,
+)
 
 
 def _strata(points: pd.DataFrame, options: dict):
@@ -90,7 +96,7 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
         },
     }
     points = context.evaluation.points.reset_index(drop=True)
-    arrays = context.evaluation.members
+    arrays = method_arrays(points, context.evaluation.members)
     truth = points.observation.to_numpy(float)
     deterministic = {
         "glorys_packaged": points.glorys.to_numpy(float),
@@ -117,16 +123,7 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
     rows = []
     for labels, frame in _strata(points, options):
         idx = frame.index.to_numpy()
-        references = ["glorys_packaged"] + [
-            name
-            for name in ("glorys_bias", "glorys_calibrated", "glorys_native")
-            if name in loss
-        ]
-        references += [
-            name
-            for name in arrays
-            if name.startswith("baseline_oi_") and name.endswith("_full")
-        ]
+        references = [name for name in loss if name not in {"residual", "glorys"}]
         for baseline in references:
             for metric in ("mae", "rmse", "crps"):
                 model_loss, baseline_loss = (

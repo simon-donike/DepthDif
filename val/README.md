@@ -27,12 +27,27 @@ PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate \
   --config val/validation.yaml --output val/results/paper_all
 ```
 
-Open `val/results/paper_all/index.html`. This runs EN4 temperature, Italian XBT,
-CUGN and the salinity configuration in sequence. Missing data and compatible
+Open `val/results/paper_all/index.html`. This runs EN4 temperature, Italian XBT
+and the salinity configuration in sequence. Missing data and compatible
 salinity weights appear as blocked cohorts. Within each cohort, ten independent
 modules run in sequence. Each stage exports CSV/LaTeX tables and, where applicable,
 vector PDF/SVG figures plus 300 dpi PNG previews. Unexpected errors preserve a
 traceback, allow subsequent stages to finish, and make the command fail.
+
+For the frozen temperature checkpoint and both local temperature cohorts:
+
+```bash
+PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate \
+  --config val/validation_temperature.yaml --output val/results/temperature_full_20261105
+```
+
+This runs all ten stages with **one DepthDif generation** per batch and
+conditioning budget, using 1,000-step DDPM and the five conditioning budgets.
+It preserves the frozen EN4 cap of 256 selected patches;
+it does not evaluate every validation patch. XBT uses its configured
+2016 cohort without a patch cap. The cohort configs select `cuda:0`; check GPU
+availability before launch. The full campaign has not been launched. Readiness
+checks from 5 November 2026 are under `results/preflight_temperature_20261105/`.
 
 | Stage | Question | Module |
 | --- | --- | --- |
@@ -97,11 +112,14 @@ can use `sampling.variables: [temperature, salinity]`. Switching the scenario of
 temperature weights does not create a salinity model; capability and strict weight
 checks reject that mistake.
 
-The default uses 20 independent DDPM members, matching the original sampler. This
-can take substantial GPU time. For a faster development scan, copy the config
-under `val/` and explicitly test DDIM with fewer steps on discovery data first.
-Use the same frozen sampler for the comparisons you report. For final probability
-claims, increase ensemble size and check convergence on a fixed subset.
+The current validation default is `sampling.members: 1` in both the standalone
+cohort configs and campaign configs. Every baseline remains included. MAE,
+RMSE, signed bias and point-forecast CRPS (equal to absolute error) are available.
+Ensemble fair CRPS, interval coverage, rank histograms and uncertainty-based
+selection for DepthDif are marked unavailable with one generation. The sampler
+still uses 1,000 DDPM steps; a generation means one complete reconstruction,
+not a single denoising step. Calibration-reference sampling and the published
+model's fixed output heads do not add DepthDif model passes.
 
 ## What to open
 
@@ -199,6 +217,11 @@ label unless the exact checkpoint's training windows were independently excluded
 
 ## Other observation cohorts and baselines
 
+[Cavaiola 2026](CAVAIOLA_2026.md) documents the supplied LSTM paper and an
+optional adapter for its released ERA5-driven model. It produces a separate
+5–200 m temperature diagnostic: the weights include 2016 in their training
+period, and the fixed CRPS output heads are scored without an iid correction.
+
 External CSVs use one row per observed depth, with:
 
 ```text
@@ -222,18 +245,43 @@ and references establish the common scoring support before predictions are
 generated. Invalid predictions fail the run rather than improving scores by
 silently dropping difficult points.
 
+EN4 temperature, Italian XBT and salinity configurations all load the shared
+[`baselines.yaml`](baselines.yaml) registry: **IDW, LSTM, CNN, U-Net 3D and U-Net
+2D**. Neural checkpoints and their effective architecture/data/training snapshots
+are pinned by SHA256 from `logs/selection/baselines/`; inference uses their standard
+saved weights. Preflight verifies these inputs before evaluation. No training
+configurations are edited.
+
+Each baseline receives the identical masked batches and observation operator.
+Its full-conditioning predictions are saved in `points.csv` and `members.npz`
+and included in the scientific score tables, paired regional comparisons,
+physical/dependence diagnostics, extreme-event scores, selective-risk curves,
+and measured efficiency tables. The Cavaiola diagnostic includes all available
+methods on its restricted shared support, including calibration baselines once
+they have been fitted. Deterministic methods remain single point estimates.
+
+Conditioning experiments rerun all five baselines for each retained-profile
+budget. `bundle/baseline_availability.csv` and the conditioning-stage availability
+table record every attempted method/budget. A method with nonfinite output on
+the frozen cohort is labelled blocked for that budget; its missing values are
+never filled or used to reduce another method's scoring population. In
+particular, zero-input IDW and U-Net cases can be unavailable by model design.
+Older saved bundles without captured baseline predictions report the missing
+methods explicitly and need a new `evaluate` run to produce them.
+
 `baselines` accepts existing baseline model configs and checkpoints, for example:
 
 ```yaml
 baselines:
-  - name: lstm
+  - name: additional_lstm
     config: val/inputs/lstm_config.yaml
     checkpoint: val/inputs/lstm.ckpt
     checkpoint_sha256: <sha256>
     weights: standard
 ```
 
-The same masked batches and point assignments feed every baseline. A missing
+Additional method names must differ from the registry names. The same masked
+batches and point assignments feed every baseline. A missing
 learned checkpoint is an error. A checkpoint-free IDW configuration is supported;
 depths with no interpolation support fail unless a fallback is explicitly
 implemented and named in that baseline. No AI comparison is claimed when the
@@ -256,19 +304,16 @@ PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run suite \
 
 Conditioning experiments require arrays captured with
 `paper.conditioning.enabled: true` (the default). Old bundles cannot reconstruct
-missing counterfactual predictions. Increase `sampling.members` to 100 for the
-full 10/20/50/100 convergence curve; the default 20-member run reports available
-prefixes. The complete `validation.yaml` campaign overrides this to 100 members
-so all planned prefixes are measured. Lower `sampling.members` in that campaign
-file for a development run. Full DDPM inference across every budget costs substantially more than
-the earlier single-ensemble benchmark. Timing tables use measured local inference
+missing counterfactual predictions. Both campaigns currently request one
+generation per conditioning budget, and the efficiency stage scores the
+single-generation forecast. Ensemble convergence curves require a separately
+configured run with more members. Timing tables use measured local inference
 and do not estimate GLORYS production cost.
 
 Extremes thresholds are fitted only on calibration profiles. Joint density
 diagnostics require paired T/S truth, compatible joint weights and optional
-`gsw`; the frozen checkpoint supplies temperature only. The CUGN importer retains
-explicit archive and deployment provenance and measured salinity for in-situ
-temperature conversion. Archive membership alone does not prove non-assimilation.
+`gsw`; the frozen checkpoint supplies temperature only. Archive membership alone
+does not prove non-assimilation.
 
 ## Verification
 

@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from val.paper_common import method_arrays
+
 
 def _points(context: Any) -> tuple[pd.DataFrame | None, dict[str, np.ndarray]]:
     """Extract point and member data from either shared context representation."""
@@ -30,6 +32,8 @@ def _write(frame: pd.DataFrame, output: Path, name: str) -> list[str]:
 
 def _plot(frame: pd.DataFrame, output: Path) -> list[str]:
     """Write the risk coverage plot in publication friendly formats."""
+    if frame.empty:
+        return []
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -72,6 +76,11 @@ def run(
         }
     rows = []
     work = points.reset_index(drop=True)
+    baselines = {
+        name: values
+        for name, values in method_arrays(work, members).items()
+        if name not in {"residual", "temperature", "salinity", "glorys"}
+    }
     calibrated_members = None
     if isinstance(members, dict):
         calibrated_members = members.get("calibrated_glorys")
@@ -98,7 +107,11 @@ def run(
                 else np.searchsorted(variable_indices, idx)
             )
             prediction = np.mean(array[local_idx], axis=1)
-            spread = np.mean(np.std(array[local_idx], axis=1))
+            spread = (
+                np.mean(np.std(array[local_idx], axis=1))
+                if array.shape[1] > 1
+                else np.nan
+            )
             model_error = float(
                 np.mean(np.abs(prediction - group.observation.to_numpy(float)))
             )
@@ -140,6 +153,17 @@ def run(
                     "calibrated_glorys_spread": calibrated_spread,
                     "distance": distance,
                     "density": density,
+                    **{
+                        f"risk_{name}": float(
+                            np.mean(
+                                np.abs(
+                                    values[idx].mean(axis=1)
+                                    - group.observation.to_numpy(float)
+                                )
+                            )
+                        )
+                        for name, values in baselines.items()
+                    },
                 }
             )
     if not rows:
@@ -173,10 +197,11 @@ def run(
             for coverage in np.linspace(0.1, 1.0, 10):
                 count = max(1, int(np.ceil(coverage * len(ranked))))
                 selected = ranked.iloc[:count]
-                for method, risk in (
+                for method, risk in [
                     ("DepthDif", selected.model_risk.mean()),
                     ("GLORYS", selected.glorys_risk.mean()),
-                ):
+                    *[(name, selected[f"risk_{name}"].mean()) for name in baselines],
+                ]:
                     curves.append(
                         {
                             "variable": variable,
@@ -198,7 +223,10 @@ def run(
                     "n_profiles": len(variable_profile),
                 }
             )
-    curve = pd.DataFrame(curves)
+    curve = pd.DataFrame(
+        curves,
+        columns=("variable", "covariate", "coverage", "method", "risk", "n_profiles"),
+    )
     artifacts = _write(profile, output_dir, "selective_profile_risk")
     artifacts += _write(curve, output_dir, "selective_risk_coverage")
     artifacts += _plot(curve[curve.covariate == "spread"], output_dir)

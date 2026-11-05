@@ -109,19 +109,33 @@ def run(
         return {"status": "blocked", "summary": str(error), "artifacts": []}
     rows = []
     has_budget_arrays = False
+    metadata = getattr(getattr(context, "evaluation", None), "metadata", {})
+    baseline_names = set(metadata.get("baselines", {}))
     for name, values in members.items():
         if (
             name != "residual"
             and not name.startswith("conditioning_")
             and not name.startswith("baseline_oi_")
+            and not name.startswith("baseline_model_")
+            and name not in baseline_names
         ):
             continue
-        if name.startswith("baseline_oi_"):
+        if name.startswith("baseline_model_"):
+            model_name, _, value = name.removeprefix("baseline_model_").rpartition(
+                "_budget_"
+            )
+            budget = int(value)
+            score_name = model_name
+        elif name in baseline_names:
+            budget = "full"
+            score_name = name
+        elif name.startswith("baseline_oi_"):
             budget = name.rsplit("_", 1)[-1]
+            score_name = name
         else:
             budget = "full" if name == "residual" else int(name.split("_", 1)[1])
+            score_name = str(budget)
         has_budget_arrays |= name.startswith("conditioning_")
-        score_name = name if name.startswith("baseline_oi_") else str(budget)
         scored = _scores(points, values, score_name)
         scored["budget"] = budget
         rows.append(scored)
@@ -144,6 +158,13 @@ def run(
         "conditioning_scores",
         "Profile balanced scores by retained sparse profile conditioning budget",
     )
+    if metadata.get("baseline_availability"):
+        table_artifacts += save_table(
+            pd.DataFrame(metadata["baseline_availability"]),
+            output_dir,
+            "conditioning_baseline_availability",
+            "Support and measured runtimes for every baseline and conditioning budget",
+        )
     pivot = summary.pivot_table(
         index=["budget", "method"], columns="variable", values="mae"
     )
@@ -205,7 +226,7 @@ def run(
                     else (
                         "climatology + local OI"
                         if str(name).startswith("baseline_oi_climatology")
-                        else "DepthDif"
+                        else ("DepthDif" if str(name).isdigit() else str(name))
                     )
                 )
             )

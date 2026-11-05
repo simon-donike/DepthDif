@@ -47,6 +47,33 @@ class Context:
     seed: int
 
 
+def method_arrays(points: pd.DataFrame, members: dict) -> dict[str, np.ndarray]:
+    """Collect every full-conditioning method on the same frozen point rows."""
+    result = {
+        name: points[name].to_numpy(float)[:, None]
+        for name in ("glorys", "climatology")
+        if name in points
+    }
+    result.update(
+        {
+            name.removeprefix("baseline_"): points[name].to_numpy(float)[:, None]
+            for name in points
+            if name.startswith("baseline_")
+        }
+    )
+    # Conditioning-budget runs are separate experiments, not additional full
+    # input baselines; include only their explicitly named full OI references.
+    result.update(
+        {
+            name: np.asarray(values)
+            for name, values in members.items()
+            if not name.startswith(("conditioning_", "baseline_model_"))
+            and not (name.startswith("baseline_oi_") and "_budget_" in name)
+        }
+    )
+    return result
+
+
 def point_crps(
     members: np.ndarray, truth: np.ndarray, fair: bool = False
 ) -> np.ndarray:

@@ -23,10 +23,11 @@ cohort:
   reference_manifest: val/results/xbt_reference/manifest.json
 sampling:
   variables: [temperature]
-  members: 20
+  members: 1
   seed: 20261103
   sampler: ddpm
   steps: 1000
+baseline_registry: val/baselines.yaml
 baselines: []
 statistics:
   bootstrap_replicates: 2000

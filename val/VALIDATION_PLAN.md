@@ -218,6 +218,11 @@ layer-thickness weighting for integrated quantities. Include profile shape RMSE
 after subtracting each profile mean and vertical-gradient error. Do not pool T and
 S into an undocumented scalar.
 
+The current validation runs one generation per batch and conditioning budget.
+Point/profile scores remain available; ensemble calibration and dependence
+claims are deferred. The following larger-ensemble audit is a future protocol,
+not the current inference setting.
+
 For 50 fixed-seed members (and 100 members on a fixed 10% audit subset), report
 CRPS, central 50/80/90/95% coverage and width, rank/PIT histograms, spread-skill,
 and energy score for complete standardized T/S profiles when both variables exist.
@@ -229,7 +234,7 @@ establishes proper scoring rules; use lower-is-better conventions consistently.
 
 Pair every DepthDif result with GLORYS on the same case/profile. Bootstrap the
 paired difference by independent `case_id`, not depth pixels: platform-year for
-floats, complete cruise for sections/XBT, and complete deployment for gliders.
+floats and complete cruise for sections/XBT.
 Use 10,000 reproducible replicates for the final report, report the mean and
 median difference, 95% interval, and win fraction, and show the number of clusters.
 Use a minimum gate of 30 independent cases for a general regional comparison and
@@ -239,8 +244,8 @@ the estimate and interval as underpowered without a comparative claim.
 ## Region design and multiple testing
 
 The exploratory scan covers global wet cells and fixed broad regions: North
-Atlantic, Southern Ocean (with Atlantic/Indian/Pacific sectors), California
-Current, Beaufort, and optional Weddell. Use wet-cell area weights and publish the
+Atlantic, Southern Ocean (with Atlantic/Indian/Pacific sectors), Beaufort, and
+optional Weddell. Use wet-cell area weights and publish the
 region registry, masks, depth bands, seasonal bins, and counts with the report.
 The Italian XBT line is a separately identified Southern Ocean campaign, not a
 global-region replacement.

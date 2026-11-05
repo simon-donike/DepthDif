@@ -198,6 +198,15 @@ class ConditioningTests(unittest.TestCase):
                 },
                 "sampling": {"members": 2, "seed": 7},
                 "paper": {"conditioning": {"enabled": True, "budgets": [0, 1]}},
+                "baselines": [
+                    {
+                        "name": name,
+                        "config": str(config_path),
+                        "checkpoint": str(checkpoint),
+                        "weights": "ema",
+                    }
+                    for name in ("idw", "lstm", "cnn", "unet3d", "unet2d")
+                ],
                 "device": "cpu",
             }
             assignments = pd.DataFrame(
@@ -231,7 +240,95 @@ class ConditioningTests(unittest.TestCase):
                 self.assertEqual(saved["residual"].shape, (1, 2))
                 self.assertEqual(saved["conditioning_0"].shape, (1, 2))
                 self.assertEqual(saved["conditioning_1"].shape, (1, 2))
+                for name in ("idw", "lstm", "cnn", "unet3d", "unet2d"):
+                    self.assertEqual(saved[name].shape, (1, 1))
+                    for budget in (0, 1):
+                        self.assertEqual(
+                            saved[f"baseline_model_{name}_budget_{budget}"].shape,
+                            (1, 1),
+                        )
             self.assertTrue((root / "out" / "conditioning_selection.csv").is_file())
+
+    def test_unsupported_baseline_budget_is_reported_without_dropping_points(self):
+        """Zero-context failures remain explicit while supported methods keep their cohort."""
+        from val.test_inference import _FakeModel, _bundle
+
+        class SparseBaseline(_FakeModel):
+            """Emulate IDW's unavailable output when no input observations remain."""
+
+            def predict_step(self, batch, batch_idx):
+                """Return a finite point estimate only with retained conditioning."""
+                value = 1.0 if batch["x_valid_mask"].any() else float("nan")
+                return {
+                    "y_hat_temperature_denorm": torch.full_like(
+                        batch["prediction"], value
+                    )
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, checkpoint = root / "config.yaml", root / "model.ckpt"
+            source.write_text("scenario: temperature\n")
+            checkpoint.write_bytes(b"checkpoint")
+            config = {
+                "model": {
+                    "config": str(source),
+                    "checkpoint": str(checkpoint),
+                    "weights": "ema",
+                },
+                "sampling": {"members": 2},
+                "device": "cpu",
+                "paper": {"conditioning": {"enabled": True, "budgets": [0, 1]}},
+                "baselines": [
+                    {
+                        "name": "idw",
+                        "config": str(source),
+                        "checkpoint": str(checkpoint),
+                        "weights": "ema",
+                    }
+                ],
+            }
+            assignments = pd.DataFrame(
+                [
+                    {
+                        "point_id": "p",
+                        "variable": "temperature",
+                        "batch_index": 0,
+                        "row": 0,
+                        "col": 0,
+                        "depth_index": 0,
+                    }
+                ]
+            )
+            batch = {
+                "prediction": torch.ones(1, 1, 1, 2),
+                "x": torch.ones(1, 1, 1, 2),
+                "x_valid_mask": torch.ones(1, 1, 1, 2, dtype=torch.bool),
+            }
+            with (
+                patch(
+                    "val.inference.load_pixel_training_config",
+                    return_value=_bundle(root),
+                ),
+                patch("val.inference.build_datamodule", return_value=object()),
+                patch(
+                    "val.inference.build_model",
+                    side_effect=[_FakeModel(), SparseBaseline()],
+                ),
+                patch("val.inference.load_checkpoint_weights", return_value="ema"),
+            ):
+                run_model(config, root / "out", [(batch, assignments)])
+            with np.load(root / "out/members.npz") as saved:
+                self.assertEqual(saved["residual"].shape, (1, 2))
+                self.assertNotIn("baseline_model_idw_budget_0", saved.files)
+                self.assertIn("baseline_model_idw_budget_1", saved.files)
+            availability = pd.read_csv(root / "out/baseline_availability.csv")
+            self.assertEqual(
+                availability.loc[
+                    availability.budget.astype(str).eq("0"), "status"
+                ].iloc[0],
+                "blocked",
+            )
 
 
 if __name__ == "__main__":

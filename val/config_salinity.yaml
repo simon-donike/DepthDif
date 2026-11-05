@@ -18,10 +18,11 @@ cohort:
   min_input_profiles: 8
 sampling:
   variables: [salinity]  # A joint checkpoint also supports [temperature, salinity].
-  members: 20
+  members: 1
   seed: 20261103
   sampler: ddpm
   steps: 1000
+baseline_registry: val/baselines.yaml
 baselines: []
 statistics:
   bootstrap_replicates: 2000

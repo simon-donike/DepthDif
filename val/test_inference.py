@@ -124,7 +124,7 @@ class InferenceTests(unittest.TestCase):
                     "checkpoint": str(checkpoint),
                     "weights": "ema",
                 },
-                "sampling": {"members": 3, "seed": 7},
+                "sampling": {"members": 1, "seed": 7},
                 "device": "cpu",
             }
             with (
@@ -138,8 +138,9 @@ class InferenceTests(unittest.TestCase):
             ):
                 metadata = run_model(config, root / "out", [(batch, assignments)])
             self.assertEqual(metadata["point_count"], 1)
+            self.assertFalse(metadata["uncertainty_available"])
             with __import__("numpy").load(root / "out" / "members.npz") as saved:
-                self.assertEqual(saved["residual"].shape, (1, 3))
+                self.assertEqual(saved["residual"].shape, (1, 1))
             self.assertTrue((root / "out" / "points.csv").is_file())
             self.assertTrue((root / "out" / "selection.csv").is_file())
             self.assertTrue((root / "out" / "exclusions.csv").is_file())

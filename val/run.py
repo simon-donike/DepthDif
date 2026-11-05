@@ -73,8 +73,8 @@ def _config(path: Path) -> dict:
         raise ValueError("sampling.variables requires temperature and/or salinity.")
     if config.get("cohort", {}).get("split_role") not in {"discovery", "confirmation"}:
         raise ValueError("cohort.split_role must be discovery or confirmation.")
-    if int(config.get("sampling", {}).get("members", 0)) < 2:
-        raise ValueError("sampling.members must be at least two.")
+    if int(config.get("sampling", {}).get("members", 0)) < 1:
+        raise ValueError("sampling.members must be at least one.")
     reference_manifest = config.get("cohort", {}).get("reference_manifest")
     if reference_manifest and Path(reference_manifest).is_file():
         manifest = json.loads(Path(reference_manifest).read_text())
@@ -85,6 +85,9 @@ def _config(path: Path) -> dict:
         ):
             config["cohort"][key] = manifest["config_snippet"][key]
     config["validation_config"] = str(path.resolve())
+    from val.baselines import registered_baselines
+
+    config["baselines"] = registered_baselines(config)
     return config
 
 
@@ -102,6 +105,26 @@ def _raster_entries(node):
 def preflight(config: dict) -> dict:
     """Inventory required inputs and field capability without constructing a model."""
     checks, issues = {}, []
+    from val.baselines import check_artifact
+
+    checks["baselines"] = {}
+    for baseline in config.get("baselines", []):
+        try:
+            for source in baseline.get("effective_configs", {}).values():
+                check_artifact(source["path"], source["sha256"])
+            if baseline.get("config"):
+                check_artifact(baseline["config"])
+            if baseline.get("checkpoint"):
+                check_artifact(
+                    baseline["checkpoint"], baseline.get("checkpoint_sha256")
+                )
+            checks["baselines"][baseline["name"]] = {"ready": True}
+        except (OSError, ValueError) as error:
+            issues.append(f"Baseline {baseline['name']}: {error}")
+            checks["baselines"][baseline["name"]] = {
+                "ready": False,
+                "reason": str(error),
+            }
     model = config["model"]
     for key in ("config", "checkpoint"):
         raw = model.get(key)
@@ -200,12 +223,6 @@ def preflight(config: dict) -> dict:
     key = "audit_path" if cohort["kind"] == "en4_archive" else "profiles"
     path = Path(cohort[key]) if cohort.get(key) else None
     checks["cohort"] = {"path": str(path), "exists": bool(path and path.is_file())}
-    if cohort["kind"] == "cugn":
-        inputs = [Path(value) for value in cohort.get("inputs", [])]
-        checks["cohort"] = {
-            "paths": [str(value) for value in inputs],
-            "exists": bool(inputs) and all(value.is_file() for value in inputs),
-        }
     if not checks["cohort"]["exists"]:
         issues.append(f"Missing cohort {key}: {path}")
     if (
@@ -226,10 +243,7 @@ def preflight(config: dict) -> dict:
                 issues.append(
                     "TEOS-10 conversion needs the optional gsw dependency; see val/requirements-optional.txt."
                 )
-            if (
-                not cohort.get("reference_salinity_provenance")
-                and cohort.get("kind") != "cugn"
-            ):
+            if not cohort.get("reference_salinity_provenance"):
                 issues.append(
                     "TEOS-10 conversion needs documented per-row reference salinity and its provenance."
                 )
@@ -493,24 +507,7 @@ def evaluate(config: dict, output: Path) -> dict:
     if config["cohort"]["kind"] == "en4_archive":
         cohort = _en4_cohort(dataset, config, output)
     else:
-        if config["cohort"]["kind"] == "cugn":
-            from val.cugn import import_cugn
-
-            import_cugn(
-                [Path(value) for value in config["cohort"]["inputs"]],
-                output / "cugn_import",
-                config["cohort"].get("max_depth_m"),
-                year=int(config["cohort"]["year"]),
-            )
-            points = pd.read_csv(output / "cugn_import" / "profiles.csv")
-            config["cohort"]["reference_salinity_provenance"] = {
-                "path": str(output / "cugn_import" / "profiles.csv"),
-                "sha256": _sha256(output / "cugn_import" / "profiles.csv"),
-            }
-            times = pd.to_datetime(points.observation_time, utc=True, format="mixed")
-            points = points.loc[times.dt.year.eq(int(config["cohort"]["year"]))]
-        else:
-            points = pd.read_csv(config["cohort"]["profiles"])
+        points = pd.read_csv(config["cohort"]["profiles"])
         points = points.loc[
             points.variable.isin(config["sampling"]["variables"])
         ].copy()
@@ -753,8 +750,8 @@ def validate(config_path: Path, output: Path) -> dict:
         try:
             config = _config(Path(item["config"]))
             config["sampling"].update(specification.get("sampling", {}))
-            if int(config["sampling"]["members"]) < 2:
-                raise ValueError("Campaign sampling.members must be at least two")
+            if int(config["sampling"]["members"]) < 1:
+                raise ValueError("Campaign sampling.members must be at least one")
             readiness = preflight(config)
             _write_json(cohort_output / "preflight.json", readiness)
             if not readiness["ready"]:

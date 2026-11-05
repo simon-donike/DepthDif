@@ -21,12 +21,13 @@ cohort:
   cluster_size_deg: 5  # spatial/time bootstrap blocks when platform IDs are unavailable
 sampling:
   variables: [temperature]
-  members: 20
+  members: 1
   seed: 20261103
   # DDPM matches training selection; use an independently checked DDIM config for a faster scan.
   sampler: ddpm
   steps: 1000
-baselines: []  # Add matching trained LSTM/CNN/U-Net configs and checkpoints; see README.
+baseline_registry: val/baselines.yaml
+baselines: []  # Optional additional methods; the registry includes all five baselines.
 statistics:
   bootstrap_replicates: 2000
   min_clusters: 20

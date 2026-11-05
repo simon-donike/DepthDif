@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from val.paper_common import method_arrays, point_crps, profile_mean
+
 
 def _crps(x: np.ndarray, y: np.ndarray) -> float:
     """Return fair empirical CRPS for a single finite ensemble."""
@@ -55,9 +57,15 @@ def _plot(frame: pd.DataFrame, output: Path) -> list[str]:
     except ImportError:
         return []
     fig, ax = plt.subplots(figsize=(5, 3.8))
+    metric = "crps_fair" if frame.crps_fair.notna().any() else "crps_empirical"
     for variable, group in frame.groupby("variable"):
-        ax.plot(group.n_members, group.crps_fair, marker="o", label=variable)
-    ax.set(xlabel="Ensemble members", ylabel="Fair CRPS")
+        ax.plot(group.n_members, group[metric], marker="o", label=variable)
+    ax.set(
+        xlabel="Generations",
+        ylabel=(
+            "Fair CRPS" if metric == "crps_fair" else "Point-forecast absolute error"
+        ),
+    )
     ax.legend(fontsize=8)
     fig.tight_layout()
     paths = []
@@ -83,7 +91,7 @@ def run(
             "artifacts": [],
             "details": {},
         }
-    requested = options.get("member_counts", (2, 5, 10, 20, 50, 100))
+    requested = options.get("member_counts", (1, 2, 5, 10, 20, 50, 100))
     missing_prefixes = {}
     rows, reasons = [], []
     for variable, frame in points.reset_index(drop=True).groupby("variable", sort=True):
@@ -119,10 +127,12 @@ def run(
                     "variable": variable,
                     "n_members": int(count),
                     "n_points": len(frame),
-                    "crps_fair": np.nanmean(crps),
-                    "coverage_90": coverage,
-                    "mean_width_90": np.mean(upper - lower),
-                    "mean_pairwise_difference": diversity,
+                    "crps_fair": np.nanmean(crps) if count > 1 else np.nan,
+                    "crps_empirical": point_crps(prefix, truth).mean(),
+                    "coverage_90": coverage if count > 1 else np.nan,
+                    "mean_width_90": np.mean(upper - lower) if count > 1 else np.nan,
+                    "mean_pairwise_difference": diversity if count > 1 else np.nan,
+                    "uncertainty_available": count > 1,
                 }
             )
     if not rows:
@@ -186,6 +196,30 @@ def run(
     artifacts = _write(result, output_dir, "efficiency_member_counts")
     artifacts += _write(timing_frame, output_dir, "efficiency_timing")
     artifacts += _plot(result, output_dir)
+    method_rows = []
+    for name, values in method_arrays(points, members).items():
+        for variable, frame in points.groupby("variable", sort=True):
+            matrix = values[frame.index.to_numpy()]
+            truth = frame.observation.to_numpy(float)
+            error = matrix.mean(axis=1) - truth
+            timing_info = metadata.get("baselines", {}).get(name, {})
+            seconds = timing_info.get("elapsed_seconds", np.nan)
+            method_rows.append(
+                {
+                    "method": name,
+                    "variable": variable,
+                    "n_members": matrix.shape[1],
+                    "mae": profile_mean(frame, np.abs(error)),
+                    "rmse": np.sqrt(profile_mean(frame, error**2)),
+                    "empirical_crps": profile_mean(frame, point_crps(matrix, truth)),
+                    "seconds": seconds,
+                    "timing_status": (
+                        "measured" if np.isfinite(seconds) else "unavailable"
+                    ),
+                    "cost_scope": "complete cohort inference, shared across variables",
+                }
+            )
+    artifacts += _write(pd.DataFrame(method_rows), output_dir, "efficiency_all_methods")
     status = (
         "complete" if measured and not any(missing_prefixes.values()) else "partial"
     )
@@ -205,5 +239,6 @@ def run(
             "timing_status": "measured" if measured else "unavailable_or_estimated",
             "unavailable_requested_prefixes": missing_prefixes,
             "glorys_cost_comparison": "not_estimated",
+            "uncertainty_available": bool(result.uncertainty_available.any()),
         },
     }

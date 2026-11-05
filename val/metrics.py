@@ -45,11 +45,15 @@ DEPTH_LABELS = [
 def _crps(y: float, x: np.ndarray) -> tuple[float, float]:
     """Return empirical and finite-ensemble fair CRPS for one observation."""
     ensemble = np.sort(np.asarray(x, dtype=float))
-    if ensemble.ndim != 1 or len(ensemble) < 2:
+    if ensemble.ndim != 1 or len(ensemble) < 1:
         raise ValueError(
-            "CRPS requires a one-dimensional ensemble with at least two members"
+            "CRPS requires a one-dimensional forecast with at least one member"
         )
     first = float(np.abs(ensemble - y).mean())
+    if len(ensemble) == 1:
+        # A point forecast has CRPS equal to absolute error; the iid ensemble
+        # correction cannot be estimated from a single generation.
+        return first, np.nan
     ranks = 2 * np.arange(1, len(ensemble) + 1) - len(ensemble) - 1
     pair_sum = float(2 * np.sum(ranks * ensemble))
     return (
@@ -70,8 +74,8 @@ def validate_bundle(
     if missing:
         raise ValueError(f"points missing required columns: {missing}")
     members = np.asarray(members)
-    if members.ndim != 2 or members.shape[0] != len(points) or members.shape[1] < 2:
-        raise ValueError("members must have shape (len(points), M), with M >= 2")
+    if members.ndim != 2 or members.shape[0] != len(points) or members.shape[1] < 1:
+        raise ValueError("members must have shape (len(points), M), with M >= 1")
     if not np.isfinite(members).all():
         raise ValueError("members contains non-finite values")
     if points["point_id"].duplicated().any() or points["point_id"].isna().any():
@@ -341,9 +345,16 @@ def _score_rows(
         for method, prediction in predictions.items()
     ]
     prediction = members[indices].mean(axis=1)
-    row = _method_row(labels, frame, "ensemble", prediction, glorys_error)
+    single = members.shape[1] == 1
+    row = _method_row(
+        labels,
+        frame,
+        "single_generation" if single else "ensemble",
+        prediction,
+        glorys_error,
+    )
     row.update(
-        metric_type="probabilistic",
+        metric_type="deterministic" if single else "probabilistic",
         crps=float(crps[indices].mean()),
         fair_crps=float(fair_crps[indices].mean()),
         skill_vs_glorys=_safe_skill(
@@ -377,6 +388,8 @@ def _reliability_rows(
         "n_profiles": frame.profile_id.nunique(),
         "n_clusters": frame.cluster_id.nunique(),
     }
+    if ensemble.shape[1] == 1:
+        return [{**common, "metric": "unavailable_single_generation", "score": np.nan}]
     rows = []
     for level in (0.5, 0.8, 0.9, 0.95):
         lower, upper = np.quantile(
@@ -651,7 +664,11 @@ def score_bundle(
     ranks = 2 * np.arange(1, members.shape[1] + 1) - members.shape[1] - 1
     pair_sum = 2 * (sorted_members * ranks).sum(axis=1)
     crps = first - pair_sum / (2 * members.shape[1] ** 2)
-    fair_crps = first - pair_sum / (2 * members.shape[1] * (members.shape[1] - 1))
+    fair_crps = (
+        first - pair_sum / (2 * members.shape[1] * (members.shape[1] - 1))
+        if members.shape[1] > 1
+        else np.full(len(points), np.nan)
+    )
     baseline_columns = ["glorys", "climatology"] + sorted(
         column for column in points if column.startswith("baseline_")
     )
@@ -709,6 +726,8 @@ def score_bundle(
         "metadata": metadata,
         "demo": bool(metadata.get("demo")),
         "n_points": len(points),
+        "member_count": members.shape[1],
+        "uncertainty_available": members.shape[1] > 1,
         "n_profiles": int(points.profile_id.nunique()),
         "n_clusters": int(points.cluster_id.nunique()),
         "variables": sorted(points.variable.unique().tolist()),

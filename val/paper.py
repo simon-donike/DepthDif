@@ -81,11 +81,18 @@ def load_bundle(path: Path) -> Bundle:
         if (
             values.ndim != 2
             or values.shape[0] != len(points)
+            or values.shape[1] < 1
             or not np.isfinite(values).all()
         ):
             raise ValueError(f"Invalid or unaligned ensemble: {name}")
     if "residual" not in members:
         raise ValueError("Saved bundle requires residual members")
+    for column in points:
+        if column.startswith("baseline_"):
+            members.setdefault(
+                column.removeprefix("baseline_"),
+                points[column].to_numpy(float)[:, None],
+            )
     return Bundle(points, members, metadata, path)
 
 
@@ -277,6 +284,8 @@ def run_suite(
         stage_output = output / f"{order:02d}_{name}"
         stage_output.mkdir()
         options = dict(config.get("paper", {}).get(name, {}))
+        if name == "comparators" and options.get("cavaiola2026"):
+            options["_defer_cavaiola"] = True
         options.setdefault("seed", context.seed)
         print(f"Validation {order}/{len(STAGES)}: {name}", flush=True)
         started = time.monotonic()
@@ -312,6 +321,65 @@ def run_suite(
         }
         records.append(record)
         _json(stage_output / "status.json", record)
+        if name == "baselines" and config.get("paper", {}).get("comparators", {}).get(
+            "cavaiola2026"
+        ):
+            from val.cavaiola import run as run_cavaiola
+
+            # The diagnostic includes the calibration-only GLORYS/climatology
+            # methods as well as all trained baselines, once fitting is complete.
+            comparator = next(
+                row for row in records if row["technique"] == "comparators"
+            )
+            directory = output / f"{comparator['order']:02d}_comparators"
+            try:
+                result = run_cavaiola(
+                    context, directory, config["paper"]["comparators"]["cavaiola2026"]
+                )
+                comparator["artifacts"] += result["artifacts"]
+                comparator["details"]["cavaiola2026"] = result
+                for row in comparator["details"]["comparators"]:
+                    if row["method"] == "cavaiola2026":
+                        row.update(
+                            status=(
+                                "available"
+                                if result["status"] == "complete"
+                                else "blocked"
+                            ),
+                            information=result["summary"],
+                        )
+                comparator["status"] = (
+                    (
+                        "partial"
+                        if any(
+                            row["status"] != "available"
+                            for row in comparator["details"]["comparators"]
+                        )
+                        else "complete"
+                    )
+                    if any(
+                        row["status"] == "available"
+                        for row in comparator["details"]["comparators"]
+                    )
+                    else "blocked"
+                )
+                comparator["summary"] = (
+                    "Compared available methods; see explicit baseline availability and the Cavaiola diagnostic scorecard"
+                )
+                save_table(
+                    pd.DataFrame(comparator["details"]["comparators"]),
+                    directory,
+                    "comparator_availability",
+                    "AI comparators, matched support and declared information differences",
+                )
+            except Exception as exc:
+                (directory / "cavaiola_traceback.txt").write_text(
+                    traceback.format_exc()
+                )
+                comparator.update(
+                    status="failed", summary=f"Cavaiola: {type(exc).__name__}: {exc}"
+                )
+            _json(directory / "status.json", comparator)
         _json(output / "stages.json", records)
     save_table(
         pd.DataFrame(

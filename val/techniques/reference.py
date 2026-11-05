@@ -427,6 +427,11 @@ def run(
                 methods["depthdif_mean"] = np.asarray(residual)[
                     selected.to_numpy()
                 ].mean(axis=1)
+            for column in subset:
+                if column.startswith("baseline_"):
+                    methods[column.removeprefix("baseline_")] = subset[column].to_numpy(
+                        float
+                    )
             for method, prediction in methods.items():
                 error = prediction - subset.observation.to_numpy(float)
                 profile = (

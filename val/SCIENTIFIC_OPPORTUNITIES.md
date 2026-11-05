@@ -294,22 +294,10 @@ alone is only a diagnostic.
 
 | Regime/data | Scientific motivation | Primary proposed endpoint | Priority |
 | --- | --- | --- | --- |
-| California glider sections | Documented upper-ocean T/S structure errors and source-specific non-assimilation evidence | T 20–50 and 60–180 m, thermocline depth; later S 60–100 m | Highest new external source |
 | PNRA Southern Ocean XBT | Data already recovered; repeated crossings of strong hydrographic regimes | T 50–100 m, thermal-layer/isotherm depth; coarse-scale front position | High development value; only two cruises in the recovered 2016 subset |
 | North Atlantic 59.5 N | Published overflow/deep-water discrepancies | Predefined 700–2000 m T/S and water-mass properties | Secondary; current surface-only signal may be weak |
 | Beaufort / East Greenland | Freshwater and halocline hypotheses | Layer salinity and freshwater anomaly, density stratification | Future S/joint model |
 | Weddell repeat hydrography | Recent deep-water bias/trend evidence | Water-mass T/S properties | Future joint model; low priority for this checkpoint |
-
-The California study reports CUGN was not assimilated into the GLORYS version
-evaluated over 2007–2018, with a nearshore warm feature around 30 m, colder
-60–180 m structure, and salinity deficiencies. This is a stronger starting
-provenance argument than an archive non-match; confirm applicability to our exact
-product version and dates. The local CUGN NetCDFs are processed section products;
-check their mapping/time support, and obtain raw deployment identifiers before
-using raw-profile or deployment-bootstrap language.
-It also finds GLORYS generally strong in temperature,
-so the region is a credible challenge, not a guaranteed easy win.
-[Amaya et al. 2023](https://doi.org/10.1016/j.pocean.2022.102951).
 
 The 59.5 N study motivates a defined overflow/deep-water test, not arbitrary
 North Atlantic box selection. [Verezemskaya et al. 2021](https://doi.org/10.1029/2020JC016317).
@@ -399,8 +387,7 @@ support trajectory-based temporal or climate-trend claims.
 1. Native GLORYS/clock/precision audit and consistent profile-level estimand.
 2. Calibrated GLORYS plus probabilistic climatology; frozen-model correction and
    conditioning diagnostics on discovery cases.
-3. Temperature thermocline/layer and dependence-permutation tests; add California
-   gliders as the next source with product-specific provenance checks.
+3. Temperature thermocline/layer and dependence-permutation tests.
 4. Predefine the final region, meaningful margin, primary metric, and independent
    cohort; only then run the larger confirmatory ensemble.
 5. Extremes and decision utility once calibration is credible; joint T/S physical

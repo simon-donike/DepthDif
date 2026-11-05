@@ -185,12 +185,16 @@ def run(
         if array.shape[0] != len(points):
             reasons.append(f"{method}: member array is not point aligned")
             continue
+        if array.shape[1] == 1:
+            reasons.append(
+                f"{method}: one generation provides point-profile scores; ensemble dependence is unavailable"
+            )
         for variable in sorted(points.variable.dropna().unique()):
             for profile, truth, intact in _profile_matrix(points, array, variable):
                 scale = options.get("scales", {}).get(variable, 1.0)
                 scaled_truth, scaled_intact = truth / scale, intact / scale
                 controls = [("intact", scaled_intact)]
-                for repeat in range(permutations):
+                for repeat in range(permutations if array.shape[1] > 1 else 0):
                     controls.append(
                         (
                             f"vertical_permutation_{repeat}",
@@ -281,7 +285,7 @@ def run(
                         "n_members": intact_joint.shape[0],
                     }
                 )
-                for repeat in range(permutations):
+                for repeat in range(permutations if intact_joint.shape[0] > 1 else 0):
                     # Keep each physical location fixed and permute only its
                     # member axis. This preserves every site's marginal profile
                     # distribution while disrupting cross-site member pairing.
@@ -342,10 +346,10 @@ def run(
                     np.random.default_rng(seed).permutation(shuffled.shape[0]),
                     len(truth) // 2 :,
                 ]
-                for label, ensemble in (
-                    ("joint_intact", scaled_intact),
-                    ("joint_ts_permutation", shuffled),
-                ):
+                joint_controls = [("joint_intact", scaled_intact)]
+                if scaled_intact.shape[0] > 1:
+                    joint_controls.append(("joint_ts_permutation", shuffled))
+                for label, ensemble in joint_controls:
                     rows.append(
                         {
                             "method": method,

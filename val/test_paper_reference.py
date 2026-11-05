@@ -1,4 +1,4 @@
-"""Numerical tests for native reference and CUGN validation stages."""
+"""Numerical tests for native reference validation."""
 
 import tempfile
 import unittest
@@ -8,12 +8,11 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from val.cugn import convert_file, import_cugn
 from val.techniques.reference import run as reference_run
 
 
 class PaperReferenceTests(unittest.TestCase):
-    """Protect reference provenance and external section conversion."""
+    """Protect reference provenance and native sampling."""
 
     def _points(self):
         return pd.DataFrame(
@@ -130,30 +129,6 @@ class PaperReferenceTests(unittest.TestCase):
             self.assertTrue(
                 (Path(temporary) / "out" / "reference_precision_audit.csv").is_file()
             )
-
-    def test_cugn_import_marks_processed_section_unknown_independence(self):
-        """Processed sections retain their provenance instead of being called raw casts."""
-        with tempfile.TemporaryDirectory() as temporary:
-            source = Path(temporary) / "CUGN_line_66.nc"
-            xr.Dataset(
-                {
-                    "temperature": (("station", "depth"), [[20.0, 19.0]]),
-                    "salinity": (("station", "depth"), [[35.0, 35.1]]),
-                },
-                coords={
-                    "station": [0],
-                    "depth": [10.0, 100.0],
-                    "time": ("station", ["2016-01-01"]),
-                    "latitude": ("station", [45.0]),
-                    "longitude": ("station", [12.0]),
-                },
-            ).to_netcdf(source)
-            frame, metadata = convert_file(source, Path(temporary))
-            self.assertEqual(len(frame), 4)
-            self.assertTrue(frame.processed_section.all())
-            self.assertTrue((frame.independence == "unknown").all())
-            result = import_cugn([source], Path("val") / "results" / "test_cugn_import")
-            self.assertEqual(result["status"], "complete")
 
 
 if __name__ == "__main__":

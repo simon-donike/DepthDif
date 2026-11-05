@@ -28,6 +28,7 @@ from val.conditioning import (
     nested_selections,
     selection_table,
 )
+from val.baselines import materialize_config
 
 
 def _sha256(path: Path) -> str:
@@ -146,9 +147,9 @@ def run_model(
     if weight_variant not in {"ema", "standard"}:
         raise ValueError("model.weights must be 'ema' or 'standard'.")
     sampling = config.get("sampling", {})
-    members = int(sampling.get("members", 20))
-    if members < 2:
-        raise ValueError("sampling.members must be at least 2 for an ensemble")
+    members = int(sampling.get("members", 1))
+    if members < 1:
+        raise ValueError("sampling.members must be at least 1")
     device = torch.device(str(config.get("device", "cpu")))
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"Requested device is unavailable: {device}")
@@ -217,6 +218,8 @@ def run_model(
     baseline_models: dict[str, tuple[Any, Any, str]] = {}
     baseline_status: dict[str, Any] = {}
     baseline_values: dict[str, dict[str, float]] = {}
+    baseline_budget_values: dict[str, list[np.ndarray]] = {}
+    baseline_records: list[dict[str, Any]] = []
     conditioning_cfg = (
         config.get("paper", {}).get("conditioning", {})
         if isinstance(config.get("paper", {}), Mapping)
@@ -268,14 +271,28 @@ def run_model(
             raise ValueError(f"Invalid baseline name: {name!r}")
         if name in baseline_models:
             raise ValueError(f"Duplicate baseline name: {name!r}")
+        baseline_runtime = output_dir / "effective" / f"baseline_{name}"
         baseline_config_path = _require_file(
-            baseline.get("config", ""), f"baseline {name} config"
+            materialize_config(baseline, baseline_runtime), f"baseline {name} config"
         )
         baseline_bundle = load_pixel_training_config(
             config_path_value=baseline_config_path,
-            runtime_config_dir=output_dir / "effective" / f"baseline_{name}",
+            runtime_config_dir=baseline_runtime,
+            **(
+                {"scenario_override": baseline["scenario"]}
+                if baseline.get("scenario")
+                else {}
+            ),
+            **(
+                {"overrides": baseline["overrides"]}
+                if baseline.get("overrides")
+                else {}
+            ),
             write_snapshots=True,
         )
+        fields = baseline_bundle.model_cfg.get("model", {}).get("output_fields", [])
+        if set(variables) - set(fields):
+            raise ValueError(f"Baseline {name} does not provide {variables}")
         baseline_checkpoint = baseline.get("checkpoint")
         baseline_digest = None
         if baseline_checkpoint:
@@ -330,7 +347,41 @@ def run_model(
             "checkpoint": str(baseline_checkpoint) if baseline_checkpoint else None,
             "checkpoint_sha256": baseline_digest,
             "weights": loaded_baseline,
+            "source_configs": baseline.get("effective_configs", {}),
         }
+
+    def baseline_prediction(name, baseline_model, sample, assignments, budget):
+        """Run each baseline on the identical masked batch and record its support."""
+        baseline_started = time.monotonic()
+        with _evaluation_rng(device, seed + batch_number), torch.inference_mode():
+            result = baseline_model.predict_step(
+                to_device(_clone_batch(sample), device), batch_idx=batch_number
+            )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        values = np.full(len(assignments), np.nan, dtype=np.float32)
+        for variable in variables:
+            selected = assignments["variable"].eq(variable)
+            if selected.any():
+                values[np.flatnonzero(selected.to_numpy())] = _prediction_points(
+                    _physical_output(result, variable),
+                    assignments.loc[selected],
+                    batch_offset=0,
+                )["prediction"].to_numpy(float)
+        invalid = int((~np.isfinite(values)).sum())
+        baseline_records.append(
+            {
+                "method": name,
+                "budget": str(budget),
+                "batch": batch_number,
+                "points": len(values),
+                "invalid_points": invalid,
+                "elapsed_seconds": time.monotonic() - baseline_started,
+                "status": "blocked" if invalid else "available",
+            }
+        )
+        return values
+
     seed = int(sampling.get("seed", 20261103))
     for batch_number, (batch, assignments) in enumerate(batches):
         assignments = assignments.copy()
@@ -463,25 +514,9 @@ def run_model(
                     }
                 )
         for name, (baseline_model, baseline_bundle, _) in baseline_models.items():
-            with _evaluation_rng(device, seed + batch_number), torch.inference_mode():
-                baseline_result = baseline_model.predict_step(
-                    to_device(_clone_batch(batch), device), batch_idx=batch_number
-                )
-            baseline_points = np.full(len(assignments), np.nan, dtype=np.float32)
-            for variable in variables:
-                selected = assignments["variable"].eq(variable)
-                if selected.any():
-                    baseline_points[np.flatnonzero(selected.to_numpy())] = (
-                        _prediction_points(
-                            _physical_output(baseline_result, variable),
-                            assignments.loc[selected],
-                            batch_offset=0,
-                        )["prediction"].to_numpy(float)
-                    )
-            if not np.isfinite(baseline_points).all():
-                raise ValueError(
-                    f"Baseline {name} has invalid predictions on common support"
-                )
+            baseline_points = baseline_prediction(
+                name, baseline_model, batch, assignments, "full"
+            )
             baseline_values[name].update(
                 zip(assignments["point_id"].astype(str), baseline_points)
             )
@@ -537,6 +572,16 @@ def run_model(
                 conditioning_values[selection.budget].append(
                     np.asarray(budget_values, dtype=np.float32).T
                 )
+                for name, (baseline_model, _, _) in baseline_models.items():
+                    key = f"baseline_model_{name}_budget_{selection.budget}"
+                    values = baseline_prediction(
+                        name,
+                        baseline_model,
+                        selection.batch,
+                        assignments,
+                        selection.budget,
+                    )
+                    baseline_budget_values.setdefault(key, []).append(values[:, None])
                 for background in ("glorys", "climatology"):
                     key = f"baseline_oi_{background}_budget_{selection.budget}"
                     oi = _oi_or_none(selection.selected_mask, assignments, background)
@@ -625,13 +670,33 @@ def run_model(
             full_covariates.nearest_input_distance_km
         )
     for name, values in baseline_values.items():
-        points[f"baseline_{name}"] = points["point_id"].astype(str).map(values)
-        if points[f"baseline_{name}"].isna().any():
-            raise ValueError(f"Baseline {name} did not produce every selected point")
+        forecast = points["point_id"].astype(str).map(values)
+        invalid = int((~np.isfinite(forecast)).sum())
+        baseline_status[name].update(
+            status="blocked" if invalid else "available",
+            invalid_points=invalid,
+            elapsed_seconds=sum(
+                row["elapsed_seconds"]
+                for row in baseline_records
+                if row["method"] == name and row["budget"] == "full"
+            ),
+        )
+        # A baseline lacking support is reported explicitly. Keep the complete
+        # frozen cohort for every scored method; never fill its missing outputs.
+        if not invalid:
+            points[f"baseline_{name}"] = forecast
     members_array = first_members.astype(np.float32, copy=False)
     points_path = output_dir / "points.csv"
     points.to_csv(points_path, index=False)
     saved_members = {"residual": members_array}
+    for name in baseline_models:
+        column = f"baseline_{name}"
+        if column in points:
+            saved_members[name] = points[column].to_numpy(float)[:, None]
+    for name, values in baseline_budget_values.items():
+        matrix = np.concatenate(values, axis=0)
+        if np.isfinite(matrix).all():
+            saved_members[name] = matrix
     if conditioning_enabled:
         for budget, values in conditioning_values.items():
             if values:
@@ -640,6 +705,9 @@ def run_model(
             if values:
                 saved_members[name] = np.concatenate(values, axis=0)
     np.savez_compressed(output_dir / "members.npz", **saved_members)
+    pd.DataFrame.from_records(baseline_records).to_csv(
+        output_dir / "baseline_availability.csv", index=False
+    )
     selection = pd.concat(all_assignments, ignore_index=True)
     selection.to_csv(output_dir / "selection.csv", index=False)
     exclusions = pd.DataFrame(columns=["point_id", "reason"])
@@ -656,6 +724,7 @@ def run_model(
     metadata = {
         "scenario": bundle.scenario,
         "members": members,
+        "uncertainty_available": members > 1,
         "seed": seed,
         "device": str(device),
         "hardware": (
@@ -670,6 +739,7 @@ def run_model(
         "conditioning_count": int(conditioning_count),
         "batch_records": batch_records,
         "baselines": baseline_status,
+        "baseline_availability": baseline_records,
         "effective_config_sha256": {
             name: _sha256(Path(path))
             for name, path in (

@@ -28,11 +28,27 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
         rows.append(
             {
                 "method": name,
-                "status": "available",
+                "status": metadata.get("status", "available"),
                 "information": "same masked model batches",
                 "provenance": json.dumps(metadata, sort_keys=True),
             }
         )
+    recorded = {row["method"] for row in rows}
+    for baseline in context.config.get("baselines", []):
+        name = baseline["name"]
+        if (
+            name not in recorded
+            and name not in arrays
+            and f"baseline_{name}" not in points
+        ):
+            rows.append(
+                {
+                    "method": name,
+                    "status": "blocked",
+                    "information": "Predictions absent from saved bundle; rerun evaluate with the baseline registry",
+                    "provenance": json.dumps(baseline, sort_keys=True),
+                }
+            )
     for spec in options.get("predictions", []):
         name = str(spec["name"])
         if (
@@ -107,6 +123,7 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
             if not np.isfinite(values).all():
                 raise ValueError("External deterministic predictions must be finite")
             points[f"baseline_{name}"] = values
+            arrays[name] = values[:, None]
         rows.append(
             {
                 "method": name,
@@ -115,6 +132,33 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
                 "provenance": json.dumps(
                     {**spec, "verified_rows": len(points)}, sort_keys=True
                 ),
+            }
+        )
+    cavaiola = None
+    if options.get("cavaiola2026") and not options.get("_defer_cavaiola"):
+        from val.cavaiola import run as run_cavaiola
+
+        # Its fixed CRPS heads have a separate empirical scorecard; they must
+        # not enter stages that assume iid draws or learned joint dependence.
+        cavaiola = run_cavaiola(context, output_dir, options["cavaiola2026"])
+        artifacts += cavaiola["artifacts"]
+        rows.append(
+            {
+                "method": "cavaiola2026",
+                "status": (
+                    "available" if cavaiola["status"] == "complete" else "blocked"
+                ),
+                "information": cavaiola["summary"],
+                "provenance": json.dumps(cavaiola["details"], sort_keys=True),
+            }
+        )
+    elif options.get("cavaiola2026"):
+        rows.append(
+            {
+                "method": "cavaiola2026",
+                "status": "pending",
+                "information": "Scored after calibration baselines are available",
+                "provenance": json.dumps(options["cavaiola2026"], sort_keys=True),
             }
         )
     if not rows:
@@ -134,7 +178,11 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
     )
     return {
         "status": (
-            "complete"
+            (
+                "partial"
+                if any(row["status"] != "available" for row in rows)
+                else "complete"
+            )
             if any(row["status"] == "available" for row in rows)
             else "blocked"
         ),
@@ -146,6 +194,7 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
         "artifacts": artifacts,
         "details": {
             "comparators": rows,
+            "cavaiola2026": cavaiola,
             "fair_comparison": "Different declared inputs/domains remain explicit; alignment alone does not make them equivalent",
         },
     }

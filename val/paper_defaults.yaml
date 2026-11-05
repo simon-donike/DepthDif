@@ -16,7 +16,6 @@ comparators:
 regional:
   regions:
     - {name: southern_ocean, latitude: [-75, -40], longitude: [-180, 180]}
-    - {name: california_current, latitude: [28, 42], longitude: [-130, -115]}
     - {name: north_atlantic_59n_section, latitude: [59, 60], longitude: [-60, 10]}
     - {name: weddell_sea, latitude: [-75, -60], longitude: [-60, 0]}
 conditioning:
@@ -39,4 +38,4 @@ extremes:
   quantiles: [0.90, 0.95]
 selective: {}
 efficiency:
-  member_counts: [2, 5, 10, 20, 50, 100]
+  member_counts: [1]

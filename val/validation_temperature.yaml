@@ -1,0 +1,10 @@
+# Run from the repository root (choose a new output directory for each run):
+# PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate --config val/validation_temperature.yaml --output val/results/temperature_full_20261105
+# Full scientific suite for the frozen temperature checkpoint and all local cohorts.
+sampling:
+  members: 1
+cohorts:
+  - name: en4_temperature
+    config: val/config.yaml
+  - name: italian_xbt_temperature
+    config: val/config_xbt.yaml

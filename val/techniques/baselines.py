@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from val.paper_common import save_figure, save_table
+from val.paper_common import method_arrays, save_figure, save_table
 from val.metrics import _cluster_bootstrap, _profile_losses
 
 
@@ -61,8 +61,8 @@ def _paired_cluster_table(
     points: pd.DataFrame, arrays: dict[str, np.ndarray], options: dict[str, Any]
 ) -> pd.DataFrame:
     """Bootstrap paired profile losses by cluster for direct comparator CIs."""
-    methods = [
-        name for name in ("glorys", "glorys_calibrated", "residual") if name in arrays
+    methods = (["glorys"] if "glorys" in arrays else []) + [
+        name for name in arrays if name != "glorys"
     ]
     if len(methods) < 2 or "cluster_id" not in points:
         return pd.DataFrame()
@@ -427,6 +427,8 @@ def _summary(
                         ),
                     }
                 )
+                if matrix.shape[1] == 1:
+                    rows[-1].update(fair_crps=np.nan, coverage80=np.nan, width80=np.nan)
     if not rows:
         return pd.DataFrame()
     return (
@@ -526,7 +528,7 @@ def run(
         "glorys_calibrated": calibrated,
         "climatology_calibrated": climatology,
     }
-    existing = _field(evaluation, "members", {})
+    existing = method_arrays(eval_points, _field(evaluation, "members", {}))
     if isinstance(existing, dict):
         for name, values in existing.items():
             if np.asarray(values).ndim == 2 and np.asarray(values).shape[0] == len(

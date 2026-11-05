@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from val.paper_common import method_arrays
+
 
 def _get(context: Any, name: str, default: Any = None) -> Any:
     """Read a field from the shared Context or its evaluation Bundle."""
@@ -251,13 +253,12 @@ def run(
     }
     baseline_arrays = {}
     if isinstance(members, dict):
-        for name in (
-            "glorys_calibrated",
-            "bias_corrected",
-            "glorys_bias_corrected",
-        ):
-            if members.get(name) is not None:
-                baseline_arrays[name] = np.asarray(members[name], float)
+        baseline_arrays = {
+            name: values
+            for name, values in method_arrays(points, members).items()
+            if name
+            not in {"residual", "temperature", "salinity", "glorys", "climatology"}
+        }
     for index, row in points.iterrows():
         variable = str(row.variable)
         array = None

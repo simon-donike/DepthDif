@@ -1,15 +1,13 @@
 # Run every cohort and every scientific stage in sequence, under one report:
 # PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.run validate --config val/validation.yaml --output val/results/paper_all
 # Missing data or compatible salinity weights appear as blocked cohorts.
-# Final campaign captures every member-count prefix; lower this for development.
+# Use one model generation per batch and conditioning budget for this validation.
 sampling:
-  members: 100
+  members: 1
 cohorts:
   - name: en4_temperature
     config: val/config.yaml
   - name: italian_xbt_temperature
     config: val/config_xbt.yaml
-  - name: cugn_temperature
-    config: val/config_cugn.yaml
   - name: en4_salinity
     config: val/config_salinity.yaml
