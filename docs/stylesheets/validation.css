@@ -89,3 +89,7 @@ output { min-width: 190px; font-variant-numeric: tabular-nums; }
 .info-popup strong { display: block; margin-bottom: 6px; }
 .method-help { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0; color: var(--muted); font-size: .8rem; }
 #depth-play { min-width: 70px; }
+#patch { min-width: 0; flex: 1; }
+.section-head label:has(#patch) { min-width: 0; max-width: 100%; }
+.profile-map .leaflet-control-layers { max-width: calc(100vw - 95px); }
+.profile-map .leaflet-control-layers label { display: block; white-space: normal; color: #222; }

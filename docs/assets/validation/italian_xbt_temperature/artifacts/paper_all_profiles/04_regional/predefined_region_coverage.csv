@@ -1,0 +1,4 @@
+region,variable,profiles,clusters,points,status
+southern_ocean,temperature,102,2,79367,observation-sampled support
+north_atlantic_59n_section,temperature,0,0,0,no evaluation support
+weddell_sea,temperature,0,0,0,no evaluation support

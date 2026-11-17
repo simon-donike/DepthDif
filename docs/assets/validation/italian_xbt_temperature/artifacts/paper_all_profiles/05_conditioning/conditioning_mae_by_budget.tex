@@ -1,0 +1,42 @@
+\begin{table}[htbp]
+\centering
+\caption{Profile balanced MAE across retained sparse profile budgets and methods}
+\begin{tabular}{lll}
+\toprule
+budget & method & temperature \\
+\midrule
+0 & 0 & 0.577 \\
+1 & 1 & 0.5465 \\
+1 & cnn & 1.093 \\
+1 & lstm & 0.5792 \\
+1 & unet2d & 0.453 \\
+1 & unet3d & 0.7058 \\
+2 & 2 & 0.486 \\
+2 & cnn & 1.093 \\
+2 & lstm & 0.5792 \\
+2 & unet2d & 0.42 \\
+2 & unet3d & 0.591 \\
+4 & 4 & 0.4633 \\
+4 & cnn & 1.093 \\
+4 & lstm & 0.5792 \\
+4 & unet2d & 0.4466 \\
+4 & unet3d & 0.5057 \\
+8 & 8 & 0.4469 \\
+8 & cnn & 1.093 \\
+8 & lstm & 0.5792 \\
+8 & unet2d & 0.439 \\
+8 & unet3d & 0.4996 \\
+0 & baseline\_oi\_climatology\_budget\_0 & 0.537 \\
+1 & baseline\_oi\_climatology\_budget\_1 & 0.4564 \\
+2 & baseline\_oi\_climatology\_budget\_2 & 0.3959 \\
+4 & baseline\_oi\_climatology\_budget\_4 & 0.3927 \\
+8 & baseline\_oi\_climatology\_budget\_8 & 0.4125 \\
+full & baseline\_oi\_climatology\_full & 0.4115 \\
+full & cnn & 1.093 \\
+full & full & 0.4418 \\
+full & lstm & 0.5792 \\
+full & unet2d & 0.456 \\
+full & unet3d & 0.4783 \\
+\bottomrule
+\end{tabular}
+\end{table}

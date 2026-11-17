@@ -12,55 +12,57 @@
   const signed = (value) => Number.isFinite(value) ? `${value > 0 ? "+" : ""}${value.toFixed(4)}` : "—";
   let campaign, selected, request = 0, map, markers = new Map(), mapCohort;
   let spatial, spatialCohort, spatialRequest = 0, stackImages = new Map();
+  let missionLayers = [], layerControl, supportLayer, supportMapCohort;
+  const missionColors = ["#7de0bc", "#e9a1ff", "#ffba75", "#6ca9ff"];
   let playback, activeHelp, helpTimer;
   const explanations = {
-    mae: ["MAE", "Mean absolute error: average |prediction − observation| within each profile, then average across profiles. Units: °C. Smaller values indicate smaller typical errors."],
-    rmse: ["RMSE", "Root mean squared error: compute mean squared error within each profile, average across profiles, then take the square root. Units: °C. Large errors receive more weight than in MAE."],
-    bias: ["Signed bias", "Average prediction − observation within each profile, then across profiles. Positive values indicate predictions that are too warm; negative values indicate predictions that are too cold. Opposite errors can cancel."],
-    crps: ["CRPS", "Continuous ranked probability score compares a predictive distribution with the observation. Smaller is better; units are °C. With this campaign’s single generated member, pointwise CRPS equals absolute error, so its aggregate equals MAE. It does not measure ensemble calibration here."],
-    delta: ["Δ MAE vs GLORYS", "Method MAE minus packaged GLORYS MAE on the same evaluation support. Negative values favour the method; positive values favour GLORYS. This descriptive difference alone does not establish statistical significance."],
-    weighting: ["Equal profile weighting", "First average errors over the measurements available within each profile (or depth bin), then average those profile scores equally. A densely sampled cast therefore does not outweigh a sparsely sampled one."],
-    common: ["Common evaluation support", "Methods in a comparison are evaluated at the same retained observation points. A method lacking complete valid predictions is excluded from that shared comparison rather than receiving a score on easier or different points."],
-    depths: ["Depth bins", "Italian XBT observations are grouped into 25 m intervals: the lower boundary is included, the upper boundary excluded. Curves are plotted at bin centres. Profile weights are recalculated within each bin; the set of profiles can change with depth. EN4 uses model depth levels."],
-    profiles: ["Profiles and points", "A profile is a temperature-versus-depth cast. Points are individual retained temperature measurements, not independent replicate casts. Several profiles may belong to the same cruise."],
-    residual: ["DepthDif", "The frozen diffusion model generates a temperature residual relative to climatology, then adds climatology back to reconstruct the temperature field. This campaign uses EMA weights, SST conditioning and one generated member per case."],
-    glorys: ["GLORYS (packaged)", "GLORYS is an ocean reanalysis combining an ocean model with assimilated observations. Packaged means the dataset’s processed GeoTIFF reference: 0.1° grid and about 0.1496 °C temperature increments. Targets are daily means sampled every seven days, not weekly averages. Native GLORYS retains the source 1/12° grid and floating-point precision. Packaging does not change which observations were assimilated."],
-    climatology: ["Climatology", "The dataset’s fitted temperature background describes recurring seasonal and spatial structure. It does not reconstruct the individual event from current EN4 context. DepthDif learns departures from this background."],
-    idw: ["IDW", "Inverse-distance weighting interpolates retained observations, giving nearby supports greater weight. This run lacks valid predictions at some evaluation points, so IDW is shown descriptively in the spatial viewer and excluded from the complete-support score table."],
-    lstm: ["LSTM", "Long short-term memory neural-network baseline. Recurrent processing represents temperature structure along depth. Predictions use the frozen selected checkpoint; this is a deterministic comparator."],
-    cnn: ["CNN", "Convolutional neural-network baseline using learned local filters to reconstruct temperature. It uses its own frozen selected checkpoint and configuration; the label does not imply identical inputs or architecture to DepthDif."],
-    unet3d: ["UNet3D", "Three-dimensional U-Net baseline with convolutions across depth and both horizontal dimensions. Encoder and decoder features are linked by skip connections. It uses a frozen selected checkpoint."],
-    unet2d: ["UNet2D", "Two-dimensional U-Net baseline with spatial convolutions and skip connections between encoder and decoder. Depth levels are represented by channels rather than a third convolution dimension. It uses a frozen selected checkpoint."],
-    baseline_oi_climatology_full: ["OI · climatology", "Optimal interpolation updates a climatological background using retained EN4 observations and specified covariance and observation-error assumptions. Full denotes all retained context after masking. Evaluation XBT values are not used for the update."],
-    conditioning: ["Conditioning", "Observations or surface fields supplied as inputs to a prediction. Here the full-context reconstruction uses available quality-controlled EN4 temperature supports and SST. EN4 context may include observations assimilated into GLORYS; it is not the Italian evaluation target."],
-    en4: ["EN4 supports", "EN4 is the temperature and salinity profile dataset supplying context. Markers show occupied temperature input grid cells after quality filtering and holdout masking, verified against the original inference batch hashes. Multiple source profiles can share a cell; these are not unique profile identities."],
-    xbt: ["Italian XBT", "Expendable bathythermograph casts measure temperature with depth. This evaluation uses corrected Italian XBT data with quality flag QF=1. The casts provide held-out observations, not conditioning inputs."],
-    masking: ["Holdout buffer", "All target grid cells and their one-cell neighbourhood are removed from the context inputs, including overlapping patches. This reduces local leakage; complete cruise-level context exclusion cannot be verified from the compact store."],
-    screening: ["Archive screening", "Selected profiles were checked against the documented archive-screened registry. No archive match is evidence about those archives, not proof that GLORYS never assimilated the observations. Assimilation-log verification is unavailable."],
-    partition: ["Calibration and evaluation", "Complete clusters are assigned to calibration or evaluation. Calibration fits adjustments; evaluation supplies reported errors. Italian data have 14 calibration profiles from one cruise and 88 evaluation profiles from another."],
-    discovery: ["Discovery campaign", "The 2016 data informed checkpoint selection. Scores on this year describe performance during development; they are not an independent confirmation of a predeclared claim."],
-    ema: ["EMA weights", "Exponential moving average of model weights accumulated during training. The frozen EMA checkpoint is used for inference rather than the last raw training weights."],
-    ddpm: ["DDPM and one generation", "Denoising diffusion probabilistic model sampling progressively removes noise over 1,000 steps to generate one temperature field per case. One generation is one ensemble member; it cannot characterize predictive spread or calibration."],
-    sst: ["SST", "Sea-surface temperature supplied as an additional conditioning field. It is a surface input, not a subsurface evaluation profile."],
-    budget: ["Conditioning budget", "A cap of 0, 1, 2, 4 or 8 retained horizontal EN4 context locations per patch, after holdout masking. Full retains all available locations. This ablates profile context; it does not remove every other input, such as SST or climatology."],
-    potential: ["Potential temperature / TEOS-10", "Potential temperature accounts for the temperature change from pressure alone when seawater is brought to a reference pressure. Corrected XBT temperatures are converted with TEOS-10 seawater thermodynamics using GLORYS salinity. Model and observation temperatures must use the same convention."],
-    interpolation: ["Native observation depths", "Model temperatures at the two surrounding model levels are linearly interpolated to each retained observation depth before scoring. Profile plots preserve the saved observation depths; spatial images show the original model levels."],
-    clusters: ["Clusters and uncertainty", "Profiles collected on the same cruise can share errors and are grouped as a cluster. The Italian evaluation has only one cruise, so between-cruise uncertainty cannot be estimated reliably; confidence intervals and significance claims are withheld."],
-    quantization: ["Quantization", "Storing temperatures in discrete increments loses numerical precision. The packaged reference increment is approximately 0.1496 °C, with a half-step rounding bound of 0.0748 °C. This is not GLORYS’s total physical error. Native floating-point verification is needed before claiming superiority over the delivered product."],
-    patch: ["Patch", "A cropped model-grid domain at one target date. All spatial panels show that same patch and depth. Overlapping patches may contain the same geographic locations. Only patches containing evaluation casts are displayed."],
-    scale: ["Colour scale and missing support", "Within a selected patch, the temperature colour range is fixed across all methods and depths, so colours remain comparable during playback. It can change when selecting another patch. Transparent pixels indicate missing reference or model support, not zero temperature."],
-    replay: ["Verified spatial replay", "Full prediction grids were reconstructed using the recorded masked inputs, weights, batch sizes and random seeds. Input hashes and predictions at saved evaluation points were checked against the original run. IDW has no complete valid point comparator."],
-    markers: ["Spatial markers", "Cyan circles mark all retained EN4 temperature support cells in the patch; a filled centre means that input is valid at the selected depth. Open circles have support only at other levels. White crosses locate XBT evaluation casts; red marks the selected cast. A cross does not imply a measurement at every model depth."],
-    reference: ["Reference audit", "Checks packaged GLORYS precision and temporal matching, with native-product comparison when source NetCDF files are configured. A completed packaged audit does not replace native-product verification."],
-    comparators: ["Comparator audit", "Checks availability and compatibility of saved comparator predictions before scoring. Missing or incomplete predictions can limit which methods share a comparison."],
-    baselines: ["Calibrated baselines", "Fits permitted corrections or distributions on calibration data, then evaluates them on separate held-out data. Partial status means some requested comparator outputs are unavailable."],
-    regional: ["Regional analysis", "Groups paired method errors by region, depth and other predefined strata. Available descriptive scores do not imply sufficient independent clusters for uncertainty or significance estimates."],
-    physical: ["Physical diagnostics", "Examines reconstructed vertical structure and derived ocean quantities where temperature, salinity and depth coverage permit. A temperature-only model cannot establish joint temperature–salinity physical accuracy."],
-    dependence: ["Dependence diagnostics", "Examines whether relationships across depth, space or variables are retained. A single generated member limits what can be inferred about ensemble dependence."],
-    extremes: ["Extremes", "Evaluates predefined tail events and their forecast probabilities where the sample and ensemble support those estimates. One member provides very limited probability resolution."],
-    selective: ["Selective prediction", "Examines whether forecast uncertainty can identify more reliable cases when retaining only part of the sample. One generated member does not provide an ensemble-spread estimate."],
-    efficiency: ["Efficiency", "Summarizes measured computational cost alongside accuracy under the saved workload. Hardware, batch size and member count affect comparisons."],
-    status: ["Analysis status", "Complete means the stage produced its configured outputs; partial means some outputs or evidence requirements remain unavailable. Pending means no result is available in this static site snapshot. These labels are not scientific success or significance claims."]
+    mae: ["MAE", "Typical error size in °C, ignoring whether the prediction is too warm or too cold. Errors are averaged within each profile first, so every profile counts equally. Lower is better."],
+    rmse: ["RMSE", "An error score in °C that gives more weight to large mistakes. Each profile counts equally. Lower is better."],
+    bias: ["Signed bias", "Average prediction minus observation. Positive means too warm; negative means too cold. Warm and cold errors can cancel."],
+    crps: ["CRPS", "A score for predictions that contain several possible outcomes. This run has only one prediction per case, so CRPS equals MAE and tells us nothing extra about uncertainty."],
+    delta: ["Δ MAE vs GLORYS", "The method’s MAE minus original GLORYS MAE. Negative means a smaller error than GLORYS; positive means a larger error. Both use the same observations."],
+    weighting: ["Equal profile weighting", "Every profile counts equally, even if one cast contains more depth measurements than another."],
+    common: ["Common evaluation support", "Methods are compared at the same observation locations and depths. A method with missing predictions is left out of that comparison."],
+    depths: ["Depth bins", "XBT measurements are grouped into 25 m depth bands, such as 0–25 m and 25–50 m. Each point on the curve represents one band. Fewer casts reach the deepest bands."],
+    profiles: ["Profiles and points", "One profile is one cast measuring temperature at many depths. A mission or cruise contains many casts. Measurement counts are not counts of independent missions."],
+    residual: ["DepthDif", "DepthDif predicts how temperature differs from the usual seasonal background, then adds that background back. The model weights are fixed for this comparison."],
+    glorys: ["GLORYS (packaged)", "The original GLORYS ocean reanalysis, as stored in our dataset. It uses a 0.1° grid and temperature steps of about 0.15 °C. Native GLORYS keeps the original finer grid and numerical precision. No bias correction or optimal interpolation is applied to this reference."],
+    climatology: ["Climatology", "The usual temperature for that month, location and depth, estimated from training data. It is a background reference rather than a prediction of the individual event."],
+    idw: ["IDW", "Inverse-distance weighting estimates temperature from nearby EN4 inputs, giving closer locations more weight. It misses some evaluation points in this run, so its images are shown but it is excluded from the main score table."],
+    lstm: ["LSTM", "A neural-network baseline that processes temperature information along depth. Its trained weights are fixed during validation."],
+    cnn: ["CNN", "A neural-network baseline that uses local patterns to reconstruct temperature. It uses its own fixed checkpoint and input setup."],
+    unet3d: ["UNet3D", "A neural-network baseline that learns patterns across depth and both horizontal directions. Its trained weights are fixed during validation."],
+    unet2d: ["UNet2D", "A neural-network baseline that learns horizontal patterns, with depth levels supplied as separate channels. Its trained weights are fixed during validation."],
+    baseline_oi_climatology_full: ["OI · climatology", "Optimal interpolation combines the usual seasonal temperature with nearby EN4 observations. Its settings were fixed in advance; it is not fitted to the Italian XBT measurements."],
+    conditioning: ["Conditioning", "Information supplied to the prediction: retained EN4 temperature measurements and sea-surface temperature. The Italian XBT casts are used for checking predictions, not as inputs."],
+    en4: ["EN4 supports", "EN4 supplies the observed temperature inputs. Markers show occupied input grid cells after quality checks and target masking. Several source profiles can share a cell."],
+    xbt: ["Italian XBT", "An expendable bathythermograph measures temperature as it falls through the water. We use the corrected Italian measurements that passed the quality check."],
+    masking: ["Holdout buffer", "The XBT target grid cells and their immediate neighbours are removed from EN4 inputs, including in overlapping patches. This helps prevent the model from receiving the answers it is being tested on."],
+    screening: ["Archive screening", "The profiles were checked against the documented archive-screened list. That does not prove they were never used by GLORYS; we do not have its assimilation logs."],
+    partition: ["Calibration and evaluation", "All 102 Italian casts from two missions are now evaluated. None are reserved for calibration. Previously, 14 casts from the second mission were reserved for extra correction methods; those fits are not used here. EN4 is evaluated separately."],
+    discovery: ["Discovery campaign", "The 2016 data helped select the model checkpoint. These results describe development performance; an untouched dataset is still needed for independent confirmation."],
+    ema: ["EMA weights", "The model uses weights averaged over training steps. This is a fixed trained model, not a correction fitted to the validation observations."],
+    ddpm: ["DDPM and one generation", "The model starts from noise and refines it over 1,000 steps. It produces one temperature field per case. One field cannot tell us the spread of possible predictions."],
+    sst: ["SST", "Sea-surface temperature is an additional model input. It describes the surface, not a subsurface validation cast."],
+    budget: ["Conditioning budget", "The number of EN4 input locations retained per patch: 0, 1, 2, 4, 8, or all available locations. Other inputs, such as sea-surface temperature, remain available."],
+    potential: ["Potential temperature / TEOS-10", "Water temperature changes with pressure. We convert the XBT measurements to the same pressure-adjusted temperature convention as the model, using standard seawater calculations and GLORYS salinity."],
+    interpolation: ["Native observation depths", "Model values above and below an observation are used to estimate temperature at its exact depth. Profile curves use observation depths; spatial images use model depth levels."],
+    clusters: ["Clusters and uncertainty", "Casts from the same mission can share similar errors. The Italian set has 102 casts but only two missions. We show errors for each mission and do not claim reliable uncertainty ranges from so few missions."],
+    quantization: ["Quantization", "The stored GLORYS temperatures change in steps of about 0.15 °C. That storage rounding is separate from the reanalysis error. A native-data comparison is needed before claiming that a model outperforms the original GLORYS product."],
+    patch: ["Patch", "A cropped area of the model grid at one date. All panels show the same area and depth. The selector lists how many XBT casts and EN4 input cells each area contains."],
+    scale: ["Colour scale and missing support", "Colours represent temperature. The scale stays fixed while changing depth or model within a patch, but can change between patches. Blank pixels mean missing data, not zero temperature."],
+    replay: ["Verified spatial replay", "The images were regenerated with the original inputs, model weights and random seeds. Predictions at the saved observation points were checked against the original run."],
+    markers: ["Spatial markers", "Cyan circles mark EN4 temperature input cells. A filled centre means input is available at the displayed depth. Crosses mark XBT casts; red marks the selected cast. A cast need not reach every displayed depth."],
+    reference: ["Reference audit", "Checks how the stored GLORYS data are rounded and matched in time. Native GLORYS files are needed for a direct comparison with the original product."],
+    comparators: ["Comparator audit", "Checks which baseline predictions are available at the required observations."],
+    baselines: ["Calibrated baselines", "Optional corrections fitted to a separate calibration set. This stage is not used in the all-profile Italian comparison."],
+    regional: ["Regional analysis", "Reports errors by area, depth and mission using the same observations for each method."],
+    physical: ["Physical diagnostics", "Checks vertical temperature structure and related ocean quantities. It is separate from the main temperature-error comparison."],
+    dependence: ["Dependence diagnostics", "Checks relationships across depths, locations or variables. One generated field limits the uncertainty analysis."],
+    extremes: ["Extremes", "Checks performance on unusually high or low values. This is separate from the main temperature-error comparison."],
+    selective: ["Selective prediction", "Checks whether an uncertainty estimate identifies more reliable predictions. One generated field does not provide a useful ensemble spread."],
+    efficiency: ["Efficiency", "Reports computation time and related costs for the saved workload."],
+    status: ["Analysis status", "Complete means results are available. Partial means some checks could not be completed. Blocked means the stage is unavailable or not used in this comparison. Pending means no results are published yet."]
   };
   explanations.glorys_packaged = explanations.glorys;
   function closeHelp() {
@@ -159,35 +161,71 @@
       L.control.scale().addTo(map);
     }
     if (mapCohort !== selected.id) {
-      markers.forEach((marker) => marker.remove());
+      missionLayers.forEach((layer) => layer.remove());
+      if (supportLayer) supportLayer.remove();
+      if (layerControl) layerControl.remove();
+      supportLayer = null; supportMapCohort = null; missionLayers = [];
       markers.clear();
-      // Leaflet needs an initial view before marker SVG elements are available.
       map.fitBounds(selected.profiles.map((profile) => [profile.latitude, profile.longitude]), { padding: [24, 24], maxZoom: 7 });
-      selected.profiles.forEach((profile) => {
-        const marker = L.circleMarker([profile.latitude, profile.longitude], { radius: 5, color: "#e1edf5", weight: 1, fillColor: "#7de0bc", fillOpacity: .8 }).addTo(map);
-        marker.bindTooltip(element("span", profile.id));
-        marker.bindPopup(element("span", `${profile.id} · ${profile.time}`));
-        const choose = () => { $("profile").value = profile.id; profileChart().catch(showError); };
-        marker.on("click", choose);
-        const node = marker.getElement();
-        node.setAttribute("tabindex", "0");
-        node.setAttribute("role", "button");
-        node.setAttribute("aria-label", `Compare profile ${profile.id}`);
-        node.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); marker.openPopup(); choose(); } });
-        markers.set(profile.id, marker);
+      const missions = [...new Set(selected.profiles.map((profile) => profile.mission || profile.cluster))];
+      const overlays = {};
+      missions.forEach((mission, index) => {
+        const profiles = selected.profiles.filter((profile) => (profile.mission || profile.cluster) === mission);
+        const group = L.featureGroup().addTo(map);
+        missionLayers.push(group);
+        const color = missionColors[index % missionColors.length];
+        // Build the label with text nodes before Leaflet uses it as HTML.
+        const label = element("span"), swatch = element("span", "● ");
+        swatch.style.color = color;
+        swatch.setAttribute("aria-hidden", "true");
+        label.append(swatch, document.createTextNode(`${mission} · ${profiles.length} casts`));
+        overlays[label.innerHTML] = group;
+        profiles.forEach((profile) => {
+          const marker = L.circleMarker([profile.latitude, profile.longitude], { radius: 5, color: "#e1edf5", weight: 1, fillColor: color, fillOpacity: .85 }).addTo(group);
+          marker.bindTooltip(element("span", `${mission} · ${profile.id}`));
+          marker.bindPopup(element("span", `${mission} · ${profile.id} · ${profile.time} · ${profile.points} measurements`));
+          const choose = () => { $("profile").value = profile.id; profileChart().catch(showError); };
+          marker.on("click", choose);
+          const node = marker.getElement();
+          node.setAttribute("tabindex", "0"); node.setAttribute("role", "button");
+          node.setAttribute("aria-label", `Compare profile ${profile.id} from ${mission}`);
+          node.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); marker.openPopup(); choose(); } });
+          markers.set(profile.id, marker);
+        });
       });
+      layerControl = L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+      $("map-summary").textContent = `${selected.profiles.length} casts across ${missions.length} missions. Each mission has a separate map layer. Click a cast to compare its temperatures.`;
       mapCohort = selected.id;
     }
+    if (spatial && spatialCohort === selected.id && supportMapCohort !== selected.id) {
+      supportLayer = L.featureGroup().addTo(map);
+      // These are verified input grid-cell centres, not fabricated source-profile coordinates.
+      (spatial.context_patches || spatial.patches).forEach((patch) => {
+        const [west, south, east, north] = patch.bounds;
+        (patch.en4_supports || []).forEach((support) => {
+          const lon = west + (support.col + .5) * (east - west) / patch.width;
+          const lat = north - (support.row + .5) * (north - south) / patch.height;
+          L.circleMarker([lat, lon], { radius: 3, color: "#00e5ff", weight: 1.5, fillOpacity: 0 }).addTo(supportLayer)
+            .bindPopup(element("span", `EN4 temperature input cell · ${patch.date} · patch ${patch.patch_index} · ${support.levels.length} supported depths`));
+        });
+      });
+      layerControl.addOverlay(supportLayer, "EN4 conditioning cells · all saved patches");
+      const bounds = L.latLngBounds(selected.profiles.map((profile) => [profile.latitude, profile.longitude]));
+      if (supportLayer.getLayers().length) bounds.extend(supportLayer.getBounds());
+      map.fitBounds(bounds, { padding: [24, 24] });
+      supportMapCohort = selected.id;
+    }
     map.invalidateSize();
-    markers.forEach((marker, id) => marker.setStyle({ radius: id === $("profile").value ? 8 : 5, fillColor: id === $("profile").value ? "#ffd166" : "#7de0bc" }));
+    markers.forEach((marker, id) => marker.setStyle({ radius: id === $("profile").value ? 8 : 5, weight: id === $("profile").value ? 3 : 1, color: id === $("profile").value ? "#ffd166" : "#e1edf5" }));
   }
+
   async function profileChart() {
     // Ignore slow responses from a previously selected cast or cohort.
     const token = ++request;
     const cohort = selected;
     const profile = cohort.profiles.find((p) => p.id === $("profile").value);
     if (!profile) return;
-    $("profile-meta").textContent = `${profile.id} · ${profile.time} · ${profile.latitude.toFixed(3)}° N, ${profile.longitude.toFixed(3)}° E · ${profile.points.toLocaleString()} depths · evaluation only`;
+    $("profile-meta").textContent = `${profile.id} · ${profile.time} · ${profile.latitude.toFixed(3)}° N, ${profile.longitude.toFixed(3)}° E · ${profile.points.toLocaleString()} depths · mission ${profile.mission || profile.cluster} · evaluation`;
     locationMap();
     if (spatial && spatialCohort === cohort.id) {
       const patch = spatial.patches.find((item) => item.profiles.some((item) => item.profile_id === profile.id));
@@ -313,14 +351,18 @@
     const data = await fetchJSON(`${base}${cohort.id}/${cohort.spatial}`);
     if (token !== spatialRequest || selected !== cohort) return;
     spatial = data; spatialCohort = cohort.id;
-    $("patch").replaceChildren(...data.patches.map((patch) => { const option = element("option", `${patch.date} · patch ${patch.patch_index}`); option.value = patch.patch_index; return option; }));
-    const matching = data.patches.find((patch) => patch.profiles.some((profile) => profile.profile_id === $("profile").value));
-    if (matching) $("patch").value = matching.patch_index;
+    $("patch").replaceChildren(...data.patches.map((patch) => { const option = element("option", `${patch.date} · patch ${patch.patch_index} · ${patch.profiles.length} XBT / ${(patch.en4_supports || []).length} EN4`); option.value = patch.patch_index; return option; }));
+    // Choose by observation/input coverage, never by prediction accuracy.
+    const preferred = data.patches.filter((patch) => patch.profiles.length > 5 && (patch.en4_supports || []).length > 5)
+      .sort((a, b) => b.profiles.length - a.profiles.length || b.en4_supports.length - a.en4_supports.length || a.patch_index - b.patch_index)[0] || data.patches[0];
+    $("patch").value = preferred.patch_index;
+    $("profile").value = preferred.profiles[0].profile_id;
+    locationMap();
     $("patch").disabled = false;
     $("depth-level").max = data.depths_m.length - 1;
     $("depth-level").value = 0;
     $("spatial-controls").hidden = false;
-    await loadPatch();
+    await Promise.all([loadPatch(), profileChart()]);
   }
   async function render() {
     pausePlayback();
@@ -332,7 +374,7 @@
     $("load-error").hidden = true;
     $("results").hidden = !selected.available;
     $("pending").hidden = selected.available;
-    $("status").textContent = selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
+    $("status").textContent = selected.evaluation_policy ? "All-profile comparison complete · no calibration" : selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
     $("provenance").textContent = JSON.stringify({ campaign: campaign.campaign, snapshot_utc: campaign.updated_utc, model: selected.model || "Pending", membership: selected.membership || "Pending" }, null, 2);
     $("stages").replaceChildren(...selected.stages.map((stage) => {
       const node = element("div", undefined, "stage");
@@ -348,20 +390,26 @@
     const model = selected.overall.find((row) => row.method === "residual");
     const glorys = selected.overall.find((row) => row.method === "glorys_packaged");
     const counts = selected.counts;
-    $("stats").replaceChildren(...[[counts.profiles.toLocaleString(), "evaluation profiles"], [counts.points.toLocaleString(), "temperature measurements"], [fmt(model.mae), "DepthDif MAE · °C"], [signed(model.mae - glorys.mae), "MAE difference vs GLORYS · °C"]].map(([value, label]) => {
+    $("stats").replaceChildren(...[[counts.profiles.toLocaleString(), "evaluation casts"], [counts.clusters.toLocaleString(), "missions / observation groups"], [fmt(model.mae), "DepthDif MAE · °C"], [signed(model.mae - glorys.mae), "MAE difference vs GLORYS · °C"]].map(([value, label]) => {
       const node = element("div", undefined, "stat");
       node.append(element("strong", value), explained(label, label.includes("difference") ? "delta" : label.includes("MAE") ? "mae" : "profiles"));
       return node;
     }));
     const calibration = selected.partition.find((row) => row.partition === "calibration");
-    $("interpretation").textContent = `${counts.clusters} evaluation cluster${counts.clusters === 1 ? " (one cruise)" : "s"}; ${calibration?.profiles ?? 0} profiles reserved for calibration. DepthDif MAE is ${Math.abs(model.mae - glorys.mae).toFixed(4)} °C ${model.mae > glorys.mae ? "higher" : "lower"} than packaged GLORYS. These are descriptive discovery results${counts.clusters === 1 ? "; one cruise does not support confidence intervals or significance claims" : ""}.`;
+    $("interpretation").textContent = selected.evaluation_policy
+      ? `${counts.profiles} casts from ${counts.clusters} missions; all ${counts.points.toLocaleString()} measurements are evaluated. No casts are reserved for calibration and no corrections are fitted. DepthDif MAE is ${Math.abs(model.mae - glorys.mae).toFixed(4)} °C ${model.mae > glorys.mae ? "higher" : "lower"} than original packaged GLORYS. Results are also shown by mission below. Two missions provide limited evidence about performance elsewhere.`
+      : `${counts.profiles} profiles from ${counts.clusters} observation groups; ${calibration?.profiles ?? 0} profiles reserved for calibration. These are development results.`;
+    tableRows("mission-table", (selected.mission_scores || []).map((row) => ({ highlight: row.method === "residual", cells: [row.mission, explained(name(row.method), row.method), fmt(row.mae), fmt(row.rmse)] })));
+    $("mission-results").hidden = !selected.mission_scores?.length;
+    const missionCSV = selected.downloads?.find((item) => item.name === "mission_scores.csv");
+    if (missionCSV) $("mission-csv").href = `${base}${selected.id}/${missionCSV.file}`;
     tableRows("overall-table", selected.overall.map((row) => ({ highlight: row.method === "residual", cells: [explained(name(row.method), row.method), fmt(row.mae), fmt(row.rmse), fmt(row.crps), signed(row.mae - glorys.mae)] })));
     $("overall-csv").href = `${base}${selected.id}/overall_scores.csv`;
     $("baseline-status").textContent = selected.baselines.filter((row) => row.status !== "available").map((row) => `${name(row.method)}: ${row.status}, ${row.invalid_points} invalid predictions across the full input cohort; excluded from the shared comparison.`).join(" ");
-    $("depth-note").textContent = `${selected.id.startsWith("italian") ? "25 m bins, left-closed and right-open, plotted at bin centers." : "Exact model depth levels."} Hover for profile and measurement counts. Click a legend label to show or hide a method. Curves are descriptive; no confidence bands are implied.`;
+    $("depth-note").textContent = `${selected.id.startsWith("italian") ? "Measurements grouped into 25 m depth bands." : "Exact model depth levels."} Hover to see the number of casts and measurements. Click a legend label to show or hide a method.`;
     tableRows("depth-table", selected.depth.map((row) => ({ highlight: row.method === "residual", cells: [explained(name(row.method), row.method), row.depth_resolution === "bin" ? `${row.depth_lower_m}–${row.depth_upper_m}` : row.depth_m, row.n_profiles, row.n_points, fmt(row.mae), fmt(row.rmse), fmt(row.bias), fmt(row.crps)] })));
     $("method-help").replaceChildren(...[...new Set(selected.overall.map((row) => row.method))].map((method) => explained(name(method), method)));
-    $("profile").replaceChildren(...selected.profiles.map((profile) => { const option = element("option", profile.id); option.value = profile.id; return option; }));
+    $("profile").replaceChildren(...selected.profiles.map((profile) => { const option = element("option", `${profile.mission || profile.cluster} · ${profile.id}`); option.value = profile.id; return option; }));
     // Render only after revealing the panel so Plotly measures the real layout width.
     if (typeof Plotly === "undefined") throw new Error("The chart library could not load. Tables and downloads remain available");
     await Promise.all([depthChart(), conditioningChart(), profileChart(), spatialViewer()]);
@@ -382,6 +430,11 @@
     document.addEventListener("visibilitychange", () => { if (document.hidden) pausePlayback(); });
     window.addEventListener("pagehide", pausePlayback);
     $("depth-play").addEventListener("click", togglePlayback);
+    $("map-fit").addEventListener("click", () => {
+      const locations = selected.profiles.map((profile) => [profile.latitude, profile.longitude]);
+      if (supportLayer) supportLayer.eachLayer((marker) => locations.push(marker.getLatLng()));
+      map.fitBounds(locations, { padding: [24, 24] });
+    });
     campaign = await fetchJSON(`${base}campaign.json`);
     // Apply the same publication selection to older cached campaign snapshots.
     campaign.cohorts.forEach((cohort) => {

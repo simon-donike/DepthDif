@@ -1,0 +1,42 @@
+\begin{table}[htbp]
+\centering
+\caption{Profile balanced scores by retained sparse profile conditioning budget}
+\begin{tabular}{llllll}
+\toprule
+method & budget & variable & mae & rmse & crps \\
+\midrule
+0 & 0 & temperature & 0.577 & 0.6643 & 0.577 \\
+1 & 1 & temperature & 0.5465 & 0.6322 & 0.5465 \\
+2 & 2 & temperature & 0.486 & 0.5716 & 0.486 \\
+4 & 4 & temperature & 0.4633 & 0.5472 & 0.4633 \\
+8 & 8 & temperature & 0.4469 & 0.5293 & 0.4469 \\
+baseline\_oi\_climatology\_budget\_0 & 0 & temperature & 0.537 & 0.6568 & 0.537 \\
+baseline\_oi\_climatology\_budget\_1 & 1 & temperature & 0.4564 & 0.569 & 0.4564 \\
+baseline\_oi\_climatology\_budget\_2 & 2 & temperature & 0.3959 & 0.5064 & 0.3959 \\
+baseline\_oi\_climatology\_budget\_4 & 4 & temperature & 0.3927 & 0.4975 & 0.3927 \\
+baseline\_oi\_climatology\_budget\_8 & 8 & temperature & 0.4125 & 0.5169 & 0.4125 \\
+baseline\_oi\_climatology\_full & full & temperature & 0.4115 & 0.517 & 0.4115 \\
+cnn & 1 & temperature & 1.093 & 1.288 & 1.093 \\
+cnn & 2 & temperature & 1.093 & 1.288 & 1.093 \\
+cnn & 4 & temperature & 1.093 & 1.288 & 1.093 \\
+cnn & 8 & temperature & 1.093 & 1.288 & 1.093 \\
+cnn & full & temperature & 1.093 & 1.288 & 1.093 \\
+full & full & temperature & 0.4418 & 0.5221 & 0.4418 \\
+lstm & 1 & temperature & 0.5792 & 0.6799 & 0.5792 \\
+lstm & 2 & temperature & 0.5792 & 0.6799 & 0.5792 \\
+lstm & 4 & temperature & 0.5792 & 0.6799 & 0.5792 \\
+lstm & 8 & temperature & 0.5792 & 0.6799 & 0.5792 \\
+lstm & full & temperature & 0.5792 & 0.6799 & 0.5792 \\
+unet2d & 1 & temperature & 0.453 & 0.5183 & 0.453 \\
+unet2d & 2 & temperature & 0.42 & 0.4809 & 0.42 \\
+unet2d & 4 & temperature & 0.4466 & 0.5141 & 0.4466 \\
+unet2d & 8 & temperature & 0.439 & 0.5069 & 0.439 \\
+unet2d & full & temperature & 0.456 & 0.5225 & 0.456 \\
+unet3d & 1 & temperature & 0.7058 & 0.7792 & 0.7058 \\
+unet3d & 2 & temperature & 0.591 & 0.6625 & 0.591 \\
+unet3d & 4 & temperature & 0.5057 & 0.577 & 0.5057 \\
+unet3d & 8 & temperature & 0.4996 & 0.5724 & 0.4996 \\
+unet3d & full & temperature & 0.4783 & 0.5512 & 0.4783 \\
+\bottomrule
+\end{tabular}
+\end{table}

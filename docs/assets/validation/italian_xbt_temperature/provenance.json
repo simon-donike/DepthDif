@@ -68,8 +68,8 @@
     },
     {
       "name": "baselines",
-      "status": "partial",
-      "summary": "Scored 10 calibrated comparator groups from 14 calibration profiles."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     },
     {
       "name": "regional",
@@ -83,270 +83,235 @@
     },
     {
       "name": "physical",
-      "status": "partial",
-      "summary": "Computed 237 physical diagnostic groups."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     },
     {
       "name": "dependence",
-      "status": "partial",
-      "summary": "Scored intact and vertical dependence controls."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     },
     {
       "name": "extremes",
-      "status": "pending",
-      "summary": "Not available in this snapshot."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     },
     {
       "name": "selective",
-      "status": "pending",
-      "summary": "Not available in this snapshot."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     },
     {
       "name": "efficiency",
-      "status": "pending",
-      "summary": "Not available in this snapshot."
+      "status": "blocked",
+      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
     }
   ],
   "artifacts": [
     {
-      "name": "native_reference_status.csv",
-      "file": "artifacts/paper/01_reference/native_reference_status.csv",
-      "sha256": "04a9a6e94e125810c65b28e20b0734f237554b81cd9e6d77b3e21a877de8072b"
+      "name": "mission_scores.csv",
+      "file": "artifacts/paper_all_profiles/mission_scores.csv",
+      "sha256": "d04a45e20084e74d42eb6d06bbe3350235f9e314c0e25ce442ab6f11623082e9"
     },
     {
-      "name": "native_reference_status.tex",
-      "file": "artifacts/paper/01_reference/native_reference_status.tex",
-      "sha256": "b1a9aff134dfdfcb40e16102d0b324d729d22c68a13aeb4a820bd381d0a1f261"
-    },
-    {
-      "name": "packaged_time_window_scores.csv",
-      "file": "artifacts/paper/01_reference/packaged_time_window_scores.csv",
-      "sha256": "400bfa870d0c733e46a4be289315a20b57fa3a4f5bab5c8549120dcf50fcce71"
-    },
-    {
-      "name": "packaged_time_window_scores.tex",
-      "file": "artifacts/paper/01_reference/packaged_time_window_scores.tex",
-      "sha256": "3f51aa0bd6d74e115a6486a53555aa29f9c02868b6de3939fe4f008fd8cc11e0"
-    },
-    {
-      "name": "reference_precision_audit.csv",
-      "file": "artifacts/paper/01_reference/reference_precision_audit.csv",
-      "sha256": "fc4d3dc669d1aae2572ae90f9b5e0dc8adb17f26857d87bab943fa6ecacaa8b5"
-    },
-    {
-      "name": "reference_precision_audit.tex",
-      "file": "artifacts/paper/01_reference/reference_precision_audit.tex",
-      "sha256": "e00697591dd35b9c4ff2e6afad3e92e4e6554d342f3af5d8dda342919429b1b2"
-    },
-    {
-      "name": "reference_time_windows.csv",
-      "file": "artifacts/paper/01_reference/reference_time_windows.csv",
-      "sha256": "c0c5c3aca4fe7f75b8391950c2f908783d9454b38abffb8b2735e665a99d4ab8"
-    },
-    {
-      "name": "reference_time_windows.tex",
-      "file": "artifacts/paper/01_reference/reference_time_windows.tex",
-      "sha256": "ad132127c096338cc1592843066b1c7ec9ad531077ae2d801825aaa2e09c282b"
-    },
-    {
-      "name": "comparator_availability.csv",
-      "file": "artifacts/paper/02_comparators/comparator_availability.csv",
-      "sha256": "3267ba973e7ce9d763dd0a44ddf765e54602d95fc6bb1c4cb308fa3afcf79264"
-    },
-    {
-      "name": "comparator_availability.tex",
-      "file": "artifacts/paper/02_comparators/comparator_availability.tex",
-      "sha256": "f4122312e41545ef1336d6e102a877842eed230528670d369a9478a3dd0a82ba"
-    },
-    {
-      "name": "baseline_scores.csv",
-      "file": "artifacts/paper/03_baselines/baseline_scores.csv",
-      "sha256": "c1a13ea34d264e33da641a457365a6dce1b9fbf6f9bd74e32f855c4ff59b4d90"
-    },
-    {
-      "name": "baseline_scores.tex",
-      "file": "artifacts/paper/03_baselines/baseline_scores.tex",
-      "sha256": "bc450977dde9d940dff5a46856f03b77e5da04175e19829ae45ebe4320f4dd9f"
-    },
-    {
-      "name": "depth_accuracy_temperature.pdf",
-      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.pdf",
-      "sha256": "601b61ecb182413f56dd73d0ea82bd52592a46b5c98e8c962cabb7fda36cd289"
-    },
-    {
-      "name": "depth_accuracy_temperature.png",
-      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.png",
-      "sha256": "f3887ff64f46c10272163c037bcfd4179c9996c2cfba5a707b4e522a7e02db1c"
-    },
-    {
-      "name": "depth_accuracy_temperature.svg",
-      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.svg",
-      "sha256": "a4008aebca189aac84dc963c806de9263ceee077e1abc236907f3073575a1301"
-    },
-    {
-      "name": "depth_scores.csv",
-      "file": "artifacts/paper/04_regional/depth_scores.csv",
-      "sha256": "d18189e581a447296ca2b5dd25265d324edda1ae819eba0758ada4c17c30dc6d"
-    },
-    {
-      "name": "depth_scores.tex",
-      "file": "artifacts/paper/04_regional/depth_scores.tex",
-      "sha256": "ccfeda3173100dc50c3cff0f09e6eb41076214a46d0d4d16e7ff90211bd3bb42"
-    },
-    {
-      "name": "paired_comparisons.csv",
-      "file": "artifacts/paper/04_regional/paired_comparisons.csv",
-      "sha256": "84b051272f365544a2137ac5042df41c89cc89adbb50d0c53f4069ae62c202cb"
-    },
-    {
-      "name": "paired_comparisons.tex",
-      "file": "artifacts/paper/04_regional/paired_comparisons.tex",
-      "sha256": "8c5eb0992f6a7f0fdf40c02b5b573ac35791a791baec879eba1e0011db023df5"
-    },
-    {
-      "name": "predefined_region_coverage.csv",
-      "file": "artifacts/paper/04_regional/predefined_region_coverage.csv",
-      "sha256": "7360bdd1e4258a95232b5eb5cf8d98806dab4a1d7b1ec2988a6ef5f5801bf9b7"
-    },
-    {
-      "name": "predefined_region_coverage.tex",
-      "file": "artifacts/paper/04_regional/predefined_region_coverage.tex",
-      "sha256": "dfcb0a31f327add3dd077677c20e575745bc2d337bcbaf03ebe5d10604107011"
-    },
-    {
-      "name": "primary_scorecard.csv",
-      "file": "artifacts/paper/04_regional/primary_scorecard.csv",
-      "sha256": "a29925d91ade63a125491f5e34592465b09b980a5365f6248af5866eebc331ce"
-    },
-    {
-      "name": "primary_scorecard.tex",
-      "file": "artifacts/paper/04_regional/primary_scorecard.tex",
-      "sha256": "90ca0364eb65f2a2a70c6e87ee5be246b7009b41f2d7b854a9b43a5541266c44"
-    },
-    {
-      "name": "regional_paired_improvement.pdf",
-      "file": "artifacts/paper/04_regional/regional_paired_improvement.pdf",
-      "sha256": "d4cc06176b72be247c73ca66067a64932f02248a482c647771d63a77791ecb45"
-    },
-    {
-      "name": "regional_paired_improvement.png",
-      "file": "artifacts/paper/04_regional/regional_paired_improvement.png",
-      "sha256": "8096d04cc49a788342bf4ad83d0cdc304b0d5c77f2ecaa6e9a2ae41962c70700"
-    },
-    {
-      "name": "regional_paired_improvement.svg",
-      "file": "artifacts/paper/04_regional/regional_paired_improvement.svg",
-      "sha256": "e05c61249e11ea6b63e5b171fabceb262dcc713322475abfebd305f08fac9624"
-    },
-    {
-      "name": "conditioning_baseline_availability.csv",
-      "file": "artifacts/paper/05_conditioning/conditioning_baseline_availability.csv",
-      "sha256": "774f8c91bd30ea1243ebed120af4549e3f5f8ec65820ff08a46493ef93d90644"
-    },
-    {
-      "name": "conditioning_baseline_availability.tex",
-      "file": "artifacts/paper/05_conditioning/conditioning_baseline_availability.tex",
-      "sha256": "c686c0860914a5b747676b2d6b6d3d5de5652e260b25d6c4203e30ce99f12529"
-    },
-    {
-      "name": "conditioning_comparisons.csv",
-      "file": "artifacts/paper/05_conditioning/conditioning_comparisons.csv",
-      "sha256": "ebb9f78da0b08eb22fdefbde69510fb98af569de973fa6dfae0522a2af4f6ab9"
-    },
-    {
-      "name": "conditioning_comparisons.tex",
-      "file": "artifacts/paper/05_conditioning/conditioning_comparisons.tex",
-      "sha256": "2cc16eca2d7091392d60d8c0fd0526c0ec882767b87a01eac99cd504eea738e3"
-    },
-    {
-      "name": "conditioning_curve.pdf",
-      "file": "artifacts/paper/05_conditioning/conditioning_curve.pdf",
-      "sha256": "ac01a41cb5f0cd78e27ab7ac5a6168d669dc04aa4c2ead4b9f9768496ff43a36"
-    },
-    {
-      "name": "conditioning_curve.png",
-      "file": "artifacts/paper/05_conditioning/conditioning_curve.png",
-      "sha256": "e58947fadce6cb7704307c8c4c95a484c01b2b150e90a035dc0fb561055a48d9"
-    },
-    {
-      "name": "conditioning_curve.svg",
-      "file": "artifacts/paper/05_conditioning/conditioning_curve.svg",
-      "sha256": "708f341b16a427a93b94c1ba3bdd5efa896f1d40115c10cbb4f7daa6e40a429f"
-    },
-    {
-      "name": "conditioning_mae_by_budget.csv",
-      "file": "artifacts/paper/05_conditioning/conditioning_mae_by_budget.csv",
-      "sha256": "5f05153982ae9397b2b5d1adc02176692b5670456f9b79e25f70beb78518de67"
-    },
-    {
-      "name": "conditioning_mae_by_budget.tex",
-      "file": "artifacts/paper/05_conditioning/conditioning_mae_by_budget.tex",
-      "sha256": "35e4b1b468bb3df1f83ada5b2a87b8348334b2583a519746a2135eb68116847e"
-    },
-    {
-      "name": "conditioning_reference_scores.csv",
-      "file": "artifacts/paper/05_conditioning/conditioning_reference_scores.csv",
-      "sha256": "1be5be56a7b9cef4b464e367e7f4a311788e79ff3c551ef2107baaf2269df56a"
-    },
-    {
-      "name": "conditioning_reference_scores.tex",
-      "file": "artifacts/paper/05_conditioning/conditioning_reference_scores.tex",
-      "sha256": "c4964bd40a7930d0d83c6e00e61b4cc3fadd6c822b74cba8f93e0551bd1fff01"
-    },
-    {
-      "name": "conditioning_scores.csv",
-      "file": "artifacts/paper/05_conditioning/conditioning_scores.csv",
-      "sha256": "1af0c51e2ab6e231713dd3649db6ffb81ebb35329a5edc2afb26b6db226507d6"
-    },
-    {
-      "name": "conditioning_scores.tex",
-      "file": "artifacts/paper/05_conditioning/conditioning_scores.tex",
-      "sha256": "5d721f77dd49148e54b965c2fe96cc7c936a6e5dd269d8ce656bf52cd6805586"
-    },
-    {
-      "name": "physical_error_summary_1.pdf",
-      "file": "artifacts/paper/06_physical/physical_error_summary_1.pdf",
-      "sha256": "7440a55a5d8c817afa54ec13e5182c429404d0e7c1095cfcd97af1c9347171c4"
-    },
-    {
-      "name": "physical_error_summary_1.png",
-      "file": "artifacts/paper/06_physical/physical_error_summary_1.png",
-      "sha256": "a0ca9640ab837e81326c57721d80d373f95251df15c807e6fe86034ae70d2727"
-    },
-    {
-      "name": "physical_error_summary_1.svg",
-      "file": "artifacts/paper/06_physical/physical_error_summary_1.svg",
-      "sha256": "fafb5a1627e2479e367c356b104ed83cb8ab76167b7b9c7951fe7a8abf960dfe"
-    },
-    {
-      "name": "physical_member_diagnostics.tex",
-      "file": "artifacts/paper/06_physical/physical_member_diagnostics.tex",
-      "sha256": "bff9850955eb5198c2098964cc07e0d0d94ac28c6482786bbd53d7d003a51fe6"
-    },
-    {
-      "name": "physical_summary.csv",
-      "file": "artifacts/paper/06_physical/physical_summary.csv",
-      "sha256": "a2635d331f6be4a8a5d463fde242235170051c84e8ba06941faa8af39d9986e6"
-    },
-    {
-      "name": "physical_summary.tex",
-      "file": "artifacts/paper/06_physical/physical_summary.tex",
-      "sha256": "cbfc68f2759221d26af5c71e9882f5d4afeb40e0c8d0d20669a33f31ce409ff2"
-    },
-    {
-      "name": "dependence_energy_scores.pdf",
-      "file": "artifacts/paper/07_dependence/dependence_energy_scores.pdf",
-      "sha256": "7d03d78816bfe84f879c85a5222ff6c31cdb3dc72c55511f8d24a766b4cd4a05"
+      "name": "mission_scores.tex",
+      "file": "artifacts/paper_all_profiles/mission_scores.tex",
+      "sha256": "43b6a3d1a2b9533474e99aa5039fb83058cb2eb43f52033fb2530b741f5d0621"
     },
     {
       "name": "partition_summary.csv",
-      "file": "artifacts/paper/partition_summary.csv",
-      "sha256": "9254b7c0e1d9c21d5d09023b386f69581d29ac928604a9ea27a82388d5321c53"
+      "file": "artifacts/paper_all_profiles/partition_summary.csv",
+      "sha256": "411482d3b5b8c0bf34ed9eb2a95f7d23896c8b59759752d8eb4c1f4f5d2a2655"
     },
     {
       "name": "profile_membership.csv",
       "file": "artifacts/profile_membership.csv",
       "sha256": "d6c6b2a46ad07d48f262123b9d7b36b54a8782c6d9e5b722e18901042e1465f7"
+    },
+    {
+      "name": "native_reference_status.csv",
+      "file": "artifacts/paper_all_profiles/01_reference/native_reference_status.csv",
+      "sha256": "04a9a6e94e125810c65b28e20b0734f237554b81cd9e6d77b3e21a877de8072b"
+    },
+    {
+      "name": "native_reference_status.tex",
+      "file": "artifacts/paper_all_profiles/01_reference/native_reference_status.tex",
+      "sha256": "b1a9aff134dfdfcb40e16102d0b324d729d22c68a13aeb4a820bd381d0a1f261"
+    },
+    {
+      "name": "packaged_time_window_scores.csv",
+      "file": "artifacts/paper_all_profiles/01_reference/packaged_time_window_scores.csv",
+      "sha256": "52f6fff6ab408326b0fc5dd911c2138b0ea1ee450e6159125f7d4220e0ac4ed6"
+    },
+    {
+      "name": "packaged_time_window_scores.tex",
+      "file": "artifacts/paper_all_profiles/01_reference/packaged_time_window_scores.tex",
+      "sha256": "e24fd05fc0289068f95a4b55dbe884f837d38a6feae309c2eab2d0eebb638b76"
+    },
+    {
+      "name": "reference_precision_audit.csv",
+      "file": "artifacts/paper_all_profiles/01_reference/reference_precision_audit.csv",
+      "sha256": "fc4d3dc669d1aae2572ae90f9b5e0dc8adb17f26857d87bab943fa6ecacaa8b5"
+    },
+    {
+      "name": "reference_precision_audit.tex",
+      "file": "artifacts/paper_all_profiles/01_reference/reference_precision_audit.tex",
+      "sha256": "e00697591dd35b9c4ff2e6afad3e92e4e6554d342f3af5d8dda342919429b1b2"
+    },
+    {
+      "name": "reference_time_windows.csv",
+      "file": "artifacts/paper_all_profiles/01_reference/reference_time_windows.csv",
+      "sha256": "660b7c33e96092ba896c0a0c63f103455f971160a3ed53476a623fc942960e08"
+    },
+    {
+      "name": "reference_time_windows.tex",
+      "file": "artifacts/paper_all_profiles/01_reference/reference_time_windows.tex",
+      "sha256": "9d0dcd9a561493a1c060a763f0b663baf691ec8d8210f55f47d14db6fb65baa9"
+    },
+    {
+      "name": "comparator_availability.csv",
+      "file": "artifacts/paper_all_profiles/02_comparators/comparator_availability.csv",
+      "sha256": "3267ba973e7ce9d763dd0a44ddf765e54602d95fc6bb1c4cb308fa3afcf79264"
+    },
+    {
+      "name": "comparator_availability.tex",
+      "file": "artifacts/paper_all_profiles/02_comparators/comparator_availability.tex",
+      "sha256": "f4122312e41545ef1336d6e102a877842eed230528670d369a9478a3dd0a82ba"
+    },
+    {
+      "name": "depth_accuracy_temperature.pdf",
+      "file": "artifacts/paper_all_profiles/04_regional/depth_accuracy_temperature.pdf",
+      "sha256": "6e59c39cef24698270057e2453a1bf6b06fc39f454389fe83fc943d0945a04d1"
+    },
+    {
+      "name": "depth_accuracy_temperature.png",
+      "file": "artifacts/paper_all_profiles/04_regional/depth_accuracy_temperature.png",
+      "sha256": "82f6aee669916dabb7996254553899aff4d9890691467ec90cac2ce59ac00e01"
+    },
+    {
+      "name": "depth_accuracy_temperature.svg",
+      "file": "artifacts/paper_all_profiles/04_regional/depth_accuracy_temperature.svg",
+      "sha256": "39007e27f83345289dec5bac0ebc1895e347d14715258b479ba4b385391e4c5d"
+    },
+    {
+      "name": "depth_scores.csv",
+      "file": "artifacts/paper_all_profiles/04_regional/depth_scores.csv",
+      "sha256": "040526060ddb4c287cc32c877da01affece5b0e6ebcec03543c95fdce2e42617"
+    },
+    {
+      "name": "depth_scores.tex",
+      "file": "artifacts/paper_all_profiles/04_regional/depth_scores.tex",
+      "sha256": "ac4a05cd38afb00e2f4ae5cd70037f46f2f19bfbc5746092e1670e6a48007321"
+    },
+    {
+      "name": "paired_comparisons.csv",
+      "file": "artifacts/paper_all_profiles/04_regional/paired_comparisons.csv",
+      "sha256": "6e70e4c699b9532d0ad9e70b82f69816a56a96f453c753980c474a62dbc94802"
+    },
+    {
+      "name": "paired_comparisons.tex",
+      "file": "artifacts/paper_all_profiles/04_regional/paired_comparisons.tex",
+      "sha256": "b8da871c904f5937dfa68a8505d971131d58f05825c612ab8dcd8a2ef1891a29"
+    },
+    {
+      "name": "predefined_region_coverage.csv",
+      "file": "artifacts/paper_all_profiles/04_regional/predefined_region_coverage.csv",
+      "sha256": "cdf0deb05c8d82d0d86a12184832dd112b0bf31d5fd05e299c5398aa28fe6220"
+    },
+    {
+      "name": "predefined_region_coverage.tex",
+      "file": "artifacts/paper_all_profiles/04_regional/predefined_region_coverage.tex",
+      "sha256": "da7396743f49bbbede0563e4a7420232b3582f0a82d4d19992a9cd8af108c167"
+    },
+    {
+      "name": "primary_scorecard.csv",
+      "file": "artifacts/paper_all_profiles/04_regional/primary_scorecard.csv",
+      "sha256": "62d317c32bd7332cfed45a419268d6c5689c729f7e28508adc68d73846252b7c"
+    },
+    {
+      "name": "primary_scorecard.tex",
+      "file": "artifacts/paper_all_profiles/04_regional/primary_scorecard.tex",
+      "sha256": "973298fdbf6be4ba403b13ebc4d7e999264bfcfa2b36c54f4a096274ba856cdf"
+    },
+    {
+      "name": "regional_paired_improvement.pdf",
+      "file": "artifacts/paper_all_profiles/04_regional/regional_paired_improvement.pdf",
+      "sha256": "638401404285d775cbf32c0386812ba61fb6311e80bef8b3ceeb8747b444208c"
+    },
+    {
+      "name": "regional_paired_improvement.png",
+      "file": "artifacts/paper_all_profiles/04_regional/regional_paired_improvement.png",
+      "sha256": "8fa3c2949ed17fa6c757596a1bb621976faa7e79045731c6c90e985f8e16666a"
+    },
+    {
+      "name": "regional_paired_improvement.svg",
+      "file": "artifacts/paper_all_profiles/04_regional/regional_paired_improvement.svg",
+      "sha256": "207a0a027a7430576076d0fd273c594d2b9a36052d4901bfa306f431691a0a61"
+    },
+    {
+      "name": "conditioning_baseline_availability.csv",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_baseline_availability.csv",
+      "sha256": "774f8c91bd30ea1243ebed120af4549e3f5f8ec65820ff08a46493ef93d90644"
+    },
+    {
+      "name": "conditioning_baseline_availability.tex",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_baseline_availability.tex",
+      "sha256": "c686c0860914a5b747676b2d6b6d3d5de5652e260b25d6c4203e30ce99f12529"
+    },
+    {
+      "name": "conditioning_comparisons.csv",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_comparisons.csv",
+      "sha256": "3f36beb333340da0a83caca042f8b9d3cd44aa0039115beb323bf8f9dd40094e"
+    },
+    {
+      "name": "conditioning_comparisons.tex",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_comparisons.tex",
+      "sha256": "f851312af4f0ec13056a3ec9ed817f2ce65ed99ff8327d7f59cbcc5d9351f0d0"
+    },
+    {
+      "name": "conditioning_curve.pdf",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_curve.pdf",
+      "sha256": "5c8f18ebb1ca0023963482bc506cdd344221343b1617db7c47d238eaef186bc1"
+    },
+    {
+      "name": "conditioning_curve.png",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_curve.png",
+      "sha256": "e914506e3ece05499d84bf0faf41490d683e273d90fe6418aaee1a6aea24adf6"
+    },
+    {
+      "name": "conditioning_curve.svg",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_curve.svg",
+      "sha256": "0edca6b615593dffce8c49c29bc652c4f03f1b133a2ddb591df6db5fa7e4854f"
+    },
+    {
+      "name": "conditioning_mae_by_budget.csv",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_mae_by_budget.csv",
+      "sha256": "b35b7269b8aa78bfecb10dcc925fd08dea579df93b348856c862cfad9c7bc91b"
+    },
+    {
+      "name": "conditioning_mae_by_budget.tex",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_mae_by_budget.tex",
+      "sha256": "e9e0e9e58c3afd77ccd9ce44eafcaa203d72c138b6cbbdcde9a9d8f2be7c42bd"
+    },
+    {
+      "name": "conditioning_reference_scores.csv",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_reference_scores.csv",
+      "sha256": "f5fe10ba9ea038eb99d98965e61da9efc418b60368d19964629e0a0bbde159ad"
+    },
+    {
+      "name": "conditioning_reference_scores.tex",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_reference_scores.tex",
+      "sha256": "99bc831b4e2e95c04164815cda682052ee1d49aa6f13f87073a10b0582386043"
+    },
+    {
+      "name": "conditioning_scores.csv",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_scores.csv",
+      "sha256": "094dfffd84b5e284a6cfe0682e3b7c0f0bb9e5ff6bac13d37eb542cf56dd0544"
+    },
+    {
+      "name": "conditioning_scores.tex",
+      "file": "artifacts/paper_all_profiles/05_conditioning/conditioning_scores.tex",
+      "sha256": "14323e8c1ff22dd5ea7ad968b64970fd203690bc1f180f06bd0daff2ca4a5bc0"
     }
   ]
 }
