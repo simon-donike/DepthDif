@@ -14,6 +14,7 @@ baselines:
 comparators:
   predictions: []  # Optional matched external CSV/NPZ predictions with frozen hashes.
 regional:
+  depth_bin_m: 25  # Raw external depths use fixed bins; EN4 keeps exact model levels.
   regions:
     - {name: southern_ocean, latitude: [-75, -40], longitude: [-180, 180]}
     - {name: north_atlantic_59n_section, latitude: [59, 60], longitude: [-60, 10]}

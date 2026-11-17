@@ -19,6 +19,107 @@ from val.paper_common import (
 )
 
 
+def _depth_scores(
+    points: pd.DataFrame, arrays: dict[str, np.ndarray], depth_bin_m: float | None
+) -> pd.DataFrame:
+    """Score identical depths with equal profile weights for every method."""
+    work = points.reset_index(drop=True).copy()
+    if depth_bin_m is not None:
+        if not np.isfinite(depth_bin_m) or depth_bin_m <= 0:
+            raise ValueError("regional.depth_bin_m must be positive and finite")
+        # Raw XBT depths differ between casts; fixed bins avoid one-cast curves.
+        work["depth_lower_m"] = np.floor(work.depth_m / depth_bin_m) * depth_bin_m
+        work["depth_upper_m"] = work.depth_lower_m + depth_bin_m
+        work["depth_m"] = (work.depth_lower_m + work.depth_upper_m) / 2
+    else:
+        work["depth_lower_m"] = work.depth_m
+        work["depth_upper_m"] = work.depth_m
+    truth = work.observation.to_numpy(float)
+    rows = []
+    for method, values in arrays.items():
+        matrix = np.asarray(values)
+        if matrix.ndim == 1:
+            matrix = matrix[:, None]
+        if not np.isfinite(matrix).all() or not np.isfinite(truth).all():
+            raise ValueError(f"Nonfinite values on common depth support: {method}")
+        error = matrix.mean(axis=1) - truth
+        losses = work.assign(
+            mae=np.abs(error), mse=error**2, bias=error, crps=point_crps(matrix, truth)
+        )
+        for (variable, depth), frame in losses.groupby(["variable", "depth_m"]):
+            # Average within profiles first so dense XBT sampling cannot dominate.
+            profile = frame.groupby("profile_id")[["mae", "mse", "bias", "crps"]].mean()
+            means = profile.mean()
+            rows.append(
+                {
+                    "variable": variable,
+                    "method": method,
+                    "depth_resolution": "bin" if depth_bin_m is not None else "exact",
+                    "depth_m": depth,
+                    "depth_lower_m": frame.depth_lower_m.iloc[0],
+                    "depth_upper_m": frame.depth_upper_m.iloc[0],
+                    "n_points": len(frame),
+                    "n_profiles": len(profile),
+                    "n_clusters": frame.cluster_id.nunique(),
+                    "mae": means.mae,
+                    "rmse": np.sqrt(means.mse),
+                    "bias": means.bias,
+                    "crps": means.crps,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _depth_report(
+    points: pd.DataFrame,
+    arrays: dict[str, np.ndarray],
+    output_dir: Path,
+    depth_bin_m: float | None,
+    settings: dict,
+) -> list[str]:
+    """Export evaluation-only depth tables and accuracy profiles for all methods."""
+    scores = _depth_scores(points, arrays, depth_bin_m)
+    scores["support_status"] = np.where(
+        (scores.n_profiles >= settings["min_profiles"])
+        & (scores.n_clusters >= settings["min_clusters"]),
+        "descriptive",
+        "insufficient_clusters_or_profiles",
+    )
+    artifacts = save_table(
+        scores,
+        output_dir,
+        "depth_scores",
+        "Evaluation partition only; equal profile weights on common support. "
+        "MAE, RMSE and signed bias use the member mean; CRPS uses all members. "
+        "Depths are grouped into fixed intervals. Curves are descriptive, without confidence intervals.",
+    )
+    for variable, frame in scores.groupby("variable", sort=True):
+        fig, axes = plt.subplots(1, 3, sharey=True, figsize=(12, 6))
+        units = "°C" if variable == "temperature" else "practical salinity"
+        for index, (method, group) in enumerate(frame.groupby("method", sort=True)):
+            group = group.sort_values("depth_m")
+            for axis, metric in zip(axes, ("mae", "rmse", "bias")):
+                axis.plot(
+                    group[metric],
+                    group.depth_m,
+                    label="DepthDif" if method == "residual" else method,
+                    color=plt.get_cmap("tab20")(index % 20),
+                    linestyle="-" if index < 20 else "--",
+                    linewidth=2.4 if method == "residual" else 1.2,
+                )
+                axis.set_xlabel(f"{metric.upper()} ({units})")
+                axis.grid(alpha=0.2)
+        axes[0].set_ylabel("Depth (m)")
+        axes[0].invert_yaxis()
+        axes[2].axvline(0, color="black", linewidth=0.8)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=8)
+        fig.suptitle(f"{variable}: evaluation profiles (descriptive)")
+        fig.tight_layout(rect=(0, 0.16, 1, 0.95))
+        artifacts += save_figure(fig, output_dir, f"depth_accuracy_{variable}")
+    return artifacts
+
+
 def _strata(points: pd.DataFrame, options: dict):
     """Yield predefined geography and descriptive transfer/regime diagnostics."""
     work = points.copy()
@@ -211,6 +312,17 @@ def run(context: Any, output_dir: Path, options: dict | None = None) -> dict:
         output_dir,
         "paired_comparisons",
         "Paired profile-balanced differences: DepthDif minus reference; negative favors DepthDif. Confidence intervals resample whole clusters.",
+    )
+    artifacts += _depth_report(
+        points,
+        arrays,
+        output_dir,
+        (
+            float(options.get("depth_bin_m", 25))
+            if context.config.get("cohort", {}).get("kind") == "external"
+            else None
+        ),
+        settings,
     )
     coverage = []
     for region in options.get("regions", []):

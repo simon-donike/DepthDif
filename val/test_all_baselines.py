@@ -77,6 +77,47 @@ def _context():
 class AllBaselineTests(unittest.TestCase):
     """Catch silent method omissions across score tables and conditioning budgets."""
 
+    def test_depth_bins_balance_profiles_and_preserve_signed_bias(self):
+        """Dense sampling cannot give one cast extra weight in a depth bin."""
+        points = pd.DataFrame(
+            {
+                "profile_id": ["a", "a", "b"],
+                "cluster_id": ["cruise_a", "cruise_a", "cruise_b"],
+                "variable": ["temperature"] * 3,
+                "depth_m": [10.0, 12.0, 14.0],
+                "observation": [0.0] * 3,
+            }
+        )
+        values = np.array([[1.0], [3.0], [-5.0]])
+        scores = regional._depth_scores(points, {"residual": values}, 25.0)
+        row = scores.iloc[0]
+        self.assertEqual((row.n_points, row.n_profiles, row.n_clusters), (3, 2, 2))
+        self.assertEqual(
+            (row.depth_lower_m, row.depth_m, row.depth_upper_m), (0, 12.5, 25)
+        )
+        self.assertAlmostEqual(row.mae, 3.5)
+        self.assertAlmostEqual(row.rmse, np.sqrt(15.0))
+        self.assertAlmostEqual(row.bias, -1.5)
+        self.assertAlmostEqual(row.crps, 3.5)
+        exact = regional._depth_scores(points, {"residual": values}, None)
+        self.assertEqual(list(exact.depth_m), [10, 12, 14])
+        # A sample on the upper edge belongs to the next bin, without overlap.
+        points.loc[2, "depth_m"] = 25.0
+        edges = regional._depth_scores(points, {"residual": values}, 25.0)
+        self.assertEqual(list(edges.n_points), [2, 1])
+
+    def test_depth_scores_reject_method_specific_missing_support(self):
+        """A failed baseline cannot improve its scores by dropping hard points."""
+        context = _context()
+        points = context.evaluation.points
+        arrays = method_arrays(points, context.evaluation.members)
+        scores = regional._depth_scores(points, arrays, None)
+        self.assertTrue(NAMES.issubset(set(scores.method)))
+        self.assertEqual(set(scores.n_profiles), {6})
+        arrays["cnn"][0, 0] = np.nan
+        with self.assertRaisesRegex(ValueError, "common depth support: cnn"):
+            regional._depth_scores(points, arrays, None)
+
     def test_every_default_cohort_uses_the_complete_roster(self):
         """Standalone EN4, XBT and salinity evaluations share the five methods."""
         for path in (

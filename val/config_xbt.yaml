@@ -9,6 +9,8 @@ device: cuda:0
 cohort:
   kind: external
   profiles: val/results/xbt_reference/profiles.csv
+  screened_profiles: evaluations/outputs/italian_en4_no_match_profiles.parquet
+  screened_profiles_sha256: e6ca86ff73e0f51dc5b7d7dbc8ff1367e23cc8905301cdbd2e1c843c2a4e1b63
   year: 2016
   split_role: discovery
   batch_size: 2
@@ -36,3 +38,7 @@ statistics:
 evidence:
   training_split_verified: false
   confirmation_untouched: false
+paper:
+  calibration_fraction: 0  # Evaluate every Italian cast with fixed predictions.
+  baselines:
+    enabled: false  # No corrections or uncertainty models fitted to Italian labels.

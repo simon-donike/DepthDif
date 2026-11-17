@@ -1,8 +1,8 @@
 # Frozen residual validation
 
-Everything added for this validation lives here. The training application,
-existing tests, checkpoints, and deliberately shuffled validation loader are
-unchanged. Commands run from the repository root with
+The validation workflow lives here; its published dashboard and snapshots live
+under `docs/`. The training application, checkpoints, and deliberately shuffled
+validation loader are unchanged. Commands run from the repository root with
 `/work/envs/depth/bin/python`; add `PYTHONPATH=src` if the package is not installed.
 
 The scientific protocol and primary references are in
@@ -46,8 +46,12 @@ conditioning budget, using 1,000-step DDPM and the five conditioning budgets.
 It preserves the frozen EN4 cap of 256 selected patches;
 it does not evaluate every validation patch. XBT uses its configured
 2016 cohort without a patch cap. The cohort configs select `cuda:0`; check GPU
-availability before launch. The full campaign has not been launched. Readiness
-checks from 5 November 2026 are under `results/preflight_temperature_20261105/`.
+availability before launch. On 17 November 2026 the initial sequential campaign
+was stopped at the user's request and restarted under
+`results/temperature_parallel_20261117/`: EN4 on physical GPU 0 and XBT on physical
+GPU 1. That directory's `index.html`, `status.json` and separate cohort logs track
+the run; final results are pending. The frozen config snapshots and exact runner
+are retained there. Registry checks are under `results/screening_restart_20261117/`.
 
 | Stage | Question | Module |
 | --- | --- | --- |
@@ -141,6 +145,28 @@ Each successful evaluation writes:
 | `bundle/exclusions.csv` | Cases excluded using QC, reference support, or conditioning criteria |
 | `cohort.csv`, `holdouts.json` | Selected points and global conditioning exclusions |
 | `preflight.json`, `status.json` | Readiness and completion/failure record |
+| `profile_membership.csv`, `profile_membership.json` | Every selected profile checked against the frozen screened registry before inference |
+
+EN4's registry is `instructions/en4_no_spatiotemporal_candidate_profiles.parquet`;
+only the configured year and `no_spatiotemporal_candidate` status qualify. XBT's
+registry is `evaluations/outputs/italian_en4_no_match_profiles.parquet`, as named
+in `evaluations/plans/glorys12_weaknesses_plan_short.md`. The temperature configs
+pin both registry hashes. Missing IDs, conflicting timestamps, altered registry
+contents, or mismatched XBT cruise/station/file/coordinates/QC abort the run.
+XBT's entire prepared input is also checked under `input_screening/` before
+matching. Registry membership verifies the documented screened selection; it
+does not establish that GLORYS never assimilated a profile.
+
+The paper regional stage additionally writes `paper/04_regional/depth_scores.csv`
+and `.tex` for **every available method**, using only the evaluation partition.
+EN4 retains exact model depths; raw XBT depths use fixed 25 m bins (left-closed,
+right-open), configurable with `paper.regional.depth_bin_m`. Losses are averaged
+within each profile before averaging across profiles; RMSE is the square root of
+that profile-balanced mean squared error. Tables include MAE, RMSE, signed bias,
+CRPS, and point/profile/cluster counts. `depth_accuracy_temperature.pdf`, `.svg`
+and `.png` plot MAE, RMSE and bias against depth. These curves are descriptive;
+the paired depth-band comparisons provide cluster-bootstrap intervals where
+support permits. No calibration profiles enter these depth tables or figures.
 
 Errors are reported in °C or practical salinity units separately. Ensemble-mean
 RMSE and ensemble-median MAE are point scores; CRPS scores all members. Deterministic
@@ -326,3 +352,164 @@ The test wrapper runs the complete existing `tests/run_tests.sh` and then all
 additional `val/test_*.py` tests, with logs under `val/results/verification/`.
 Missing ocean data blocks real evaluation; it does not block the synthetic demo,
 observation-operator fixtures, or scoring tests.
+# Website validation snapshot
+
+### Italian ensemble and spatial metrics
+
+`val.italian_ensemble` generates 20 members for every frozen Italian XBT batch,
+split across physical GPUs 0 and 1. It preserves the 1,000-step DDPM sampler,
+EMA checkpoint, original batch pairing, full masked conditioning, and the
+single-generation seed as member zero. Conditioning hashes and member-zero
+point predictions must match the original campaign. Samples are saved atomically
+with checksums and can be resumed using identical arguments.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.italian_ensemble --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --output val/results/italian_ensemble_20261117 --shard 0 --members 20
+CUDA_VISIBLE_DEVICES=1 PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.italian_ensemble --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --output val/results/italian_ensemble_20261117 --shard 1 --members 20
+PYTHONPATH=val/vendor:src /work/envs/depth/bin/python -m val.score_italian_ensemble --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --ensemble val/results/italian_ensemble_20261117 --spatial val/results/xbt_spatial_all_20261117 --output docs/assets/validation/italian_xbt_temperature/ensemble --device cuda:0
+```
+
+Launch the workers concurrently; score only after both finish. CRPS and fair
+CRPS use all 102 casts / 79,367 measurements, with equal cast weights and native
+depth interpolation. Coverage and width use sample 5th–95th percentiles.
+Original single-generation tables remain separate. No EN4 inference is repeated.
+
+Before scoring, replay `val.export_spatial` with `--all-profiles` and work directory
+`val/results/xbt_spatial_all_20261117` to include both missions. Spatial comparisons
+use all 14 patches with verified saved neural baseline fields for every method,
+checking wet support across all 50 model depths. LPIPS 0.1 uses
+pretrained VGG16, repeats each physical temperature layer across three channels,
+and maps a fixed clipped range of −2 to 35 °C to [−1, 1]. Common invalid pixels
+have identical zero fills; spatial distances are averaged over wet masks eroded
+16 cells. Receptive fields may still cross coasts: this is an exploratory
+natural-image metric, not an ocean-trained perceptual score.
+
+Spectra reuse the repository's physical-spacing, plane-detrended, Hann-windowed
+2D FFT implementation, with common masks and 32 wavelength bins over 30–1,000 km.
+The scalar spectral error is RMSE of log10 power against packaged GLORYS,
+with a common 1e-12 °C² power floor so zero-power predictions are not discarded.
+Individual-member power is averaged before comparison; the ensemble mean is
+reported separately. Spatial scores average depths and then patches equally.
+GLORYS self-scores are zero by construction; these metrics measure similarity to
+the reference rather than independent observational accuracy. CSV exports retain
+patch/depth scores and spectra, and the website offers depth-selectable curves.
+
+The `/validation/` dashboard exports saved evaluation results only. Refresh it after
+additional campaign stages or EN4 inference finish:
+
+```bash
+/work/envs/depth/bin/python -m val.export_dashboard --campaign val/results/temperature_parallel_20261117 --output docs/assets/validation
+```
+
+The exporter checks bundle hashes, rejects overlapping calibration/evaluation
+profiles or clusters, preserves the paper's aggregate scores, and publishes every
+evaluation profile at its saved observation depths. Unfinished cohorts have no
+placeholder scores. Only completed-stage artifacts are included in the download
+pack; pointwise diagnostic files above 2 MB remain in the original campaign.
+The static site must be rebuilt and published after refreshing the snapshot.
+
+Italian fixed-model comparisons now use all 102 saved casts (79,367 points)
+from PNRAXXXI and PNRAXXXII, with no calibration. The earlier report reserved
+14 casts from PNRAXXXII for fitted correction/uncertainty comparators; DepthDif
+itself was never fitted to them. Preserve that original report and generate the
+new analysis from the existing prediction bundle:
+
+```bash
+/work/envs/depth/bin/python -m val.score_all_profiles --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --output val/results/temperature_parallel_20261117/italian_xbt_temperature/paper_all_profiles
+```
+
+The exporter prefers this report only when its completion marker, bundle hash
+and complete observation membership pass validation. Combined and per-mission
+scores use fixed predictions without fitting corrections. Two missions remain
+below the independent-cluster threshold for confidence/significance claims.
+`config_xbt.yaml` also disables calibration and fitted baseline stages for future
+Italian runs. EN4 retains its own separate analysis configuration.
+
+Full-context XBT inference uses all available QC-valid EN4 context in the matched
+patches/times, irrespective of GLORYS archive membership, after target-cell and
+one-cell-buffer masking. The screened registries constrain evaluation targets,
+not all conditioning profiles. Italian and EN4 scores remain separate; reduced
+context budgets are separate ablations. Italian archive screening does not prove
+non-assimilation from GLORYS assimilation logs.
+
+### Spatial prediction images
+
+The dashboard comparisons retain original packaged GLORYS as the GLORYS
+reference. Bias-calibrated GLORYS and both GLORYS- and climatology-background optimal interpolation
+(including all context budgets) are excluded from the published dashboard
+tables, curves, profile series, downloadable reports and CSV/LaTeX exports. The export filter
+preserves retained scores and does not modify the frozen campaign evidence.
+
+The validation page uses a Leaflet map to select evaluation profiles and compare
+DepthDif, packaged GLORYS and XBT temperature curves. The spatial viewer displays
+all model depths with a shared colour range across methods and depths per patch.
+The map includes all 102 casts in separate mission layers and verified EN4
+temperature support cells from all 14 saved input patches. The default animation
+patch is selected by coverage, not error: more than five XBT casts and more than
+five EN4 cells, then largest cast count (patch 12896: 13 casts / 15 EN4 cells).
+The all-profile replay extends the original 12-patch image archive to all 14
+Italian patches, including both missions.
+Playback advances every 500 ms and loops; manual depth changes, patch/cohort
+changes and hiding the browser tab pause it. Cyan circles show every retained
+EN4 temperature input cell, with filled centres at supported depths. XBT casts
+use crosses (red for the selected cast). These are masked model-grid support
+locations, not unique source-profile identities. Method and metric information
+buttons explain definitions, weighting, conditioning and interpretation limits
+on hover, keyboard focus or tap.
+
+The point bundles do not retain complete prediction grids. Generate verified
+spatial replays separately, without restarting the campaign:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 /work/envs/depth/bin/python -m val.export_spatial --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --work val/results/xbt_spatial_20261117 --output docs/assets/validation/italian_xbt_temperature/spatial --device cuda:0
+```
+
+Use a new `--work` directory for each replay. The exporter preserves the original
+batch sizes and seeds, verifies conditioning tensor hashes, checks native-depth
+predictions against saved values (absolute tolerance 1e-5 °C, relative tolerance
+1e-6), and exports only patches containing evaluation profiles. GLORYS validity
+and land masks apply to every field; missing model values are transparent. Each
+PNG contains the original grid at all model depths, stacked vertically. Physical
+arrays remain in the local work directory. Re-run `val.export_dashboard` after
+the spatial export to add the manifest to the website snapshot.
+
+To add verified support markers to existing images without rerunning inference:
+
+```bash
+/work/envs/depth/bin/python -m val.export_spatial --cohort val/results/temperature_parallel_20261117/italian_xbt_temperature --work val/results/xbt_supports --output docs/assets/validation/italian_xbt_temperature/spatial --device cpu --supports-only
+```
+
+This reads the saved holdouts, rebuilds the original batches and checks every
+input tensor hash before exporting `x_valid_mask` cell locations and depth
+availability. It checks the existing manifest's checkpoint, depth axis and
+evaluation patch set before atomically updating the manifest.
+
+For LSTM spatial replay, independent pixel sequences are processed in groups of
+1,024 on the GPU to bound recurrent workspace memory. Each full depth sequence,
+conditioning feature, and outer patch batch is preserved. Frozen point predictions
+must still pass the same numerical agreement check before publication.
+
+### Preliminary EN4 subset on two GPUs
+
+`val.quick_en4` selects 64 patches from the frozen 256-patch EN4 campaign using
+month and 20-degree region coverage, with seeded tie ordering and no prediction
+values. It retains original two-patch batches, residual member seeds, checkpoint,
+DDPM steps, and **all** original masked target cells, including cells outside the
+subset. Both workers use all remaining inputs. The additional conditioning-budget
+experiments and fitted calibration methods are disabled; every supported selected
+profile is evaluated. This is a preliminary coverage sample, not an area-weighted
+global estimate or independent confirmation.
+
+```bash
+/work/envs/depth/bin/python -m val.quick_en4 prepare --source val/results/temperature_parallel_20261117/en4_temperature --output val/results/en4_quick_20261117/en4_temperature --patches 64 --seed 20261117
+CUDA_VISIBLE_DEVICES=0 /work/envs/depth/bin/python -m val.quick_en4 worker --output val/results/en4_quick_20261117/en4_temperature --shard 0
+CUDA_VISIBLE_DEVICES=1 /work/envs/depth/bin/python -m val.quick_en4 worker --output val/results/en4_quick_20261117/en4_temperature --shard 1
+/work/envs/depth/bin/python -m val.quick_en4 merge --output val/results/en4_quick_20261117/en4_temperature
+```
+
+Run the two worker commands in separate processes. Each two-patch bundle is saved
+with checksums before the next batch. Completed bundles can be reused; incomplete
+batch directories are deliberately not overwritten. Merge requires every frozen
+batch and excludes an incomplete baseline from the entire shared comparison,
+without removing observations to improve its coverage. Tables and figures use
+exact EN4 model depths; the paper report has no calibration partition.

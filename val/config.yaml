@@ -11,6 +11,7 @@ device: cuda:0
 cohort:
   kind: en4_archive
   audit_path: instructions/en4_no_spatiotemporal_candidate_profiles.parquet
+  audit_sha256: 96266311d33c51f9180fdb0407cb64666240011c2499b739e5d777a5b633b3bc
   year: 2016
   split_role: discovery
   max_patches: 256
@@ -38,3 +39,7 @@ evidence:
   # Supply evidence paths before enabling either flag; 2016 was used for model selection.
   training_split_evidence: null
   confirmation_evidence: null
+paper:
+  calibration_fraction: 0  # Evaluate every eligible profile with fixed predictions.
+  baselines:
+    enabled: false

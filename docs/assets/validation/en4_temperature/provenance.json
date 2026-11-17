@@ -1,0 +1,607 @@
+{
+  "model": {
+    "checkpoint_sha256": "d5c5e7d49b1d4ea286c41b4ee717f112e57dc96d52d96331e654e646cb41b84a",
+    "config_sha256": "e96f0342332592fe0bfb0b4a89292be9ca08440a798aa88c66dd0fa6df8238d2",
+    "weight_variant": "ema",
+    "members": 1,
+    "seed": 20261103,
+    "bundle_sha256": {
+      "points.csv": "565495b18591d7eedf3e7cc48e2861fd7d6fe103e13468885e1ca597a1d1f4ba",
+      "members.npz": "b05f0edaf7ef2b876a2ec9282e3f17b573756616626a2791078f73f980108399"
+    }
+  },
+  "membership": {
+    "status": "passed",
+    "registry": "en4_no_spatiotemporal_candidate_profiles.parquet",
+    "registry_sha256": "96266311d33c51f9180fdb0407cb64666240011c2499b739e5d777a5b633b3bc",
+    "year": 2016,
+    "registry_profiles": 297561,
+    "selected_profiles": 548,
+    "verified_profiles": 548,
+    "unlisted_profiles": 0,
+    "identity_mismatches": 0,
+    "verified_not_assimilated": false,
+    "evidence": "Membership in the documented archive-screened set; not GLORYS assimilation-log verification"
+  },
+  "baselines": [
+    {
+      "method": "idw",
+      "status": "blocked",
+      "invalid_points": 19,
+      "checkpoint_sha256": null
+    },
+    {
+      "method": "lstm",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "cead4e50a983541346dea570a620ce599f5a609a350f6dde953029d029cf7d40"
+    },
+    {
+      "method": "cnn",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "6978636ae05dc0e76b25dd4b25b414bdb1cdc33bfbbea8d48f5c79cea67ec862"
+    },
+    {
+      "method": "unet3d",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "d77791b0766773ea6e4c67197befa1afa0d21dcb5dbbc2267d65a99f384c590a"
+    },
+    {
+      "method": "unet2d",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "068eb9fe4464921177864f407338569d5885445119eab2a371125e2e6cf3fb37"
+    }
+  ],
+  "stages": [
+    {
+      "name": "reference",
+      "status": "partial",
+      "summary": "Packaged precision and timing audits completed; native NetCDF is not configured."
+    },
+    {
+      "name": "comparators",
+      "status": "partial",
+      "summary": "Verified matching AI/published comparator predictions"
+    },
+    {
+      "name": "regional",
+      "status": "complete",
+      "summary": "Paired regional, depth, seasonal and provenance comparisons with cluster uncertainty and evidence gates"
+    },
+    {
+      "name": "conditioning",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    },
+    {
+      "name": "physical",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    },
+    {
+      "name": "dependence",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    },
+    {
+      "name": "extremes",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    },
+    {
+      "name": "selective",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    },
+    {
+      "name": "efficiency",
+      "status": "blocked",
+      "summary": "Disabled explicitly in the frozen configuration"
+    }
+  ],
+  "pilot": {
+    "source": "/work/code/DepthDif/val/results/temperature_parallel_20261117/en4_temperature",
+    "seed": 20261117,
+    "selection": "Greedy month then 20-degree region coverage, seeded tie order; original two-patch batches retained; no prediction-based selection.",
+    "source_sha256": {
+      "cohort.csv": "0de08bff3baf63a3f7033d3165edb2696c171049f283d7940f8aa3699ec7d855",
+      "en4_selection.json": "7c34fba44cdc6f94c5941ab428f76024f6d83633ba905725c1d3f3ca489e2298",
+      "holdouts.json": "494b8be5fbc94eb653eb7bd766a5934ef3260a80188b8400a89a27ddff5f0204",
+      "config.yaml": "7cf438c098186b998dffcc54b04ce14aeefa764644f7d108886e25831fa5f2bc"
+    },
+    "frozen_sha256": {
+      "cohort.csv": "c3d0ad6d5669036d9b64aa2debeffb81438efb2a9cd288c0ec0b2836bbb5ef8b",
+      "holdouts.json": "494b8be5fbc94eb653eb7bd766a5934ef3260a80188b8400a89a27ddff5f0204",
+      "config.yaml": "8ec557d3296e136e26d1dc984ad5dd1e7198d41a77641a65f19181d00ee3869e"
+    },
+    "jobs": [
+      {
+        "original_batch": 4,
+        "patch_indices": [
+          34150,
+          151602
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 9,
+        "patch_indices": [
+          48526,
+          101811
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 10,
+        "patch_indices": [
+          666,
+          32807
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 11,
+        "patch_indices": [
+          37558,
+          141180
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 12,
+        "patch_indices": [
+          134632,
+          124060
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 13,
+        "patch_indices": [
+          59639,
+          52921
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 19,
+        "patch_indices": [
+          20751,
+          78695
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 24,
+        "patch_indices": [
+          109721,
+          149727
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 28,
+        "patch_indices": [
+          95405,
+          26570
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 29,
+        "patch_indices": [
+          128756,
+          122955
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 30,
+        "patch_indices": [
+          23098,
+          33726
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 40,
+        "patch_indices": [
+          53897,
+          94620
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 46,
+        "patch_indices": [
+          80226,
+          167945
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 49,
+        "patch_indices": [
+          66012,
+          115237
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 59,
+        "patch_indices": [
+          158449,
+          69774
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 60,
+        "patch_indices": [
+          99807,
+          131788
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 63,
+        "patch_indices": [
+          1991,
+          31977
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 68,
+        "patch_indices": [
+          76301,
+          50020
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 72,
+        "patch_indices": [
+          21160,
+          80058
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 76,
+        "patch_indices": [
+          114521,
+          10982
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 81,
+        "patch_indices": [
+          96222,
+          27952
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 82,
+        "patch_indices": [
+          128560,
+          122425
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 90,
+        "patch_indices": [
+          29730,
+          36709
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 93,
+        "patch_indices": [
+          53884,
+          93096
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 95,
+        "patch_indices": [
+          50621,
+          146223
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 98,
+        "patch_indices": [
+          56071,
+          19861
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 103,
+        "patch_indices": [
+          10657,
+          110237
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 104,
+        "patch_indices": [
+          148583,
+          41777
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 105,
+        "patch_indices": [
+          113591,
+          64007
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 106,
+        "patch_indices": [
+          9237,
+          160367
+        ],
+        "shard": 1
+      },
+      {
+        "original_batch": 107,
+        "patch_indices": [
+          17041,
+          95866
+        ],
+        "shard": 0
+      },
+      {
+        "original_batch": 127,
+        "patch_indices": [
+          75218,
+          3936
+        ],
+        "shard": 1
+      }
+    ],
+    "patches": 64,
+    "source_patches": 256,
+    "profiles": 548,
+    "points_before_support": 11392,
+    "months": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "regions": [
+      "lat+00_lon+060",
+      "lat+00_lon+080",
+      "lat+00_lon+120",
+      "lat+00_lon+140",
+      "lat+00_lon+160",
+      "lat+00_lon-020",
+      "lat+00_lon-040",
+      "lat+00_lon-080",
+      "lat+00_lon-100",
+      "lat+00_lon-120",
+      "lat+00_lon-140",
+      "lat+00_lon-160",
+      "lat+00_lon-180",
+      "lat+20_lon+020",
+      "lat+20_lon+120",
+      "lat+20_lon+160",
+      "lat+20_lon-040",
+      "lat+20_lon-060",
+      "lat+20_lon-080",
+      "lat+20_lon-100",
+      "lat+20_lon-120",
+      "lat+20_lon-140",
+      "lat+40_lon+000",
+      "lat+40_lon+020",
+      "lat+40_lon+140",
+      "lat+40_lon-020",
+      "lat+40_lon-040",
+      "lat+40_lon-060",
+      "lat+40_lon-160",
+      "lat+60_lon+000",
+      "lat+60_lon+020",
+      "lat+60_lon-040",
+      "lat+60_lon-160",
+      "lat+80_lon+000",
+      "lat+80_lon+120",
+      "lat-20_lon+060",
+      "lat-20_lon+080",
+      "lat-20_lon+100",
+      "lat-20_lon+140",
+      "lat-20_lon+160",
+      "lat-20_lon-020",
+      "lat-20_lon-040",
+      "lat-20_lon-100",
+      "lat-20_lon-120",
+      "lat-20_lon-140",
+      "lat-20_lon-160",
+      "lat-20_lon-180",
+      "lat-40_lon+000",
+      "lat-40_lon+040",
+      "lat-40_lon+080",
+      "lat-40_lon+140",
+      "lat-40_lon-040",
+      "lat-40_lon-060",
+      "lat-60_lon+000",
+      "lat-60_lon+020",
+      "lat-60_lon+040",
+      "lat-60_lon+060",
+      "lat-60_lon+080",
+      "lat-60_lon-020",
+      "lat-80_lon+000",
+      "lat-80_lon+040",
+      "lat-80_lon+060"
+    ],
+    "screening": {
+      "status": "passed",
+      "registry": "/work/code/DepthDif/instructions/en4_no_spatiotemporal_candidate_profiles.parquet",
+      "registry_sha256": "96266311d33c51f9180fdb0407cb64666240011c2499b739e5d777a5b633b3bc",
+      "year": 2016,
+      "registry_profiles": 297561,
+      "selected_profiles": 548,
+      "verified_profiles": 548,
+      "unlisted_profiles": 0,
+      "identity_mismatches": 0,
+      "verified_not_assimilated": false,
+      "evidence": "Membership in the documented archive-screened set; not GLORYS assimilation-log verification"
+    },
+    "policy": "Preliminary coverage-selected EN4 subset; all retained points evaluated. All source holdouts remain masked. One generation, original DDPM steps and original residual batch seeds. Not an ocean-area representative sample or proof of non-assimilation."
+  },
+  "artifacts": [
+    {
+      "name": "native_reference_status.csv",
+      "file": "artifacts/paper/01_reference/native_reference_status.csv",
+      "sha256": "04a9a6e94e125810c65b28e20b0734f237554b81cd9e6d77b3e21a877de8072b"
+    },
+    {
+      "name": "native_reference_status.tex",
+      "file": "artifacts/paper/01_reference/native_reference_status.tex",
+      "sha256": "b1a9aff134dfdfcb40e16102d0b324d729d22c68a13aeb4a820bd381d0a1f261"
+    },
+    {
+      "name": "packaged_time_window_scores.csv",
+      "file": "artifacts/paper/01_reference/packaged_time_window_scores.csv",
+      "sha256": "7e45b074d6faa9571151b81fd0e8f1943545900225c02d1d29a81352a11222f5"
+    },
+    {
+      "name": "packaged_time_window_scores.tex",
+      "file": "artifacts/paper/01_reference/packaged_time_window_scores.tex",
+      "sha256": "08bd791fa935900d8548a6305edfe5a90d78f43b7a7580fc7568303c40741167"
+    },
+    {
+      "name": "reference_precision_audit.csv",
+      "file": "artifacts/paper/01_reference/reference_precision_audit.csv",
+      "sha256": "0030d4548e7f29a2b79cdfc21872a264a04e666453a4f32c1e1ab6f0c5d1cb24"
+    },
+    {
+      "name": "reference_precision_audit.tex",
+      "file": "artifacts/paper/01_reference/reference_precision_audit.tex",
+      "sha256": "7264b6f906356a7a31aff7dcfd0b64bad8f225a45c20ae3352d4b6325c578c05"
+    },
+    {
+      "name": "reference_time_windows.csv",
+      "file": "artifacts/paper/01_reference/reference_time_windows.csv",
+      "sha256": "b3ac96169fa0297bd233cdf252a8414c7fb1404b578c1b81a275f2ec36a78be7"
+    },
+    {
+      "name": "reference_time_windows.tex",
+      "file": "artifacts/paper/01_reference/reference_time_windows.tex",
+      "sha256": "7566760e6b61f5c1066fccaa5a575094a039aa8ad84ba7c803fd8161c2b35bea"
+    },
+    {
+      "name": "comparator_availability.csv",
+      "file": "artifacts/paper/02_comparators/comparator_availability.csv",
+      "sha256": "bb4b5d7b61fafe7dd0b6baf907c701b84d0bc2db9f5b047556e5dfeeb5529864"
+    },
+    {
+      "name": "comparator_availability.tex",
+      "file": "artifacts/paper/02_comparators/comparator_availability.tex",
+      "sha256": "83dc144a651eebc57d69e68b355b9804a83a30eb501c0ff0d3bc7b3725ac7117"
+    },
+    {
+      "name": "depth_accuracy_temperature.pdf",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.pdf",
+      "sha256": "5cb66f6391a909c15606ef85d46f5b5121ab00aca7c476b4e3db7f4959b35f01"
+    },
+    {
+      "name": "depth_accuracy_temperature.png",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.png",
+      "sha256": "cda9aa07b95e9a17ea9ebd3c21ac44fdd0bd0cc055f5c1705c98f84a6ee92bce"
+    },
+    {
+      "name": "depth_accuracy_temperature.svg",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.svg",
+      "sha256": "315aa482f93d7a38a06b47f30b290acbf2e4b8e14a4f20f1d426e9d7b2c293ef"
+    },
+    {
+      "name": "depth_scores.csv",
+      "file": "artifacts/paper/04_regional/depth_scores.csv",
+      "sha256": "325bf9874f6b12b42cac907076a65808357d59f17754da193918190c9e1d9a02"
+    },
+    {
+      "name": "depth_scores.tex",
+      "file": "artifacts/paper/04_regional/depth_scores.tex",
+      "sha256": "ad0138dadf7698e2e5d00f20b46d4dacefe8297a7a211bfdde28735ad21ed1c7"
+    },
+    {
+      "name": "paired_comparisons.csv",
+      "file": "artifacts/paper/04_regional/paired_comparisons.csv",
+      "sha256": "4e474e41ac72597833052b34c1620befecb5c95dc37806d1387780c683be7517"
+    },
+    {
+      "name": "paired_comparisons.tex",
+      "file": "artifacts/paper/04_regional/paired_comparisons.tex",
+      "sha256": "d4b3f60b8aa9b65be71d41d8900cb735d15baa7dbecdbd2df2afbacb19e838d3"
+    },
+    {
+      "name": "predefined_region_coverage.csv",
+      "file": "artifacts/paper/04_regional/predefined_region_coverage.csv",
+      "sha256": "dbb791a0a831633160f6d26ef6f8bcc0d97bac3a5d25b2da9b5ddbffbcddbd0d"
+    },
+    {
+      "name": "predefined_region_coverage.tex",
+      "file": "artifacts/paper/04_regional/predefined_region_coverage.tex",
+      "sha256": "85e6a40e6f9f2d49b010ae4c926128faaf9a3ee2ec339f7969ba2f1b45621e46"
+    },
+    {
+      "name": "primary_scorecard.csv",
+      "file": "artifacts/paper/04_regional/primary_scorecard.csv",
+      "sha256": "3c608bbc471acf202d17506726f32680a6525f235915e98a55ebd76764bfe94b"
+    },
+    {
+      "name": "primary_scorecard.tex",
+      "file": "artifacts/paper/04_regional/primary_scorecard.tex",
+      "sha256": "95736b1736c6e4b7da3024f64e1052574a6c1301d46a768e314f7b54b582b6ef"
+    },
+    {
+      "name": "regional_paired_improvement.pdf",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.pdf",
+      "sha256": "a87be2059f3f02a4660fd1db2c102a186d8f3e5fc5b85f2242acae78342d1c83"
+    },
+    {
+      "name": "regional_paired_improvement.png",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.png",
+      "sha256": "c824c7cce335681c80d61a209fb869820541f065cb8a3a8652dfeab63c0eb35c"
+    },
+    {
+      "name": "regional_paired_improvement.svg",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.svg",
+      "sha256": "a44728192f15b40f25af4db235525a2440942cd82f47555e9ad05cce6a10eaf9"
+    },
+    {
+      "name": "partition_summary.csv",
+      "file": "artifacts/paper/partition_summary.csv",
+      "sha256": "6554dafd1f1ca3c254e9e27166fbbb70f9d8af660a15bb7dd3f198261f3eac7a"
+    },
+    {
+      "name": "profile_membership.csv",
+      "file": "artifacts/profile_membership.csv",
+      "sha256": "de05c64e78a23519aec2c9e68691e20e1ef18d811e1cbab7de28ea765f042221"
+    }
+  ]
+}

@@ -1,3 +1,41 @@
+# Verification on 17 November 2026
+
+Both temperature preflights passed again, including the residual checkpoint and
+the five baseline checkpoint/configuration checks. The latest local residual run
+remains `1419568d`; the campaign keeps its frozen best step-2,000 EMA checkpoint.
+Both host RTX 3090 GPUs were idle before launch. The user selected the prepared
+campaign with unchanged sampling and cohort settings: 256 EN4 patches, the
+configured 2016 XBT cohort, one member, 1,000 DDPM steps, and all conditioning budgets.
+
+The initial campaign under `results/temperature_full_20261117/` was stopped at
+the user's request and retained. Its replacement is
+`results/temperature_parallel_20261117/`, with EN4 on physical GPU 0 and Italian
+XBT on physical GPU 1. Each process sees its assigned card as logical `cuda:0`.
+The replacement index, status JSON, config snapshots and separate cohort logs
+record execution. This records a launch, **not completed scientific results**.
+
+The documented source lists were checked directly: **1,297/1,297 selected EN4
+profiles** belong to the 2016 `no_spatiotemporal_candidate` set (297,561 identities,
+expected archive CORA5.1, `auditable_public_release`), and **102/102 prepared XBT
+profiles** belong to the documented Italian no-match list. There were zero
+unlisted IDs or identity mismatches. XBT identity verification includes cruise,
+station, file, timestamp, native coordinates and `QF=1`. Both registry SHA-256
+hashes are now pinned in the cohort configs; membership is checked again for
+the freshly selected restart cohort before model inference. Evidence and test
+logs are under `results/screening_restart_20261117/`. This confirms membership
+in the supplied screened sets, not independent GLORYS assimilation-log evidence.
+
+The regional paper stage now exports all-method depth tables and MAE/RMSE/bias
+figures on the evaluation partition: exact EN4 model levels and fixed 25 m XBT
+bins, with equal profile weights and support counts. The complete test wrapper
+passed **409 repository tests and 82 validation tests**, including numerical
+checks for profile weighting, bin edges, signed bias, common baseline support,
+and rejection of unlisted, misidentified or incorrectly screened profiles.
+Black and `git diff --check` passed. Test logs are under `results/verification/`.
+
+The discovery/confirmation, XBT cruise support, reference precision and
+single-generation limitations below still apply.
+
 # Verification on 5 November 2026
 
 ## TL;DR: comparison datasets and implemented checks
@@ -219,8 +257,8 @@ from training or GLORYS assimilation.
    EN4, one for XBT. Keep signed observation-to-target time differences.
    These exclusions are determined before predictions. A nonfinite prediction
    on an accepted point fails the run instead of dropping that difficult point.
-5. **Generate and save ensembles.** Use batches of two patches, 100 independent
-   DDPM members with 1,000 denoising steps, and seed `20261103`. Repeat inference
+5. **Generate and save predictions.** Use batches of two patches, one
+   DDPM member with 1,000 denoising steps, and seed `20261103`. Repeat inference
    with nested retained-context budgets 0, 1, 2, 4 and 8 per patch, using the same
    member seeds to isolate the effect of conditioning. A budget counts grid
    locations with profile support, not necessarily distinct instruments; fewer
@@ -457,3 +495,175 @@ lacks platform/cruise identities for complete conditioning exclusion, and 2016
 was used in prior model selection. Confirmation gates therefore remain false.
 No accuracy, uncertainty, global-superiority, or efficiency benefit is claimed
 from these software checks.
+
+## Validation website snapshot — 2026-11-17
+
+The evaluation-only exporter adds calibration/cluster overlap and point-alignment
+checks, preserves authoritative paper scores, and exports all 88 Italian XBT
+evaluation profiles. EN4 remains pending until its regional stage completes.
+`bash val/run_tests.sh` passes 409 repository tests and 86 validation tests (495
+total). Black and `git diff --check` pass. MkDocs builds successfully; existing
+missing-link warnings are unrelated to this dashboard. Desktop (1440 px) and
+mobile (390 px) browser checks cover cohort switching, metric selection, profile
+selection, all artifact links, absence of horizontal overflow, and JavaScript
+errors. The snapshot reports 88 evaluation profiles / 67,803 measurements, with
+14 separate calibration profiles. It makes no non-assimilation or significance
+claim and includes no calibration profiles in the example selector.
+
+## Spatial validation viewer revision — 2026-11-17
+
+The website uses technical headings, a Leaflet/OpenStreetMap profile selector,
+and synchronized depth image panels. The separate download section was removed.
+Spatial replay in `val/results/xbt_spatial_chunks` verified every original input
+batch hash and exported 12 evaluation patches × 50 depths × 8 fields. Scored
+model predictions agree with saved native-depth predictions within 4.77e-7 °C.
+IDW lacks a complete saved point comparator and is labelled descriptive. Full-grid
+LSTM workspace memory is bounded by chunking independent pixel sequences while
+retaining full depth sequences and outer batches; recurrent-state equivalence
+is tested. Earlier unsuccessful memory/CPU replays were not published.
+
+`bash val/run_tests.sh` passes 409 repository and 89 validation tests (498 total).
+Black, JavaScript syntax checks and MkDocs build pass. Browser verification covers
+all 88 selectable map profiles, the three default profile curves, all 96 spatial
+PNG stacks, depth slider/buttons/wheel, patch/cohort switching, and desktop/mobile
+layout without horizontal overflow or JavaScript errors.
+
+## Playback, input supports and explanations — 2026-11-17
+
+The spatial manifest now includes retained EN4 temperature grid cells and valid
+depth indices from `x_valid_mask`. All original batch hashes matched before this
+support-only export; no inference was rerun. Across 12 displayed patches there
+are 109 support-cell appearances (overlapping patches may repeat locations).
+Open cyan circles mark all retained cells, filled centres indicate valid input
+at the selected depth, and XBT crosses remain distinct.
+
+`bash val/run_tests.sh` passes 409 repository and 90 validation tests (499 total).
+The added mask test checks excluded cells, depth-specific availability, empty
+support and invalid shapes. Browser checks verify 500 ms playback, pause,
+looping, manual-control and cohort reset, rendered support markers, explanatory
+popups on hover/focus/tap, Escape/outside dismissal, mobile popup bounds, and
+absence of horizontal overflow or JavaScript errors. The existing map, profile,
+all-image and depth-control checks also pass. Black and JavaScript syntax checks
+pass. Definitions are based on the frozen configurations, scoring code and
+reference precision audit; packaged targets are daily means at a seven-day
+stride, not weekly averages.
+
+## Original GLORYS comparator selection — 2026-11-17
+
+Dashboard exports exclude bias-calibrated GLORYS and GLORYS-background OI at
+every context budget. Original packaged GLORYS remains the reference. All
+retained comparison rows are unchanged. Browser checks verify the overall
+table, depth/profile/error/conditioning curves, all 88 profile JSON files and
+the overall CSV. The exporter selection test covers both method and paired
+baseline columns and retains the climatology comparator. All 409 repository
+and 91 validation tests pass (500 total); Black, JavaScript syntax checks,
+`git diff --check` and the MkDocs build pass.
+
+## All Italian missions, no calibration — 2026-11-17
+
+`val.score_all_profiles` reuses the hash-verified frozen prediction bundle to
+score all 102 casts / 79,367 measurements from PNRAXXXI (88) and PNRAXXXII (14).
+It writes a separate `paper_all_profiles` report, fits no corrections, excludes
+adjusted GLORYS comparators, and preserves the original split report. Independent
+MAE/RMSE calculations from the saved prediction arrays match the new tables.
+DepthDif MAE is 0.441814654643 °C; original packaged GLORYS MAE is
+0.421530433658 °C. Both missions have separate fixed-method score tables.
+
+All 409 repository and 92 validation tests pass (501 total). Browser checks
+cover 102 selectable XBT markers, two mission layers, 125 EN4 cell appearances
+across all 14 saved patches, the default patch 12896 (13 casts / 15 input cells),
+playback, the second mission's profile curves, cohort switching, simplified
+explanations and desktop/mobile layout. The complete input hashes were checked
+again before the EN4 map export. Images still cover the original 12 spatial
+replay patches; the map and profile curves include all 14 patches. Selection of
+the default patch is based only on data coverage, not prediction performance.
+
+## Preliminary EN4 subset — 2026-11-17
+
+- Source: `val/results/temperature_parallel_20261117/en4_temperature`; pilot:
+  `val/results/en4_quick_20261117/en4_temperature`.
+- Frozen selection: 64/256 patches in 32 original pairs, 548 screened candidate
+  profiles and 11,392 candidate measurements; all 12 months and 62 source regions.
+  Selection used month/region coverage with seed 20261117, before inference.
+- Two RTX 3090 workers retained the original residual checkpoint, EMA weights,
+  1,000 DDPM steps, one member, original per-batch residual seeds, and all 353
+  source target-cell holdouts. Each pair was saved with checksums.
+- Common support: 531 profiles, 10,604 measurements, 59 contributing patches,
+  69 area/month groups and 47 exact model depths. There were 788 pre-scoring
+  exclusions, including 345 measurements outside the 3.5-day matching window.
+- All supported profiles were evaluated; no calibration split or fitted correction.
+  IDW was excluded from the shared comparison because 19 outputs were invalid.
+  LSTM, CNN, UNet3D and UNet2D had complete shared support.
+- Independently recomputed profile-balanced MAE/RMSE (degrees C): residual
+  1.230659/1.776971; original packaged GLORYS 0.720516/1.104809;
+  UNet2D 0.915393/1.175883. This preliminary coverage sample does not establish
+  global skill or independent confirmation.
+- Verified merged checksums, unique point identities, finite aligned predictions,
+  all 32 original residual seeds, registry membership and an evaluation-only
+  partition. All 409 repository and 94 validation tests passed. Black checked
+  179 files; JavaScript syntax, whitespace and MkDocs build checks passed.
+- Browser checks passed for the EN4 direct link, 531 clickable map markers,
+  329 depth-table rows, scientific downloads, phone layout, cohort switching,
+  Italian mission scores and 500 ms spatial playback. Published website commit
+  `50c11f98d9b3b9c97795d2f7f2fe0759073f6da2`; GitHub Pages run `44084741120`
+  succeeded. Public manifest, page, ZIP and final profile returned HTTP 200 with
+  the expected EN4 counts.
+
+## Italian probabilistic and spatial results — 2026-11-17
+
+Completed 20 members for all 7 original batches / 14 Italian patches on both
+RTX 3090 GPUs, using the pinned EMA checkpoint and 1,000 DDPM steps. Input
+fingerprints match every original batch, member zero reproduces saved point
+predictions, and all generated samples pass checksums and finite-value checks.
+The independent all-profile spatial replay verifies the original neural
+comparators and exports all 14 patches across 50 model depth levels.
+
+All 102 casts / 79,367 measurements contribute to profile-weighted CRPS:
+DepthDif 0.274600 °C (fair CRPS 0.265785), OI climatology 0.411467 °C, and
+packaged GLORYS 0.421530 °C. Central 90% interval coverage is 64.3105%, with
+mean width 0.896685 °C: the ensemble is underdispersed on this discovery cohort.
+Deterministic baseline CRPS agrees with the existing MAE tables.
+
+Against packaged GLORYS on shared wet support, individual-sample mean VGG LPIPS
+is 0.257699 and the ensemble-mean field scores 0.256715. The spectral log10-power
+RMSE is 0.339669 for member-averaged power and 0.412646 for the ensemble-mean
+field. These are reference-field diagnostics, not independent XBT accuracy.
+The ensemble and spatial methodology, depth/patch scores, and spectra are
+exported under `docs/assets/validation/italian_xbt_temperature/ensemble/`;
+raw members and checksums remain under `results/italian_ensemble_20261117/`.
+
+Validation: 409 repository tests + 98 validation tests passed; required Black
+and whitespace checks passed. Tests include CRPS definitions, equal-profile
+weighting, RGB scaling/masking, and zero-power spectral penalties. MkDocs builds
+successfully with existing unrelated link warnings. Browser checks verify
+102 casts, 14 patches, 8 methods in each new table, all 50 spectrum depths,
+logarithmic axes, all new CSV downloads, cohort isolation, mobile layout and
+absence of JavaScript errors. EN4 data and inference remain unchanged.
+
+Publication completed at commit `7ae01ed581001c6d7e6015a014454920d91dde50`;
+GitHub Pages build and deployment run `44101616495` both succeeded. Live
+`https://depthdif.donike.net/assets/validation/italian_xbt_temperature/ensemble/metrics.json`
+was fetched and compared exactly with the verified local export. The website is
+`https://depthdif.donike.net/validation/#ensemble-panel`. Both GPUs were confirmed
+idle after completion.
+
+### Remove climatology OI from publication (2026-11-17)
+
+Excluded all `baseline_oi_climatology` variants from both published cohorts,
+including profile JSON, aggregate/depth/mission/conditioning tables, ensemble
+CRPS exports, downloadable CSV/LaTeX reports, figure exports and ZIP archives.
+The publication exporter and ensemble scorer preserve this selection on refresh.
+Plain climatology remains. Frozen source bundles and campaign evidence remain
+unchanged. Compared retained dashboard scores against the previous publication:
+all retained values are identical for both Italian XBT and EN4.
+
+Validation: full wrapper passed 409 repository and 98 validation tests; Black and
+MkDocs completed. Browser checks passed with seven Italian CRPS methods, eight
+spatial rows, 102 casts, 14 patches, 50 depths, working downloads and no JavaScript
+errors. All public text artifacts and ZIP entries were checked for excluded OI
+methods; download SHA-256 checksums match the regenerated files.
+
+Published as `5ff474a5bc9b36e3be720cc499175ee4b68d0949`; GitHub Pages run
+`44103296317` completed build and deployment successfully. Live campaign and
+Italian ensemble JSON match the verified local snapshots and contain no
+climatology OI method.

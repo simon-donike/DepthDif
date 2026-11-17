@@ -64,6 +64,22 @@ class PaperWorkflowTests(unittest.TestCase):
         self.assertIsNone(context.calibration)
         self.assertEqual(len(context.evaluation.points), 16)
 
+    def test_no_calibration_retains_every_cast_and_prediction(self):
+        """All-cast scoring preserves all missions and aligned frozen predictions."""
+        bundle = self._bundle()
+        with tempfile.TemporaryDirectory() as directory:
+            context = make_context(
+                bundle, {"paper": {"calibration_fraction": 0}}, Path(directory)
+            )
+            partition = pd.read_csv(Path(directory) / "partition.csv")
+        self.assertIsNone(context.calibration)
+        pd.testing.assert_frame_equal(context.evaluation.points, bundle.points)
+        np.testing.assert_array_equal(
+            context.evaluation.members["residual"], bundle.members["residual"]
+        )
+        self.assertEqual(set(partition.partition), {"evaluation"})
+        self.assertEqual(len(partition), len(bundle.points))
+
     def test_aliasing_a_physical_cast_is_detected(self):
         """Renaming identifiers cannot hide duplicate calibration observations."""
         evaluation, calibration = self._bundle(), self._bundle()

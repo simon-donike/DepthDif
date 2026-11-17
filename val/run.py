@@ -220,6 +220,17 @@ def preflight(config: dict) -> dict:
         if not path.is_file():
             issues.append(f"Missing frozen climatology: {path}")
     cohort = config["cohort"]
+    from val.screening import screening_source
+
+    screening_path, screening_hash = screening_source(cohort)
+    if screening_path:
+        try:
+            checks["screened_profiles"] = {
+                "path": screening_path,
+                "sha256": check_artifact(screening_path, screening_hash),
+            }
+        except (OSError, ValueError) as error:
+            issues.append(f"Screened profile registry: {error}")
     key = "audit_path" if cohort["kind"] == "en4_archive" else "profiles"
     path = Path(cohort[key]) if cohort.get(key) else None
     checks["cohort"] = {"path": str(path), "exists": bool(path and path.is_file())}
@@ -495,6 +506,7 @@ def evaluate(config: dict, output: Path) -> dict:
     from depth_recon.inference.core import build_dataset
     from val.inference import run_model
     from val.observations import prepare_external
+    from val.screening import verify_screened_profiles
 
     readiness = preflight(config)
     _write_json(output / "preflight.json", readiness)
@@ -511,11 +523,13 @@ def evaluate(config: dict, output: Path) -> dict:
         points = points.loc[
             points.variable.isin(config["sampling"]["variables"])
         ].copy()
+        verify_screened_profiles(points, config["cohort"], output / "input_screening")
         cohort = prepare_external(dataset, points, config["cohort"])
         cohort.assignments["split_role"] = config["cohort"]["split_role"]
         cohort.assignments["target_time"] = pd.to_datetime(
             cohort.assignments.target_date.astype(str), utc=True
         ).astype(str)
+    screening = verify_screened_profiles(cohort.assignments, config["cohort"], output)
     cohort.assignments.to_csv(output / "cohort.csv", index=False)
     _write_json(
         output / "holdouts.json",
@@ -545,6 +559,7 @@ def evaluate(config: dict, output: Path) -> dict:
             output / "bundle" / "exclusions.csv", index=False
         )
     metadata.update(cohort=cohort.metadata, checkpoint_verified=True, demo=False)
+    metadata["profile_screening"] = screening
     metadata["temperature_kind_compared"] = "potential"
     # Incomplete platform exclusion must not become a confirmatory result through a flag.
     metadata["conditioning_exclusion_verified"] = bool(
