@@ -654,10 +654,14 @@ class TestPaperMetricsExport(unittest.TestCase):
                     np.testing.assert_array_equal(
                         axis.lines[0].get_ydata(), callback.depth_axis_m
                     )
-                    self.assertEqual(len(figure.axes), 2)
-                    error_axis = figure.axes[1]
-                    self.assertEqual(error_axis.get_title(), "Total error by depth")
-                    self.assertEqual(len(error_axis.lines), 2)
+                    # The dedicated absolute-error figure already contains only error curves.
+                    if key.endswith("_average_absolute_error_by_depth"):
+                        self.assertEqual(len(figure.axes), 1)
+                    else:
+                        self.assertEqual(len(figure.axes), 2)
+                        error_axis = figure.axes[1]
+                        self.assertEqual(error_axis.get_title(), "Total error by depth")
+                        self.assertEqual(len(error_axis.lines), 2)
             logged = next(
                 payload
                 for payload in logged_payloads
@@ -680,7 +684,8 @@ class TestPaperMetricsExport(unittest.TestCase):
                 logged["en4_candidate_eval/retained_input_profile_count_min"], 0
             )
             self.assertIn(
-                "n=", logged["en4_candidate_eval/temperature_profiles"].axes[0].get_title()
+                "n=",
+                logged["en4_candidate_eval/temperature_profiles"].axes[0].get_title(),
             )
             self.assertIn(
                 "held-out profiles",
@@ -899,9 +904,11 @@ class TestPaperMetricsExport(unittest.TestCase):
             def predict_step(self, batch, batch_idx):
                 del batch_idx
                 self.predict_calls += 1
-                return {"y_hat_temperature_denorm": temperature_normalize(
-                    mode="denorm", tensor=batch["y"]
-                )}
+                return {
+                    "y_hat_temperature_denorm": temperature_normalize(
+                        mode="denorm", tensor=batch["y"]
+                    )
+                }
 
         candidates = pd.DataFrame(
             {

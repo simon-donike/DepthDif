@@ -37,6 +37,10 @@ dependencies = [
     "zarr",
 ]
 
+[project.optional-dependencies]
+# The Italian XBT monitor must convert in-situ to potential temperature offline.
+hpc = ["gsw==3.6.19"]
+
 [project.scripts]
 profile-audit = "profile_audit.cli:main"
 depth-recon-infer-week = "depth_recon.inference.api:infer_week_cli"

@@ -4,7 +4,14 @@ from typing import Any
 
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader, Dataset, Subset, default_collate, random_split
+from torch.utils.data import (
+    DataLoader,
+    Dataset,
+    DistributedSampler,
+    Subset,
+    default_collate,
+    random_split,
+)
 
 
 def _collate_candidate_validation_batch(samples: list[object]) -> dict[str, Any]:
@@ -54,6 +61,55 @@ class DepthTileDataModule(pl.LightningDataModule):
         self._val_generator = torch.Generator().manual_seed(self.seed)
         self.candidate_val_dataset: Dataset | None = None
         self.candidate_val_batch_size: int | None = None
+
+    def _world_size(self) -> int:
+        """Return the active distributed world size, defaulting to one."""
+        trainer = getattr(self, "trainer", None)
+        value = getattr(trainer, "world_size", None)
+        if value is None:
+            value = self.dataloader_cfg.get("world_size", 1)
+        world_size = int(value)
+        if world_size < 1:
+            raise ValueError("Distributed world size must be positive.")
+        return world_size
+
+    def _resolved_train_batch_size(self) -> int:
+        """Resolve the per-rank batch size while preserving legacy batch_size."""
+        global_batch = self.dataloader_cfg.get("global_batch_size")
+        if global_batch is None:
+            return int(self.dataloader_cfg.get("batch_size", 16))
+        global_batch = int(global_batch)
+        world_size = self._world_size()
+        if global_batch < 1 or global_batch % world_size:
+            raise ValueError(
+                "dataloader.global_batch_size must be positive and divisible by "
+                f"world_size ({world_size}); got {global_batch}."
+            )
+        batch_size = global_batch // world_size
+        print(
+            "Resolved training batch: "
+            f"global={global_batch}, local={batch_size}, world_size={world_size}"
+        )
+        return batch_size
+
+    def resolved_train_batch_metadata(self) -> dict[str, int] | None:
+        """Return global-batch metadata using Lightning's active world size.
+
+        This is deliberately resolved at fit startup instead of module
+        construction, because the final DDP world size is not known until the
+        trainer has initialized its strategy.
+        """
+        global_batch = self.dataloader_cfg.get("global_batch_size")
+        if global_batch is None:
+            return None
+        local_batch = self._resolved_train_batch_size()
+        world_size = self._world_size()
+        return {
+            "global_batch_size": int(global_batch),
+            "local_batch_size": local_batch,
+            "world_size": world_size,
+            "actual_global_batch_size": local_batch * world_size,
+        }
 
     def set_candidate_validation_dataset(
         self, dataset: Dataset, *, batch_size: int
@@ -121,7 +177,11 @@ class DepthTileDataModule(pl.LightningDataModule):
         batch_size = int(
             batch_size
             if batch_size is not None
-            else cfg.get("val_batch_size" if is_val else "batch_size", 16)
+            else (
+                self._resolved_train_batch_size()
+                if not is_val
+                else cfg.get("val_batch_size", 16)
+            )
         )
         num_workers_key = "val_num_workers" if is_val else "num_workers"
         num_workers = int(cfg.get(num_workers_key, 0 if is_val else 4))
@@ -150,6 +210,24 @@ class DepthTileDataModule(pl.LightningDataModule):
             pin_memory=pin_memory,
             persistent_workers=persistent_workers,
         )
+        if (
+            not is_val
+            and cfg.get("global_batch_size") is not None
+            and self._world_size() > 1
+        ):
+            # drop_last prevents both partial local batches and DistributedSampler
+            # padding, which would otherwise duplicate samples across ranks.
+            kwargs["sampler"] = DistributedSampler(
+                dataset,
+                num_replicas=self._world_size(),
+                rank=int(getattr(getattr(self, "trainer", None), "global_rank", 0)),
+                shuffle=shuffle,
+                seed=self.seed,
+                drop_last=True,
+            )
+            kwargs["shuffle"] = False
+        if not is_val and self.dataloader_cfg.get("global_batch_size") is not None:
+            kwargs["drop_last"] = True
         if is_val and shuffle:
             # Keep validation shuffled while advancing the order across validation runs.
             kwargs["generator"] = self._val_generator

@@ -8,6 +8,7 @@ import yaml
 
 from depth_recon.configs.config_resolver_pixel import (
     apply_config_overrides,
+    apply_depth_aware_condition_contract,
     load_pixel_inference_config,
     load_pixel_training_config,
     load_yaml,
@@ -121,6 +122,53 @@ def _write_yaml(path: Path, payload: dict[str, object]) -> None:
 
 
 class TestPixelConfig(unittest.TestCase):
+    def test_depth_aware_contract_derives_channels_and_requires_artifacts(self) -> None:
+        model_cfg = {
+            "model": {
+                "model_type": "cond_px_dif",
+                "generated_channels": 4,
+                "condition_include_eo": True,
+                "condition_eo_channels": 1,
+                "condition_use_valid_mask": True,
+                "condition_per_depth_valid_mask": True,
+                "condition_use_wet_mask": True,
+                "climatology_residual": True,
+            }
+        }
+        data_cfg = {
+            "dataset": {
+                "wet_domain": {"enabled": True},
+                "climatology": {"enabled": True, "path": "climatology.npz"},
+            }
+        }
+        apply_depth_aware_condition_contract(model_cfg, data_cfg, set())
+        self.assertEqual(model_cfg["model"]["condition_mask_channels"], 4)
+        # Observations, depth masks, wet masks, and background each add four channels.
+        self.assertEqual(model_cfg["model"]["condition_channels"], 17)
+
+    def test_depth_aware_contract_rejects_missing_wet_or_climatology_inputs(
+        self,
+    ) -> None:
+        base_model = {
+            "model": {
+                "model_type": "cond_px_dif",
+                "generated_channels": 2,
+                "condition_use_wet_mask": True,
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "wet-mask"):
+            apply_depth_aware_condition_contract(base_model, {"dataset": {}}, set())
+
+        residual_model = {
+            "model": {"model_type": "cond_px_dif", "climatology_residual": True}
+        }
+        with self.assertRaisesRegex(ValueError, "climatology"):
+            apply_depth_aware_condition_contract(
+                residual_model,
+                {"dataset": {"climatology": {"enabled": False}}},
+                set(),
+            )
+
     def test_active_pixel_presets_reserve_2016_for_validation(self) -> None:
         """Active presets preserve validation settings and their documented data mode."""
         config_dir = Path("src/depth_recon/configs/px_space")
@@ -138,19 +186,30 @@ class TestPixelConfig(unittest.TestCase):
                     "training_super_config.yaml",
                     "training_super_config_standard.yaml",
                 }
+                corrected_residual = (
+                    config_path.name
+                    == "training_super_config_spacehpc_residual_corrected.yaml"
+                )
                 self.assertEqual(payload["data"]["split"]["val_year"], 2016)
                 self.assertTrue(payload["data"]["dataloader"]["val_shuffle"])
                 dataset_cfg = payload["data"]["dataset"]
                 self.assertEqual(
                     dataset_cfg["selection"]["require_argo_for_train"],
-                    config_path.name in ambient_stage_configs or local_reproduction,
+                    config_path.name in ambient_stage_configs
+                    or local_reproduction
+                    or corrected_residual,
                 )
-                self.assertFalse(dataset_cfg["selection"]["filter_bad_argo_quality"])
+                self.assertEqual(
+                    dataset_cfg["selection"]["filter_bad_argo_quality"],
+                    corrected_residual,
+                )
                 self.assertEqual(
                     dataset_cfg["surface_conditioning"]["sources"],
-                    ["sst", "sss", "adt"]
-                    if config_path.name.endswith("_3eo.yaml")
-                    else ["sst"],
+                    (
+                        ["sst", "sss", "adt"]
+                        if config_path.name.endswith("_3eo.yaml")
+                        else ["sst"]
+                    ),
                 )
                 self.assertEqual(payload["model"]["condition_eo_channels"], 1)
                 if config_path.name.startswith("training_"):
@@ -167,7 +226,10 @@ class TestPixelConfig(unittest.TestCase):
                     candidate_eval = payload["training"]["training"][
                         "en4_candidate_eval"
                     ]
-                    self.assertEqual(candidate_eval["enabled"], not local_reproduction)
+                    self.assertEqual(
+                        candidate_eval["enabled"],
+                        not (local_reproduction or corrected_residual),
+                    )
                     self.assertEqual(
                         candidate_eval["candidate_profiles_path"],
                         "instructions/en4_no_spatiotemporal_candidate_profiles.parquet",

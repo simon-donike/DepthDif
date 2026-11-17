@@ -380,6 +380,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         return_intermediates: bool = False,
         intermediate_step_indices: list[int] | None = None,
         return_x0_intermediates: bool = False,
+        wet_mask: torch.Tensor | None = None,
     ) -> (
         torch.Tensor
         | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]]
@@ -402,6 +403,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             return_intermediates (bool): Boolean flag controlling behavior.
             intermediate_step_indices (list[int] | None): Input value.
             return_x0_intermediates (bool): Boolean flag controlling behavior.
+            wet_mask (torch.Tensor | None): Static water-domain mask. Dry cells are
+                fixed at normalized zero throughout sampling.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, list[tuple[int, torch.Tensor]]] | tuple[torch.Tensor, list[tuple[int, torch.Tensor]], list[tuple[int, torch.Tensor]]]: Tensor output produced by this call.
@@ -431,6 +434,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             torch.randn([b, self.generated_channels, h, w], device=device)
             * noise_temperature
         )
+        wet_domain = self._build_wet_domain_mask(wet_mask, x_t)
+        if wet_domain is not None:
+            x_t = torch.where(wet_domain > 0.0, x_t, torch.zeros_like(x_t))
         intermediates: list[tuple[int, torch.Tensor]] = []
         x0_intermediates: list[tuple[int, torch.Tensor]] = []
         capture_indices: set[int] = set()
@@ -473,6 +479,9 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
 
         if apply_known:
             x_t = x_t * (1.0 - known_mask) + known_values * known_mask
+        if wet_domain is not None:
+            # The physical domain always wins over known-pixel conditioning.
+            x_t = torch.where(wet_domain > 0.0, x_t, torch.zeros_like(x_t))
         if return_intermediates and 0 in capture_indices:
             intermediates.append((0, x_t.detach().clone()))
 
@@ -489,15 +498,25 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             model_t = self._sampler_train_timestep(sampler, t)
             model_input = torch.cat([x_t, condition], 1).to(device)
             prediction = self.model(model_input, model_t, coord_emb=coord_emb)
+            if wet_domain is not None:
+                prediction = torch.where(
+                    wet_domain > 0.0, prediction, torch.zeros_like(prediction)
+                )
             x0_pred = self._prediction_to_x0(
                 x_t=x_t,
                 t=t,
                 prediction=prediction,
                 sampler=sampler,
             )
+            if wet_domain is not None:
+                x0_pred = torch.where(
+                    wet_domain > 0.0, x0_pred, torch.zeros_like(x0_pred)
+                )
             x_t = sampler(x_t, t, prediction)
             if apply_known:
                 x_t = x_t * (1.0 - known_mask) + known_values * known_mask
+            if wet_domain is not None:
+                x_t = torch.where(wet_domain > 0.0, x_t, torch.zeros_like(x_t))
             if return_intermediates:
                 capture_step = step_index + 1
                 if capture_step in capture_indices:
@@ -669,6 +688,36 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         mask = mask.clamp(0.0, 1.0)
         return mask.to(device=reference.device, dtype=reference.dtype)
 
+    @staticmethod
+    def _build_wet_domain_mask(
+        wet_mask: torch.Tensor | None, reference: torch.Tensor
+    ) -> torch.Tensor | None:
+        """Validate and align a static wet-domain mask to a generated tensor."""
+        if wet_mask is None:
+            return None
+        if not torch.is_tensor(wet_mask):
+            raise ValueError("wet_mask must be a torch.Tensor when provided.")
+        if wet_mask.ndim not in {3, 4}:
+            raise ValueError("wet_mask must have shape (B, H, W) or (B, C, H, W).")
+        if wet_mask.ndim == 3:
+            wet_mask = wet_mask.unsqueeze(1)
+        if (
+            wet_mask.shape[0] != reference.shape[0]
+            or wet_mask.shape[2:] != reference.shape[2:]
+        ):
+            raise ValueError(
+                f"wet_mask shape {tuple(wet_mask.shape)} is incompatible with "
+                f"reference {tuple(reference.shape)}."
+            )
+        if wet_mask.size(1) == 1 and reference.size(1) > 1:
+            wet_mask = wet_mask.expand(-1, reference.size(1), -1, -1)
+        elif wet_mask.size(1) != reference.size(1):
+            raise ValueError(
+                f"wet_mask channels ({int(wet_mask.size(1))}) must match generated "
+                f"channels ({int(reference.size(1))}) or be 1."
+            )
+        return (wet_mask > 0.5).to(device=reference.device, dtype=reference.dtype)
+
     @classmethod
     def _build_coastal_loss_weights(
         cls,
@@ -736,6 +785,7 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         coord: torch.Tensor | None = None,
         date: torch.Tensor | None = None,
         return_context: bool = False,
+        wet_mask: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the diffusion training loss for the current batch.
 
@@ -755,6 +805,8 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
             coord (torch.Tensor | None): Coordinate conditioning values.
             date (torch.Tensor | None): Date conditioning values.
             return_context (bool): Return clean prediction context for auxiliary losses.
+            wet_mask (torch.Tensor | None): Static water-domain mask. Dry cells are
+                fixed at normalized zero in the noisy training input and prediction.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]: Loss, optionally
@@ -770,7 +822,21 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         t = torch.randint(
             0, self.forward_process.num_timesteps, (b,), device=device
         ).long()
-        output_noisy, noise = self.forward_process(output, t, return_noise=True)
+        wet_domain = self._build_wet_domain_mask(wet_mask, output)
+        output_for_diffusion = (
+            output
+            if wet_domain is None
+            else torch.where(wet_domain > 0.0, output, torch.zeros_like(output))
+        )
+        output_noisy, noise = self.forward_process(
+            output_for_diffusion, t, return_noise=True
+        )
+        if wet_domain is not None:
+            # Keep both the noisy state and epsilon target outside the domain at zero.
+            output_noisy = torch.where(
+                wet_domain > 0.0, output_noisy, torch.zeros_like(output_noisy)
+            )
+            noise = torch.where(wet_domain > 0.0, noise, torch.zeros_like(noise))
         if apply_further_corruption_to_noisy_branch:
             further_mask = self._build_valid_mask(
                 further_valid_mask, output_noisy, mode="observed"
@@ -783,7 +849,11 @@ class DenoisingDiffusionConditionalProcess(nn.Module):
         model_input = torch.cat([output_noisy, condition], 1).to(device)
         coord_emb = self._maybe_embed_coords(coord, model_input, date=date)
         prediction = self.model(model_input, t, coord_emb=coord_emb)
-        target = noise if self.parameterization == "epsilon" else output
+        if wet_domain is not None:
+            prediction = torch.where(
+                wet_domain > 0.0, prediction, torch.zeros_like(prediction)
+            )
+        target = noise if self.parameterization == "epsilon" else output_for_diffusion
 
         loss: torch.Tensor
         if not mask_loss or loss_mask is None:

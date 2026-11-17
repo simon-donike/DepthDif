@@ -34,6 +34,7 @@ from depth_recon.data.dataset_grid_utils import (
 from depth_recon.data.synthetic_dataset_creation.vertical_offset_prior import (
     VerticalOffsetPrior,
 )
+from depth_recon.data.target_bias import TargetBias
 from depth_recon.paths import config_path, resolve_config_path
 from depth_recon.utils.normalizations import (
     CELSIUS_TO_KELVIN_OFFSET,
@@ -271,6 +272,7 @@ class ArgoGeoTIFFProfileStore:
         include_salinity: bool = False,
         filter_bad_quality: bool = True,
         accepted_qc_flags: Sequence[int] | None = None,
+        exclude_profile_years: Sequence[int] | None = None,
     ) -> None:
         """Open a compact ARGO profile zarr store."""
         self.path = Path(path)
@@ -279,6 +281,9 @@ class ArgoGeoTIFFProfileStore:
         self.include_salinity = bool(include_salinity)
         self.filter_bad_quality = bool(filter_bad_quality)
         self.accepted_qc_flags = _normalize_accepted_qc_flags(accepted_qc_flags)
+        self.exclude_profile_years = tuple(
+            sorted(int(year) for year in (exclude_profile_years or ()))
+        )
         self._pid = os.getpid()
         self.ds = self._open_dataset()
         self._zarr_pid = os.getpid()
@@ -292,12 +297,20 @@ class ArgoGeoTIFFProfileStore:
         }
         if self.include_salinity:
             required.update({"argo_psal_uint8", "argo_psal_valid"})
+        if self.exclude_profile_years:
+            # Assigned target dates cannot identify observations crossing a year boundary.
+            required.add("profile_date")
         missing = sorted(name for name in required if name not in self.ds)
         if missing:
             raise RuntimeError(
                 f"ARGO profile zarr is missing required variables {missing}: {self.path}"
             )
         self.target_date = np.asarray(self.ds["target_date"].values, dtype=np.int32)
+        self.profile_date = (
+            np.asarray(self.ds["profile_date"].values, dtype=np.int64)
+            if "profile_date" in self.ds
+            else self.target_date.astype(np.int64)
+        )
         self.grid_row = np.asarray(self.ds["grid_row"].values, dtype=np.int32)
         self.grid_col = np.asarray(self.ds["grid_col"].values, dtype=np.int32)
         self.depth_axis_m = np.asarray(
@@ -307,6 +320,11 @@ class ArgoGeoTIFFProfileStore:
         if self.filter_bad_quality:
             temp_valid &= self._quality_mask_for_variable("temp")
         self._has_valid_temp = temp_valid.any(axis=1)
+        if self.exclude_profile_years:
+            self._has_valid_temp &= ~np.isin(
+                self.profile_date // 10000,
+                np.asarray(self.exclude_profile_years, dtype=np.int64),
+            )
         (
             self._valid_profile_indices_by_date,
             self._profile_index_bounds_by_date,
@@ -536,7 +554,7 @@ class ArgoGeoTIFFProfileStore:
         )
         flags_text = "-".join(str(value) for value in self.accepted_qc_flags)
         return _sanitize_cache_text(
-            f"filter{int(self.filter_bad_quality)}_flags{flags_text}_{marker_text}"
+            f"filter{int(self.filter_bad_quality)}_flags{flags_text}_years{'-'.join(map(str, self.exclude_profile_years))}_{marker_text}"
         )
 
     def close(self) -> None:
@@ -810,11 +828,15 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         output_fields: Sequence[str] | str | None = None,
         filter_bad_argo_quality: bool = True,
         accepted_argo_qc_flags: Sequence[int] | None = None,
+        exclude_train_profile_years: Sequence[int] | None = None,
         heldout_argo_locations: Sequence[tuple[int, int, int]] | None = None,
         random_seed: int = 7,
         cache_size: int = 8,
         val_fraction: float = 0.2,
         val_year: int | None = None,
+        climatology: dict[str, Any] | None = None,
+        wet_domain: dict[str, Any] | None = None,
+        target_bias: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the GeoTIFF-backed patch dataset."""
         self.split = str(split).strip().lower()
@@ -871,12 +893,26 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.accepted_argo_qc_flags = _normalize_accepted_qc_flags(
             accepted_argo_qc_flags
         )
+        self.exclude_train_profile_years = tuple(
+            sorted(int(year) for year in (exclude_train_profile_years or ()))
+        )
         self.heldout_argo_location_keys: set[tuple[int, int, int]] = set()
         self.set_heldout_argo_locations(heldout_argo_locations)
         self.include_salinity = "salinity" in self.output_fields
         self._loads_temperature = "temperature" in self.output_fields
         self.random_seed = int(random_seed)
         self.val_year = None if val_year is None else int(val_year)
+        self.climatology_config = dict(climatology or {})
+        self.climatology_path = self.climatology_config.get("path")
+        if (
+            bool(self.climatology_config.get("enabled", False))
+            and not self.climatology_path
+        ):
+            raise ValueError("Enabled climatology requires a non-empty path.")
+        self.wet_domain_config = dict(wet_domain or {})
+        self.wet_domain_enabled = bool(self.wet_domain_config.get("enabled", False))
+        self.target_bias_config = dict(target_bias or {})
+        self.target_bias = None
         self.require_argo_for_train = bool(require_argo_for_train)
         self.require_argo_for_val = bool(require_argo_for_val)
         self.require_argo_for_all = bool(require_argo_for_all)
@@ -898,6 +934,31 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         ).reshape(-1)
         if self._depth_axis_m.size == 0:
             raise RuntimeError("GeoTIFF manifest is missing depth_axis_m.")
+        if bool(self.target_bias_config.get("enabled", False)):
+            if not self._loads_temperature or self.synthetic_target_enabled:
+                raise ValueError(
+                    "Target bias requires real GLORYS temperature targets."
+                )
+            if self.val_year is None:
+                raise ValueError("Target bias requires an explicit validation year.")
+            bias_path = self.target_bias_config.get("path")
+            if not bias_path:
+                raise ValueError("Enabled target_bias requires a non-empty path.")
+            bias_path = _resolve_manifest_path(self.root_dir, bias_path)
+            self.target_bias = TargetBias(
+                bias_path, expected_depth_axis_m=self._depth_axis_m
+            )
+            if self.target_bias.grid != self.manifest["grid"]:
+                raise ValueError(
+                    "Target bias spatial grid does not match dataset grid."
+                )
+            if self.val_year is not None and int(self.val_year) not in {
+                int(year)
+                for year in self.target_bias.metadata.get("excluded_years", ())
+            }:
+                raise ValueError(
+                    "Target bias artifact must exclude the dataset validation year."
+                )
 
         self.argo_store = self._open_argo_store()
         if self.argo_store is not None and int(
@@ -914,6 +975,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.eo_store = next(iter(self.surface_stores.values()))
         self.ostia_store = self.surface_stores.get("sst", self.eo_store)
         self.synthetic_target = self._open_synthetic_target()
+        self.climatology = self._open_climatology()
 
         available_dates = set(self.glorys_store.dates)
         for store in self.surface_stores.values():
@@ -998,6 +1060,7 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             "surface_stores",
             "synthetic_target",
             "ostia_store",
+            "climatology",
         ):
             state[key] = None
         state["_train_prior_rng"] = None
@@ -1014,6 +1077,50 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
         self.eo_store = next(iter(self.surface_stores.values()))
         self.ostia_store = self.surface_stores.get("sst", self.eo_store)
         self.synthetic_target = self._open_synthetic_target()
+        self.climatology = self._open_climatology()
+
+    def _open_climatology(self):
+        """Load and validate the same background contract in main and worker processes."""
+        climatology = None
+        if self.climatology_path and bool(self.climatology_config.get("enabled", True)):
+            from depth_recon.data.climatology import MonthlyClimatology
+
+            path = Path(self.climatology_path)
+            climatology = MonthlyClimatology(
+                path if path.is_absolute() else self.root_dir / path
+            )
+            if not np.array_equal(climatology.depth_axis_m, self._depth_axis_m):
+                raise ValueError(
+                    "Climatology depth axis does not match dataset depth axis."
+                )
+            if climatology.metadata.get("grid") != self.manifest["grid"]:
+                raise ValueError(
+                    "Climatology spatial grid does not match the dataset grid."
+                )
+            artifact_val_year = climatology.metadata.get("val_year_excluded")
+            if self.val_year is None:
+                raise ValueError(
+                    "A climatology-enabled dataset requires an explicit val_year."
+                )
+            artifact_dates = climatology.metadata.get("dates")
+            if artifact_val_year is None or not artifact_dates:
+                raise ValueError(
+                    "Climatology metadata must record the excluded validation year and dates."
+                )
+            if artifact_val_year != self.val_year or any(
+                int(str(int(date))[:4]) == int(self.val_year) for date in artifact_dates
+            ):
+                raise ValueError(
+                    "Climatology validation-year provenance does not match dataset split."
+                )
+            if self._loads_temperature and climatology.temperature is None:
+                raise ValueError(
+                    "Temperature output requires temperature climatology data."
+                )
+            if self.include_salinity and climatology.salinity is None:
+                raise ValueError("Salinity output requires salinity climatology data.")
+
+        return climatology
 
     @staticmethod
     def _normalize_surface_conditioning(
@@ -1104,6 +1211,9 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             include_salinity=self.include_salinity,
             filter_bad_quality=self.filter_bad_argo_quality,
             accepted_qc_flags=self.accepted_argo_qc_flags,
+            exclude_profile_years=(
+                self.exclude_train_profile_years if self.split == "train" else ()
+            ),
         )
 
     def _open_synthetic_target(self) -> VerticalOffsetPrior | None:
@@ -1393,6 +1503,12 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 "accepted_argo_qc_flags",
                 default=None,
             ),
+            exclude_train_profile_years=cls._cfg_get(
+                ds_cfg,
+                "selection.exclude_train_profile_years",
+                "exclude_train_profile_years",
+                default=(),
+            ),
             surface_conditioning=cls._cfg_get(
                 ds_cfg,
                 "surface_conditioning",
@@ -1429,6 +1545,13 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             ),
             cache_size=int(
                 cls._cfg_get(ds_cfg, "runtime.cache_size", "cache_size", default=8)
+            ),
+            climatology=cls._cfg_get(
+                ds_cfg, "climatology", "climatology", default=None
+            ),
+            wet_domain=cls._cfg_get(ds_cfg, "wet_domain", "wet_domain", default=None),
+            target_bias=cls._cfg_get(
+                ds_cfg, "target_bias", "target_bias", default=None
             ),
         )
 
@@ -2082,6 +2205,17 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                     y_salinity_glorys_valid_mask_np = np.isfinite(y_salinity_glorys_np)
         else:
             y_np = self._load_y_patch(row) if self._loads_temperature else None
+            if (
+                self.target_bias is not None
+                and self.split == "val"
+                and y_np is not None
+            ):
+                # Keep the uncorrected field as a validation-only diagnostic while
+                # the supervised validation target follows the training correction.
+                y_glorys_np = y_np.copy()
+                y_glorys_valid_mask_np = np.isfinite(y_glorys_np)
+            if self.target_bias is not None and y_np is not None:
+                y_np = self.target_bias.apply(y_np)
             y_salinity_np = (
                 self._load_y_salinity_patch(row) if self.include_salinity else None
             )
@@ -2099,6 +2233,37 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
                 if y_salinity_valid_mask_np is not None
                 else None
             )
+        wet_mask_np = None
+        wet_salinity_mask_np = None
+        if self.wet_domain_enabled:
+            reference_date = self.wet_domain_config.get("reference_date")
+            if reference_date is None:
+                reference_date = self.bathymetry_reference_date
+            if int(reference_date) not in self.glorys_store.dates:
+                raise ValueError(
+                    "wet_domain.reference_date is unavailable in GLORYS rasters."
+                )
+            wet_mask_np = self.glorys_store.read_valid_mask_patch(
+                target_date=int(reference_date),
+                grid_y0=int(row["grid_y0"]),
+                grid_x0=int(row["grid_x0"]),
+                tile_size=self.tile_size,
+            ).astype(bool, copy=False)
+            if self.include_salinity:
+                if (
+                    self.salinity_store is None
+                    or int(reference_date) not in self.salinity_store.dates
+                ):
+                    raise ValueError(
+                        "wet_domain.reference_date is unavailable for salinity."
+                    )
+                # Preserve per-field reference support instead of copying temperature gaps.
+                wet_salinity_mask_np = self.salinity_store.read_valid_mask_patch(
+                    target_date=int(reference_date),
+                    grid_y0=int(row["grid_y0"]),
+                    grid_x0=int(row["grid_x0"]),
+                    tile_size=self.tile_size,
+                ).astype(bool, copy=False)
         eo = self._normalize_surface_fields(surface_fields)
         eo = torch.nan_to_num(eo, nan=0.0, posinf=0.0, neginf=0.0)
         land_support_np = (
@@ -2114,6 +2279,52 @@ class ArgoGeoTIFFGriddedPatchDataset(Dataset):
             "land_mask": torch.from_numpy(land_mask_np),
             "date": _parse_date_int(row.get("date", 19700115)),
         }
+        if wet_mask_np is not None:
+            sample["wet_mask"] = torch.from_numpy(wet_mask_np)
+            if self.include_salinity:
+                sample["wet_mask_salinity"] = torch.from_numpy(wet_salinity_mask_np)
+        if self.climatology is not None:
+            unsupported = self.climatology.metadata.get("unsupported_depth_indices", {})
+            for field, target_mask in (
+                ("temperature", y_valid_mask_np),
+                ("salinity", y_salinity_valid_mask_np),
+            ):
+                empty_depths = unsupported.get(field, [])
+                # Never score or train against a placeholder for an unobserved band.
+                if (
+                    target_mask is not None
+                    and empty_depths
+                    and np.any(target_mask[empty_depths])
+                ):
+                    raise ValueError(
+                        f"Valid {field} targets occur at unsupported climatology depths."
+                    )
+        if self.climatology is not None and self._loads_temperature:
+            sample["climatology"] = temperature_normalize(
+                mode="norm",
+                tensor=torch.from_numpy(
+                    self.climatology.sample_patch(
+                        date=int(row["date"]),
+                        grid_y0=int(row["grid_y0"]),
+                        grid_x0=int(row["grid_x0"]),
+                        tile_size=self.tile_size,
+                        field="temperature",
+                    )
+                ),
+            )
+        if self.climatology is not None and self.include_salinity:
+            sample["climatology_salinity"] = salinity_normalize(
+                mode="norm",
+                tensor=torch.from_numpy(
+                    self.climatology.sample_patch(
+                        date=int(row["date"]),
+                        grid_y0=int(row["grid_y0"]),
+                        grid_x0=int(row["grid_x0"]),
+                        tile_size=self.tile_size,
+                        field="salinity",
+                    )
+                ),
+            )
 
         if self._loads_temperature and y_np is not None and y_valid_mask_np is not None:
             x = temperature_normalize(mode="norm", tensor=torch.from_numpy(x_np))

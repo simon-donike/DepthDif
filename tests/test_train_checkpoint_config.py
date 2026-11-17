@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 import unittest
@@ -16,6 +17,8 @@ from train import (
     load_weights_only_checkpoint,
     resolve_load_checkpoint_only,
     resolve_resume_ckpt_path,
+    resolve_run_directory,
+    validate_fresh_start,
 )
 
 
@@ -30,6 +33,84 @@ class _TinyCheckpointModule(torch.nn.Module):
 
 
 class TestTrainCheckpointConfig(unittest.TestCase):
+    def test_require_fresh_start_rejects_checkpoint_and_wandb_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint = Path(tmpdir) / "checkpoint.ckpt"
+            checkpoint.touch()
+            with self.assertRaisesRegex(ValueError, "resume_checkpoint"):
+                validate_fresh_start(
+                    trainer_cfg={"require_fresh_start": True},
+                    model_cfg={"model": {"resume_checkpoint": str(checkpoint)}},
+                    training_cfg={"wandb": {}},
+                    run_dir=Path(tmpdir) / "new-run",
+                    explicit_run_dir=True,
+                )
+            with self.assertRaisesRegex(ValueError, "W&B"):
+                validate_fresh_start(
+                    trainer_cfg={"require_fresh_start": True},
+                    model_cfg={"model": {}},
+                    training_cfg={"wandb": {"run_id": "old-run"}},
+                    run_dir=Path(tmpdir) / "new-run",
+                    explicit_run_dir=True,
+                )
+
+    def test_require_fresh_start_rejects_nonempty_explicit_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            run_dir.mkdir()
+            (run_dir / "last.ckpt").touch()
+            with self.assertRaisesRegex(FileExistsError, "empty run directory"):
+                validate_fresh_start(
+                    trainer_cfg={"require_fresh_start": True},
+                    model_cfg={"model": {}},
+                    training_cfg={"wandb": {}},
+                    run_dir=run_dir,
+                    explicit_run_dir=True,
+                )
+
+    def test_default_resume_behavior_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "existing"
+            run_dir.mkdir()
+            (run_dir / "last.ckpt").touch()
+            validate_fresh_start(
+                trainer_cfg={},
+                model_cfg={"model": {"resume_checkpoint": False}},
+                training_cfg={"wandb": {"run_id": "stable", "resume": "allow"}},
+                run_dir=run_dir,
+                explicit_run_dir=True,
+            )
+
+    def test_nonzero_rank_reuses_parent_run_directory_without_collision_check(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "rank-zero-run"
+            run_dir.mkdir()
+            (run_dir / "resolved_training_config.yaml").touch()
+            with patch.dict(
+                os.environ,
+                {
+                    "DEPTHDIF_RUN_DIR": str(run_dir),
+                    "DEPTHDIF_RUN_STAMP": "shared-launch",
+                },
+                clear=True,
+            ):
+                resolved_dir, run_stamp, explicit = resolve_run_directory(
+                    None, global_rank=1
+                )
+            self.assertEqual(resolved_dir, run_dir)
+            self.assertEqual(run_stamp, "shared-launch")
+            self.assertFalse(explicit)
+            validate_fresh_start(
+                trainer_cfg={"require_fresh_start": True},
+                model_cfg={"model": {"resume_checkpoint": False}},
+                training_cfg={"wandb": {}},
+                run_dir=run_dir,
+                explicit_run_dir=True,
+                check_run_directory=False,
+            )
+
     def test_early_stopping_callback_uses_configured_validation_metric(self) -> None:
         callback = build_early_stopping_callback(
             {

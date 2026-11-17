@@ -1,5 +1,9 @@
 # Training
 
+The [corrected residual HPC handoff](hpc-residual-handoff.md) documents the
+dedicated scratch preset, training-only EN4-to-GLORYS bias artifact, global batch
+48, and independent Italian profile monitor. Existing HPC presets are preserved.
+
 ## Launch
 
 Pixel-space training requires one scenario:

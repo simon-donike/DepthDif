@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import sys
@@ -50,6 +51,8 @@ from depth_recon.models.baselines import (
 from depth_recon.models.diffusion import EMA, PixelDiffusionConditional
 from depth_recon.utils.en4_candidate_validation import EN4CandidateValidationCallback
 from depth_recon.utils.hard_region_validation import HardRegionValidationCallback
+from depth_recon.utils.italian_validation import build_italian_validation_callback
+from depth_recon.utils.reconstruction_validation import FullReconstructionValidation
 from depth_recon.configs.config_resolver_pixel import (
     DEFAULT_PIXEL_TRAINING_CONFIG_PATH,
     PIXEL_SCENARIOS,
@@ -106,9 +109,7 @@ def build_en4_candidate_validation_callback(
             if validation_cfg.get("max_profiles_to_plot") is None
             else int(validation_cfg["max_profiles_to_plot"])
         ),
-        max_patch_images_to_log=int(
-            validation_cfg.get("max_patch_images_to_log", 3)
-        ),
+        max_patch_images_to_log=int(validation_cfg.get("max_patch_images_to_log", 3)),
         patch_batch_size=int(validation_cfg.get("patch_batch_size", 8)),
         random_seed=int(validation_cfg.get("seed", 7)),
         image_depths_m=tuple(
@@ -161,6 +162,24 @@ def build_hard_region_validation_callback(
     )
 
 
+def build_italian_validation_callback_for_model(
+    *,
+    data_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+    data_config_path: str | Path,
+) -> pl.Callback | None:
+    """Build the independent Italian validation callback from resolved configs."""
+    italian_cfg = training_cfg.get("training", {}).get("italian_validation", {})
+    if not bool(italian_cfg.get("enabled", False)):
+        return None
+    return build_italian_validation_callback(
+        italian_cfg,
+        data_config=data_cfg,
+        training_config=training_cfg,
+        data_config_path=data_config_path,
+    )
+
+
 def resolve_resume_ckpt_path(model_cfg: dict[str, Any]) -> str | None:
     # Accept false/null to start fresh; otherwise require a valid checkpoint path string.
     """Resolve and validate resume ckpt path.
@@ -200,6 +219,41 @@ def resolve_load_checkpoint_only(model_cfg: dict[str, Any]) -> bool:
     return load_checkpoint_only
 
 
+def validate_fresh_start(
+    *,
+    trainer_cfg: dict[str, Any],
+    model_cfg: dict[str, Any],
+    training_cfg: dict[str, Any],
+    run_dir: Path,
+    explicit_run_dir: bool,
+    check_run_directory: bool = True,
+) -> None:
+    """Reject checkpoint, output-directory, and W&B reuse for fresh runs."""
+    if not bool(trainer_cfg.get("require_fresh_start", False)):
+        return
+    if resolve_resume_ckpt_path(model_cfg) is not None:
+        raise ValueError("require_fresh_start forbids model.resume_checkpoint.")
+    if resolve_load_checkpoint_only(model_cfg):
+        raise ValueError("require_fresh_start forbids model.load_checkpoint_only.")
+    # In DDP every rank validates checkpoint and W&B settings, but only rank zero
+    # owns the output directory.  Non-zero ranks may observe it after rank zero
+    # creates it, which is not evidence that this launch is reusing a run.
+    if (
+        check_run_directory
+        and explicit_run_dir
+        and run_dir.exists()
+        and any(run_dir.iterdir())
+    ):
+        raise FileExistsError(
+            f"require_fresh_start requires an empty run directory: {run_dir}"
+        )
+    wandb_cfg = training_cfg.get("wandb", {})
+    if wandb_cfg.get("run_id") or wandb_cfg.get("resume") not in (None, False, "never"):
+        raise ValueError(
+            "require_fresh_start forbids reusing a W&B run id or resume mode."
+        )
+
+
 def load_weights_only_checkpoint(model: torch.nn.Module, ckpt_path: str) -> str:
     """Load only model weights from a checkpoint, preferring EMA weights if present.
 
@@ -227,6 +281,86 @@ def resolve_global_rank() -> int:
         except ValueError:
             continue
     return 0
+
+
+def _implicit_run_stamp() -> str:
+    """Return a launch-stable stamp when an external DDP launcher is active."""
+    inherited = os.environ.get("DEPTHDIF_RUN_STAMP")
+    if inherited:
+        return inherited
+    for key in ("SLURM_JOB_ID", "TORCHELASTIC_RUN_ID"):
+        value = os.environ.get(key)
+        if value and value.lower() not in {"none", "null"}:
+            # Job and elastic run identifiers are common to all external ranks.
+            return f"hpc-{value}"
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def _uses_external_distributed_launcher() -> bool:
+    """Return whether ranks were started independently by a distributed launcher."""
+    return any(
+        key in os.environ for key in ("RANK", "SLURM_PROCID", "OMPI_COMM_WORLD_RANK")
+    )
+
+
+def resolve_run_directory(
+    run_dir_value: str | None, *, global_rank: int
+) -> tuple[Path, str, bool]:
+    """Resolve one run directory shared by all ranks in a training launch.
+
+    Lightning's spawned workers inherit ``DEPTHDIF_RUN_DIR`` from the launcher
+    process.  External launchers cannot receive a value set by rank zero, so they
+    instead derive the same directory from their Slurm or elastic launch ID.
+    """
+    explicit = run_dir_value is not None
+    run_stamp = _implicit_run_stamp()
+    if explicit:
+        return Path(run_dir_value).expanduser(), run_stamp, True
+
+    inherited = os.environ.get("DEPTHDIF_RUN_DIR")
+    if global_rank != 0 and inherited:
+        return Path(inherited), run_stamp, False
+    return Path("logs") / run_stamp, run_stamp, False
+
+
+class ResolvedBatchMetadata(pl.Callback):
+    """Record the global-batch resolution after Lightning has established DDP."""
+
+    def __init__(self, run_dir: Path) -> None:
+        """Initialize the callback with the directory for rank-zero metadata."""
+        super().__init__()
+        self.run_dir = run_dir
+
+    def on_fit_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        """Persist batch metadata using the trainer's actual world size."""
+        datamodule = trainer.datamodule
+        resolver = getattr(datamodule, "resolved_train_batch_metadata", None)
+        if not callable(resolver):
+            return
+        metadata = resolver()
+        if metadata is None:
+            return
+        if int(metadata["actual_global_batch_size"]) != int(
+            metadata["global_batch_size"]
+        ):
+            raise RuntimeError(
+                "Resolved global batch does not match its configured size."
+            )
+        if not trainer.is_global_zero:
+            return
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        (self.run_dir / "resolved_training_batch.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if trainer.logger is not None:
+            trainer.logger.log_metrics(
+                {
+                    "training/global_batch_size": float(metadata["global_batch_size"]),
+                    "training/local_batch_size": float(metadata["local_batch_size"]),
+                    "training/world_size": float(metadata["world_size"]),
+                },
+                step=trainer.global_step,
+            )
 
 
 # Configure W&B logging and optional model watching.
@@ -550,27 +684,52 @@ def main(
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
-    # Create one run directory per launch; non-zero ranks reuse the resolved path.
-    run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = (
-        Path(run_dir_value).expanduser()
-        if run_dir_value is not None
-        else Path("logs") / run_stamp
+    # Create one run directory per launch; workers reuse the parent directory.
+    run_dir, run_stamp, explicit_run_dir = resolve_run_directory(
+        run_dir_value, global_rank=global_rank
+    )
+    runtime_cfg_dir = (
+        Path("/tmp/depthdif_runtime_configs")
+        / f"{run_stamp}_{os.getpid()}_{global_rank}"
+    )
+    # Resolve the trainer section early because fresh-start checks must happen
+    # before any checkpoint or logger state is created.
+    preflight_bundle = load_pixel_training_config(
+        config_path_value=config_path_value,
+        scenario_override=scenario,
+        overrides=list(overrides or []),
+        runtime_config_dir=runtime_cfg_dir,
+        snapshot_dir=None,
+        write_snapshots=False,
+    )
+    preflight_training_cfg = preflight_bundle.training_cfg
+    preflight_trainer_cfg = preflight_training_cfg.get("trainer", {})
+    validate_fresh_start(
+        trainer_cfg=preflight_trainer_cfg,
+        model_cfg=preflight_bundle.model_cfg,
+        training_cfg=preflight_training_cfg,
+        run_dir=run_dir,
+        explicit_run_dir=explicit_run_dir,
+        check_run_directory=is_global_zero,
     )
     if is_global_zero:
         if run_dir_value is None:
             suffix = 1
             while run_dir.exists():
+                if _uses_external_distributed_launcher():
+                    raise FileExistsError(
+                        "Implicit distributed run directory already exists: "
+                        f"{run_dir}. Pass --run-dir to choose a fresh shared path."
+                    )
                 run_dir = Path("logs") / f"{run_stamp}_{suffix:02d}"
                 suffix += 1
         # Explicit run directories are reusable for interrupted-run validation
         # snapshots; the suite launcher owns collision and resume decisions.
         run_dir.mkdir(parents=True, exist_ok=run_dir_value is not None)
+        # Lightning-spawned workers inherit this exact collision-free path.
+        os.environ["DEPTHDIF_RUN_DIR"] = str(run_dir.resolve())
+        os.environ["DEPTHDIF_RUN_STAMP"] = run_stamp
 
-    runtime_cfg_dir = (
-        Path("/tmp/depthdif_runtime_configs")
-        / f"{run_stamp}_{os.getpid()}_{global_rank}"
-    )
     config_bundle = load_pixel_training_config(
         config_path_value=config_path_value,
         scenario_override=scenario,
@@ -621,6 +780,18 @@ def main(
     data_dataloader_cfg = data_cfg.get("dataloader", {})
     if isinstance(data_dataloader_cfg, dict):
         dataloader_cfg.update(data_dataloader_cfg)
+    global_batch_size = dataloader_cfg.get("global_batch_size")
+    if global_batch_size is not None:
+        global_batch_size = int(global_batch_size)
+        if global_batch_size < 1:
+            raise ValueError("dataloader.global_batch_size must be positive.")
+        accumulation = int(trainer_cfg.get("accumulate_grad_batches", 1))
+        if accumulation != 1:
+            raise ValueError(
+                "dataloader.global_batch_size requires "
+                "trainer.accumulate_grad_batches=1."
+            )
+        dataloader_cfg["global_batch_size"] = global_batch_size
     dataloader_type = (
         str(
             ds_cfg_value(
@@ -756,6 +927,14 @@ def main(
             "train.py supports model_type='cond_px_dif', 'idw_baseline', "
             "'lstm_baseline', 'cnn_baseline', 'unet_baseline', or 'unet2d_baseline'."
         )
+    italian_validation_callback = build_italian_validation_callback_for_model(
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+        data_config_path=effective_data_config_path,
+    )
+    if italian_validation_callback is not None:
+        # Keep evaluation evidence with this run's checkpoints, independent of W&B's cache.
+        italian_validation_callback.output_dir = run_dir
     if resume_ckpt_path is not None and load_checkpoint_only:
         # Weight-only loading intentionally skips optimizer, scheduler, and trainer state.
         weight_source = load_weights_only_checkpoint(model, resume_ckpt_path)
@@ -771,6 +950,10 @@ def main(
         **model_cfg,
         "training": training_cfg,
     }
+    if global_batch_size is not None:
+        run_config.setdefault("training", {}).setdefault("dataloader", {})[
+            "configured_global_batch_size"
+        ] = global_batch_size
     logger = build_wandb_logger(training_cfg, model, run_config=run_config)
     if is_global_zero:
         # Avoid duplicate uploads from DDP worker ranks.
@@ -841,6 +1024,21 @@ def main(
         callbacks.append(en4_candidate_callback)
     if hard_region_callback is not None:
         callbacks.append(hard_region_callback)
+    if italian_validation_callback is not None:
+        callbacks.append(italian_validation_callback)
+    reconstruction_cfg = training_cfg.get("training", {}).get("reconstruction_eval", {})
+    if reconstruction_cfg.get("enabled", False):
+        reconstruction_callback = FullReconstructionValidation(
+            dataset=val_dataset,
+            output_dir=run_dir,
+            sample_count=int(reconstruction_cfg.get("sample_count", 128)),
+            batch_size=int(reconstruction_cfg.get("batch_size", 4)),
+            seed=int(reconstruction_cfg.get("seed", 7)),
+        )
+        # EMA must be active during reconstruction, and the checkpoint callback
+        # must observe its metric after this callback logs it.
+        callbacks.insert(1 if ema_callback is not None else 0, reconstruction_callback)
+    callbacks.append(ResolvedBatchMetadata(run_dir))
 
     # Build device settings from config
     num_gpus = trainer_cfg.get("num_gpus", None)
@@ -887,6 +1085,7 @@ def main(
         limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),
         gradient_clip_val=float(trainer_cfg.get("gradient_clip_val", 0.0)),
+        accumulate_grad_batches=int(trainer_cfg.get("accumulate_grad_batches", 1)),
     )
 
     if is_global_zero:
@@ -919,6 +1118,8 @@ def main(
         # Start from scratch or restore the complete optimizer/trainer state.
         fit_ckpt_path = None if load_checkpoint_only else resume_ckpt_path
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=fit_ckpt_path)
+        # Preserve the established handoff artifact in addition to last.ckpt.
+        trainer.save_checkpoint(str(run_dir / "final.ckpt"))
 
 
 def parse_args() -> argparse.Namespace:

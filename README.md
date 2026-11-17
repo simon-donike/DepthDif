@@ -11,6 +11,10 @@
 
 # DepthDif
 
+For the corrected residual scratch run on SpaceHPC, including the fixed global
+batch of 48, offline data bundle, and Italian epoch monitor, see the
+[HPC handoff guide](docs/hpc-residual-handoff.md).
+
 [![DOI](https://zenodo.org/badge/1148711247.svg)](https://doi.org/10.5281/zenodo.22111273)
 
 DepthDif reconstructs dense subsurface ocean temperature or salinity fields from
