@@ -55,8 +55,8 @@ summary { cursor: pointer; color: var(--cyan); padding: 8px 0; }
 .stages { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .stage { border-bottom: 1px solid var(--border); padding: 14px 0; }
 .stage strong { text-transform: capitalize; }
-.stage span { float: right; font-size: .75rem; color: var(--amber); }
-.stage span.complete { color: var(--mint); }
+.stage > span { float: right; font-size: .75rem; color: var(--amber); }
+.stage > span.complete { color: var(--mint); }
 .stage p { font-size: .8rem; color: var(--muted); margin: 8px 0; }
 .limits { color: var(--muted); font-size: .9rem; padding-left: 20px; }
 .limits li { padding: 5px 0; }
@@ -76,10 +76,16 @@ button:disabled { opacity: .4; cursor: default; }
 output { min-width: 190px; font-variant-numeric: tabular-nums; }
 .spatial-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
 .spatial-grid figure { margin: 0; min-width: 0; }
-.spatial-grid figcaption { margin-bottom: 8px; font-size: .85rem; }
+.spatial-grid figcaption { margin-bottom: 8px; min-height: 3.2em; font-size: .85rem; }
 .spatial-grid canvas { display: block; width: 100%; height: auto; background: #303640; border: 1px solid var(--border); }
 .colour-scale { display: flex; align-items: center; gap: 12px; max-width: 520px; font-size: .8rem; }
 .colour-scale img { flex: 1; min-width: 100px; width: 256px; height: 16px; }
 .colour-scale span { white-space: nowrap; }
 @media (max-width: 1000px) { .spatial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .profile-map { height: 400px; } .hero { padding: 24px 0; } }
+.info-button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; min-width: 20px; padding: 0; margin-left: 6px; border-radius: 50%; color: var(--cyan); border-color: #6c91aa; font: 600 12px/1 Georgia, serif; vertical-align: middle; letter-spacing: 0; text-transform: none; }
+.info-button:hover, .info-button[aria-expanded="true"] { background: #24495e; color: white; }
+.info-popup { position: fixed; z-index: 2000; width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow: auto; padding: 14px 16px; border: 1px solid #6c91aa; border-radius: 6px; background: #102c40; color: var(--text); box-shadow: 0 5px 20px #0008; font: 14px/1.5 system-ui, sans-serif; }
+.info-popup strong { display: block; margin-bottom: 6px; }
+.method-help { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0; color: var(--muted); font-size: .8rem; }
+#depth-play { min-width: 70px; }
