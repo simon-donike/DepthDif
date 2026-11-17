@@ -135,14 +135,23 @@ are not silently regenerated. Omit `--exclude=climatology` from the transfer
 command if you prefer to copy the existing background.
 
 Training startup has the same missing-file preparation on both `val` and
-`dev-ruben`; run the separate CPU preflight first to avoid spending GPU allocation
-time fitting. Generation uses a filesystem lock across ranks and an atomic rename.
+`dev-ruben`. Running `train.py` directly is supported: no separate preflight command
+is required. The first launch generates missing climatology before constructing
+datasets or the model, then continues training. A separate CPU preflight is optional
+and avoids spending GPU allocation time fitting. Generation uses a filesystem lock
+across ranks and an atomic rename.
 
 ### Files needed for Italian/XBT validation
 
 Copy the contents of the already prepared directory
 `outputs/hpc_residual_handoff_20261117/hpc_residual/` into
-`<dataset-root>/hpc_residual/`. The relative layout is:
+`<dataset-root>/hpc_residual/`.
+
+The ready-to-send `ruben_hpc_training_inputs.zip` in the same handoff output
+directory contains these files, `README_FOR_RUBEN.txt`, and transfer checksums.
+Extract the ZIP **into the dataset root**; it already contains the `hpc_residual/`
+directory. Climatology is omitted and generated automatically on the first launch.
+The relative layout is:
 
 ```text
 hpc_residual/
@@ -188,10 +197,12 @@ including two optimizer updates, all 102 Italian profiles, and the saved final
 checkpoint. See `integration_verification.json` and the `logs/integration_*`
 files for the merged-branch evidence.
 
-The automatic climatology preflight update passed 484 repository tests plus
-98 validation tests on `dev-ruben`, and 413 plus 98 on `val`. Coverage includes
+The automatic climatology preflight update passed 485 repository tests plus
+98 validation tests on `dev-ruben`, and 414 plus 98 on `val`. Coverage includes
 concurrent generation, interrupted fits, validation-year exclusion, unchanged
 existing artifacts, dataset-relative paths, and generated-artifact checksums.
+A direct `train.py` entry-point regression verifies fitting before dataset
+construction without invoking a separate preflight command.
 
 ## Cluster environment, smoke run, and training
 

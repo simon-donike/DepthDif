@@ -251,6 +251,60 @@ class ClimatologyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "val_year"):
                 prepare_training_climatology(config, {})
 
+    def test_train_entry_point_prepares_missing_background_without_cli_preflight(
+        self,
+    ) -> None:
+        """A direct training launch fits the baseline before its first dataset opens."""
+        import os
+        import train
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self._fixture_root(Path(temp_dir) / "dataset")
+            relative = "hpc_residual/climatology/temperature_monthly_stride4.npz"
+            config = yaml.safe_load(
+                (
+                    Path(train.__file__).parent
+                    / "src/depth_recon/configs/px_space/training_super_config.yaml"
+                ).read_text()
+            )
+            config["data"]["dataset"]["core"]["geotiff_root_dir"] = str(root)
+            config["data"]["dataset"]["climatology"] = {
+                "enabled": True,
+                "path": relative,
+            }
+            config["data"]["split"]["val_year"] = 2021
+            config["model"]["climatology_residual"] = True
+            config_path = Path(temp_dir) / "training.yaml"
+            config_path.write_text(yaml.safe_dump(config))
+            self.assertFalse((root / relative).exists())
+
+            def check_background_then_stop(**kwargs):
+                """Check real preparation at the dataset boundary without allocating GPUs."""
+                artifact = MonthlyClimatology(root / relative)
+                self.assertEqual(artifact.metadata["val_year_excluded"], 2021)
+                self.assertEqual(artifact.metadata["dates"], [20200115])
+                self.assertTrue(np.allclose(artifact.temperature, 10.0 * 300.0 / 254.0))
+                raise RuntimeError("dataset boundary reached")
+
+            # Only the expensive dataset/model phase is stubbed: configuration
+            # resolution, the startup hook and climatology fitting run normally.
+            with (
+                patch.dict(os.environ),
+                patch.object(
+                    train, "build_dataset", side_effect=check_background_then_stop
+                ) as build,
+                patch.object(train.pl, "seed_everything"),
+                self.assertRaisesRegex(RuntimeError, "dataset boundary reached"),
+            ):
+                train.main(
+                    config_path_value=str(config_path),
+                    run_dir_value=str(Path(temp_dir) / "run"),
+                )
+            build.assert_called_once()
+            self.assertTrue(
+                (root / relative).with_suffix(".npz.preflight.json").is_file()
+            )
+
     def test_non_aligned_patch_uses_source_grid_coordinates(self) -> None:
         """Coarse-grid sampling must not move non-aligned patches toward the origin."""
         with tempfile.TemporaryDirectory() as temp_dir:
