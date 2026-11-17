@@ -477,6 +477,13 @@
     document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeHelp(); });
     document.addEventListener("click", (event) => { if (!event.target.closest(".info-button, #info-popup")) closeHelp(); });
     window.addEventListener("resize", closeHelp);
+    document.querySelectorAll(".metric-section").forEach((section) => {
+      section.addEventListener("toggle", () => {
+        if (!section.open) return;
+        // Charts initialized inside collapsed sections need their visible width measured.
+        section.querySelectorAll(".js-plotly-plot").forEach((chart) => Plotly.Plots.resize(chart));
+      });
+    });
     document.addEventListener("scroll", (event) => {
       if (!activeHelp || event.target === $("info-popup")) return;
       const rect = activeHelp.getBoundingClientRect();
