@@ -88,8 +88,8 @@
     },
     {
       "name": "dependence",
-      "status": "pending",
-      "summary": "Not available in this snapshot."
+      "status": "partial",
+      "summary": "Scored intact and vertical dependence controls."
     },
     {
       "name": "extremes",
@@ -332,6 +332,11 @@
       "name": "physical_summary.tex",
       "file": "artifacts/paper/06_physical/physical_summary.tex",
       "sha256": "cbfc68f2759221d26af5c71e9882f5d4afeb40e0c8d0d20669a33f31ce409ff2"
+    },
+    {
+      "name": "dependence_energy_scores.pdf",
+      "file": "artifacts/paper/07_dependence/dependence_energy_scores.pdf",
+      "sha256": "7d03d78816bfe84f879c85a5222ff6c31cdb3dc72c55511f8d24a766b4cd4a05"
     },
     {
       "name": "partition_summary.csv",

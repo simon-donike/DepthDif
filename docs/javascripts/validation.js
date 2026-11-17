@@ -8,7 +8,8 @@
   const name = (method) => labels[method] || method;
   const fmt = (value) => Number.isFinite(value) ? value.toFixed(4) : "—";
   const signed = (value) => Number.isFinite(value) ? `${value > 0 ? "+" : ""}${value.toFixed(4)}` : "—";
-  let campaign, selected, request = 0;
+  let campaign, selected, request = 0, map, markers = new Map(), mapCohort;
+  let spatial, spatialCohort, spatialRequest = 0, stackImages = new Map();
   const config = { responsive: true, displaylogo: false, toImageButtonOptions: { format: "svg", filename: "depthdif-validation" } };
   function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -48,9 +49,37 @@
     });
     return Plotly.react("depth-chart", traces, layout(`${metric.toUpperCase()} (°C)`, "Depth (m)", { yaxis: { title: "Depth (m)", autorange: "reversed", gridcolor: "#203b4c" } }), config);
   }
-  function locationChart() {
-    const profiles = selected.profiles;
-    return Plotly.react("locations-chart", [{ type: "scatter", mode: "markers", x: profiles.map((p) => p.longitude), y: profiles.map((p) => p.latitude), customdata: profiles.map((p) => p.id), text: profiles.map((p) => p.id), hovertemplate: "%{text}<br>%{x:.2f}° E · %{y:.2f}° N<extra></extra>", marker: { size: profiles.map((p) => p.id === $("profile").value ? 12 : 6), color: profiles.map((p) => p.id === $("profile").value ? "#ffd166" : "#7de0bc"), opacity: .85 } }], layout("Longitude (° E)", "Latitude (° N)", { margin: { t: 20, r: 15, b: 55, l: 65 }, showlegend: false }), config);
+  function locationMap() {
+    if (typeof L === "undefined") throw new Error("Leaflet could not load");
+    if (!map) {
+      map = L.map("locations-map", { scrollWheelZoom: false });
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>', maxZoom: 19
+      }).addTo(map);
+      L.control.scale().addTo(map);
+    }
+    if (mapCohort !== selected.id) {
+      markers.forEach((marker) => marker.remove());
+      markers.clear();
+      // Leaflet needs an initial view before marker SVG elements are available.
+      map.fitBounds(selected.profiles.map((profile) => [profile.latitude, profile.longitude]), { padding: [24, 24], maxZoom: 7 });
+      selected.profiles.forEach((profile) => {
+        const marker = L.circleMarker([profile.latitude, profile.longitude], { radius: 5, color: "#e1edf5", weight: 1, fillColor: "#7de0bc", fillOpacity: .8 }).addTo(map);
+        marker.bindTooltip(element("span", profile.id));
+        marker.bindPopup(element("span", `${profile.id} · ${profile.time}`));
+        const choose = () => { $("profile").value = profile.id; profileChart().catch(showError); };
+        marker.on("click", choose);
+        const node = marker.getElement();
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("role", "button");
+        node.setAttribute("aria-label", `Compare profile ${profile.id}`);
+        node.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); marker.openPopup(); choose(); } });
+        markers.set(profile.id, marker);
+      });
+      mapCohort = selected.id;
+    }
+    map.invalidateSize();
+    markers.forEach((marker, id) => marker.setStyle({ radius: id === $("profile").value ? 8 : 5, fillColor: id === $("profile").value ? "#ffd166" : "#7de0bc" }));
   }
   async function profileChart() {
     // Ignore slow responses from a previously selected cast or cohort.
@@ -59,7 +88,12 @@
     const profile = cohort.profiles.find((p) => p.id === $("profile").value);
     if (!profile) return;
     $("profile-meta").textContent = `${profile.id} · ${profile.time} · ${profile.latitude.toFixed(3)}° N, ${profile.longitude.toFixed(3)}° E · ${profile.points.toLocaleString()} depths · evaluation only`;
-    await locationChart();
+    locationMap();
+    if (spatial && spatialCohort === cohort.id) {
+      const patch = spatial.patches.find((item) => item.profiles.some((item) => item.profile_id === profile.id));
+      if (patch && String(patch.patch_index) !== $("patch").value) { $("patch").value = patch.patch_index; loadPatch().catch(showError); }
+      else drawDepth();
+    }
     const data = await fetchJSON(`${base}${cohort.id}/${profile.file}`);
     if (token !== request || selected !== cohort) return;
     const methods = Object.keys(data).filter((key) => key !== "depth_m");
@@ -76,14 +110,90 @@
       return line(method, order, order.map((budget) => values.find((row) => String(row.budget) === budget)?.mae ?? null), { mode: "lines+markers", connectgaps: false });
     }), layout("Retained context budget per patch", "MAE (°C)", { xaxis: { title: "Retained context budget per patch", type: "category", categoryorder: "array", categoryarray: order } }), config);
   }
-  function downloadLink(label, file) {
-    const link = element("a", label);
-    link.href = `${base}${selected.id}/${file}`;
-    link.setAttribute("download", "");
-    return link;
+  function drawDepth() {
+    if (!spatial || spatialCohort !== selected.id) return;
+    const patch = spatial.patches.find((item) => String(item.patch_index) === $("patch").value);
+    if (!patch) return;
+    const level = Number($("depth-level").value);
+    $("depth-value").textContent = `${spatial.depths_m[level].toFixed(2)} m · level ${level + 1}/${spatial.depths_m.length}`;
+    $("depth-previous").disabled = level === 0;
+    $("depth-next").disabled = level === spatial.depths_m.length - 1;
+    $("spatial-images").querySelectorAll("canvas").forEach((canvas) => {
+      const image = stackImages.get(canvas.dataset.method);
+      if (!image) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = false;
+      // Each PNG contains one original-resolution raster per depth, stacked vertically.
+      ctx.drawImage(image, 0, level * patch.height, patch.width, patch.height, 0, 0, canvas.width, canvas.height);
+      patch.profiles.forEach((profile) => {
+        const x = (profile.col + .5) * canvas.width / patch.width, y = (profile.row + .5) * canvas.height / patch.height;
+        ctx.strokeStyle = profile.profile_id === $("profile").value ? "#ff3939" : "white";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x - 3, y); ctx.lineTo(x + 3, y); ctx.moveTo(x, y - 3); ctx.lineTo(x, y + 3); ctx.stroke();
+      });
+      canvas.setAttribute("aria-label", `${name(canvas.dataset.method)}, depth ${spatial.depths_m[level].toFixed(2)} metres, patch ${patch.patch_index}`);
+    });
+  }
+  function stepDepth(delta) {
+    if (!spatial) return;
+    $("depth-level").value = Math.max(0, Math.min(spatial.depths_m.length - 1, Number($("depth-level").value) + delta));
+    drawDepth();
+  }
+  async function loadPatch() {
+    const token = ++spatialRequest;
+    const patch = spatial.patches.find((item) => String(item.patch_index) === $("patch").value);
+    stackImages.clear();
+    $("spatial-images").replaceChildren();
+    $("spatial-status").textContent = "Loading spatial fields…";
+    $("patch-meta").textContent = `Patch ${patch.patch_index} · target date ${patch.date} · ${patch.width} × ${patch.height} cells · bounds W/S/E/N: ${patch.bounds.map((value) => value.toFixed(2)).join(", ")}° · north at top`;
+    $("colour-min").textContent = `${patch.limits_c[0].toFixed(2)} °C`;
+    $("colour-max").textContent = `${patch.limits_c[1].toFixed(2)} °C`;
+    $("colour-bar").src = `${base}${selected.id}/spatial/colour_bar.png`;
+    const order = ["residual", "glorys", "climatology", "idw", "lstm", "cnn", "unet3d", "unet2d"];
+    const methods = order.filter((method) => patch.methods[method]);
+    const loaded = await Promise.all(methods.map(async (method) => {
+      const image = new Image();
+      image.src = `${base}${selected.id}/spatial/${patch.methods[method]}`;
+      await image.decode();
+      return [method, image];
+    }));
+    if (token !== spatialRequest) return;
+    loaded.forEach(([method, image]) => {
+      stackImages.set(method, image);
+      const figure = element("figure"), canvas = element("canvas");
+      canvas.width = patch.width * 2; canvas.height = patch.height * 2;
+      canvas.dataset.method = method;
+      figure.append(element("figcaption", method === "idw" ? "IDW (incomplete support)" : name(method)), canvas);
+      $("spatial-images").append(figure);
+    });
+    $("spatial-status").textContent = `${spatial.patches.length} evaluation patches · ${spatial.depths_m.length} model depths · ${methods.length} fields. Colour range is fixed across methods and depths within the selected patch.`;
+    drawDepth();
+  }
+  async function spatialViewer() {
+    const cohort = selected;
+    const token = ++spatialRequest;
+    spatial = null;
+    $("spatial-controls").hidden = true;
+    $("patch").disabled = true;
+    $("patch").replaceChildren();
+    if (!cohort.spatial) { $("spatial-status").textContent = "Spatial images have not been exported for this cohort."; return; }
+    const data = await fetchJSON(`${base}${cohort.id}/${cohort.spatial}`);
+    if (token !== spatialRequest || selected !== cohort) return;
+    spatial = data; spatialCohort = cohort.id;
+    $("patch").replaceChildren(...data.patches.map((patch) => { const option = element("option", `${patch.date} · patch ${patch.patch_index}`); option.value = patch.patch_index; return option; }));
+    const matching = data.patches.find((patch) => patch.profiles.some((profile) => profile.profile_id === $("profile").value));
+    if (matching) $("patch").value = matching.patch_index;
+    $("patch").disabled = false;
+    $("depth-level").max = data.depths_m.length - 1;
+    $("depth-level").value = 0;
+    $("spatial-controls").hidden = false;
+    await loadPatch();
   }
   async function render() {
     ++request;
+    ++spatialRequest;
+    spatial = null;
     selected = campaign.cohorts.find((cohort) => cohort.id === $("cohort").value);
     $("load-error").hidden = true;
     $("results").hidden = !selected.available;
@@ -115,23 +225,31 @@
     $("depth-note").textContent = `${selected.id.startsWith("italian") ? "25 m bins, left-closed and right-open, plotted at bin centers." : "Exact model depth levels."} Hover for profile and measurement counts. Click a legend label to show or hide a method. Curves are descriptive; no confidence bands are implied.`;
     tableRows("depth-table", selected.depth.map((row) => ({ highlight: row.method === "residual", cells: [name(row.method), row.depth_resolution === "bin" ? `${row.depth_lower_m}–${row.depth_upper_m}` : row.depth_m, row.n_profiles, row.n_points, fmt(row.mae), fmt(row.rmse), fmt(row.bias), fmt(row.crps)] })));
     $("profile").replaceChildren(...selected.profiles.map((profile) => { const option = element("option", profile.id); option.value = profile.id; return option; }));
-    $("paper-pack").href = `${base}${selected.id}/paper_artifacts.zip`;
-    $("download-links").replaceChildren(downloadLink("Overall CSV", "overall_scores.csv"), downloadLink("Overall LaTeX", "overall_scores.tex"), downloadLink("Provenance JSON", "provenance.json"), ...selected.downloads.filter((item) => ["depth_scores.csv", "depth_scores.tex", "depth_accuracy_temperature.pdf", "primary_scorecard.csv", "partition_summary.csv"].includes(item.name)).map((item) => downloadLink(item.name, item.file)));
-    $("artifact-list").replaceChildren(...selected.downloads.map((item) => downloadLink(item.file.replace("artifacts/", ""), item.file)));
     // Render only after revealing the panel so Plotly measures the real layout width.
     if (typeof Plotly === "undefined") throw new Error("The chart library could not load. Tables and downloads remain available");
-    await Promise.all([depthChart(), conditioningChart(), profileChart()]);
-    $("locations-chart").removeAllListeners("plotly_click");
-    $("locations-chart").on("plotly_click", (event) => { $("profile").value = event.points[0].customdata; profileChart().catch(showError); });
+    await Promise.all([depthChart(), conditioningChart(), profileChart(), spatialViewer()]);
   }
   async function start() {
     campaign = await fetchJSON(`${base}campaign.json`);
-    $("snapshot").textContent = `Snapshot ${new Date(campaign.updated_utc).toLocaleString()} · refresh requires a new export`;
+    $("snapshot").textContent = `Snapshot ${new Date(campaign.updated_utc).toLocaleString()} · static snapshot`;
     $("cohort").replaceChildren(...campaign.cohorts.map((cohort) => { const option = element("option", `${cohort.label}${cohort.available ? "" : " · pending"}`); option.value = cohort.id; return option; }));
     $("cohort").disabled = false;
     $("cohort").addEventListener("change", () => render().catch(showError));
     $("metric").addEventListener("change", () => depthChart().catch(showError));
     $("profile").addEventListener("change", () => profileChart().catch(showError));
+    $("patch").addEventListener("change", () => loadPatch().catch(showError));
+    $("depth-level").addEventListener("input", drawDepth);
+    $("depth-previous").addEventListener("click", () => stepDepth(-1));
+    $("depth-next").addEventListener("click", () => stepDepth(1));
+    let lastWheel = 0;
+    $("spatial-images").addEventListener("wheel", (event) => {
+      if (!spatial || event.ctrlKey || !event.deltaY) return;
+      event.preventDefault();
+      if (performance.now() - lastWheel > 80) { stepDepth(Math.sign(event.deltaY)); lastWheel = performance.now(); }
+    }, { passive: false });
+    $("spatial-images").addEventListener("keydown", (event) => {
+      if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) { event.preventDefault(); stepDepth(["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1); }
+    });
     await render();
   }
   start().catch(showError);
