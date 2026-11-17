@@ -3,10 +3,11 @@
 (() => {
   const base = "../assets/validation/";
   const $ = (id) => document.getElementById(id);
-  const labels = { residual: "DepthDif", glorys: "GLORYS (packaged)", glorys_packaged: "GLORYS (packaged)", climatology: "Climatology", lstm: "LSTM", cnn: "CNN", unet3d: "UNet3D", unet2d: "UNet2D", glorys_bias: "GLORYS + calibrated bias", baseline_oi_glorys_full: "OI · GLORYS", baseline_oi_climatology_full: "OI · climatology", observation: "Italian XBT observation" };
+  const labels = { residual: "DepthDif", glorys: "GLORYS (packaged)", glorys_packaged: "GLORYS (packaged)", climatology: "Climatology", lstm: "LSTM", cnn: "CNN", unet3d: "UNet3D", unet2d: "UNet2D", baseline_oi_climatology_full: "OI · climatology", observation: "Italian XBT observation" };
   labels.idw = "IDW";
-  const colors = { residual: "#7de0bc", glorys: "#ffd166", glorys_packaged: "#ffd166", observation: "#f4fbff", climatology: "#8d9aa5", lstm: "#b39bff", cnn: "#ff8c91", unet3d: "#6ca9ff", unet2d: "#e1a4de", glorys_bias: "#f59d57", baseline_oi_glorys_full: "#4bc6ca", baseline_oi_climatology_full: "#b2ce6e" };
+  const colors = { residual: "#7de0bc", glorys: "#ffd166", glorys_packaged: "#ffd166", observation: "#f4fbff", climatology: "#8d9aa5", lstm: "#b39bff", cnn: "#ff8c91", unet3d: "#6ca9ff", unet2d: "#e1a4de", baseline_oi_climatology_full: "#b2ce6e" };
   const name = (method) => labels[method] || method;
+  const includeMethod = (method) => !/^(glorys_bias|baseline_glorys_bias|baseline_oi_glorys)/.test(method);
   const fmt = (value) => Number.isFinite(value) ? value.toFixed(4) : "—";
   const signed = (value) => Number.isFinite(value) ? `${value > 0 ? "+" : ""}${value.toFixed(4)}` : "—";
   let campaign, selected, request = 0, map, markers = new Map(), mapCohort;
@@ -30,8 +31,6 @@
     cnn: ["CNN", "Convolutional neural-network baseline using learned local filters to reconstruct temperature. It uses its own frozen selected checkpoint and configuration; the label does not imply identical inputs or architecture to DepthDif."],
     unet3d: ["UNet3D", "Three-dimensional U-Net baseline with convolutions across depth and both horizontal dimensions. Encoder and decoder features are linked by skip connections. It uses a frozen selected checkpoint."],
     unet2d: ["UNet2D", "Two-dimensional U-Net baseline with spatial convolutions and skip connections between encoder and decoder. Depth levels are represented by channels rather than a third convolution dimension. It uses a frozen selected checkpoint."],
-    glorys_bias: ["GLORYS + calibrated bias", "Packaged GLORYS adjusted by a regularised systematic-error correction fitted only on the calibration partition. The correction is evaluated on the separate evaluation partition."],
-    baseline_oi_glorys_full: ["OI · GLORYS", "Optimal interpolation updates a GLORYS background using retained EN4 observations and specified covariance and observation-error assumptions. Full denotes all retained context after masking. Evaluation XBT values are not used for the update."],
     baseline_oi_climatology_full: ["OI · climatology", "Optimal interpolation updates a climatological background using retained EN4 observations and specified covariance and observation-error assumptions. Full denotes all retained context after masking. Evaluation XBT values are not used for the update."],
     conditioning: ["Conditioning", "Observations or surface fields supplied as inputs to a prediction. Here the full-context reconstruction uses available quality-controlled EN4 temperature supports and SST. EN4 context may include observations assimilated into GLORYS; it is not the Italian evaluation target."],
     en4: ["EN4 supports", "EN4 is the temperature and salinity profile dataset supplying context. Markers show occupied temperature input grid cells after quality filtering and holdout masking, verified against the original inference batch hashes. Multiple source profiles can share a cell; these are not unique profile identities."],
@@ -197,7 +196,7 @@
     }
     const data = await fetchJSON(`${base}${cohort.id}/${profile.file}`);
     if (token !== request || selected !== cohort) return;
-    const methods = Object.keys(data).filter((key) => key !== "depth_m");
+    const methods = Object.keys(data).filter((key) => key !== "depth_m" && includeMethod(key));
     labels.observation = cohort.id.startsWith("italian") ? "Italian XBT observation" : "EN4 observation";
     await Plotly.react("profile-chart", methods.map((method) => line(method, data[method], data.depth_m)), layout("Potential temperature (°C)", "Depth (m)", { yaxis: { title: "Depth (m)", autorange: "reversed", gridcolor: "#203b4c" } }), config);
     await Plotly.react("error-chart", methods.filter((method) => method !== "observation").map((method) => line(method, data.depth_m, data[method].map((value, index) => value - data.observation[index]))), layout("Depth (m)", "Prediction − observation (°C)"), config);
@@ -384,6 +383,12 @@
     window.addEventListener("pagehide", pausePlayback);
     $("depth-play").addEventListener("click", togglePlayback);
     campaign = await fetchJSON(`${base}campaign.json`);
+    // Apply the same publication selection to older cached campaign snapshots.
+    campaign.cohorts.forEach((cohort) => {
+      ["overall", "depth", "paired", "conditioning"].forEach((key) => {
+        if (cohort[key]) cohort[key] = cohort[key].filter((row) => includeMethod(row.method ?? row.baseline));
+      });
+    });
     $("snapshot").textContent = `Snapshot ${new Date(campaign.updated_utc).toLocaleString()} · static snapshot`;
     $("cohort").replaceChildren(...campaign.cohorts.map((cohort) => { const option = element("option", `${cohort.label}${cohort.available ? "" : " · pending"}`); option.value = cohort.id; return option; }));
     $("cohort").disabled = false;
