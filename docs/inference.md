@@ -185,3 +185,9 @@ as claims in this documentation.
 DDPM follows the full configured reverse process. DDIM permits a shorter explicit
 step count. The repository does not define a universally sufficient DDIM step
 count: choose it for a specific checkpoint and report it with the result.
+
+## Latent checkpoints
+
+The [latent workflow guide](autoencoder.md#inference) documents single-batch
+inference with the mask-aware AE export and diffusion checkpoint. The inference
+resolver preserves physical depth masks independently of latent channel counts.

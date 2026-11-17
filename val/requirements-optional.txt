@@ -1,0 +1,4 @@
+# Optional TEOS-10 observation conversion; never used implicitly for XBT.
+gsw==3.6.19
+# Exploratory grayscale-as-RGB comparison with packaged GLORYS fields.
+lpips==0.1.4

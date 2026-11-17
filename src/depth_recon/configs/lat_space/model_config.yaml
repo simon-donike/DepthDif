@@ -3,9 +3,16 @@ model: # Model Settings
   model_type: "latent_cond_dif" # Latent conditional diffusion model type.
   resume_checkpoint: false # false/null starts from scratch; set to a .ckpt path to load checkpoint state.
   load_checkpoint_only: false # true loads model weights only; false resumes optimizer/scheduler/trainer state too.
+  depth_channels: 50 # Physical depths per field, separate from generated channels.
+  output_fields: [temperature]
+  condition_eo_channels: 3
+  condition_per_depth_valid_mask: true
+  condition_use_wet_mask: true
+  mask_diffusion_with_wet_mask: true
+  climatology_residual: false
   generated_channels: 12 # Predict latent z_y channels.
-  condition_channels: 15 # z_x (12) + EO (1) + collapsed x_valid_mask (1) + GLORYS land_mask (1).
-  condition_mask_channels: 1 # One x_valid_mask channel is concatenated to the model condition.
+  condition_channels: 116 # 12 latent + 3 EO + 50 observed-depth + 50 domain + 1 land.
+  condition_mask_channels: 50 # Preserve depth-specific observation support.
   condition_include_eo: true # Include batch["eo"] as extra condition channel.
   condition_use_valid_mask: true # Use x_valid_mask as conditioning input in addition to EO + z_x.
   condition_use_land_mask: true # Concatenate GLORYS-derived spatial ocean/domain mask to the condition tensor.
@@ -23,7 +30,8 @@ model: # Model Settings
 
   latent:
     ae_config_path: "src/depth_recon/configs/lat_space/ae_config.yaml" # Path to AE architecture/training config.
-    ae_checkpoint: false # false/null disables loading pretrained AE; set to checkpoint path when available.
+    ae_checkpoint: null # REQUIRED: logs/ae_.../autoencoder_calibrated.ckpt.
+    decoded_observation_weight: 0.0 # Optional physical-space ARGO L1 loss.
     freeze_autoencoder: true # Freeze AE weights during latent diffusion training.
     latent_channels: 12 # Expected latent channel count.
     spatial_downsample: 1 # 1 keeps latent at full HxW.

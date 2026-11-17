@@ -389,6 +389,9 @@ def load_checkpoint_weights(
     artifact_validator = getattr(model, "validate_checkpoint_artifact_identity", None)
     if callable(artifact_validator) and isinstance(checkpoint, dict):
         artifact_validator(checkpoint)
+    if isinstance(model, LatentDiffusionConditional):
+        model.on_load_checkpoint(checkpoint)
+        strict = True
     if prefer_ema:
         ema_state_dict = extract_ema_state_dict(checkpoint)
         if ema_state_dict is not None:

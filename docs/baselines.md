@@ -2,6 +2,8 @@
 
 DepthDif baseline models live in `src/depth_recon/models/baselines/`. They are Lightning modules and share the same dataloader-facing batch contract and `predict_step` output contract as the diffusion model. This keeps training, inference, global export, uncertainty export, and comparison-globe tooling on the same path where possible.
 
+The validation cohorts use the shared [`val/baselines.yaml`](../val/baselines.yaml) registry to run all five methods with pinned selected checkpoints. Full and conditioning-budget predictions feed the scientific comparisons, including the Cavaiola diagnostic. See the [validation workflow](../val/README.md) for saved predictions, measured timing and explicit unsupported-budget reports.
+
 The currently supported baseline selectors are:
 
 | `model.model_type` | Model | Trainable | Checkpoint required |
@@ -11,6 +13,10 @@ The currently supported baseline selectors are:
 | `cnn_baseline` | `ProfileCNNInfillingBaseline` | Yes | Yes |
 | `unet_baseline` | `UNetInfillingBaseline` | Yes | Yes |
 | `unet2d_baseline` | `UNet2DInfillingBaseline` | Yes | Yes |
+
+## Planned Comparison Methods
+
+- [Cavaiola 2026's temperature-profile reconstruction workflow](https://github.com/Mattiads1/AI-Sea-Temperature-Profile-reconstruction/tree/main) has an optional [released-model diagnostic adapter](../val/CAVAIOLA_2026.md), using the original ERA5/BiLSTM/attention/Conv1D implementation. It compares shared 5–200 m temperature points with empirical CRPS. Its released weights include 2016 in the training period, so results are labelled diagnostics. Real ERA5 inference remains to be run.
 
 ## Shared Batch Contract
 

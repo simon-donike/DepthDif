@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-import warnings
 
 import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F
 
 from depth_recon.models.diffusion.PixelDiffusion import PixelDiffusionConditional
 from depth_recon.paths import config_path, resolve_config_path
@@ -23,6 +21,7 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         autoencoder: DepthBandAutoencoder,
         autoencoder_frozen: bool = True,
         eo_in_pixel_space: bool = True,
+        decoded_observation_weight: float = 0.0,
         **kwargs: Any,
     ) -> None:
         """Initialize LatentDiffusionConditional with configured parameters.
@@ -44,7 +43,36 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                 f"autoencoder.latent_channels={int(autoencoder.latent_channels)}."
             )
 
+        if kwargs.get("ambient_occlusion_enabled", False) or kwargs.get(
+            "clamp_known_pixels", False
+        ):
+            raise ValueError(
+                "Latent diffusion does not support ambient corruption or observation clamping."
+            )
+        if not eo_in_pixel_space:
+            raise ValueError("EO must remain in physical grid space.")
+        if kwargs.get("condition_per_depth_valid_mask", False):
+            # The parent checks masks against generated channels; latent models
+            # instead preserve one mask per physical channel.
+            if int(kwargs.get("condition_mask_channels", 0)) != autoencoder.in_channels:
+                raise ValueError(
+                    "Latent conditioning requires one mask per physical depth."
+                )
+            kwargs["condition_per_depth_valid_mask"] = False
         super().__init__(**kwargs)
+        if self.ocean_loss.any_extra_enabled():
+            raise ValueError(
+                "Pixel auxiliary losses are unsupported in latent space; use decoded_observation_weight."
+            )
+        if (
+            tuple(self.output_fields) != autoencoder.output_fields
+            or self.climatology_residual != autoencoder.climatology_residual
+        ):
+            raise ValueError("AE and diffusion field/residual contracts must match.")
+        self.decoded_observation_weight = float(decoded_observation_weight)
+        if self.decoded_observation_weight < 0:
+            raise ValueError("decoded_observation_weight must be nonnegative.")
+        self.full_reconstruction_logging_enabled = False
         self.autoencoder = autoencoder
         self.autoencoder_frozen = bool(autoencoder_frozen)
         self.eo_in_pixel_space = bool(eo_in_pixel_space)
@@ -115,6 +143,10 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         postprocess_cfg = m.get("post_process", m.get("post-process", {}))
         gaussian_blur_cfg = postprocess_cfg.get("gaussian_blur", {})
         latent_cfg = m.get("latent", {})
+        if not bool(latent_cfg.get("freeze_autoencoder", True)):
+            raise ValueError(
+                "The supported two-stage workflow requires freeze_autoencoder=true."
+            )
 
         ae_config_value = str(latent_cfg.get("ae_config_path", "")).strip()
         if not ae_config_value:
@@ -136,13 +168,23 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                 )
             checkpoint = torch.load(ae_checkpoint_path, map_location="cpu")
             state_dict = cls._extract_autoencoder_state_dict(checkpoint)
-            missing, unexpected = autoencoder.load_state_dict(state_dict, strict=False)
-            if missing or unexpected:
-                warnings.warn(
-                    "Loaded AE checkpoint with non-strict matching: "
-                    f"missing={len(missing)}, unexpected={len(unexpected)}.",
-                    stacklevel=2,
+            if checkpoint.get("ae_contract") != autoencoder.contract():
+                raise ValueError(
+                    "Autoencoder checkpoint contract mismatch; use a calibrated mask-aware AE export."
                 )
+            autoencoder.load_state_dict(state_dict, strict=True)
+            if (
+                not torch.isfinite(autoencoder.latent_mean).all()
+                or not torch.isfinite(autoencoder.latent_std).all()
+                or not (autoencoder.latent_std > 0).all()
+            ):
+                raise ValueError("Invalid AE latent normalization statistics.")
+            if not bool(autoencoder.latent_calibrated):
+                raise ValueError(
+                    "AE checkpoint lacks training-only latent calibration."
+                )
+        elif bool(latent_cfg.get("freeze_autoencoder", True)):
+            raise ValueError("Frozen latent diffusion requires latent.ae_checkpoint.")
 
         latent_channels = int(
             latent_cfg.get("latent_channels", autoencoder.latent_channels)
@@ -168,6 +210,15 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
                 f"Got {generated_channels} vs {latent_channels}."
             )
 
+        if (
+            int(m.get("physical_channels", autoencoder.in_channels))
+            != autoencoder.in_channels
+        ):
+            raise ValueError("AE physical channels do not match the resolved scenario.")
+        if m.get("coastal_loss", {}).get("enabled", False):
+            raise ValueError(
+                "Pixel coastal loss is not supported by the latent workflow."
+            )
         unet_kwargs = cls._parse_unet_config(m)
         coord_embed_dim = coord_cfg.get("embed_dim", None)
         if coord_embed_dim is not None:
@@ -175,6 +226,21 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
 
         return cls(
             datamodule=datamodule,
+            output_fields=m.get("output_fields", list(autoencoder.output_fields)),
+            variable_scenario=m.get("scenario", None),
+            condition_eo_channels=int(m.get("condition_eo_channels", 1)),
+            condition_per_depth_valid_mask=bool(
+                m.get("condition_per_depth_valid_mask", False)
+            ),
+            condition_use_wet_mask=bool(m.get("condition_use_wet_mask", False)),
+            mask_diffusion_with_wet_mask=bool(
+                m.get("mask_diffusion_with_wet_mask", False)
+            ),
+            climatology_residual=bool(m.get("climatology_residual", False)),
+            losses_config=m.get("losses"),
+            decoded_observation_weight=float(
+                latent_cfg.get("decoded_observation_weight", 0.0)
+            ),
             autoencoder=autoencoder,
             autoencoder_frozen=bool(latent_cfg.get("freeze_autoencoder", True)),
             eo_in_pixel_space=bool(latent_cfg.get("eo_in_pixel_space", True)),
@@ -263,31 +329,34 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
             log_images_every_n_steps=int(w.get("log_images_every_n_steps", 10)),
         )
 
-    def _maybe_encode_with_autoencoder(self, value: torch.Tensor) -> torch.Tensor:
-        if value.ndim == 4 and int(value.size(1)) == int(self.autoencoder.in_channels):
-            if self.autoencoder_frozen:
-                with torch.no_grad():
-                    return self.autoencoder.encode(value)
-            return self.autoencoder.encode(value)
-        return value
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Persist AE semantics with the diffusion state for strict resumes."""
+        checkpoint["ae_contract"] = self.autoencoder.contract()
 
-    def _maybe_decode_with_autoencoder(self, value: torch.Tensor) -> torch.Tensor:
-        if value.ndim == 4 and int(value.size(1)) == int(
-            self.autoencoder.latent_channels
-        ):
-            if self.autoencoder_frozen:
-                with torch.no_grad():
-                    return self.autoencoder.decode(value)
-            return self.autoencoder.decode(value)
-        return value
+    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Reject checkpoints from different field or normalization contracts."""
+        if checkpoint.get("ae_contract") != self.autoencoder.contract():
+            raise ValueError("Latent checkpoint AE contract mismatch.")
+
+    def encode_fields(
+        self,
+        value: torch.Tensor,
+        valid_mask: torch.Tensor | None = None,
+        wet_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Encode physical fields and apply fixed training-set latent scaling."""
+        encoded = self.autoencoder.encode(value, valid_mask, wet_mask)
+        return (encoded - self.autoencoder.latent_mean) / self.autoencoder.latent_std
 
     def input_T(self, value: torch.Tensor) -> torch.Tensor:
-        """Encode depth tensors into latent space when channel count matches AE input."""
-        return self._maybe_encode_with_autoencoder(value)
+        """Encode a fully observed physical tensor; sparse callers pass explicit masks."""
+        return self.encode_fields(value)
 
     def output_T(self, value: torch.Tensor) -> torch.Tensor:
-        """Decode latent tensors back to depth-band space when channel count matches."""
-        return self._maybe_decode_with_autoencoder(value)
+        """Decode normalized latents while retaining gradients to the denoiser."""
+        return self.autoencoder.decode(
+            value * self.autoencoder.latent_std + self.autoencoder.latent_mean
+        )
 
     def _prepare_condition_for_model(
         self,
@@ -296,154 +365,163 @@ class LatentDiffusionConditional(PixelDiffusionConditional):
         *,
         eo: torch.Tensor | None = None,
         land_mask: torch.Tensor | None = None,
+        wet_mask: torch.Tensor | None = None,
+        background: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # EO can stay in pixel-space while x is encoded to latent channels.
-        condition_parts: list[torch.Tensor] = []
+        """Combine encoded observations with uncompressed depth/domain evidence."""
+        domain = wet_mask if wet_mask is not None else land_mask
+        valid_mask = self.autoencoder.align_mask(
+            valid_mask, x
+        ) & self.autoencoder.align_mask(domain, x)
+        data_t = self.encode_fields(x, valid_mask, domain)
+        parts = []
         if self.condition_include_eo:
-            if eo is None:
-                raise RuntimeError("condition_include_eo=true requires batch['eo'].")
-            eo_t = eo if self.eo_in_pixel_space else self.input_T(eo)
-            condition_parts.append(eo_t)
-
-        data_t = self.input_T(x)
-        condition_parts.append(data_t)
-
-        mask_t = self._prepare_condition_mask(
-            valid_mask,
-            batch_size=int(data_t.size(0)),
-            height=int(data_t.size(-2)),
-            width=int(data_t.size(-1)),
+            if eo is None or eo.shape[1] != self.condition_eo_channels:
+                raise ValueError(
+                    "EO channels do not match the latent condition contract."
+                )
+            parts.append(eo)
+        parts.append(data_t)
+        mask = self._prepare_condition_mask(
+            valid_mask, batch_size=x.shape[0], height=x.shape[2], width=x.shape[3]
         )
-        if mask_t is not None:
-            mask_t = mask_t.to(device=data_t.device, dtype=data_t.dtype)
-            condition_parts.append(mask_t)
-
-        land_t = self._prepare_land_condition_mask(
-            land_mask,
-            batch_size=int(data_t.size(0)),
-            height=int(data_t.size(-2)),
-            width=int(data_t.size(-1)),
+        if mask is not None:
+            parts.append(mask.to(x.dtype))
+        land = self._prepare_land_condition_mask(
+            land_mask, batch_size=x.shape[0], height=x.shape[2], width=x.shape[3]
         )
-        if land_t is not None:
-            land_t = land_t.to(device=data_t.device, dtype=data_t.dtype)
-            condition_parts.append(land_t)
-
-        condition = torch.cat(condition_parts, dim=1)
-        expected_channels = int(getattr(self.model, "condition_channels", 0))
-        if expected_channels > 0 and int(condition.size(1)) != expected_channels:
-            raise RuntimeError(
-                "Conditioning channel mismatch: "
-                f"built={int(condition.size(1))}, expected={expected_channels}. "
-                "Check condition_channels / condition_mask_channels / "
-                "condition_include_eo / condition_use_valid_mask / "
-                "condition_use_land_mask."
+        if land is not None:
+            parts.append(land.to(x.dtype))
+        if self.condition_use_wet_mask:
+            if wet_mask is None:
+                raise ValueError(
+                    "Latent conditioning requires a static depth wet_mask."
+                )
+            parts.append(wet_mask.to(x.dtype))
+        if self.climatology_residual:
+            if background is None:
+                raise ValueError("Residual conditioning requires climatology.")
+            parts.append(background)
+        condition = torch.cat(parts, dim=1)
+        if condition.shape[1] != self.model.condition_channels:
+            raise ValueError(
+                f"Latent condition channels: built {condition.shape[1]}, expected {self.model.condition_channels}."
             )
         return condition
 
-    def _collapse_mask_channels(
+    def _extract_known_values_and_mask(
+        self, x: torch.Tensor, valid_mask: torch.Tensor | None
+    ) -> tuple[None, None]:
+        """Physical observations cannot clamp individual encoded features."""
+        return None, None
+
+    @torch.no_grad()
+    def forward(
         self,
-        mask: torch.Tensor | None,
-    ) -> torch.Tensor | None:
-        if mask is None:
-            return None
-        m = mask
-        if m.ndim == 3:
-            m = m.unsqueeze(1)
-        if m.ndim != 4:
-            return m
-        if int(m.size(1)) in {1, int(self.model.generated_channels)}:
-            return m
-        return m.amax(dim=1, keepdim=True)
-
-    def _downsample_mask_to_latent_grid(
-        self,
-        mask: torch.Tensor | None,
-    ) -> torch.Tensor | None:
-        if mask is None:
-            return None
-        downsample = int(getattr(self.autoencoder, "spatial_downsample", 1))
-        if downsample <= 1:
-            return mask
-
-        mask_was_3d = mask.ndim == 3
-        m = mask.unsqueeze(1) if mask_was_3d else mask
-        if m.ndim != 4:
-            return mask
-
-        # Latent-space masks should stay valid if any source pixel in the pooled block was valid.
-        pooled = F.max_pool2d(
-            m.to(dtype=torch.float32),
-            kernel_size=downsample,
-            stride=downsample,
+        condition: torch.Tensor,
+        *args: Any,
+        wet_mask: torch.Tensor | None = None,
+        clamp_known_pixels: bool | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Sample on the shared horizontal ocean domain, then decode physical depths."""
+        if clamp_known_pixels:
+            raise ValueError("Latent observation clamping is unsupported.")
+        # A latent channel mixes all depths, so only wholly dry columns are zeroed.
+        domain = wet_mask.any(dim=1, keepdim=True) if wet_mask is not None else None
+        return super().forward(
+            condition, *args, wet_mask=domain, clamp_known_pixels=False, **kwargs
         )
-        if mask.dtype == torch.bool:
-            pooled_out: torch.Tensor = pooled > 0.5
+
+    def _latent_step(self, batch: dict[str, Any], *, prefix: str) -> torch.Tensor:
+        """Denoise dense target latents; score optional observations after decoding."""
+        if self.autoencoder_frozen:
+            self.autoencoder.eval()
+        data = self._prepare_model_batch_tensors(batch, include_y=True)
+        x, y = data["x"], data["y"]
+        xm, ym = data["x_valid_mask"], data["y_valid_mask"]
+        wet, background = self._prepare_depth_context(batch, x)
+        if wet is None:
+            wet = self.autoencoder.align_mask(batch.get("land_mask"), y)
+        xm = self.autoencoder.align_mask(xm, x) & wet
+        ym = self.autoencoder.align_mask(ym, y) & wet
+        if any(
+            key in batch
+            for key in ("y_supervision_weight", "y_salinity_supervision_weight")
+        ):
+            raise ValueError(
+                "Latent dense targets do not support synthetic-prior confidence weights."
+            )
+        condition = self._prepare_condition_for_model(
+            self._subtract_background(x, xm, background),
+            xm,
+            eo=batch.get("eo"),
+            land_mask=batch.get("land_mask"),
+            wet_mask=wet,
+            background=background,
+        )
+        target = self.encode_fields(
+            self._subtract_background(y, ym, background), ym, wet
+        )
+        latent_valid = ym.any(dim=1, keepdim=True)
+        result = self.model.p_loss(
+            target,
+            condition,
+            loss_mask=latent_valid,
+            mask_loss=True,
+            wet_mask=(
+                wet.any(dim=1, keepdim=True)
+                if self.mask_diffusion_with_wet_mask
+                else None
+            ),
+            coord=batch.get("coords"),
+            date=batch.get("date"),
+            return_context=self.decoded_observation_weight > 0,
+        )
+        if self.decoded_observation_weight > 0:
+            loss, context = result
+            decoded = self.output_T(context["x0_pred"])
+            if background is not None:
+                decoded = decoded + background
+            difference = torch.where(xm, decoded - torch.where(xm, x, 0.0), 0.0)
+            observed_loss = difference.abs().sum() / xm.sum().clamp_min(1)
+            self.log(
+                f"{prefix}/decoded_observation_l1",
+                observed_loss,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=x.shape[0],
+            )
+            loss = loss + self.decoded_observation_weight * observed_loss
         else:
-            pooled_out = (pooled > 0.5).to(dtype=mask.dtype)
-        if mask_was_3d:
-            pooled_out = pooled_out.squeeze(1)
-        return pooled_out
-
-    def _prepare_batch_for_latent_loss(
-        self,
-        batch: dict[str, Any],
-    ) -> dict[str, Any]:
-        prepared = dict(batch)
-        prepared["x_valid_mask"] = self._downsample_mask_to_latent_grid(
-            self._collapse_mask_channels(batch.get("x_valid_mask"))
+            loss = result
+        self.log(
+            f"{prefix}/loss",
+            loss,
+            on_step=prefix == "train",
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=x.shape[0],
         )
-        prepared["y_valid_mask"] = self._downsample_mask_to_latent_grid(
-            self._collapse_mask_channels(batch.get("y_valid_mask"))
-        )
-        prepared["x_valid_mask_1d"] = self._downsample_mask_to_latent_grid(
-            self._collapse_mask_channels(batch.get("x_valid_mask_1d"))
-        )
-        prepared["land_mask"] = self._downsample_mask_to_latent_grid(
-            self._collapse_mask_channels(batch.get("land_mask"))
-        )
-        return prepared
-
-    def _build_ambient_further_valid_mask(
-        self,
-        valid_mask: torch.Tensor | None,
-        *,
-        reference: torch.Tensor,
-    ) -> torch.Tensor | None:
-        latent_reference = self.input_T(reference)
-        return super()._build_ambient_further_valid_mask(
-            valid_mask,
-            reference=latent_reference,
-        )
-
-    def _build_task_supervision_mask(
-        self,
-        *,
-        reference: torch.Tensor,
-        x_valid_mask: torch.Tensor | None,
-        y_valid_mask: torch.Tensor | None,
-    ) -> torch.Tensor | None:
-        latent_reference = self.input_T(reference)
-        return super()._build_task_supervision_mask(
-            reference=latent_reference,
-            x_valid_mask=x_valid_mask,
-            y_valid_mask=y_valid_mask,
-        )
+        if prefix == "val":
+            self.log(
+                "val/loss_ckpt",
+                loss.detach(),
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=x.shape[0],
+            )
+        return loss
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
-        if self.autoencoder_frozen:
-            self.autoencoder.eval()
-        return super().training_step(
-            self._prepare_batch_for_latent_loss(batch),
-            batch_idx,
-        )
+        """Train the denoiser in latent space with physical conditioning masks."""
+        return self._latent_step(batch, prefix="train")
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> torch.Tensor:
-        if self.autoencoder_frozen:
-            self.autoencoder.eval()
-        return super().validation_step(
-            self._prepare_batch_for_latent_loss(batch),
-            batch_idx,
-        )
+        """Log denoising loss; the fixed reconstruction callback selects checkpoints."""
+        return self._latent_step(batch, prefix="val")
 
     def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
         """Create optimizer and optional scheduler configuration."""

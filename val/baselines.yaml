@@ -1,0 +1,128 @@
+# Frozen selected checkpoints shared by every validation cohort.
+# Effective snapshots preserve the trained architecture; weights use the saved standard state.
+temperature:
+- name: idw
+  inherit_model_config: true
+  overrides:
+  - model.model_type=idw_baseline
+  - model.ambient_occlusion.enabled=false
+  weights: standard
+- name: lstm
+  effective_configs:
+    data:
+      path: logs/selection/baselines/LSTM/lstm_baseline_temperature_bs1_gpu0_data_config_effective.yaml
+      sha256: 5b3b25374f9269a320e106749b0009431d64cde0da26353374378c6717467c19
+    model:
+      path: logs/selection/baselines/LSTM/lstm_baseline_temperature_bs1_gpu0_model_config_effective.yaml
+      sha256: 1c6b5c485f01660b8abea7bf3a0b7bb1c62324ac0a561886de4c1acf7b7a833a
+    training:
+      path: logs/selection/baselines/LSTM/lstm_baseline_temperature_bs1_gpu0_training_config_effective.yaml
+      sha256: b7c2cbd160f1076892b4b6b818435610b4cdc091cee05e273130edaa3d4e8b16
+  checkpoint: logs/selection/baselines/LSTM/lstm_baseline_temperature_bs1_gpu0_best-epochepoch=001.ckpt
+  checkpoint_sha256: cead4e50a983541346dea570a620ce599f5a609a350f6dde953029d029cf7d40
+  weights: standard
+- name: cnn
+  effective_configs:
+    data:
+      path: logs/selection/baselines/CNN/cnn_baseline_temperature_argoonly_b9_interrupted_data_config_effective.yaml
+      sha256: 54af0e01e8d2c9ccb7d789dc11bcb44addf3741e051c9b2e5703386e2b82bd7d
+    model:
+      path: logs/selection/baselines/CNN/cnn_baseline_temperature_argoonly_b9_interrupted_model_config_effective.yaml
+      sha256: 9c98332775bfea4efdc5205f55c5620c34a7376f865ad522f4df39b0adac0f68
+    training:
+      path: logs/selection/baselines/CNN/cnn_baseline_temperature_argoonly_b9_interrupted_training_config_effective.yaml
+      sha256: 2ef3e35576a3e0f556a3d710e064a0ff94e2fc8cbb65b58e8862f777ea1d9e55
+  checkpoint: logs/selection/baselines/CNN/cnn_baseline_temperature_argoonly_b9_interrupted_best-epochepoch=000.ckpt
+  checkpoint_sha256: 6978636ae05dc0e76b25dd4b25b414bdb1cdc33bfbbea8d48f5c79cea67ec862
+  weights: standard
+- name: unet3d
+  effective_configs:
+    data:
+      path: logs/selection/baselines/UNet3D/unet3d_temperature_b8_interrupted_data_config_effective.yaml
+      sha256: 54af0e01e8d2c9ccb7d789dc11bcb44addf3741e051c9b2e5703386e2b82bd7d
+    model:
+      path: logs/selection/baselines/UNet3D/unet3d_temperature_b8_interrupted_model_config_effective.yaml
+      sha256: 7547f6b96901459a87643dda0c9591ac9d9f82d7aeb1484f5de4b6d3b0072c68
+    training:
+      path: logs/selection/baselines/UNet3D/unet3d_temperature_b8_interrupted_training_config_effective.yaml
+      sha256: 1fca576087e2159f2d7ce41d0edb616941d4155cbedfb5bdadeb96d492780f09
+  checkpoint: logs/selection/baselines/UNet3D/unet3d_temperature_b8_interrupted_best-epochepoch=000.ckpt
+  checkpoint_sha256: d77791b0766773ea6e4c67197befa1afa0d21dcb5dbbc2267d65a99f384c590a
+  weights: standard
+- name: unet2d
+  effective_configs:
+    data:
+      path: logs/selection/baselines/UNet2D/unet2d_temperature_scratch_online_data_config_effective.yaml
+      sha256: 241bc09eeac5154170eee16f3d7571e60ba0a92caf775ef1375e5b7f9f25a2a3
+    model:
+      path: logs/selection/baselines/UNet2D/unet2d_temperature_scratch_online_model_config_effective.yaml
+      sha256: 1cb6e410b9229afaf47c524454dd06dba8271ebc34e97e99cd4b69929224d928
+    training:
+      path: logs/selection/baselines/UNet2D/unet2d_temperature_scratch_online_training_config_effective.yaml
+      sha256: f403a7ce5eb0449949a324fdbcf40d92c251a9c89e8629bb4e2f991e0d117af9
+  checkpoint: logs/selection/baselines/UNet2D/unet2d_temperature_scratch_online_best-epochepoch=002.ckpt
+  checkpoint_sha256: 068eb9fe4464921177864f407338569d5885445119eab2a371125e2e6cf3fb37
+  weights: standard
+salinity:
+- name: idw
+  inherit_model_config: true
+  overrides:
+  - model.model_type=idw_baseline
+  - model.ambient_occlusion.enabled=false
+  weights: standard
+- name: lstm
+  effective_configs:
+    data:
+      path: logs/selection/baselines/LSTM/lstm_baseline_salinity_bs1_gpu1_data_config_effective.yaml
+      sha256: 6fe42e31bae7d3dcc8e5215c674def20cc171a0088f91f13f3ba1967eaf7a4e2
+    model:
+      path: logs/selection/baselines/LSTM/lstm_baseline_salinity_bs1_gpu1_model_config_effective.yaml
+      sha256: 86a96f11897078ce5a698ae53025edc8390f7623ba1127a04050cf827611aa1a
+    training:
+      path: logs/selection/baselines/LSTM/lstm_baseline_salinity_bs1_gpu1_training_config_effective.yaml
+      sha256: ae6d2b9928e04b2b1185239a3ba621ca09cab40673291d0b64c291e6e2facb93
+  checkpoint: logs/selection/baselines/LSTM/lstm_baseline_salinity_bs1_gpu1_best-epochepoch=001.ckpt
+  checkpoint_sha256: 3d0d59e9d13b7f42191f8682a80f7d62ebb5e42ad10e1ea403ec81e43a97dc1a
+  weights: standard
+- name: cnn
+  effective_configs:
+    data:
+      path: logs/selection/baselines/CNN/cnn_baseline_salinity_argoonly_b9_interrupted_data_config_effective.yaml
+      sha256: 83ff275ecaaea839f39d373338553c51c6e2986475643739088e010485a76a1c
+    model:
+      path: logs/selection/baselines/CNN/cnn_baseline_salinity_argoonly_b9_interrupted_model_config_effective.yaml
+      sha256: 599fe022e8b0fb3c94ef9e5618088202acbcb0723350ff21e5b84b8f04e89846
+    training:
+      path: logs/selection/baselines/CNN/cnn_baseline_salinity_argoonly_b9_interrupted_training_config_effective.yaml
+      sha256: 74bd8787be2b366093ebba14d29045301a3197052c9a9937adb87a08a67331e0
+  checkpoint: logs/selection/baselines/CNN/cnn_baseline_salinity_argoonly_b9_interrupted_best-epochepoch=000.ckpt
+  checkpoint_sha256: 082f60e1b5f66062f4c858f17a6e8f3195e97d1acdb1c4061c885f0ed43fd811
+  weights: standard
+- name: unet3d
+  effective_configs:
+    data:
+      path: logs/selection/baselines/UNet3D/unet3d_salinity_b8_interrupted_data_config_effective.yaml
+      sha256: 83ff275ecaaea839f39d373338553c51c6e2986475643739088e010485a76a1c
+    model:
+      path: logs/selection/baselines/UNet3D/unet3d_salinity_b8_interrupted_model_config_effective.yaml
+      sha256: c93b7a99cbf4eaf3d1429cab1d50da67ceb6e85fc3cc39a6a155a1a1a3796774
+    training:
+      path: logs/selection/baselines/UNet3D/unet3d_salinity_b8_interrupted_training_config_effective.yaml
+      sha256: fc3853a6297c532ccc1d1d8e54af75846b4195a527194b103773055971d9ffb8
+  checkpoint: logs/selection/baselines/UNet3D/unet3d_salinity_b8_interrupted_best-epochepoch=000.ckpt
+  checkpoint_sha256: e47462b3f4268f3a9d741f8d7e425434599af208e8ffe10025e0025ee34db9d0
+  weights: standard
+- name: unet2d
+  effective_configs:
+    data:
+      path: logs/selection/baselines/UNet2D/unet2d_salinity_scratch_online_data_config_effective.yaml
+      sha256: 66197b3e1990dcd0a772796915cedabebb14218c08183350f761b935328a1914
+    model:
+      path: logs/selection/baselines/UNet2D/unet2d_salinity_scratch_online_model_config_effective.yaml
+      sha256: 3cfd22e5887c5dc7f3bfa1a179859f15173ddc0a4a0e93eb9bd01f3d57a47397
+    training:
+      path: logs/selection/baselines/UNet2D/unet2d_salinity_scratch_online_training_config_effective.yaml
+      sha256: 4660087605c6bb51b67325596f7774c2fdf8648a0ad20e92dfac8bba5f6835aa
+  checkpoint: logs/selection/baselines/UNet2D/unet2d_salinity_scratch_online_best-epochepoch=004.ckpt
+  checkpoint_sha256: 158bd309055f57013c6499bcb134ff291375ab7027319a6ac31bf6e2d461cebd
+  weights: standard

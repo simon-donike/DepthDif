@@ -2307,7 +2307,6 @@ def log_wandb_glorys_profile_comparison(
     supervision_target: torch.Tensor | None = None,
     conditioning_mask: torch.Tensor | None = None,
     candidate_mask: torch.Tensor | None = None,
-    depth_axis_m: np.ndarray | None = None,
     prefix: str = "val_imgs",
     image_key: str = "glorys_profile_comparison",
     sample_idx: int = 0,

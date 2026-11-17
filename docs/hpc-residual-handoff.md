@@ -27,8 +27,17 @@ against their relocated files without rewriting provenance.
 
 ## Obtain the code
 
-The local handoff branch is `hpc-residual-corrected`, based on `dev-ruben`.
-The handoff directory also contains `hpc-residual-corrected.patch` and an
+The corrected training implementation is integrated into `dev-ruben`, together
+with `main` at `ae35d69` and `val` at `036720c`. Fetch the branch normally:
+
+```bash
+git fetch origin
+git switch dev-ruben
+git pull --ff-only origin dev-ruben
+```
+
+The earlier `hpc-residual-corrected` branch remains an implementation-only
+snapshot. The offline handoff directory also contains `hpc-residual-corrected.patch` and an
 incremental `hpc-residual-corrected.bundle`. The bundle requires the recorded
 `dev-ruben` base commit already present in the receiving clone:
 
@@ -116,7 +125,7 @@ prepared-profile, dataset-manifest, and raw-salinity hashes after relocation.
 
 ## Local verification status
 
-As of this handoff, the complete local suite has passed 441 tests. Strict
+The initial implementation passed 441 repository tests. Strict
 preflight verified 72,620 files in the transfer inventory, covering a 110.2
 GiB source dataset. The frozen bias fit used 6,111,078 profiles and supports
 49 of 50 depth bands; the unsupported 5727.9169921875 m band has a zero
@@ -131,6 +140,12 @@ retains Ruben's four workers and its other operational settings. Ordinary
 validation previews were enabled during the final smoke. See `verification.json`,
 `checkpoint_audit_006.json`, and `logs/local_smoke_command.json` in the handoff
 directory for exact evidence and local path overrides. No HPC job was submitted.
+
+The subsequent `main`/`val` integration passed all 478 repository tests and
+98 validation tests. Its normal two-GPU smoke also passed in 244.16 seconds,
+including two optimizer updates, all 102 Italian profiles, and the saved final
+checkpoint. See `integration_verification.json` and the `logs/integration_*`
+files for the merged-branch evidence.
 
 ## Cluster environment, smoke run, and training
 

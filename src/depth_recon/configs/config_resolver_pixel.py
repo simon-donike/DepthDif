@@ -455,6 +455,58 @@ def apply_depth_aware_condition_contract(
     model_section["condition_channels"] = condition_channels
 
 
+def apply_latent_condition_contract(
+    model_cfg: dict[str, Any], data_cfg: dict[str, Any]
+) -> None:
+    """Keep physical field channels separate from encoded diffusion channels."""
+    model = model_cfg["model"]
+    if model.get("model_type") != "latent_cond_dif":
+        return
+    latent = model.get("latent", {})
+    physical = int(model.get("depth_channels", 50)) * len(model["output_fields"])
+    generated = int(latent.get("latent_channels", 12))
+    if generated < 1 or int(latent.get("spatial_downsample", 1)) != 1:
+        raise ValueError(
+            "Latent workflow requires positive channels and spatial_downsample=1."
+        )
+    if model.get("ambient_occlusion", {}).get("enabled", False) or model.get(
+        "clamp_known_pixels", False
+    ):
+        raise ValueError(
+            "Latent workflow does not support ambient corruption or observation clamping."
+        )
+    dataset = data_cfg.get("dataset", {})
+    if dataset.get("synthetic_target", {}).get("enabled", False):
+        raise ValueError("Latent workflow currently requires dense GLORYS targets.")
+    if not model.get("condition_use_valid_mask", True) or not model.get(
+        "mask_loss_with_valid_pixels", True
+    ):
+        raise ValueError(
+            "Latent workflow requires observation conditioning and valid-pixel loss masks."
+        )
+    if not dataset.get("wet_domain", {}).get("enabled", False):
+        raise ValueError(
+            "Latent workflow requires data.dataset.wet_domain.enabled=true."
+        )
+    if model.get("climatology_residual", False):
+        climatology = dataset.get("climatology", {})
+        if not climatology.get("enabled", False) or not climatology.get("path"):
+            raise ValueError("Latent residuals require a fitted climatology path.")
+    model["physical_channels"] = physical
+    model["generated_channels"] = generated
+    model["condition_mask_channels"] = physical
+    model["condition_per_depth_valid_mask"] = True
+    model["condition_use_wet_mask"] = True
+    model["mask_diffusion_with_wet_mask"] = True
+    model["condition_channels"] = generated + physical + physical
+    if model.get("condition_include_eo", False):
+        model["condition_channels"] += model["condition_eo_channels"]
+    if model.get("condition_use_land_mask", False):
+        model["condition_channels"] += 1
+    if model.get("climatology_residual", False):
+        model["condition_channels"] += physical
+
+
 def resolve_pixel_scenario(
     super_cfg: dict[str, Any], scenario_override: str | None = None
 ) -> str:
@@ -527,7 +579,11 @@ def apply_pixel_scenario(
     output_section["include_salinity"] = "salinity" in output_fields
     sampling_section["eo_source"] = eo_source
     sampling_section["eo_var_name"] = eo_var_name
-    surface_section["sources"] = list(PIXEL_SCENARIO_SURFACE_SOURCES[scenario])
+    surface_section["sources"] = (
+        ["sst", "sss", "adt"]
+        if model_section.get("model_type") == "latent_cond_dif"
+        else list(PIXEL_SCENARIO_SURFACE_SOURCES[scenario])
+    )
 
 
 def _require_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
@@ -614,6 +670,7 @@ def load_pixel_training_config(
     apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
     apply_reconstruction_checkpoint_contract(training_cfg)
     apply_depth_aware_condition_contract(model_cfg, data_cfg, override_keys)
+    apply_latent_condition_contract(model_cfg, data_cfg)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (
@@ -689,6 +746,7 @@ def load_pixel_inference_config(
     )
     apply_surface_conditioning_contract(model_cfg, data_cfg, override_keys)
     apply_depth_aware_condition_contract(model_cfg, data_cfg, override_keys)
+    apply_latent_condition_contract(model_cfg, data_cfg)
     apply_unet_baseline_condition_contract(model_cfg, override_keys)
     apply_cnn_baseline_condition_contract(model_cfg, override_keys)
     effective_data, effective_model, effective_training = (

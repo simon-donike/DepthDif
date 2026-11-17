@@ -1,10 +1,12 @@
+# Example: /work/envs/depth/bin/python train_autoencoder.py --ae-config src/depth_recon/configs/lat_space/ae_config.yaml --data-config src/depth_recon/configs/lat_space/training_super_config.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --run-dir logs/ae_latent
+# Resume alternative: append --resume-checkpoint logs/ae_latent/last.ckpt; weight-only alternative: append --load-checkpoint logs/ae_latent/final.ckpt.
 """Train the depth autoencoder used by the latent workflow.
 
 This script loads the configured dataset/datamodule, builds the autoencoder
 Lightning module, restores checkpoints if configured, and runs the training job.
 
 Typical CLI:
-    /work/envs/depth/bin/python train_autoencoder.py --data-config src/depth_recon/configs/px_space/training_super_config.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --ae-config src/depth_recon/configs/lat_space/ae_config.yaml
+    /work/envs/depth/bin/python train_autoencoder.py --data-config src/depth_recon/configs/lat_space/training_super_config.yaml --train-config src/depth_recon/configs/lat_space/training_config.yaml --ae-config src/depth_recon/configs/lat_space/ae_config.yaml
 """
 
 from __future__ import annotations
@@ -35,10 +37,14 @@ from depth_recon.configs.config_resolver_pixel import (
     FULL_RECONSTRUCTION_MONITOR,
     apply_reconstruction_checkpoint_contract,
 )
-from depth_recon.utils.reconstruction_validation import FullReconstructionValidation
+from depth_recon.models.latent.workflow import (
+    AutoencoderReconstructionValidation,
+    export_calibrated_autoencoder,
+)
+from depth_recon.configs.config_resolver_pixel import load_pixel_training_config
 
 LAT_AE_CONFIG_PATH = str(config_path("lat_space", "ae_config.yaml"))
-PX_DATA_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
+PX_DATA_CONFIG_PATH = str(config_path("lat_space", "training_super_config.yaml"))
 LAT_TRAINING_CONFIG_PATH = str(config_path("lat_space", "training_config.yaml"))
 
 
@@ -97,11 +103,12 @@ def resolve_dataset_variant(ds_cfg: dict[str, Any], data_config_path: str) -> st
 def build_dataset(
     data_config_path: str,
     ds_cfg: dict[str, Any],
+    split: str = "train",
 ) -> torch.utils.data.Dataset:
     """Build and return dataset."""
     dataset_variant = resolve_dataset_variant(ds_cfg, data_config_path)
     if dataset_variant == "argo_geotiff_gridded":
-        return ArgoGeoTIFFGriddedPatchDataset.from_config(data_config_path, split="all")
+        return ArgoGeoTIFFGriddedPatchDataset.from_config(data_config_path, split=split)
     raise ValueError(
         "Unsupported dataset variant "
         f"'{dataset_variant}'. Expected one of "
@@ -113,6 +120,7 @@ def build_datamodule(
     dataset: torch.utils.data.Dataset,
     data_cfg: dict[str, Any],
     training_cfg: dict[str, Any],
+    val_dataset: torch.utils.data.Dataset | None = None,
 ) -> DepthTileDataModule:
     """Build and return datamodule."""
     split_cfg = data_cfg.get("split", {})
@@ -123,6 +131,7 @@ def build_datamodule(
 
     return DepthTileDataModule(
         dataset=dataset,
+        val_dataset=val_dataset,
         dataloader_cfg=dataloader_cfg,
         val_fraction=float(split_cfg.get("val_fraction", 0.2)),
         seed=int(
@@ -143,7 +152,8 @@ def build_wandb_logger(training_cfg: dict[str, Any]) -> WandbLogger:
         project=wandb_cfg.get("project", "DepthDif"),
         entity=wandb_cfg.get("entity"),
         name=wandb_cfg.get("run_name", "autoencoder"),
-        log_model=wandb_cfg.get("log_model", "all"),
+        log_model=wandb_cfg.get("log_model", False),
+        offline=bool(wandb_cfg.get("offline", True)),
     )
 
 
@@ -188,6 +198,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional checkpoint path to load model state_dict only.",
     )
+    parser.add_argument(
+        "--run-dir",
+        default=None,
+        help="Output directory; required for externally launched DDP.",
+    )
     return parser.parse_args()
 
 
@@ -198,6 +213,7 @@ def main(
     training_config_path: str,
     resume_checkpoint: str | None,
     load_checkpoint: str | None,
+    run_dir_value: str | None = None,
 ) -> None:
     """Run the script entry point."""
     ae_config_path = str(resolve_config_path(ae_config_path))
@@ -207,14 +223,22 @@ def main(
     global_rank = resolve_global_rank()
     is_global_zero = global_rank == 0
 
+    run_dir_value = run_dir_value or os.environ.get("DEPTHDIF_AE_RUN_DIR")
+    if run_dir_value is None and int(os.environ.get("WORLD_SIZE", "1")) > 1:
+        raise ValueError(
+            "Externally launched DDP requires --run-dir shared across ranks."
+        )
     run_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = Path("logs") / f"ae_{run_stamp}"
-    if is_global_zero:
+    run_dir = Path(run_dir_value) if run_dir_value else Path("logs") / f"ae_{run_stamp}"
+    if run_dir_value is None:
         suffix = 1
         while run_dir.exists():
             run_dir = Path("logs") / f"ae_{run_stamp}_{suffix:02d}"
             suffix += 1
-        run_dir.mkdir(parents=True, exist_ok=False)
+    # Lightning subprocess launch inherits the resolved path from the parent.
+    os.environ["DEPTHDIF_AE_RUN_DIR"] = str(run_dir.resolve())
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if is_global_zero:
         shutil.copy2(ae_config_path, run_dir / Path(ae_config_path).name)
         shutil.copy2(data_config_path, run_dir / Path(data_config_path).name)
         shutil.copy2(training_config_path, run_dir / Path(training_config_path).name)
@@ -231,13 +255,43 @@ def main(
             "w", encoding="utf-8"
         ) as f:
             yaml.safe_dump(training_cfg, f, sort_keys=False)
-    _ = ae_cfg
+    bundle = load_pixel_training_config(
+        config_path_value=data_config_path,
+        runtime_config_dir=run_dir / f"effective_rank{global_rank}",
+        write_snapshots=False,
+    )
+    data_cfg = bundle.data_cfg
+    data_config_path = bundle.effective_data_config_path
+    # AE optimization uses its own config, but data/scenario resolution matches diffusion.
+    ae_training = ae_cfg.get("ae", {}).get("training", {})
+    if "max_epochs" in ae_training:
+        training_cfg.setdefault("trainer", {})["max_epochs"] = int(
+            ae_training["max_epochs"]
+        )
+    if "batch_size" in ae_training:
+        training_cfg.setdefault("dataloader", {})["batch_size"] = int(
+            ae_training["batch_size"]
+        )
+    training_cfg.setdefault("scheduler", {}).setdefault("reduce_on_plateau", {})[
+        "monitor"
+    ] = FULL_RECONSTRUCTION_MONITOR
+    training_config_path = str(
+        run_dir / f"effective_rank{global_rank}" / "ae_training_effective.yaml"
+    )
+    with Path(training_config_path).open("w") as handle:
+        yaml.safe_dump(training_cfg, handle, sort_keys=False)
 
     trainer_cfg = training_cfg.get("trainer", {})
 
     dataset = build_dataset(data_config_path, data_cfg.get("dataset", {}))
+    val_dataset = build_dataset(
+        data_config_path, data_cfg.get("dataset", {}), split="val"
+    )
     datamodule = build_datamodule(
-        dataset=dataset, data_cfg=data_cfg, training_cfg=training_cfg
+        dataset=dataset,
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+        val_dataset=val_dataset,
     )
 
     model = DepthBandAutoencoderLightning.from_configs(
@@ -246,12 +300,30 @@ def main(
         datamodule=datamodule,
     )
 
+    expected_fields = tuple(bundle.model_cfg["model"]["output_fields"])
+    expected_channels = int(
+        bundle.model_cfg["model"].get(
+            "physical_channels", bundle.model_cfg["model"]["generated_channels"]
+        )
+    )
+    if (
+        model.output_fields != expected_fields
+        or model.model.in_channels != expected_channels
+    ):
+        raise ValueError(
+            "AE field order/channels must match the selected data scenario."
+        )
+    if model.model.climatology_residual != bool(
+        bundle.model_cfg["model"].get("climatology_residual", False)
+    ):
+        raise ValueError("AE and data configuration residual modes must match.")
     if load_checkpoint:
-        checkpoint = torch.load(load_checkpoint, map_location="cpu")
+        checkpoint = torch.load(load_checkpoint, map_location="cpu", weights_only=False)
+        model.on_load_checkpoint(checkpoint)
         state_dict = (
             checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
         )
-        model.load_state_dict(state_dict, strict=False)
+        model.load_state_dict(state_dict, strict=True)
         print(f"Loaded model weights from checkpoint: {load_checkpoint}")
 
     logger = build_wandb_logger(training_cfg)
@@ -302,7 +374,7 @@ def main(
         callbacks=[
             checkpoint_callback,
             lr_monitor_callback,
-            FullReconstructionValidation(
+            AutoencoderReconstructionValidation(
                 output_dir=run_dir,
                 **training_cfg["training"]["reconstruction_eval"],
             ),
@@ -314,6 +386,26 @@ def main(
     )
 
     trainer.fit(model=model, datamodule=datamodule, ckpt_path=resume_checkpoint)
+    trainer.save_checkpoint(str(run_dir / "final.ckpt"))
+    if trainer.is_global_zero:
+        if not checkpoint_callback.best_model_path:
+            raise RuntimeError(
+                "AE export requires a completed fixed-subset validation."
+            )
+        checkpoint = torch.load(
+            checkpoint_callback.best_model_path,
+            map_location=model.device,
+            weights_only=False,
+        )
+        model.on_load_checkpoint(checkpoint)
+        model.load_state_dict(checkpoint["state_dict"], strict=True)
+        export_calibrated_autoencoder(
+            model,
+            datamodule.train_dataloader(),
+            run_dir / "autoencoder_calibrated.ckpt",
+            max_batches=int(ae_training.get("calibration_batches", 32)),
+        )
+    trainer.strategy.barrier()
 
 
 if __name__ == "__main__":
@@ -324,4 +416,5 @@ if __name__ == "__main__":
         training_config_path=args.training_config,
         resume_checkpoint=args.resume_checkpoint,
         load_checkpoint=args.load_checkpoint,
+        run_dir_value=args.run_dir,
     )
