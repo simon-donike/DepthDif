@@ -7,8 +7,11 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
+import rasterio
+import yaml
 
 from depth_recon.scripts.prepare_hpc_handoff import (
     REQUIRED_ASSET_PATHS,
@@ -221,6 +224,54 @@ class HpcHandoffTest(unittest.TestCase):
         ]
         inventory_path.write_text(json.dumps(payload), encoding="utf-8")
         self.assertEqual(self._preflight(), 1)
+
+    def test_preflight_generates_missing_climatology_and_verifies_receipt(self) -> None:
+        """Missing backgrounds are fitted from verified training rasters, then frozen."""
+        raster = self.dataset / "rasters/glorys/thetao_20150115.tif"
+        with rasterio.open(
+            raster, "w", driver="GTiff", width=1, height=1, count=1, dtype="uint8"
+        ) as dst:
+            dst.write(np.full((1, 1, 1), 10, dtype=np.uint8))
+        self.manifest["rasters"]["glorys"]["thetao"] = [
+            {"date": 20150115, "path": "rasters/glorys/thetao_20150115.tif"}
+        ]
+        self.manifest["stretch"] = {
+            "temperature_kelvin": {"minimum": 273.15, "maximum": 573.15}
+        }
+        (self.dataset / "manifest.yaml").write_text(yaml.safe_dump(self.manifest))
+        self.assets = self._make_assets(
+            self.dataset / "rasters/glorys/so/so_20160115.tif"
+        )
+        self.bundle = self.dataset / "hpc_residual"
+        self._stage()
+        inventory_bytes = (self.bundle / "dataset_inventory.json").read_bytes()
+        path = self.bundle / REQUIRED_ASSET_PATHS[0]
+        path.unlink()
+        # No bundle override: the default is relative to the configured data root.
+        self.assertEqual(main(["preflight", "--dataset-root", str(self.dataset)]), 0)
+        self.assertEqual(
+            (self.bundle / "dataset_inventory.json").read_bytes(), inventory_bytes
+        )
+        with np.load(path) as data:
+            self.assertTrue(np.allclose(data["temperature"], 10 * 300 / 254))
+            self.assertEqual(json.loads(str(data["metadata"]))["dates"], [20150115])
+        original = path.read_bytes()
+        self.assertEqual(self._preflight(), 0)
+        self.assertEqual(path.read_bytes(), original)
+        receipt_path = path.with_suffix(".npz.preflight.json")
+        receipt = json.loads(receipt_path.read_text())
+        receipt["source_hashes"]["manifest.yaml"] = "wrong"
+        receipt_path.write_text(json.dumps(receipt))
+        self.assertEqual(self._preflight(), 1)
+
+    def test_preflight_does_not_fit_when_other_inputs_are_missing(self) -> None:
+        """Preparation must wait for the complete verified dataset and Italian assets."""
+        self._stage()
+        (self.bundle / REQUIRED_ASSET_PATHS[0]).unlink()
+        (self.bundle / REQUIRED_ASSET_PATHS[2]).unlink()
+        with patch("depth_recon.scripts.prepare_hpc_handoff.ensure_climatology") as fit:
+            self.assertEqual(self._preflight(), 1)
+            fit.assert_not_called()
 
     def test_preflight_rejects_tampered_relocated_italian_salinity(self) -> None:
         """The original Italian manifest's raw salinity digest is checked at its new root."""

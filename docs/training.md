@@ -36,7 +36,29 @@ models ignore these diffusion-only flags and retain their own channel contracts.
 from a monthly/spatial climatology. It requires
 `data.dataset.climatology.enabled=true` and a non-empty artifact `path`; the
 climatology must be fitted from training years only, excluding the validation
-year. Fit an artifact with `depth_recon.data.fit_climatology`, then compare
+year. Training startup now runs CPU preflight before building datasets or the model:
+if the configured file is missing, it fits the original GLORYS monthly background
+with the configured validation year excluded. Relative paths resolve below
+`data.dataset.core.geotiff_root_dir`; `data.dataset.climatology.spatial_stride`
+controls fitting and defaults to 4. Existing compatible artifacts are preserved;
+incompatible files fail instead of being overwritten. The selected output fields
+(temperature, salinity, or both) determine which backgrounds are prepared.
+Concurrent launch ranks share a file lock, and the complete artifact is published
+atomically with a `.npz.preflight.json` input/output checksum record. This always
+uses original GLORYS, without target-bias correction or Italian observations.
+
+Run the same preflight separately on a CPU node before allocating GPUs:
+
+```bash
+PYTHONPATH=src /work/envs/depth/bin/python -m depth_recon.data.preflight_climatology \
+  --root /work/data/OceanVariableReconstruction \
+  --output hpc_residual/climatology/temperature_monthly_stride4.npz \
+  --val-year 2016 --spatial-stride 4 --field temperature
+```
+
+Set the residual configuration's `data.dataset.climatology.path` to that relative
+path. Keep saved checkpoint configurations pointed at their original backgrounds.
+For manual fitting, `depth_recon.data.fit_climatology` remains available. Compare
 fixed-sample per-depth baselines with
 `depth_recon.scripts.evaluate_depth_baselines`. The current presets leave this
 mode disabled. These changes affect diffusion inputs and the optional output

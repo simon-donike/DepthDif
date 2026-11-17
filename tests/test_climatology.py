@@ -5,6 +5,8 @@ import json
 import pickle
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 from unittest.mock import patch
 
 import numpy as np
@@ -12,6 +14,11 @@ import rasterio
 import yaml
 
 from depth_recon.data.climatology import MonthlyClimatology, fit_monthly_climatology
+from depth_recon.data.preflight_climatology import (
+    ensure_climatology,
+    file_sha256,
+    prepare_training_climatology,
+)
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from tests.test_argo_geotiff_gridded_dataset import _make_geotiff_dataset
 
@@ -149,6 +156,101 @@ class ClimatologyTests(unittest.TestCase):
             self.assertTrue(np.all(artifact.count[:, 1] == 0))
             self.assertTrue(np.all(artifact.temperature[:, 1] == 0))
             self.assertTrue(np.all(artifact.count[0, 0] == 1))
+
+    def test_preflight_generates_relative_background_once(self) -> None:
+        """Concurrent ranks share one fit; repeated preflight preserves frozen bytes."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self._fixture_root(Path(temp_dir) / "dataset")
+            relative = "hpc_residual/climatology/temperature_monthly_stride4.npz"
+            with (
+                patch(
+                    "depth_recon.data.preflight_climatology.fit_monthly_climatology",
+                    wraps=fit_monthly_climatology,
+                ) as fit,
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                tasks = [
+                    pool.submit(ensure_climatology, root, relative, val_year=2021)
+                    for _ in range(2)
+                ]
+                paths = [task.result() for task in tasks]
+                self.assertEqual(fit.call_count, 1)
+            self.assertEqual(paths, [root / relative] * 2)
+            original = paths[0].read_bytes()
+            ensure_climatology(root, relative, val_year=2021)
+            self.assertEqual(paths[0].read_bytes(), original)
+            receipt = json.loads(
+                paths[0].with_suffix(".npz.preflight.json").read_text()
+            )
+            self.assertEqual(receipt["artifact_sha256"], file_sha256(paths[0]))
+            self.assertEqual(
+                set(receipt["source_hashes"]), {"manifest.yaml", "rasters/20200115.tif"}
+            )
+            self.assertEqual(
+                receipt["recipe"],
+                {"val_year": 2021, "spatial_stride": 4, "field": "temperature"},
+            )
+            artifact = MonthlyClimatology(paths[0])
+            self.assertTrue(np.allclose(artifact.temperature, 10.0 * 300.0 / 254.0))
+
+    def test_preflight_does_not_replace_incompatible_existing_background(self) -> None:
+        """An existing wrong-year, wrong-field or corrupt artifact fails intact."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self._fixture_root(Path(temp_dir) / "dataset")
+            path = ensure_climatology(root, "clim.npz", val_year=2021)
+            original = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "validation year"):
+                ensure_climatology(root, "clim.npz", val_year=2020)
+            with self.assertRaisesRegex(ValueError, "requested field"):
+                ensure_climatology(root, "clim.npz", val_year=2021, field="salinity")
+            self.assertEqual(path.read_bytes(), original)
+            path.write_bytes(b"broken artifact")
+            with self.assertRaises(ValueError):
+                ensure_climatology(root, "clim.npz", val_year=2021)
+            self.assertEqual(path.read_bytes(), b"broken artifact")
+
+    def test_preflight_failed_fit_does_not_publish_partial_artifact(self) -> None:
+        """A failed fit can be retried without mistaking a partial file for a baseline."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = self._fixture_root(Path(temp_dir) / "dataset")
+            path = root / "clim.npz"
+            with patch(
+                "depth_recon.data.preflight_climatology.fit_monthly_climatology",
+                side_effect=RuntimeError("interrupted fit"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "interrupted fit"):
+                    ensure_climatology(root, path, val_year=2021)
+            self.assertFalse(path.exists())
+            self.assertFalse(path.with_suffix(".npz.preflight.json").exists())
+            self.assertFalse(list(root.glob(".climatology-*")))
+            self.assertTrue(ensure_climatology(root, path, val_year=2021).is_file())
+
+    def test_training_preflight_uses_data_root_and_model_fields(self) -> None:
+        """Training prepares joint backgrounds at the configured dataset-relative path."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root, _, _ = _make_geotiff_dataset(Path(temp_dir))
+            config = {
+                "dataset": {
+                    "core": {"geotiff_root_dir": str(root)},
+                    "climatology": {
+                        "enabled": True,
+                        "path": "climatology/joint.npz",
+                        "spatial_stride": 1,
+                    },
+                },
+                "split": {"val_year": 2016},
+            }
+            path = prepare_training_climatology(
+                config, {"model": {"output_fields": ["temperature", "salinity"]}}
+            )
+            self.assertEqual(path, root / "climatology/joint.npz")
+            artifact = MonthlyClimatology(path)
+            self.assertIsNotNone(artifact.temperature)
+            self.assertIsNotNone(artifact.salinity)
+            self.assertIsNone(prepare_training_climatology({}, {}))
+            del config["split"]["val_year"]
+            with self.assertRaisesRegex(ValueError, "val_year"):
+                prepare_training_climatology(config, {})
 
     def test_non_aligned_patch_uses_source_grid_coordinates(self) -> None:
         """Coarse-grid sampling must not move non-aligned patches toward the origin."""

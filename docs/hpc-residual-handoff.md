@@ -20,8 +20,8 @@ remains shuffled.
 | 8 | 6 | 48 |
 
 The corrected residual run requires a complete copy of the exported dataset at
-`/lustre/projects/1000/rubenc/ocean_data/ocean_data` and its small immutable
-bundle at `hpc_residual/` below that root. The bundle preserves the Italian
+`/lustre/projects/1000/rubenc/ocean_data/ocean_data` and its supporting
+files at `hpc_residual/` below that root. These files preserve the Italian
 reference manifest exactly as produced; its historical local paths are checked
 against their relocated files without rewriting provenance.
 
@@ -63,8 +63,9 @@ offset and an unsupported flag at that depth.
 
 The signed correction is `b[z] = mean(EN4[z] - GLORYS[z])` in potential
 temperature degrees Celsius, and the target is `G' = G + b`. Correction occurs
-before normalization in both training and validation. The exact existing
-climatology `C` stays unchanged: training predicts `G + b - C`, and inference
+before normalization in both training and validation. An existing compatible
+climatology `C` stays unchanged; if absent, preflight fits it from original GLORYS
+with 2016 excluded, using the same monthly stride-4 recipe. Training predicts `G + b - C`, and inference
 adds `C` once. No further bias is added at inference. Actual 2016 observation
 dates are excluded from training inputs even when assigned across a year boundary.
 
@@ -109,11 +110,11 @@ rsync -aH --info=progress2 --exclude=.cache --exclude=.git --exclude=depthdif_ca
   --exclude=__pycache__ --exclude=hpc_residual /work/data/OceanVariableReconstruction/ \
   hpc-login:/lustre/projects/1000/rubenc/ocean_data/ocean_data/
 rsync -aH --info=progress2 \
+  --exclude=climatology \
   /work/code/DepthDif/outputs/hpc_residual_handoff_20261117/hpc_residual/ \
   hpc-login:/lustre/projects/1000/rubenc/ocean_data/ocean_data/hpc_residual/
 
 /work/envs/depth/bin/python -m depth_recon.scripts.prepare_hpc_handoff preflight \
-  --bundle-dir /lustre/projects/1000/rubenc/ocean_data/ocean_data/hpc_residual \
   --dataset-root /lustre/projects/1000/rubenc/ocean_data/ocean_data
 ```
 
@@ -122,6 +123,46 @@ checks size and digest, expands manifest-referenced directory trees including
 all Zarr chunks, validates the climatology’s shape/grid/depth/year, loads and
 validates the target-bias artifact, and checks the original Italian manifest’s
 prepared-profile, dataset-manifest, and raw-salinity hashes after relocation.
+
+The default asset directory is `<dataset-root>/hpc_residual`. Climatology is the
+only asset that may be absent: after all other checks pass, CPU preflight fits
+`climatology/temperature_monthly_stride4.npz` there. It excludes 2016 and never
+uses corrected targets or Italian labels. The original transfer inventory stays
+unchanged; a `.npz.preflight.json` receipt records the generated checksum, fitting
+recipe, and source hashes. Subsequent preflight verifies those hashes against
+the full dataset inventory. Existing incompatible or altered files fail; they
+are not silently regenerated. Omit `--exclude=climatology` from the transfer
+command if you prefer to copy the existing background.
+
+Training startup has the same missing-file preparation on both `val` and
+`dev-ruben`; run the separate CPU preflight first to avoid spending GPU allocation
+time fitting. Generation uses a filesystem lock across ranks and an atomic rename.
+
+### Files needed for Italian/XBT validation
+
+Copy the contents of the already prepared directory
+`outputs/hpc_residual_handoff_20261117/hpc_residual/` into
+`<dataset-root>/hpc_residual/`. The relative layout is:
+
+```text
+hpc_residual/
+  italian/profiles.csv
+  italian/reference_manifest.json
+  italian/screened_profiles.parquet
+  italian/focus_evaluation.tar.gz
+  target_bias/temperature_bias_excluding_2016.npz
+  dataset_inventory.json
+  path_map.json
+```
+
+The first three files feed the per-epoch Italian callback; the archive is retained
+for source provenance and strict preflight. The frozen bias and inventory are
+also required for this corrected training run. Keep the complete exported dataset
+(`manifest.yaml`, rasters, compact profile Zarr with QC/provenance, masks and
+metadata), including the GLORYS **salinity** rasters referenced by the Italian
+manifest. They support the TEOS-10 in-situ to potential-temperature conversion.
+Preserve the reference manifest's original bytes; its local paths are relocated
+by the loader. Climatology can now be omitted from the copy.
 
 ## Local verification status
 

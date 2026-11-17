@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -16,6 +17,11 @@ import numpy as np
 import yaml
 
 from depth_recon.data.target_bias import TargetBias
+from depth_recon.data.preflight_climatology import (
+    climatology_sources,
+    ensure_climatology,
+    validate_climatology,
+)
 
 DEFAULT_DATASET_ROOT = Path("/work/data/OceanVariableReconstruction")
 DEFAULT_CLIMATOLOGY = Path(
@@ -468,9 +474,48 @@ def _validate_italian_manifest(
     return errors
 
 
+def _generated_climatology_errors(
+    path: Path, dataset_root: Path, records: list[dict[str, Any]]
+) -> list[str]:
+    """Accept a locally fitted background only with matching input/output hashes."""
+    try:
+        receipt = json.loads(
+            path.with_suffix(path.suffix + ".preflight.json").read_text()
+        )
+        if receipt.get("schema_version") != 1 or receipt.get("recipe") != {
+            "val_year": 2016,
+            "spatial_stride": 4,
+            "field": "temperature",
+        }:
+            raise ValueError("generation receipt has an unexpected fitting recipe")
+        expected = {item["path"]: item["sha256"] for item in records}
+        source_paths = climatology_sources(dataset_root, "temperature", 2016)
+        source_hashes = {
+            os.path.relpath(path, dataset_root): expected[
+                os.path.relpath(path, dataset_root)
+            ]
+            for path in source_paths
+        }
+        if receipt.get("source_hashes") != source_hashes:
+            raise ValueError(
+                "generation input hashes do not match the dataset inventory"
+            )
+        error = _check_hash(path, receipt.get("artifact_sha256", ""))
+        if error:
+            raise ValueError(error)
+        validate_climatology(path, dataset_root, val_year=2016, field="temperature")
+    except (OSError, ValueError, KeyError) as exc:
+        return [f"generated climatology is invalid: {exc}"]
+    return []
+
+
 def preflight(args: argparse.Namespace) -> int:
-    """Strictly hash a copied HPC bundle and all relevant dataset files read-only."""
-    bundle = args.bundle_dir.resolve()
+    """Verify all copied inputs, then fit the background only when it is missing."""
+    bundle = (
+        args.bundle_dir.resolve()
+        if args.bundle_dir
+        else (args.dataset_root or DEFAULT_DATASET_ROOT).resolve() / "hpc_residual"
+    )
     inventory_path = (
         args.inventory.resolve()
         if args.inventory
@@ -510,12 +555,23 @@ def preflight(args: argparse.Namespace) -> int:
         for item in payload.get("staged_assets", [])
         if isinstance(item, dict)
     }
+    climatology_path = bundle / REQUIRED_ASSET_PATHS[0]
+    missing_climatology = not climatology_path.exists()
     for relative in REQUIRED_ASSET_PATHS:
         record = staged.get(relative)
         if record is None or not isinstance(record.get("sha256"), str):
             errors.append(f"required asset missing from inventory roster: {relative}")
             continue
+        # Only climatology is reproducible during preflight. Frozen bias and
+        # observational assets must still be copied and verified unchanged.
+        if relative == REQUIRED_ASSET_PATHS[0] and missing_climatology:
+            continue
         error = _check_hash(bundle / relative, record["sha256"])
+        if error and relative == REQUIRED_ASSET_PATHS[0]:
+            errors.extend(
+                _generated_climatology_errors(climatology_path, dataset_root, records)
+            )
+            continue
         if error:
             errors.append(f"{relative}: {error}")
     frozen_manifest_hash = payload.get("italian_reference_manifest_expected_sha256")
@@ -573,9 +629,8 @@ def preflight(args: argparse.Namespace) -> int:
             ).reshape(-1)
             grid = manifest.get("grid", {})
             manifest_hash = sha256_file(manifest_path)
-            errors.extend(
-                _validate_climatology(bundle / REQUIRED_ASSET_PATHS[0], depth, grid)
-            )
+            if not missing_climatology:
+                errors.extend(_validate_climatology(climatology_path, depth, grid))
             errors.extend(
                 _validate_target_bias(
                     bundle / REQUIRED_ASSET_PATHS[1], depth, grid, manifest_hash
@@ -594,6 +649,23 @@ def preflight(args: argparse.Namespace) -> int:
                 )
         except (OSError, ValueError, yaml.YAMLError) as exc:
             errors.append(f"dataset manifest is invalid: {exc}")
+    if not errors and missing_climatology:
+        try:
+            ensure_climatology(
+                dataset_root,
+                climatology_path,
+                val_year=2016,
+                spatial_stride=4,
+                field="temperature",
+                verified_source_hashes={
+                    item["path"]: item["sha256"] for item in records
+                },
+            )
+            errors.extend(
+                _generated_climatology_errors(climatology_path, dataset_root, records)
+            )
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"climatology generation failed: {exc}")
     if errors:
         print("HPC preflight FAILED:")
         for error in errors:
@@ -632,9 +704,11 @@ def build_parser() -> argparse.ArgumentParser:
     stage_parser.add_argument("--inventory-only", action="store_true")
     stage_parser.set_defaults(handler=stage)
     preflight_parser = subparsers.add_parser(
-        "preflight", help="strictly verify a staged bundle read-only"
+        "preflight", help="verify transferred inputs and generate missing climatology"
     )
-    preflight_parser.add_argument("--bundle-dir", type=Path, required=True)
+    preflight_parser.add_argument(
+        "--bundle-dir", type=Path, help="default: <dataset-root>/hpc_residual"
+    )
     preflight_parser.add_argument("--inventory", type=Path)
     preflight_parser.add_argument("--dataset-root", type=Path)
     preflight_parser.set_defaults(handler=preflight)

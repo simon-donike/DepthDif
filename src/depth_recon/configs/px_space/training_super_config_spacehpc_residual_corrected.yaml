@@ -165,7 +165,8 @@ data:  # dataset, split, and loader inputs
       enabled: true  # physical support per depth
     climatology:
       enabled: true
-      path: hpc_residual/climatology/temperature_monthly_stride4.npz
+      path: hpc_residual/climatology/temperature_monthly_stride4.npz  # generated in preflight if absent
+      spatial_stride: 4  # original GLORYS background; exclude validation year 2016
     target_bias:
       enabled: true
       path: hpc_residual/target_bias/temperature_bias_excluding_2016.npz
