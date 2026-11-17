@@ -5,7 +5,11 @@
   const $ = (id) => document.getElementById(id);
   const labels = { residual: "DepthDif", glorys: "GLORYS (packaged)", glorys_packaged: "GLORYS (packaged)", climatology: "Climatology", lstm: "LSTM", cnn: "CNN", unet3d: "UNet3D", unet2d: "UNet2D", baseline_oi_climatology_full: "OI · climatology", observation: "Italian XBT observation" };
   labels.idw = "IDW";
+  labels.residual_ensemble = "DepthDif · 20 samples";
+  labels.residual_mean = "DepthDif · ensemble mean";
   const colors = { residual: "#7de0bc", glorys: "#ffd166", glorys_packaged: "#ffd166", observation: "#f4fbff", climatology: "#8d9aa5", lstm: "#b39bff", cnn: "#ff8c91", unet3d: "#6ca9ff", unet2d: "#e1a4de", baseline_oi_climatology_full: "#b2ce6e" };
+  colors.residual_ensemble = colors.residual;
+  colors.residual_mean = "#38a5c7";
   const name = (method) => labels[method] || method;
   const includeMethod = (method) => !/^(glorys_bias|baseline_glorys_bias|baseline_oi_glorys)/.test(method);
   const fmt = (value) => Number.isFinite(value) ? value.toFixed(4) : "—";
@@ -19,7 +23,7 @@
     mae: ["MAE", "Typical error size in °C, ignoring whether the prediction is too warm or too cold. Errors are averaged within each profile first, so every profile counts equally. Lower is better."],
     rmse: ["RMSE", "An error score in °C that gives more weight to large mistakes. Each profile counts equally. Lower is better."],
     bias: ["Signed bias", "Average prediction minus observation. Positive means too warm; negative means too cold. Warm and cold errors can cancel."],
-    crps: ["CRPS", "A score for predictions that contain several possible outcomes. This run has only one prediction per case, so CRPS equals MAE and tells us nothing extra about uncertainty."],
+    crps: ["CRPS", "Measures the predictive distribution against observed temperature; lower is better. The original single-generation tables have CRPS equal to MAE. The separate Italian ensemble table scores 20 samples and also reports the finite-ensemble fair correction."],
     delta: ["Δ MAE vs GLORYS", "The method’s MAE minus original GLORYS MAE. Negative means a smaller error than GLORYS; positive means a larger error. Both use the same observations."],
     weighting: ["Equal profile weighting", "Every profile counts equally, even if one cast contains more depth measurements than another."],
     common: ["Common evaluation support", "Methods are compared at the same observation locations and depths. A method with missing predictions is left out of that comparison."],
@@ -42,7 +46,7 @@
     partition: ["Evaluation cohorts", "All 102 Italian casts from two missions are evaluated. EN4 is evaluated separately on a frozen 64-patch preliminary subset. Every selected profile that passes the support checks contributes to its cohort’s results."],
     discovery: ["Discovery campaign", "The 2016 data helped select the model checkpoint. These results describe development performance; an untouched dataset is still needed for independent confirmation."],
     ema: ["EMA weights", "The model uses weights averaged over training steps. This is a fixed trained model, not a correction fitted to the validation observations."],
-    ddpm: ["DDPM and one generation", "The model starts from noise and refines it over 1,000 steps. It produces one temperature field per case. One field cannot tell us the spread of possible predictions."],
+    ddpm: ["DDPM sampling", "Each sample starts from a different noise seed and is refined over 1,000 steps. Original tables use one field per case. The separate Italian ensemble uses 20 samples with identical observations and checkpoint weights."],
     sst: ["SST", "Sea-surface temperature is an additional model input. It describes the surface, not a subsurface validation cast."],
     budget: ["Conditioning budget", "The number of EN4 input locations retained per patch: 0, 1, 2, 4, 8, or all available locations. Other inputs, such as sea-surface temperature, remain available."],
     potential: ["Potential temperature / TEOS-10", "Water temperature changes with pressure. We convert the XBT measurements to the same pressure-adjusted temperature convention as the model, using standard seawater calculations and GLORYS salinity."],
@@ -149,6 +153,43 @@
       return line(method, rows.map((row) => row[metric]), rows.map((row) => row.depth_m), { customdata: rows.map((row) => [row.n_profiles, row.n_points, row.depth_lower_m, row.depth_upper_m]), hovertemplate: "%{x:.4f} °C · %{y} m<br>%{customdata[0]} profiles · %{customdata[1]} points<br>Bounds: %{customdata[2]}–%{customdata[3]} m<extra>%{fullData.name}</extra>" });
     });
     return Plotly.react("depth-chart", traces, layout(`${metric.toUpperCase()} (°C)`, "Depth (m)", { yaxis: { title: "Depth (m)", autorange: "reversed", gridcolor: "#203b4c" } }), config);
+  }
+  async function ensembleMetrics() {
+    const cohort = selected;
+    $("ensemble-panel").hidden = true;
+    if (!cohort.ensemble) return;
+    const data = await fetchJSON(`${base}${cohort.id}/${cohort.ensemble}`);
+    if (selected !== cohort) return;
+    labels.residual_ensemble = `DepthDif · ${data.members} samples`;
+    $("ensemble-panel").hidden = false;
+    $("ensemble-note").textContent = `${data.members} samples · ${data.profiles} casts · ${data.points.toLocaleString()} measurements. Same frozen checkpoint, full conditioning and 1,000 DDPM steps. Every cast counts equally. Spatial scores compare ${data.spatial_patches}/${data.total_patches} patches with saved comparator fields against packaged GLORYS; they do not measure agreement with XBT.`;
+    tableRows("ensemble-table", data.overall.map((row) => ({ highlight: row.method === "residual_ensemble", cells: [name(row.method), row.members, fmt(row.crps), fmt(row.fair_crps), row.members > 1 ? `${(100 * row.coverage90).toFixed(1)}%` : "—", row.members > 1 ? fmt(row.width90) : "—"] })));
+    tableRows("perceptual-table", data.spatial.map((row) => ({ highlight: row.method === "residual_ensemble", cells: [name(row.method), row.patches, fmt(row.lpips), fmt(row.spectral_log10_rmse)] })));
+    $("ensemble-methods").textContent = Object.values(data.methodology).join("\n\n");
+    $("ensemble-downloads").replaceChildren(...data.downloads.map((file) => {
+      const link = element("a", file.replaceAll("_", " "));
+      link.href = `${base}${cohort.id}/ensemble/${file}`;
+      link.download = "";
+      link.style.marginRight = "1rem";
+      return link;
+    }));
+    const methods = [...new Set(data.depth.map((row) => row.method))];
+    await Plotly.react("ensemble-depth-chart", methods.map((method) => {
+      const rows = data.depth.filter((row) => row.method === method);
+      return line(method, rows.map((row) => row.crps), rows.map((row) => row.depth_lower_m + 12.5), { visible: true });
+    }), layout("Ensemble CRPS (°C)", "Depth (m)", { yaxis: { title: "Depth (m)", autorange: "reversed", gridcolor: "#203b4c" } }), config);
+    $("spectra-depth").replaceChildren(...data.depths_m.map((depth) => {
+      const option = element("option", `${Number(depth).toFixed(1)} m`); option.value = depth; return option;
+    }));
+    const plotSpectra = () => {
+      const rows = data.spectra.filter((row) => row.depth_m === Number($("spectra-depth").value));
+      return Plotly.react("ensemble-spectra", [...new Set(rows.map((row) => row.method))].map((method) => {
+        const subset = rows.filter((row) => row.method === method).sort((a, b) => a.wavenumber_cycles_km - b.wavenumber_cycles_km);
+        return line(method, subset.map((row) => row.wavenumber_cycles_km), subset.map((row) => row.power), { visible: true });
+      }), layout("Wavenumber (cycles/km)", "Window-normalized FFT power (°C²)", { xaxis: { title: "Wavenumber (cycles/km)", type: "log", gridcolor: "#203b4c" }, yaxis: { title: "Window-normalized FFT power (°C²)", type: "log", gridcolor: "#203b4c" } }), config);
+    };
+    $("spectra-depth").onchange = plotSpectra;
+    await plotSpectra();
   }
   function locationMap() {
     if (typeof L === "undefined") throw new Error("Leaflet could not load");
@@ -374,6 +415,7 @@
     ++spatialRequest;
     spatial = null;
     selected = campaign.cohorts.find((cohort) => cohort.id === $("cohort").value);
+    $("ensemble-panel").hidden = true;
     $("load-error").hidden = true;
     $("results").hidden = !selected.available;
     $("pending").hidden = selected.available;
@@ -426,7 +468,7 @@
     $("profile").replaceChildren(...selected.profiles.map((profile) => { const option = element("option", `${profile.mission || profile.cluster} · ${profile.id}`); option.value = profile.id; return option; }));
     // Render only after revealing the panel so Plotly measures the real layout width.
     if (typeof Plotly === "undefined") throw new Error("The chart library could not load. Tables and downloads remain available");
-    await Promise.all([depthChart(), conditioningChart(), profileChart(), spatialViewer()]);
+    await Promise.all([depthChart(), conditioningChart(), profileChart(), spatialViewer(), ensembleMetrics()]);
   }
   async function start() {
     document.querySelectorAll("[data-explain]").forEach((node) => node.append(infoButton(node.dataset.explain)));

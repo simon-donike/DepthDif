@@ -105,6 +105,46 @@
   "pilot": null,
   "artifacts": [
     {
+      "name": "metrics.json",
+      "file": "ensemble/metrics.json",
+      "sha256": "3e56d54a9ac3a14551ddf7eac4021d88cd8a873ca98bdc86201625898530e2f7"
+    },
+    {
+      "name": "ensemble_scores.csv",
+      "file": "ensemble/ensemble_scores.csv",
+      "sha256": "51c5fe303bbc3cd31cdbb711240a50b4e96641890944bea7f799d65a16775625"
+    },
+    {
+      "name": "ensemble_depth_scores.csv",
+      "file": "ensemble/ensemble_depth_scores.csv",
+      "sha256": "7c8d78366d4940148945cfa04088fca6e8c4409afa7e3b3f45f821fd6ea21303"
+    },
+    {
+      "name": "ensemble_mission_scores.csv",
+      "file": "ensemble/ensemble_mission_scores.csv",
+      "sha256": "24d9d9d37ac9c87ffd565139e10d7403b81dc04ebd15fae234cabb8e335b5fd0"
+    },
+    {
+      "name": "spatial_scores.csv",
+      "file": "ensemble/spatial_scores.csv",
+      "sha256": "9e7fd6ef5db548e766e4fb1a9045422072bddc67051743d2c4019bb2b5b70aa6"
+    },
+    {
+      "name": "spatial_by_depth_patch.csv",
+      "file": "ensemble/spatial_by_depth_patch.csv",
+      "sha256": "21e169f8ba9b4b7b691ba26f585d2df669b3e31fe7e5a82405ecaa4ef4255fc3"
+    },
+    {
+      "name": "spectra.csv",
+      "file": "ensemble/spectra.csv",
+      "sha256": "829d1a77afc1573c347490aa756f4fe546dadaf51c3b1aaee4ecc9cbc247d632"
+    },
+    {
+      "name": "spectra_by_patch.csv",
+      "file": "ensemble/spectra_by_patch.csv",
+      "sha256": "b10b884884eb72ccce7015342416e71ffd965d7ee30b18b07a563bc4d03df0d3"
+    },
+    {
       "name": "mission_scores.csv",
       "file": "artifacts/paper_all_profiles/mission_scores.csv",
       "sha256": "d04a45e20084e74d42eb6d06bbe3350235f9e314c0e25ce442ab6f11623082e9"
