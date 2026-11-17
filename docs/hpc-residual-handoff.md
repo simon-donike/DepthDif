@@ -143,6 +143,18 @@ across ranks and an atomic rename.
 
 ### Files needed for Italian/XBT validation
 
+For the smallest transfer used by a direct training launch, send
+`outputs/hpc_residual_handoff_20261117/ruben_xbt_minimal.zip` (under 1 MB). It contains the
+three Italian runtime files below, the 73 KB frozen target-bias artifact required
+by the corrected preset, placement instructions, and checksums. Extract it into
+the existing dataset root. Original scientific file bytes and pinned hashes are
+unchanged. Missing climatology is generated automatically by `train.py`.
+
+The large original source archive and full dataset inventory are needed only
+for provenance reproduction and the optional strict transfer preflight; the
+training callback does not read them. The original ZIP was about 603 MB because
+it included the 598 MB source archive. The full handoff remains available below.
+
 Copy the contents of the already prepared directory
 `outputs/hpc_residual_handoff_20261117/hpc_residual/` into
 `<dataset-root>/hpc_residual/`.
