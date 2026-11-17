@@ -22,6 +22,109 @@ PROFILE_GRAPH_LOGO_PATH = (
 )
 
 
+def compute_depth_diagnostics(
+    prediction: np.ndarray | torch.Tensor,
+    target: np.ndarray | torch.Tensor,
+    valid_mask: np.ndarray | torch.Tensor | None = None,
+    *,
+    depth_dimension: int = 1,
+) -> dict[str, np.ndarray | float]:
+    """Compute finite, mask-aware error statistics independently by depth.
+
+    ``valid_mask`` may omit the depth dimension (for a 2-D spatial mask), in
+    which case it is broadcast over depth.  Invalid and non-finite pairs are
+    excluded from every statistic; an empty level is represented by NaN metrics
+    and a zero count.  The equal-depth aggregate is useful for comparisons when
+    shallow levels otherwise dominate the sample count.
+    """
+    prediction_np = (
+        prediction.detach().float().cpu().numpy()
+        if torch.is_tensor(prediction)
+        else np.asarray(prediction, dtype=np.float64)
+    )
+    target_np = (
+        target.detach().float().cpu().numpy()
+        if torch.is_tensor(target)
+        else np.asarray(target, dtype=np.float64)
+    )
+    if prediction_np.shape != target_np.shape or prediction_np.ndim < 2:
+        raise ValueError(
+            "prediction and target must have the same shape and a depth axis."
+        )
+    depth_axis = int(depth_dimension) % int(prediction_np.ndim)
+    if valid_mask is None:
+        valid_np = np.ones_like(prediction_np, dtype=bool)
+    else:
+        valid_np = (
+            valid_mask.detach().bool().cpu().numpy()
+            if torch.is_tensor(valid_mask)
+            else np.asarray(valid_mask, dtype=bool)
+        )
+        if valid_np.ndim == prediction_np.ndim - 1:
+            valid_np = np.expand_dims(valid_np, axis=depth_axis)
+        try:
+            valid_np = np.broadcast_to(valid_np, prediction_np.shape)
+        except ValueError as exc:
+            raise ValueError("valid_mask must broadcast to prediction shape.") from exc
+
+    prediction_depth = np.moveaxis(prediction_np, depth_axis, 0).reshape(
+        prediction_np.shape[depth_axis], -1
+    )
+    target_depth = np.moveaxis(target_np, depth_axis, 0).reshape(
+        target_np.shape[depth_axis], -1
+    )
+    valid_depth = (
+        np.moveaxis(valid_np, depth_axis, 0)
+        .reshape(prediction_np.shape[depth_axis], -1)
+        .copy()
+    )
+    valid_depth &= np.isfinite(prediction_depth) & np.isfinite(target_depth)
+    counts = valid_depth.sum(axis=1).astype(np.int64)
+    difference = prediction_depth - target_depth
+    mae = np.full(counts.shape, np.nan, dtype=np.float64)
+    rmse = np.full(counts.shape, np.nan, dtype=np.float64)
+    bias = np.full(counts.shape, np.nan, dtype=np.float64)
+    for depth_idx, mask in enumerate(valid_depth):
+        if not bool(np.any(mask)):
+            continue
+        values = difference[depth_idx, mask]
+        mae[depth_idx] = float(np.mean(np.abs(values)))
+        rmse[depth_idx] = float(np.sqrt(np.mean(values**2)))
+        bias[depth_idx] = float(np.mean(values))
+    valid_metrics = np.isfinite(mae)
+    return {
+        "mae": mae,
+        "rmse": rmse,
+        "bias": bias,
+        "valid_count": counts,
+        "equal_depth_mae": (
+            float(np.nanmean(mae)) if bool(np.any(valid_metrics)) else np.nan
+        ),
+        "equal_depth_rmse": (
+            float(np.nanmean(rmse)) if bool(np.any(valid_metrics)) else np.nan
+        ),
+        "equal_depth_bias": (
+            float(np.nanmean(bias)) if bool(np.any(valid_metrics)) else np.nan
+        ),
+    }
+
+
+def compute_depth_metrics(
+    prediction: np.ndarray | torch.Tensor,
+    target: np.ndarray | torch.Tensor,
+    valid_mask: np.ndarray | torch.Tensor | None = None,
+    *,
+    depth_dimension: int = 1,
+) -> dict[str, np.ndarray | float]:
+    """Backward-friendly alias for :func:`compute_depth_diagnostics`."""
+    return compute_depth_diagnostics(
+        prediction,
+        target,
+        valid_mask=valid_mask,
+        depth_dimension=depth_dimension,
+    )
+
+
 def _finite_mean_profile(
     values: np.ndarray | torch.Tensor, *, depth_dimension: int
 ) -> np.ndarray:
@@ -264,6 +367,108 @@ def log_wandb_average_depth_profiles(
             error_axis.legend(loc="best")
         figure.tight_layout()
         experiment.log({f"{prefix}/{image_key}": wandb.Image(figure)})
+    finally:
+        if figure is not None:
+            plt.close(figure)
+
+
+def log_wandb_depth_errors(
+    *,
+    logger: Any,
+    statistics: dict[str, torch.Tensor],
+    depth_axis_m: np.ndarray | None = None,
+    prefix: str = "val/full_reconstruction",
+    image_key: str = "absolute_error_by_depth",
+    error_label: str = "Mean absolute error",
+    title: str = "Average absolute error by depth",
+) -> None:
+    """Plot pooled depth MAE with population-standard-deviation bands and a metric table.
+
+    Each trace supplies squared-error sums, absolute-error sums and counts with
+    shape ``(3, D)``. Reducing these statistics before plotting preserves pixel
+    weighting across unequal batches and ranks without retaining reconstructions.
+    """
+    if logger is None or not statistics:
+        return
+    experiment = getattr(logger, "experiment", None)
+    if experiment is None or not hasattr(experiment, "log"):
+        return
+    try:
+        import wandb
+    except ImportError:
+        return
+
+    depth_count = next(iter(statistics.values())).shape[-1]
+    depths, depth_label = _resolve_profile_depth_axis(
+        profile_size=depth_count, depth_axis=depth_axis_m
+    )
+    colors = {"Prediction": "tab:orange", "GLORYS": "black"}
+    figure = None
+    rows = []
+    try:
+        figure, axis = plt.subplots(1, 1, figsize=(6.5, 8.0))
+        for label, stats in statistics.items():
+            if stats.shape != (3, depth_count):
+                raise ValueError("Depth error statistics must share shape (3, D).")
+            squared, absolute, counts = stats.detach().double().cpu().numpy()
+            supported = counts > 0
+            mae = np.divide(
+                absolute, counts, out=np.full_like(counts, np.nan), where=supported
+            )
+            mse = np.divide(
+                squared, counts, out=np.full_like(counts, np.nan), where=supported
+            )
+            # E[|error|²] = E[error²]; pool second moments, not batch standard deviations.
+            with np.errstate(invalid="ignore"):
+                std = np.sqrt(np.maximum(mse - mae**2, 0.0))
+            rmse = np.sqrt(mse)
+            if np.isfinite(mae).any():
+                line = axis.plot(
+                    mae, depths, label=label, color=colors.get(label), linewidth=1.8
+                )[0]
+                axis.fill_betweenx(
+                    depths,
+                    mae - std,
+                    mae + std,
+                    color=line.get_color(),
+                    alpha=0.18,
+                    linewidth=0.0,
+                )
+            for index, depth in enumerate(depths):
+                rows.append(
+                    [
+                        label,
+                        float(depth),
+                        float(mae[index]) if supported[index] else None,
+                        float(rmse[index]) if supported[index] else None,
+                        float(std[index]) if supported[index] else None,
+                        int(counts[index]),
+                    ]
+                )
+        axis.set_xlabel(error_label)
+        axis.set_ylabel(depth_label)
+        axis.set_title(title)
+        axis.invert_yaxis()
+        axis.grid(True, alpha=0.25)
+        if axis.lines:
+            axis.legend(loc="best")
+        figure.tight_layout()
+        experiment.log(
+            {
+                f"{prefix}/{image_key}": wandb.Image(figure),
+                f"{prefix}/{image_key}_metrics": wandb.Table(
+                    columns=[
+                        "method",
+                        "depth_m" if depth_axis_m is not None else "depth_index",
+                        "mae",
+                        "rmse",
+                        "absolute_error_std",
+                        "valid_values",
+                    ],
+                    data=rows,
+                ),
+            }
+        )
     finally:
         if figure is not None:
             plt.close(figure)
@@ -2107,6 +2312,7 @@ def log_wandb_glorys_profile_comparison(
     image_key: str = "glorys_profile_comparison",
     sample_idx: int = 0,
     profile_x_label: str = "Temperature (deg C)",
+    depth_axis_m: np.ndarray | torch.Tensor | None = None,
 ) -> None:
     """Log full-depth profile comparisons at generated-only validation pixels.
 
@@ -2124,6 +2330,8 @@ def log_wandb_glorys_profile_comparison(
         image_key (str): Input value.
         sample_idx (int): Zero-based index for selecting a sample or batch.
         profile_x_label (str): X-axis label for physical profile values.
+        depth_axis_m (np.ndarray | torch.Tensor | None): Optional physical depth
+            coordinate in metres. When omitted, profile band indices are shown.
 
     Returns:
         None: No value is returned.

@@ -1,0 +1,247 @@
+experiment_id: 2026-10-05-hard-region-qc-finetune
+created_at_utc: '2026-10-05T13:09:15.771646+00:00'
+status: both training on separate GPUs; offline tracking; online upload approval pending
+reason: User requested parallel standard and climatology-residual fine-tuning with
+  hard-region sampling and ARGO QC enabled.
+initial_stage_hours: 24
+duration_basis: 24-hour initial stage selected as the stated default after leaving
+  the optional preference question open; no duration response received at preparation
+  time.
+mode: weights-only fine-tuning; fresh optimizer, scheduler and EMA; new global_step
+  starts at zero
+learning_rate: 1.0e-05
+hard_fraction: 0.5
+hard_sampling_splits:
+- train
+qc_filter: true
+qc_accepted_flags:
+- 1
+- 2
+qc_missing_flag_policy: Existing loader accepts missing negative flags; rejects known
+  flags outside 1/2.
+selection_metric: val/full_reconstruction_score
+checkpoint_retention:
+  best: 3
+  recovery_every_train_steps: 1000
+new_sampling_seed: 7
+runs:
+  standard:
+    physical_gpu: 0
+    parent_checkpoint: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/checkpoints/standard_parent_step56652.ckpt
+    parent_sha256: 99c20e1c59e1d7a5ba7febde4d7f311bee84d6867c51136c0c5eb3db774087fe
+    parent_global_step: 56652
+    parent_weights: ema
+    parent_wandb_run: 0sb6ykmx
+    initial_weights_checkpoint: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/checkpoints/standard_ema_step56652_weights.ckpt
+    initial_weights_sha256: c3d1b287a84d6b0efefc64ab7e8e0626730b3b5cfeca8010858dfceffef404fd
+    config: /work/code/DepthDif/docs/experiments/2026-10-05-hard-region-qc-finetune/standard.yaml
+    config_sha256: c26eeaef82c3899b1c5c33514de05eef983974f8e26eb5f030538607b842b47c
+    run_dir: /work/code/DepthDif/logs/2026-10-05_hard_region_qc_standard
+    wandb_id: cc38592a
+    wandb_url: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/cc38592a
+    tmux_session: depthdif_ft_standard_20261005
+    stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/standard.log
+    status: training; initial finite losses verified
+    preflight_config_sha256: db4e1e79933af3d5745cd79c6850f204a5685276776c73db2bb51a8884f9b26b
+    wandb_remote_status: not created; offline records will use the pinned run ID
+    pid: 2726741
+    launcher: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/launch_standard.sh
+    environment:
+      CUDA_DEVICE_ORDER: PCI_BUS_ID
+      CUDA_VISIBLE_DEVICES: '0'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MPLBACKEND: Agg
+      MPLCONFIGDIR: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/matplotlib_standard
+      WANDB_MODE: offline
+      WANDB_DIR: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/wandb_standard
+      WANDB_NOTES: Fine-tune from 0sb6ykmx, step 56652, ema tensors. Parent SHA256
+        99c20e1c59e1d7a5ba7febde4d7f311bee84d6867c51136c0c5eb3db774087fe. QC enabled;
+        50% hard-region training rows; LR 1e-5; new optimizer/EMA; 24h first stage.
+    launched_at_utc: '2026-10-05T13:19:27.063521+00:00'
+    startup_verification:
+      observed_at_utc: '2026-10-05T13:26:46.429128+00:00'
+      pid: 2726741
+      physical_gpu: 0
+      latest_flushed_training_history:
+        train/loss_step: 0.0007023517973721027
+        trainer/global_step: 149
+      all_flushed_training_losses_finite: true
+      executed_config_checks: QC enabled; hard_fraction 0.5 on train only; global
+        shuffled validation; lr 1e-5; one GPU; 24h; expected architecture and pinned
+        initialization file
+      offline_wandb_directory: /work/code/DepthDif/wandb/offline-run-20261005_152021-cc38592a
+      note: Live W&B files are block-buffered; recorded step is a lower bound on progress,
+        not a final result.
+    offline_wandb_directory: /work/code/DepthDif/wandb/offline-run-20261005_152021-cc38592a
+    effective_config_sha256:
+      model_config_effective.yaml: 66987efab0eb13fe6d9bc82642464fcb6c1a9dc4dfb9118e95a0af78f3ae715d
+      data_config_effective.yaml: 92ea8e92542ffa0dd0e43825e942015f18fa993d215fc087782742e3ded7caeb
+      training_config_effective.yaml: ee1a22d60b8b49db269af248fab611d68717af0d13c5a669e011b5ffde100c62
+    launcher_sha256: 8cfc493e04c09d5d3f9b6e8e427c5fab1a4acef9d62b598b0ac6f91b8d9b5387
+  residual:
+    physical_gpu: 1
+    parent_checkpoint: /work/code/DepthDif/outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    parent_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    parent_global_step: 113304
+    parent_weights: standard
+    parent_wandb_run: 062mpmkd
+    initial_weights_checkpoint: /work/code/DepthDif/outputs/checkpoint_selection_20261005/selected_inference.ckpt
+    initial_weights_sha256: 05a9bb836a9dd225de65ee30f76f8eba75d0be87667bc58cf65a55f7f767b1a0
+    config: /work/code/DepthDif/docs/experiments/2026-10-05-hard-region-qc-finetune/residual.yaml
+    config_sha256: e96f0342332592fe0bfb0b4a89292be9ca08440a798aa88c66dd0fa6df8238d2
+    run_dir: /work/code/DepthDif/logs/2026-10-05_hard_region_qc_residual
+    wandb_id: 1419568d
+    wandb_url: https://wandb.ai/esa-phi-lab/DepthDif_Simon/runs/1419568d
+    tmux_session: depthdif_ft_residual_20261005
+    stdout_log: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/residual.log
+    status: training; initial finite losses verified
+    preflight_config_sha256: 1f6d237abe4dae023d506d01837b7b8c66dcb3cfb10143daff366f60410ea3ca
+    wandb_remote_status: not created; offline records will use the pinned run ID
+    launched_at_utc: '2026-10-05T13:20:31.735201+00:00'
+    launcher: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/launch_residual.sh
+    environment:
+      CUDA_DEVICE_ORDER: PCI_BUS_ID
+      CUDA_VISIBLE_DEVICES: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MPLBACKEND: Agg
+      MPLCONFIGDIR: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/matplotlib_residual
+      WANDB_MODE: offline
+      WANDB_DIR: /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/wandb_residual
+      WANDB_NOTES: Fine-tune from 062mpmkd, step 113304, standard tensors. Parent
+        SHA256 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa. QC
+        enabled; 50% hard-region training rows; LR 1e-5; new optimizer/EMA; 24h first
+        stage.
+    pid: 2727215
+    startup_verification:
+      observed_at_utc: '2026-10-05T13:26:46.430186+00:00'
+      pid: 2727215
+      physical_gpu: 1
+      latest_flushed_training_history:
+        train/loss_step: 0.0009172850986942649
+        trainer/global_step: 24
+      all_flushed_training_losses_finite: true
+      executed_config_checks: QC enabled; hard_fraction 0.5 on train only; global
+        shuffled validation; lr 1e-5; one GPU; 24h; expected architecture and pinned
+        initialization file
+      offline_wandb_directory: /work/code/DepthDif/wandb/offline-run-20261005_152141-1419568d
+      note: Live W&B files are block-buffered; recorded step is a lower bound on progress,
+        not a final result.
+    offline_wandb_directory: /work/code/DepthDif/wandb/offline-run-20261005_152141-1419568d
+    effective_config_sha256:
+      model_config_effective.yaml: e21c20a78e86cb4028b2e259aafb67df5916643c57491f8cdd9f3ba6de921822
+      data_config_effective.yaml: 2c59ce6c11e005e8255821aeb1ccc182391c0288ef08ab1de0951667de5ec312
+      training_config_effective.yaml: bf4b01ef1b21983d2269a41254c395f979f00613b10e58058ba2c76c05ea47b2
+    launcher_sha256: 92efbd5859efd6646cd5abf186544acfc76a04eb8e780ff60e09918190395404
+validation:
+  test_suite: bash tests/run_tests.sh
+  tests_passed: 389
+  elapsed_seconds: 20.111
+  formatter: /work/envs/depth/bin/python -m black .
+  production_code_edits: train.py saves final.ckpt after trainer.fit returns
+provenance_sha256:
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_model.yaml: 3d80b54144d39e91968a896a77e63554881b1e531354371f197b3c2dbd5fc498
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_training.yaml: f57e179efaebb666aa108476dc342b81e9afd3701fb596da38b48f6e7e0e40c2
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_data.yaml: bfbafb9aaf87feaf2987b819b451ccbc8eeb945ca8ba1e45c713c838ca2d6dca
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_model.yaml: f20bc1a0ba76d7c244275ee9c984c3d4258d097366cca3c2d67bab5bcbc40709
+  docs/experiments/2026-10-05-hard-region-qc-finetune/residual_parent_training.yaml: 61ce1c448541d84d6a9eaad190b0bfc58bc5e6df211884a1bd9f7625f1f5c3e5
+  docs/experiments/2026-10-05-hard-region-qc-finetune/standard_parent_data.yaml: 9e0a86207bfac60a3839f36fb66d58114200071ead66c20919d8e234048eac3a
+  src/depth_recon/configs/evaluation/hard_regions_2016.yaml: 18e1d8df29e6e1d9e15ff8f521906d1f6cd1ed6721ffd3ce5953612dcdbdedc4
+  outputs/hard_region_qc_finetune_20261005/provenance/source_before_launch.tar.gz: a6ccdd18869a7fd4f99492e3f3ef872a1b3f332c7dc95b67cc34be7b725f0423
+  outputs/hard_region_qc_finetune_20261005/provenance/preflight.py: 2205edab7e8713f1d96dd3a931dbd1c88d72358359c4075c6a0710b4cbf60630
+  train.py: 139a0ca0a3b2af9a78b1eae77d4ab8c208300297942f7087cff42abbabfcde51
+  outputs/hard_region_qc_finetune_20261005/provenance/source_executed.tar.gz: 83397123720f44457b8246d1f2a017c8bddd9325cf36df9f9388f13862631ae0
+  docs/experiments/2026-10-05-hard-region-qc-finetune/preflight.json: 7d589611cb33ab28d9aae91b103667eebd1bc0ee301ef64ff2a1af9449b1d1a7
+  /work/code/DepthDif/outputs/hard_region_qc_finetune_20261005/provenance/launch_offline.py: 3431d6d1bec59e3e5eaeeca373eff846ca71386675d4edb05bd3e0e3a0398373
+residual_climatology:
+  path: outputs/checkpoint_selection_20261005/baselines/temperature_monthly_stride4.npz
+  sha256: 6125c6bd8af1b813bb61bc55c08d5cc39f8b95f8f63e1be68c55083dd30b87c0
+  excluded_year: 2016
+  source: outputs/climatology_2016_comparison/temperature_monthly_stride4.npz
+launch_attempts:
+- at_utc: '2026-10-05T13:19:18.903138+00:00'
+  status: blocked before process creation
+  reason: Automatic approval review rejected online W&B logging without explicit destination/payload
+    approval. GPU training was authorized.
+  model_updates: 0
+- at_utc: '2026-10-05T13:20:31.410798+00:00'
+  status: standard started; PID bookkeeping recovered
+  reason: tmux display-message session target returned an empty pane PID. Live process
+    verified via list-panes; no duplicate launch or model restart. Residual not yet
+    started.
+tracking_mode: offline; online upload permission pending
+preflight:
+  weight_loading:
+    standard:
+      strict_load: true
+      exact_tensor_equality: true
+      parent_weights: ema
+      parent_global_step: 56652
+      condition_channels: 53
+      learning_rate: 1.0e-05
+    residual:
+      strict_load: true
+      exact_tensor_equality: true
+      parent_weights: standard
+      parent_global_step: 113304
+      condition_channels: 202
+      learning_rate: 1.0e-05
+  datasets:
+    train:
+      sample_count: 885276
+      row_identity_sha256: 2d07f01e527ced3adcf0ec6980ca41cd9994741ad4e82c966a01a3ced0accb02
+      finetune_sampling:
+        enabled: true
+        applied: true
+        split: train
+        target_hard_fraction: 0.5
+        actual_hard_fraction: 0.5
+        hard_rows: 442638
+        easy_rows: 442638
+        total_rows: 885276
+        available_easy_rows: 3259331
+        region_names:
+        - mediterranean
+        - black_sea
+        - russian_arctic_west
+        - russian_arctic_east
+        - hudson_bay
+        - baja_california
+        - greenland
+        - svalbard_barents
+        - european_atlantic
+        - persian_gulf
+        - red_sea
+        - yellow_sea
+        - sea_of_japan
+        - sea_of_okhotsk
+        - northern_alaska
+        - bay_of_benin_west
+        - bay_of_benin_east
+        - new_york_nova_scotia
+      known_qc4_profiles_rejected:
+      - 5948378
+      - 5958171
+      - 6438558
+      - 6465997
+      - 6467116
+      quality_cache_signature: filter1_flags1-2_markers-argo_temp_profile_qc-argo_psal_profile_qc
+    val:
+      sample_count: 173137
+      row_identity_sha256: 973f7c6becabe7db93c1cb42cda0ba64ebe9fc201c93bde33688873841af8442
+      finetune_sampling:
+        enabled: true
+        applied: false
+        split: val
+        total_rows: 173137
+      known_qc4_profiles_rejected:
+      - 5948378
+      - 5958171
+      - 6438558
+      - 6465997
+      - 6467116
+      quality_cache_signature: filter1_flags1-2_markers-argo_temp_profile_qc-argo_psal_profile_qc
+  status: passed

@@ -81,6 +81,12 @@ the HPC preset instead enables deterministic synthetic targets built from the
 fitted monthly, spatial GLORYS-delta prior. Configuration overrides use repeated
 `--set section.path=value` arguments.
 
+The maintained diffusion presets also pass depth-wise observation and physical
+wet-domain masks (configured with `data.dataset.wet_domain`) into the model. This changes the input-channel contract, so
+those presets require fresh checkpoints. An optional climatology-residual mode
+is available when a training-year-only climatology artifact is configured; it
+does not alter the diffusion loss.
+
 ```bash
 /work/envs/depth/bin/python train.py \
   --scenario temperature \
@@ -89,6 +95,13 @@ fitted monthly, spatial GLORYS-delta prior. Configuration overrides use repeated
 
 Run artifacts are stored below `logs/<timestamp>/`, including checkpoints and
 resolved data, model, and training configuration snapshots.
+Best checkpoints use full reconstructions of 128 fixed validation patches across
+all scenarios, rather than denoising loss. The regular validation loader stays
+shuffled. See [checkpoint selection](docs/training.md#checkpoint-selection-from-full-reconstructions)
+for the metric, sampling budget and GPU distribution.
+An optional [archive-screened EN4 holdout benchmark](docs/training.md#held-out-en4-with-no-historical-archive-candidate)
+evaluates up to 32 additional fixed patches once per epoch in its own W&B
+namespace, without changing checkpoint selection or shared validation inputs.
 
 ## Documentation and validation
 

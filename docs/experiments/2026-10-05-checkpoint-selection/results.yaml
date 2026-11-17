@@ -1,0 +1,229 @@
+experiment_id: 2026-10-05-residual-checkpoint-selection
+manifest_sha256: 9b6b7d29545873accd2e4dc1493be10365eadc6a027b9acedcddb13d4b7b00b2
+verified_identical_inputs_and_holdouts: true
+sample_count: 128
+hidden_profile_locations_counted_per_patch: 527
+field_ranking_by_equal_depth_rmse:
+- climatology/field
+- residual_latest_best_standard/field
+- residual_early_ema/field
+- residual_early_standard/field
+- residual_latest_best_ema/field
+metrics:
+  climatology/field:
+    equal_depth_rmse_c: 0.9419682601657025
+    equal_depth_mae_c: 0.5403878578387613
+    pixel_mae_c: 0.5902044641066834
+    pixel_rmse_c: 1.1344205455415615
+    pixel_bias_c: -0.10714123333385053
+    valid_values: 84282768
+    supported_depths: 49
+  climatology/heldout_profiles:
+    equal_depth_rmse_c: 2.8226735375525744
+    equal_depth_mae_c: 1.98841142558708
+    pixel_mae_c: 0.7894968350786437
+    pixel_rmse_c: 1.6917631875419379
+    pixel_bias_c: -0.005380219842246407
+    valid_values: 16419
+    supported_depths: 44
+  glorys/heldout_profiles:
+    equal_depth_rmse_c: 2.513562003262151
+    equal_depth_mae_c: 1.6760163238857357
+    pixel_mae_c: 0.43304822900726675
+    pixel_rmse_c: 1.399185144720523
+    pixel_bias_c: 0.06207230782434794
+    valid_values: 16419
+    supported_depths: 44
+  residual_early_ema/field:
+    equal_depth_rmse_c: 1.6729530884820787
+    equal_depth_mae_c: 1.1060507555295946
+    pixel_mae_c: 1.174835421281258
+    pixel_rmse_c: 1.909171963189942
+    pixel_bias_c: 0.0939937679719134
+    valid_values: 84282768
+    supported_depths: 49
+  residual_early_ema/heldout_profiles:
+    equal_depth_rmse_c: 3.4106154791870567
+    equal_depth_mae_c: 2.458625352445365
+    pixel_mae_c: 1.2910766768843214
+    pixel_rmse_c: 2.2957051540528317
+    pixel_bias_c: 0.15133939845617597
+    valid_values: 16419
+    supported_depths: 44
+  residual_early_standard/field:
+    equal_depth_rmse_c: 1.7313016652802182
+    equal_depth_mae_c: 1.1380306316417377
+    pixel_mae_c: 1.2141941680286372
+    pixel_rmse_c: 1.969029576073767
+    pixel_bias_c: 0.12429336325061731
+    valid_values: 84282768
+    supported_depths: 49
+  residual_early_standard/heldout_profiles:
+    equal_depth_rmse_c: 3.471373462379705
+    equal_depth_mae_c: 2.5124359628755077
+    pixel_mae_c: 1.35163742689015
+    pixel_rmse_c: 2.3261355324716586
+    pixel_bias_c: 0.20738260269281206
+    valid_values: 16419
+    supported_depths: 44
+  residual_latest_best_ema/field:
+    equal_depth_rmse_c: 2.0993963980848505
+    equal_depth_mae_c: 1.0861924917177026
+    pixel_mae_c: 1.142714356307575
+    pixel_rmse_c: 2.3497350321283252
+    pixel_bias_c: -0.41775832188907747
+    valid_values: 84282768
+    supported_depths: 49
+  residual_latest_best_ema/heldout_profiles:
+    equal_depth_rmse_c: 3.2810827418262396
+    equal_depth_mae_c: 2.3851229085147767
+    pixel_mae_c: 1.20418063423449
+    pixel_rmse_c: 2.1326721244273816
+    pixel_bias_c: -0.23315058324316532
+    valid_values: 16419
+    supported_depths: 44
+  residual_latest_best_standard/field:
+    equal_depth_rmse_c: 1.671257672398133
+    equal_depth_mae_c: 1.0847581653122496
+    pixel_mae_c: 1.141772017756001
+    pixel_rmse_c: 1.8449889569969529
+    pixel_bias_c: -0.14023419697785414
+    valid_values: 84282768
+    supported_depths: 49
+  residual_latest_best_standard/heldout_profiles:
+    equal_depth_rmse_c: 3.3310785777611276
+    equal_depth_mae_c: 2.4536917795431865
+    pixel_mae_c: 1.2788194781484103
+    pixel_rmse_c: 2.1816069031803953
+    pixel_bias_c: 0.0566805010046954
+    valid_values: 16419
+    supported_depths: 44
+paired_patch_wins:
+  residual_early_ema:
+    field:
+      lower_pixel_mae_than_climatology: 33
+      eligible_patches: 128
+    heldout_profiles:
+      lower_pixel_mae_than_climatology: 34
+      eligible_patches: 125
+  residual_early_standard:
+    field:
+      lower_pixel_mae_than_climatology: 24
+      eligible_patches: 128
+    heldout_profiles:
+      lower_pixel_mae_than_climatology: 26
+      eligible_patches: 125
+  residual_latest_best_ema:
+    field:
+      lower_pixel_mae_than_climatology: 35
+      eligible_patches: 128
+    heldout_profiles:
+      lower_pixel_mae_than_climatology: 38
+      eligible_patches: 125
+  residual_latest_best_standard:
+    field:
+      lower_pixel_mae_than_climatology: 22
+      eligible_patches: 128
+    heldout_profiles:
+      lower_pixel_mae_than_climatology: 27
+      eligible_patches: 125
+residual_diagnostics:
+  residual_early_ema:
+    correction_rms_c: 1.9994106522059012
+    true_anomaly_rms_c: 1.1344205455415615
+    correction_energy_c2: 3.997642956154427
+    twice_correction_anomaly_product_c2: 1.6396153452707027
+    mse_increase_over_climatology_c2: 2.3580276108837244
+  residual_early_standard:
+    correction_rms_c: 2.0841179679798953
+    true_anomaly_rms_c: 1.1344205455415615
+    correction_energy_c2: 4.343547704456648
+    twice_correction_anomaly_product_c2: 1.7533802071502222
+    mse_increase_over_climatology_c2: 2.5901674973064255
+  residual_latest_best_ema:
+    correction_rms_c: 2.424350649108739
+    true_anomaly_rms_c: 1.1344205455415615
+    correction_energy_c2: 5.877476069833964
+    twice_correction_anomaly_product_c2: 1.6431313227696764
+    mse_increase_over_climatology_c2: 4.234344747064288
+  residual_latest_best_standard:
+    correction_rms_c: 1.981970498132959
+    true_anomaly_rms_c: 1.1344205455415615
+    correction_energy_c2: 3.9282070554694095
+    twice_correction_anomaly_product_c2: 1.8111327781755204
+    mse_increase_over_climatology_c2: 2.117074277293889
+checkpoint_identity:
+  residual_early_ema:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_early_step37768.ckpt
+    checkpoint_sha256: 516fbac95760cef390a37a67c6cdc8d4786f780ecaf5ed6e8852620ee18c6c02
+    global_step: 37768
+    weights: ema
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 0c9a42fc42de5e177230910bdab31e89e2a0a9052d4f28bdc1f39e3640cf2eed
+  residual_early_standard:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_early_step37768.ckpt
+    checkpoint_sha256: 516fbac95760cef390a37a67c6cdc8d4786f780ecaf5ed6e8852620ee18c6c02
+    global_step: 37768
+    weights: standard
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 0c9a42fc42de5e177230910bdab31e89e2a0a9052d4f28bdc1f39e3640cf2eed
+  residual_latest_best_ema:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    checkpoint_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    global_step: 113304
+    weights: ema
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 0c9a42fc42de5e177230910bdab31e89e2a0a9052d4f28bdc1f39e3640cf2eed
+  residual_latest_best_standard:
+    checkpoint: outputs/checkpoint_selection_20261005/checkpoints/residual_latest_best_step113304.ckpt
+    checkpoint_sha256: 283642f16b73beecb61f86c73fe66863f0667d67205c838025bcdd63569397fa
+    global_step: 113304
+    weights: standard
+    config: docs/experiments/2026-10-05-checkpoint-selection/evaluation_config.yaml
+    config_sha256: 0c9a42fc42de5e177230910bdab31e89e2a0a9052d4f28bdc1f39e3640cf2eed
+completion:
+  residual_early_ema:
+    started_at_utc: '2026-10-05T12:02:32.442351+00:00'
+    completed_at_utc: '2026-10-05T12:18:19.804545+00:00'
+    elapsed_seconds: 947.3622058850015
+    weights: ema
+    script_sha256: 711d8c4505af8c86ecab926377523810a8a51cda14ec75164deabc0fb07e2390
+  residual_early_standard:
+    started_at_utc: '2026-10-05T12:19:07.715729+00:00'
+    completed_at_utc: '2026-10-05T12:34:54.593477+00:00'
+    elapsed_seconds: 946.8777594349813
+    weights: standard
+    script_sha256: 711d8c4505af8c86ecab926377523810a8a51cda14ec75164deabc0fb07e2390
+  residual_latest_best_ema:
+    started_at_utc: '2026-10-05T12:02:41.431242+00:00'
+    completed_at_utc: '2026-10-05T12:18:36.210907+00:00'
+    elapsed_seconds: 954.7796755059389
+    weights: ema
+    script_sha256: 711d8c4505af8c86ecab926377523810a8a51cda14ec75164deabc0fb07e2390
+  residual_latest_best_standard:
+    started_at_utc: '2026-10-05T12:19:20.071304+00:00'
+    completed_at_utc: '2026-10-05T12:35:20.822717+00:00'
+    elapsed_seconds: 960.7514246520586
+    weights: standard
+    script_sha256: 711d8c4505af8c86ecab926377523810a8a51cda14ec75164deabc0fb07e2390
+evidence_sha256:
+  residual_early_ema:
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_ema/batches.json: 2271f147f2be9b35e1f12c2b2964ef3dfcdcc475d2157735a91b43557011ec82
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_ema/selection.json: 3001a5431485406abcc661c2c61219555cfa88cbc5d4c977e6b972134ecb211d
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_ema/status.json: 7b84e341812b6ea014fa15cba89f2591cc89ad60cb2da85b4dbb84bdadd53be0
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_ema/summary.json: ba091b7b549c4ae5b8426f41fbe090e954012869f01305ead2e33b143294ed49
+  residual_early_standard:
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_standard/batches.json: e09cd47cbb2245cddca90922024cae4d0c08c6f0db25086836a7f27fdf4e5a5c
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_standard/selection.json: 3001a5431485406abcc661c2c61219555cfa88cbc5d4c977e6b972134ecb211d
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_standard/status.json: 597b3e5c0197fdb0b628d21e7fcd5c8b1caf0a521637fa12f8ae68102c1a0cdf
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_early_standard/summary.json: b6759784f3b9fffac54996a83ed149a677def33add7b928a2935b39c5e973e3c
+  residual_latest_best_ema:
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_ema/batches.json: 58dd776468e5c6dffffba9ac89c1f5f2842f805a4e6995b4a0d76c376aae7369
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_ema/selection.json: 3001a5431485406abcc661c2c61219555cfa88cbc5d4c977e6b972134ecb211d
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_ema/status.json: e3ed6683703ca54e26d219112b78d56c96e58bbe6d93ca36247b20c9eaf40e45
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_ema/summary.json: 81a6aa7451a8b20ff8c1dc96750498addb83c69c071f978d9e2ee6c57ee354e1
+  residual_latest_best_standard:
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_standard/batches.json: a4df08be760673bb869dd4453c9a798d085f8218a588c0784ed8dadddf65b690
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_standard/selection.json: 3001a5431485406abcc661c2c61219555cfa88cbc5d4c977e6b972134ecb211d
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_standard/status.json: 45e66c15aceeee0b49cc053e1ab08e89fa76c039a96356f7bbd6e405f13ed1b3
+    outputs/checkpoint_selection_20261005/results_attempt02/residual_latest_best_standard/summary.json: d7b2feb7cb03731f113d091eded52786a66090543709f2a0e0e0ce95483500de

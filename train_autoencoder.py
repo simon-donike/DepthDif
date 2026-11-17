@@ -31,6 +31,11 @@ from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
 from depth_recon.models.latent import DepthBandAutoencoderLightning
 from depth_recon.paths import config_path, resolve_config_path
+from depth_recon.configs.config_resolver_pixel import (
+    FULL_RECONSTRUCTION_MONITOR,
+    apply_reconstruction_checkpoint_contract,
+)
+from depth_recon.utils.reconstruction_validation import FullReconstructionValidation
 
 LAT_AE_CONFIG_PATH = str(config_path("lat_space", "ae_config.yaml"))
 PX_DATA_CONFIG_PATH = str(config_path("px_space", "training_super_config.yaml"))
@@ -220,6 +225,12 @@ def main(
         # Pixel super-configs wrap the dataset config under top-level data.
         data_cfg = data_cfg["data"]
     training_cfg = load_yaml(training_config_path)
+    apply_reconstruction_checkpoint_contract(training_cfg)
+    if is_global_zero:
+        with (run_dir / "training_config_effective.yaml").open(
+            "w", encoding="utf-8"
+        ) as f:
+            yaml.safe_dump(training_cfg, f, sort_keys=False)
     _ = ae_cfg
 
     trainer_cfg = training_cfg.get("trainer", {})
@@ -252,11 +263,12 @@ def main(
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(run_dir),
-        filename="best-epoch{epoch:03d}",
-        monitor=str(trainer_cfg.get("ckpt_monitor", "val/loss_ckpt")),
+        filename="best-epoch{epoch:03d}-step{step:09d}",
+        monitor=FULL_RECONSTRUCTION_MONITOR,
         mode="min",
-        save_top_k=1,
+        save_top_k=3,
         save_last=True,
+        save_on_train_epoch_end=False,
     )
     lr_monitor_callback = LearningRateMonitor(
         logging_interval=str(trainer_cfg.get("lr_logging_interval", "epoch"))
@@ -287,7 +299,14 @@ def main(
         precision=trainer_cfg.get("precision", "32-true"),
         num_sanity_val_steps=int(trainer_cfg.get("num_sanity_val_steps", 2)),
         logger=logger,
-        callbacks=[checkpoint_callback, lr_monitor_callback],
+        callbacks=[
+            checkpoint_callback,
+            lr_monitor_callback,
+            FullReconstructionValidation(
+                output_dir=run_dir,
+                **training_cfg["training"]["reconstruction_eval"],
+            ),
+        ],
         log_every_n_steps=int(trainer_cfg.get("log_every_n_steps", 1)),
         limit_val_batches=limit_val_batches,
         enable_model_summary=bool(trainer_cfg.get("enable_model_summary", True)),

@@ -66,6 +66,12 @@ which values are observed, supervised, ocean, or missing. With
 `--scenario joint`, it returns both temperature and salinity tensors, and
 `PixelDiffusionConditional` stacks them at the model boundary.
 
+Pixel-diffusion training presets also expose observation support at every depth
+and a static depth-dependent wet domain. An optional training-only monthly
+spatial climatology can supply a background for residual prediction. These
+options preserve the existing target-validity masks and loss weights; see
+[Depth Diagnostics](depth-diagnostics.md) for fitting and configuration.
+
 The precise tensor contract is intentionally separated from this overview. See
 [Data Contract](data-contract.md) for shapes, normalization, masks, and loader
 assembly rules.

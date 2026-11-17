@@ -6,6 +6,10 @@ training: # Internal Model Training Settings
     schedule: "cosine" # Noise schedule: "linear", "cosine", "quadratic", or "sigmoid".
     beta_start: 1.0e-4 # Noise level at first timestep (must be > 0 and < beta_end).
     beta_end: 2.0e-2 # Noise level at last timestep (must be < 1 and > beta_start).
+  reconstruction_eval: # Best-checkpoint evaluation, separate from preview images.
+    sample_count: 128 # Unique fixed patches across all GPUs.
+    batch_size: 4 # Reconstruction batch size per GPU.
+    seed: 7 # Fixed patch selection and sampling noise.
   validation_sampling:
     sampler: "ddpm" # Validation inference sampler: "ddpm" (full chain) or "ddim" (faster).
     ddim_num_timesteps: 200 # Used only when sampler="ddim"; fewer steps = faster, potentially less accurate.
@@ -24,7 +28,7 @@ trainer: # PL Trainer Settings
   matmul_precision: "high" # torch.set_float32_matmul_precision value.
   suppress_accumulate_grad_stream_mismatch_warning: true # Silence PyTorch stream-mismatch warning noise.
   suppress_lightning_pytree_warning: true # Silence Lightning internal LeafSpec deprecation warning noise.
-  ckpt_monitor: "val/loss_ckpt" # Metric name monitored by ModelCheckpoint for best model saving.
+  ckpt_monitor: "val/full_reconstruction_score" # Fixed full-reconstruction checkpoint metric.
   lr_logging_interval: "step" # Learning rate logging cadence for Lightning's LearningRateMonitor.
   log_every_n_steps: 50 # Trainer logging interval (steps).
   num_sanity_val_steps: 2 # Run Lightning sanity validation steps at startup.

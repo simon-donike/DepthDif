@@ -13,24 +13,14 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import Dataset, default_collate
 
-try:
-    from depth_recon.configs.config_resolver_pixel import FULL_RECONSTRUCTION_MONITOR
-except ImportError:
-    # Keep this utility importable while older config resolvers are in use.
-    FULL_RECONSTRUCTION_MONITOR = "val/full_reconstruction_score"
+from depth_recon.configs.config_resolver_pixel import FULL_RECONSTRUCTION_MONITOR
 from depth_recon.utils.normalizations import (
     SALINITY_STD,
     Y_STD,
     salinity_normalize,
     temperature_normalize,
 )
-
-try:
-    from depth_recon.utils.validation_denoise import log_wandb_depth_errors
-except ImportError:
-
-    def log_wandb_depth_errors(**_: Any) -> None:
-        """Compatibility no-op for branches without depth-error plot support."""
+from depth_recon.utils.validation_denoise import log_wandb_depth_errors
 
 
 @contextmanager

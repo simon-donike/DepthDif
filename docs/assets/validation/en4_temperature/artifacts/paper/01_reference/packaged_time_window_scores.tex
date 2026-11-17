@@ -1,0 +1,24 @@
+\begin{tabular}{lllrrrrrl}
+\toprule
+window & variable & method & profiles & points & mae & rmse & bias & reference_time \\
+\midrule
+within_12h & temperature & packaged_glorys & 129 & 2242 & 0.7315 & 1.0639 & 0.3241 & packaged filename daily date; source bounds unverified \\
+within_12h & temperature & depthdif_mean & 129 & 2242 & 1.4345 & 1.8784 & -0.3149 & packaged filename daily date; source bounds unverified \\
+within_12h & temperature & lstm & 129 & 2242 & 1.5012 & 2.2644 & 0.7077 & packaged filename daily date; source bounds unverified \\
+within_12h & temperature & cnn & 129 & 2242 & 2.1392 & 2.8171 & 0.7731 & packaged filename daily date; source bounds unverified \\
+within_12h & temperature & unet3d & 129 & 2242 & 1.3009 & 1.6689 & -0.1262 & packaged filename daily date; source bounds unverified \\
+within_12h & temperature & unet2d & 129 & 2242 & 1.1569 & 1.3988 & -0.4197 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & packaged_glorys & 210 & 3702 & 0.8355 & 1.2331 & 0.5151 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & depthdif_mean & 210 & 3702 & 1.4313 & 1.8568 & -0.1153 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & lstm & 210 & 3702 & 1.5996 & 2.3724 & 0.8695 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & cnn & 210 & 3702 & 2.1543 & 2.8692 & 0.9669 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & unet3d & 210 & 3702 & 1.2946 & 1.6642 & 0.0665 & packaged filename daily date; source bounds unverified \\
+within_24h & temperature & unet2d & 210 & 3702 & 1.1766 & 1.4170 & -0.2913 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & packaged_glorys & 531 & 10604 & 0.7205 & 1.1048 & 0.3758 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & depthdif_mean & 531 & 10604 & 1.2307 & 1.7770 & -0.1425 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & lstm & 531 & 10604 & 1.5664 & 2.3194 & 0.7478 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & cnn & 531 & 10604 & 2.0984 & 2.8682 & 1.1351 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & unet3d & 531 & 10604 & 1.0268 & 1.3949 & 0.0921 & packaged filename daily date; source bounds unverified \\
+full_matching_window & temperature & unet2d & 531 & 10604 & 0.9154 & 1.1759 & -0.1123 & packaged filename daily date; source bounds unverified \\
+\bottomrule
+\end{tabular}

@@ -344,7 +344,7 @@ training:  # optimizer, trainer, and logging
     matmul_precision: high  # torch matmul precision
     suppress_accumulate_grad_stream_mismatch_warning: true  # hide known warning
     suppress_lightning_pytree_warning: true  # hide Lightning warning
-    ckpt_monitor: val/loss_total/dataloader_idx_0  # best-checkpoint metric
+    ckpt_monitor: val/full_reconstruction_score  # best-checkpoint metric
     lr_logging_interval: step  # LR log cadence
     log_every_n_steps: 25  # trainer log cadence
     num_sanity_val_steps: 1  # startup val batches

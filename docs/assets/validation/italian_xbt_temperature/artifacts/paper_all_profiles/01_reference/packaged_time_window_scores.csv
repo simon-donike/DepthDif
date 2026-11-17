@@ -1,0 +1,19 @@
+window,variable,method,profiles,points,mae,rmse,bias,reference_time
+within_12h,temperature,packaged_glorys,2,1204,0.4048969236065651,0.4720133478196158,0.0811605664320247,packaged filename daily date; source bounds unverified
+within_12h,temperature,depthdif_mean,2,1204,0.4601871138274144,0.5729746247388122,0.4372840003652444,packaged filename daily date; source bounds unverified
+within_12h,temperature,lstm,2,1204,0.902963361430114,0.9875924999827,0.902963361430114,packaged filename daily date; source bounds unverified
+within_12h,temperature,cnn,2,1204,1.5360503763096036,1.6166572454756702,1.5360503763096036,packaged filename daily date; source bounds unverified
+within_12h,temperature,unet3d,2,1204,0.7382394911973136,0.8627929187598175,0.6013312641638734,packaged filename daily date; source bounds unverified
+within_12h,temperature,unet2d,2,1204,0.3013482504325594,0.34432549904972,-0.1199344872406329,packaged filename daily date; source bounds unverified
+within_24h,temperature,packaged_glorys,15,11252,0.4783654627579948,0.6602580410439729,0.0776847745969479,packaged filename daily date; source bounds unverified
+within_24h,temperature,depthdif_mean,15,11252,0.5936183745344669,0.8582983313561782,0.178610715804481,packaged filename daily date; source bounds unverified
+within_24h,temperature,lstm,15,11252,0.8958561649196388,1.3629270449010311,0.7755738462014311,packaged filename daily date; source bounds unverified
+within_24h,temperature,cnn,15,11252,1.7513382595474962,2.113614289567146,1.700341360747595,packaged filename daily date; source bounds unverified
+within_24h,temperature,unet3d,15,11252,0.6591979802664082,1.0427969937597716,0.4777891341477894,packaged filename daily date; source bounds unverified
+within_24h,temperature,unet2d,15,11252,0.6319806423977474,0.7441228154676849,-0.1226986099246096,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,packaged_glorys,102,79367,0.4215304336582944,0.5690298206501316,-0.0034271188669253,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,depthdif_mean,102,79367,0.4418146546425396,0.6011205036469328,-0.0667139017738955,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,lstm,102,79367,0.5791880526793021,0.8524443332475977,-0.1270455085087102,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,cnn,102,79367,1.0931336142707857,1.4093734230474142,0.8151127321216043,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,unet3d,102,79367,0.4783100948616525,0.650623012824521,0.2782692561580094,packaged filename daily date; source bounds unverified
+full_matching_window,temperature,unet2d,102,79367,0.456049992386736,0.6030790765541133,-0.1788487785190645,packaged filename daily date; source bounds unverified
