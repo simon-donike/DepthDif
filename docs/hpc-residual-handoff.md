@@ -173,6 +173,17 @@ manifest. They support the TEOS-10 in-situ to potential-temperature conversion.
 Preserve the reference manifest's original bytes; its local paths are relocated
 by the loader. Climatology can now be omitted from the copy.
 
+Missing prepared XBT profiles, reference manifests, or screening files do not
+stop a direct training launch. The callback warns with the missing paths, disables
+Italian validation for that run, and logs `italian_validation/available=0` and
+`italian_validation/skipped_missing_inputs=1` at the first real validation check.
+All GPU ranks agree to skip if any rank lacks an input. Ordinary training,
+shuffled validation, and reconstruction checkpoint selection continue normally.
+Restore the files before a later launch to enable the diagnostic again; the
+missing-data status is not saved as a permanent checkpoint setting. Present files
+still undergo integrity checks. The optional full transfer preflight continues
+to report missing files, so an incomplete transfer is visible.
+
 ## Local verification status
 
 The initial implementation passed 441 repository tests. Strict
@@ -203,6 +214,10 @@ concurrent generation, interrupted fits, validation-year exclusion, unchanged
 existing artifacts, dataset-relative paths, and generated-artifact checksums.
 A direct `train.py` entry-point regression verifies fitting before dataset
 construction without invoking a separate preflight command.
+
+The missing-XBT fallback passed 491 repository tests and 98 validation tests,
+including a real CPU training run with two optimizer updates and ordinary
+validation while XBT is absent, plus checks for agreement across distributed ranks.
 
 ## Cluster environment, smoke run, and training
 

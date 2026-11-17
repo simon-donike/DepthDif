@@ -6,7 +6,7 @@ import random
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -126,6 +126,203 @@ class ItalianValidationTest(unittest.TestCase):
             self.assertEqual(len(loaded), 1)
             self.assertEqual(metadata["profile_count"], 1)
             self.assertEqual(len(metadata["screening_registry_sha256"]), 64)
+
+    def test_missing_xbt_inputs_disable_diagnostic_without_stopping_training(
+        self,
+    ) -> None:
+        """Each missing optional asset skips all epochs without inventing scores."""
+        for missing_name in (
+            "profiles_path",
+            "reference_manifest_path",
+            "screened_profiles_path",
+        ):
+            with (
+                self.subTest(missing=missing_name),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                config = {"enabled": True, "profiles_path": str(self._profiles(root))}
+                config[missing_name] = str(root / "missing" / missing_name)
+                evaluator = Mock(
+                    side_effect=AssertionError("missing XBT must not be evaluated")
+                )
+                with self.assertLogs(
+                    italian_validation.__name__, level="WARNING"
+                ) as logs:
+                    callback = build_italian_validation_callback(
+                        {"training": {"italian_validation": config}}, evaluator
+                    )
+                    trainer = self._trainer(root)
+                    with patch.object(callback, "_assert_ema_is_active") as ema_check:
+                        for epoch in (0, 0, 1):
+                            trainer.current_epoch = epoch
+                            callback.on_validation_epoch_end(
+                                trainer, torch.nn.Identity()
+                            )
+                        ema_check.assert_not_called()
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn(config[missing_name], logs.output[0])
+                self.assertIn("Training will continue", logs.output[0])
+                evaluator.assert_not_called()
+                self.assertIsNone(callback.last_evaluated_epoch)
+                self.assertEqual(
+                    trainer.logger.metrics,
+                    {
+                        "italian_validation/available": 0.0,
+                        "italian_validation/skipped_missing_inputs": 1.0,
+                    },
+                )
+                self.assertFalse(
+                    (root / "italian_validation" / "epoch_0000.json").exists()
+                )
+
+    def test_missing_xbt_during_preparation_is_nonfatal_but_missing_training_data_is_not(
+        self,
+    ) -> None:
+        """Only missing observation artifacts may disable the optional callback."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profiles = self._profiles(root)
+            config = ItalianValidationConfig(profiles)
+
+            def disappear(_config):
+                """Simulate removal between the initial path check and loading."""
+                profiles.unlink()
+                raise FileNotFoundError(str(profiles))
+
+            with (
+                patch.object(
+                    italian_validation, "_prepare_cohort", side_effect=disappear
+                ),
+                self.assertLogs(italian_validation.__name__, level="WARNING"),
+            ):
+                callback = ItalianValidationCallback(config)
+            self.assertIn(str(profiles), callback.disabled_reason)
+            self._profiles(root)
+            with (
+                patch.object(
+                    italian_validation,
+                    "_prepare_cohort",
+                    side_effect=FileNotFoundError("missing GLORYS"),
+                ),
+                self.assertRaisesRegex(FileNotFoundError, "missing GLORYS"),
+            ):
+                ItalianValidationCallback(config)
+
+    def test_corrupt_xbt_is_not_treated_as_missing(self) -> None:
+        """A present artifact with the wrong checksum still fails its integrity check."""
+        with tempfile.TemporaryDirectory() as directory:
+            config = ItalianValidationConfig(
+                self._profiles(Path(directory)), profiles_sha256="incorrect"
+            )
+            with self.assertRaisesRegex(ValueError, "SHA256 does not match"):
+                ItalianValidationCallback(config, lambda *args: _rows())
+
+    def test_training_finishes_optimizer_updates_with_missing_xbt(self) -> None:
+        """A real CPU Trainer completes training and ordinary validation without XBT."""
+
+        class Model(italian_validation.pl.LightningModule):
+            """One parameter makes continued optimizer progress observable."""
+
+            def __init__(self):
+                """Initialize the trainable scalar."""
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(()))
+
+            def training_step(self, batch, batch_idx):
+                """Return a loss with a deterministic nonzero gradient."""
+                return self.weight.square()
+
+            def validation_step(self, batch, batch_idx):
+                """Keep ordinary validation independent of the missing observations."""
+                return self.weight.square()
+
+            def configure_optimizers(self):
+                """Use SGD so two optimizer updates have a predictable outcome."""
+                return torch.optim.SGD(self.parameters(), lr=0.1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertLogs(italian_validation.__name__, level="WARNING"):
+                callback = ItalianValidationCallback(
+                    ItalianValidationConfig(root / "missing.csv")
+                )
+            trainer = italian_validation.pl.Trainer(
+                accelerator="cpu",
+                devices=1,
+                max_epochs=2,
+                limit_train_batches=1,
+                limit_val_batches=1,
+                num_sanity_val_steps=0,
+                logger=False,
+                enable_checkpointing=False,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                default_root_dir=root,
+                callbacks=[callback],
+            )
+            loader = torch.utils.data.DataLoader(
+                torch.ones(4, 1), batch_size=1, shuffle=True
+            )
+            model = Model()
+            trainer.fit(model, train_dataloaders=loader, val_dataloaders=loader)
+            self.assertEqual(trainer.global_step, 2)
+            self.assertAlmostEqual(model.weight.item(), 0.64, places=6)
+            self.assertIsNone(callback.last_evaluated_epoch)
+
+    def test_missing_xbt_on_one_rank_skips_evaluation_on_every_rank(self) -> None:
+        """A rank with available files must also skip before EMA or GPU sampling."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for rank in (0, 1):
+                evaluator = Mock(return_value=_rows())
+                callback = self._callback(root, evaluator)
+                trainer = self._trainer(root)
+                cpu_group = object()
+
+                def gather(output, local, *, group=None):
+                    """Report missing observations on the remote worker."""
+                    self.assertIs(group, cpu_group)
+                    output[:] = [None, "/node1/missing/profiles.csv"]
+
+                with (
+                    patch("torch.distributed.is_available", return_value=True),
+                    patch("torch.distributed.is_initialized", return_value=True),
+                    patch("torch.distributed.get_rank", return_value=rank),
+                    patch("torch.distributed.get_world_size", return_value=2),
+                    patch("torch.distributed.new_group", return_value=cpu_group),
+                    patch(
+                        "torch.distributed.all_gather_object", side_effect=gather
+                    ) as gather_mock,
+                    patch.object(callback, "_assert_ema_is_active") as ema_check,
+                    self.assertLogs(italian_validation.__name__, level="WARNING"),
+                ):
+                    callback.on_validation_epoch_end(trainer, torch.nn.Identity())
+                    trainer.current_epoch = 1
+                    callback.on_validation_epoch_end(trainer, torch.nn.Identity())
+                gather_mock.assert_called_once()
+                ema_check.assert_not_called()
+                evaluator.assert_not_called()
+                self.assertIn("rank 1", callback.disabled_reason)
+                self.assertEqual(bool(trainer.logger.metrics), rank == 0)
+
+    def test_restoring_xbt_files_allows_evaluation_after_relaunch(self) -> None:
+        """Missing-data status is not persisted as a permanent checkpoint disable."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = ItalianValidationConfig(root / "profiles.csv")
+            with self.assertLogs(italian_validation.__name__, level="WARNING"):
+                missing = ItalianValidationCallback(config, lambda *args: _rows())
+            self._profiles(root)
+            evaluator = Mock(return_value=_rows())
+            restored = ItalianValidationCallback(config, evaluator)
+            restored.load_state_dict(missing.state_dict())
+            trainer = self._trainer(root)
+            restored.on_validation_epoch_end(trainer, torch.nn.Identity())
+            evaluator.assert_called_once()
+            self.assertEqual(
+                trainer.logger.metrics["italian_validation/available"], 1.0
+            )
 
     def test_sanity_once_and_recovery_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -271,6 +468,10 @@ class ItalianValidationTest(unittest.TestCase):
                 return iter(())
 
             def gather(output, local, *, group=None):
+                if local is None or isinstance(local, str):
+                    events.append(("availability", group))
+                    output[:] = [None, None]
+                    return
                 events.append(("gather", group))
                 output[0], output[1] = _rows(), local
 
@@ -297,6 +498,7 @@ class ItalianValidationTest(unittest.TestCase):
             self.assertEqual(
                 events,
                 [
+                    ("availability", cpu_group),
                     ("batches", cpu_group),
                     ("gather", cpu_group),
                     ("batches", cpu_group),

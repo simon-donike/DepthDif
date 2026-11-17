@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from pathlib import Path
 import random
 from typing import Any, Callable, Mapping, Sequence
@@ -740,14 +741,30 @@ class ItalianValidationCallback(pl.Callback):
         super().__init__()
         self.config = config
         self.evaluator = evaluator
-        if evaluator is None:
-            self.cohort, self.metadata = _prepare_cohort(config)
-            self.profiles = self.cohort.assignments
+        self.cohort = None
+        self.profiles = pd.DataFrame(columns=["profile_id"])
+        self.metadata: dict[str, Any] = {}
+        self.disabled_reason: str | None = None
+        self._availability_checked = False
+        missing = self._missing_inputs()
+        if missing:
+            self._disable_for_missing_inputs(missing)
         else:
-            # The compatibility seam is deliberately limited to offline tests/tools;
-            # production construction always prepares real masked patch batches.
-            self.cohort = None
-            self.profiles, self.metadata = config.load_profiles()
+            try:
+                if evaluator is None:
+                    self.cohort, self.metadata = _prepare_cohort(config)
+                    self.profiles = self.cohort.assignments
+                else:
+                    # Offline tests/tools can inject an evaluator; production
+                    # construction prepares independent masked patch batches.
+                    self.profiles, self.metadata = config.load_profiles()
+            except FileNotFoundError:
+                # A file may disappear between the availability check and its
+                # read. Only missing XBT inputs are optional, not training data.
+                missing = self._missing_inputs()
+                if not missing:
+                    raise
+                self._disable_for_missing_inputs(missing)
         self.last_evaluated_epoch: int | None = None
         self.patch_count = 0 if self.cohort is None else len(self.cohort.patch_indices)
         self.ema_evaluation_active = False
@@ -755,6 +772,50 @@ class ItalianValidationCallback(pl.Callback):
         # Object collectives must use CPU transport: an early rank entering an
         # NCCL object gather can occupy its GPU while another rank is still sampling.
         self._object_collective_group: Any | None = None
+
+    def _missing_inputs(self) -> str:
+        """Describe configured XBT artifacts that are absent or not regular files."""
+        paths = (
+            self.config.profiles_path,
+            self.config.reference_manifest,
+            self.config.screening_registry,
+        )
+        return ", ".join(
+            str(path) for path in paths if path is not None and not path.is_file()
+        )
+
+    def _disable_for_missing_inputs(self, reason: str) -> None:
+        """Warn once and disable this diagnostic without interrupting training."""
+        if self.disabled_reason is None:
+            logging.getLogger(__name__).warning(
+                "Italian/XBT validation disabled for this run: missing input(s): %s. "
+                "Training will continue without Italian metrics.",
+                reason,
+            )
+        self.disabled_reason = reason
+
+    def _inputs_available(self, trainer: Any, group: Any) -> bool:
+        """Agree across ranks before any optional sampling or metric collectives."""
+        if not self._availability_checked:
+            reason = self.disabled_reason or self._missing_inputs() or None
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                reasons: list[str | None] = [None] * torch.distributed.get_world_size(
+                    group=group
+                )
+                torch.distributed.all_gather_object(reasons, reason, group=group)
+                reason = (
+                    "; ".join(
+                        f"rank {rank}: {missing}"
+                        for rank, missing in enumerate(reasons)
+                        if missing
+                    )
+                    or None
+                )
+            if reason:
+                self._disable_for_missing_inputs(reason)
+                self._log(trainer, {"available": 0, "skipped_missing_inputs": 1})
+            self._availability_checked = True
+        return self.disabled_reason is None
 
     def state_dict(self) -> dict[str, Any]:
         """Persist callback progress for checkpoint resume."""
@@ -1077,10 +1138,14 @@ class ItalianValidationCallback(pl.Callback):
         epoch = int(getattr(trainer, "current_epoch", -1))
         if self.last_evaluated_epoch == epoch:
             return
-        self._assert_ema_is_active(trainer)
         # Group creation itself is collective. Complete it on every rank before
         # explicit sharding produces different amounts of DDPM sampling work.
         object_collective_group = self._ensure_object_collective_group()
+        # Keep the callback registered even when local files are missing: all
+        # ranks must agree to skip, including ranks with a complete local copy.
+        if not self._inputs_available(trainer, object_collective_group):
+            return
+        self._assert_ema_is_active(trainer)
         rng_state = torch.random.get_rng_state()
         numpy_rng_state = np.random.get_state()
         python_rng_state = random.getstate()
@@ -1138,6 +1203,8 @@ class ItalianValidationCallback(pl.Callback):
             bands_m=self.config.depth_bands_m,
         )
         flat: dict[str, Any] = {
+            "available": 1,
+            "skipped_missing_inputs": 0,
             "prepared_profiles": int(self.metadata.get("profile_count", 0)),
             "eligible_profiles": int(self.profiles.profile_id.nunique()),
             "scored_profiles": int(rows.profile_id.nunique()),
