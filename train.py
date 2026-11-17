@@ -34,6 +34,7 @@ if __package__ in {None, ""}:
 
 from depth_recon.data.datamodule import DepthTileDataModule
 from depth_recon.data.dataset_argo_geotiff_gridded import ArgoGeoTIFFGriddedPatchDataset
+from depth_recon.data.preflight_climatology import prepare_training_climatology
 from depth_recon.inference.core import load_checkpoint_weights
 from depth_recon.inference.export_paper_metrics import (
     load_en4_candidate_profiles,
@@ -642,6 +643,9 @@ def main(
     effective_data_config_path = config_bundle.effective_data_config_path
     effective_training_config_path = config_bundle.effective_training_config_path
     uploaded_config_paths = config_bundle.uploaded_config_paths
+
+    # CPU preflight creates a missing background before dataset/model construction.
+    prepare_training_climatology(data_cfg, model_cfg)
 
     # Resolve checkpoint paths once so failure happens early before trainer/model setup.
     resume_ckpt_path = resolve_resume_ckpt_path(model_cfg)
