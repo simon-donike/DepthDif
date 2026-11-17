@@ -188,6 +188,11 @@ including two optimizer updates, all 102 Italian profiles, and the saved final
 checkpoint. See `integration_verification.json` and the `logs/integration_*`
 files for the merged-branch evidence.
 
+The automatic climatology preflight update passed 484 repository tests plus
+98 validation tests on `dev-ruben`, and 413 plus 98 on `val`. Coverage includes
+concurrent generation, interrupted fits, validation-year exclusion, unchanged
+existing artifacts, dataset-relative paths, and generated-artifact checksums.
+
 ## Cluster environment, smoke run, and training
 
 Install the package and the TEOS-10 dependency on a login node before moving to

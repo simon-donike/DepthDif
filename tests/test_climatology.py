@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
-from unittest.mock import patch
 
 import numpy as np
 import rasterio
