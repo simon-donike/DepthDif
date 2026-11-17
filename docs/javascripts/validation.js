@@ -39,7 +39,7 @@
     xbt: ["Italian XBT", "An expendable bathythermograph measures temperature as it falls through the water. We use the corrected Italian measurements that passed the quality check."],
     masking: ["Holdout buffer", "Evaluation target cells are removed from EN4 inputs in every overlapping patch. For Italian XBT, immediate neighbouring cells are also removed. This helps prevent the model from receiving the answers it is being tested on."],
     screening: ["Archive screening", "The profiles were checked against the documented archive-screened list. That does not prove they were never used by GLORYS; we do not have its assimilation logs."],
-    partition: ["Calibration and evaluation", "All 102 Italian casts from two missions are now evaluated. None are reserved for calibration. Previously, 14 casts from the second mission were reserved for extra correction methods; those fits are not used here. EN4 is evaluated separately on a frozen 64-patch preliminary subset, also without calibration."],
+    partition: ["Evaluation cohorts", "All 102 Italian casts from two missions are evaluated. EN4 is evaluated separately on a frozen 64-patch preliminary subset. Every selected profile that passes the support checks contributes to its cohort’s results."],
     discovery: ["Discovery campaign", "The 2016 data helped select the model checkpoint. These results describe development performance; an untouched dataset is still needed for independent confirmation."],
     ema: ["EMA weights", "The model uses weights averaged over training steps. This is a fixed trained model, not a correction fitted to the validation observations."],
     ddpm: ["DDPM and one generation", "The model starts from noise and refines it over 1,000 steps. It produces one temperature field per case. One field cannot tell us the spread of possible predictions."],
@@ -55,7 +55,6 @@
     markers: ["Spatial markers", "Cyan circles mark EN4 temperature input cells. A filled centre means input is available at the displayed depth. Crosses mark XBT casts; red marks the selected cast. A cast need not reach every displayed depth."],
     reference: ["Reference audit", "Checks how the stored GLORYS data are rounded and matched in time. Native GLORYS files are needed for a direct comparison with the original product."],
     comparators: ["Comparator audit", "Checks which baseline predictions are available at the required observations."],
-    baselines: ["Calibrated baselines", "Optional corrections fitted to a separate calibration set. This stage is disabled for both the Italian comparison and the preliminary EN4 subset."],
     regional: ["Regional analysis", "Reports errors by area, depth and mission using the same observations for each method."],
     physical: ["Physical diagnostics", "Checks vertical temperature structure and related ocean quantities. It is separate from the main temperature-error comparison."],
     dependence: ["Dependence diagnostics", "Checks relationships across depths, locations or variables. One generated field limits the uncertainty analysis."],
@@ -378,7 +377,7 @@
     $("load-error").hidden = true;
     $("results").hidden = !selected.available;
     $("pending").hidden = selected.available;
-    $("status").textContent = selected.pilot ? "Preliminary EN4 subset complete · no calibration" : selected.evaluation_policy ? "All-profile comparison complete · no calibration" : selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
+    $("status").textContent = selected.pilot ? "Preliminary EN4 subset complete" : selected.evaluation_policy ? "All-profile comparison complete" : selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
     $("provenance").textContent = JSON.stringify({ campaign: campaign.campaign, snapshot_utc: campaign.updated_utc, model: selected.model || "Pending", membership: selected.membership || "Pending", subset: selected.pilot || null }, null, 2);
     $("stages").replaceChildren(...selected.stages.map((stage) => {
       const node = element("div", undefined, "stage");
@@ -404,12 +403,11 @@
       node.append(element("strong", value), explained(label, label.includes("difference") ? "delta" : label.includes("MAE") ? "mae" : "profiles"));
       return node;
     }));
-    const calibration = selected.partition.find((row) => row.partition === "calibration");
     $("interpretation").textContent = selected.pilot
-      ? `${selected.pilot.patches} of ${selected.pilot.source_patches} frozen EN4 patches were run. ${counts.patches} patches contribute ${counts.profiles} profiles and ${counts.points.toLocaleString()} measurements at ${counts.depths} depths across all 12 months. ${selected.pilot.points_before_support - counts.points} candidate measurements were excluded by time-match, reference or input-support checks before scoring. Selection used geographic and monthly coverage before inference. No calibration or corrections are fitted. These preliminary results describe this subset, not the full ocean or all EN4 candidates.`
+      ? `${selected.pilot.patches} of ${selected.pilot.source_patches} frozen EN4 patches were run. ${counts.patches} patches contribute ${counts.profiles} profiles and ${counts.points.toLocaleString()} measurements at ${counts.depths} depths across all 12 months. ${selected.pilot.points_before_support - counts.points} candidate measurements were excluded by time-match, reference or input-support checks before scoring. Selection used geographic and monthly coverage before inference. These preliminary results describe this subset, not the full ocean or all EN4 candidates.`
       : selected.evaluation_policy
-      ? `${counts.profiles} casts from ${counts.clusters} missions; all ${counts.points.toLocaleString()} measurements are evaluated. No casts are reserved for calibration and no corrections are fitted. DepthDif MAE is ${Math.abs(model.mae - glorys.mae).toFixed(4)} °C ${model.mae > glorys.mae ? "higher" : "lower"} than original packaged GLORYS. Results are also shown by mission below. Two missions provide limited evidence about performance elsewhere.`
-      : `${counts.profiles} profiles from ${counts.clusters} observation groups; ${calibration?.profiles ?? 0} profiles reserved for calibration. These are development results.`;
+      ? `${counts.profiles} casts from ${counts.clusters} missions; all ${counts.points.toLocaleString()} measurements are evaluated. DepthDif MAE is ${Math.abs(model.mae - glorys.mae).toFixed(4)} °C ${model.mae > glorys.mae ? "higher" : "lower"} than original packaged GLORYS. Results are also shown by mission below. Two missions provide limited evidence about performance elsewhere.`
+      : `${counts.profiles} profiles from ${counts.clusters} observation groups; ${counts.points.toLocaleString()} measurements evaluated. These are development results.`;
     tableRows("mission-table", (selected.mission_scores || []).map((row) => ({ highlight: row.method === "residual", cells: [row.mission, explained(name(row.method), row.method), fmt(row.mae), fmt(row.rmse)] })));
     $("mission-results").hidden = !selected.mission_scores?.length;
     const missionCSV = selected.downloads?.find((item) => item.name === "mission_scores.csv");

@@ -67,11 +67,6 @@
       "summary": "Verified matching AI/published comparator predictions"
     },
     {
-      "name": "baselines",
-      "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
-    },
-    {
       "name": "regional",
       "status": "complete",
       "summary": "Paired regional, depth, seasonal and provenance comparisons with cluster uncertainty and evidence gates"
@@ -84,29 +79,30 @@
     {
       "name": "physical",
       "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
+      "summary": "Not included in this fixed-method comparison."
     },
     {
       "name": "dependence",
       "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
+      "summary": "Not included in this fixed-method comparison."
     },
     {
       "name": "extremes",
       "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
+      "summary": "Not included in this fixed-method comparison."
     },
     {
       "name": "selective",
       "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
+      "summary": "Not included in this fixed-method comparison."
     },
     {
       "name": "efficiency",
       "status": "blocked",
-      "summary": "Not included in this fixed-method comparison; no calibration is fitted."
+      "summary": "Not included in this fixed-method comparison."
     }
   ],
+  "pilot": null,
   "artifacts": [
     {
       "name": "mission_scores.csv",

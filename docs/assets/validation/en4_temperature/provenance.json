@@ -67,11 +67,6 @@
       "summary": "Verified matching AI/published comparator predictions"
     },
     {
-      "name": "baselines",
-      "status": "blocked",
-      "summary": "Disabled explicitly in the frozen configuration"
-    },
-    {
       "name": "regional",
       "status": "complete",
       "summary": "Paired regional, depth, seasonal and provenance comparisons with cluster uncertainty and evidence gates"
@@ -475,7 +470,7 @@
       "verified_not_assimilated": false,
       "evidence": "Membership in the documented archive-screened set; not GLORYS assimilation-log verification"
     },
-    "policy": "Preliminary coverage-selected EN4 subset; all retained points evaluated; no calibration. All source holdouts remain masked. One generation, original DDPM steps and original residual batch seeds. Not an ocean-area representative sample or proof of non-assimilation."
+    "policy": "Preliminary coverage-selected EN4 subset; all retained points evaluated. All source holdouts remain masked. One generation, original DDPM steps and original residual batch seeds. Not an ocean-area representative sample or proof of non-assimilation."
   },
   "artifacts": [
     {
