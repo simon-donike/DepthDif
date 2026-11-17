@@ -486,22 +486,22 @@
     {
       "name": "packaged_time_window_scores.csv",
       "file": "artifacts/paper/01_reference/packaged_time_window_scores.csv",
-      "sha256": "bdbc2c63338380df7f67cc279dc95f767fcc9f0dca0f8517cf2496fbab5c6c40"
+      "sha256": "7e45b074d6faa9571151b81fd0e8f1943545900225c02d1d29a81352a11222f5"
     },
     {
       "name": "packaged_time_window_scores.tex",
       "file": "artifacts/paper/01_reference/packaged_time_window_scores.tex",
-      "sha256": "aa0b22271e40652099779d0f10386d9af238cc2d30a97259ce8b007fc92d1b52"
+      "sha256": "08bd791fa935900d8548a6305edfe5a90d78f43b7a7580fc7568303c40741167"
     },
     {
       "name": "reference_precision_audit.csv",
       "file": "artifacts/paper/01_reference/reference_precision_audit.csv",
-      "sha256": "fc4d3dc669d1aae2572ae90f9b5e0dc8adb17f26857d87bab943fa6ecacaa8b5"
+      "sha256": "0030d4548e7f29a2b79cdfc21872a264a04e666453a4f32c1e1ab6f0c5d1cb24"
     },
     {
       "name": "reference_precision_audit.tex",
       "file": "artifacts/paper/01_reference/reference_precision_audit.tex",
-      "sha256": "e00697591dd35b9c4ff2e6afad3e92e4e6554d342f3af5d8dda342919429b1b2"
+      "sha256": "7264b6f906356a7a31aff7dcfd0b64bad8f225a45c20ae3352d4b6325c578c05"
     },
     {
       "name": "reference_time_windows.csv",
@@ -511,7 +511,7 @@
     {
       "name": "reference_time_windows.tex",
       "file": "artifacts/paper/01_reference/reference_time_windows.tex",
-      "sha256": "e199c0b94f1b4ab34824e9bd6172f3fe64fe4a46ef2d95bcc4eb7aca12dcdb80"
+      "sha256": "7566760e6b61f5c1066fccaa5a575094a039aa8ad84ba7c803fd8161c2b35bea"
     },
     {
       "name": "comparator_availability.csv",
@@ -521,42 +521,42 @@
     {
       "name": "comparator_availability.tex",
       "file": "artifacts/paper/02_comparators/comparator_availability.tex",
-      "sha256": "8ae5f7a6925e21f3626f7ba463135226df4241096c2f8ddee94b7173aade5a2d"
+      "sha256": "83dc144a651eebc57d69e68b355b9804a83a30eb501c0ff0d3bc7b3725ac7117"
     },
     {
       "name": "depth_accuracy_temperature.pdf",
       "file": "artifacts/paper/04_regional/depth_accuracy_temperature.pdf",
-      "sha256": "819713e0b8074f30d3a0b2ef786d35810db7d142c17a924f992aeb4b0616f2e1"
+      "sha256": "5cb66f6391a909c15606ef85d46f5b5121ab00aca7c476b4e3db7f4959b35f01"
     },
     {
       "name": "depth_accuracy_temperature.png",
       "file": "artifacts/paper/04_regional/depth_accuracy_temperature.png",
-      "sha256": "810762baafb2fd3d3939c0de5b7f855c8bc4a52ff655fafacd39514f12da8a4b"
+      "sha256": "cda9aa07b95e9a17ea9ebd3c21ac44fdd0bd0cc055f5c1705c98f84a6ee92bce"
     },
     {
       "name": "depth_accuracy_temperature.svg",
       "file": "artifacts/paper/04_regional/depth_accuracy_temperature.svg",
-      "sha256": "3add4d2f85970fccb50884cee803f7096413075fd6b58aeb340ca3c4d2dc748f"
+      "sha256": "315aa482f93d7a38a06b47f30b290acbf2e4b8e14a4f20f1d426e9d7b2c293ef"
     },
     {
       "name": "depth_scores.csv",
       "file": "artifacts/paper/04_regional/depth_scores.csv",
-      "sha256": "47fa90bf331602fac39584e549edac2880c881e100a9ccdbf2f4b66f6a4b2b04"
+      "sha256": "325bf9874f6b12b42cac907076a65808357d59f17754da193918190c9e1d9a02"
     },
     {
       "name": "depth_scores.tex",
       "file": "artifacts/paper/04_regional/depth_scores.tex",
-      "sha256": "5a2f418f8a8fbd715e6b7f5e5759e9f901b46e0ab5237064cbc84e76d10257fd"
+      "sha256": "ad0138dadf7698e2e5d00f20b46d4dacefe8297a7a211bfdde28735ad21ed1c7"
     },
     {
       "name": "paired_comparisons.csv",
       "file": "artifacts/paper/04_regional/paired_comparisons.csv",
-      "sha256": "0d7c4308eb643cad5fe3a34757a27374591f9f7ff1767560604a778aea66274d"
+      "sha256": "4e474e41ac72597833052b34c1620befecb5c95dc37806d1387780c683be7517"
     },
     {
       "name": "paired_comparisons.tex",
       "file": "artifacts/paper/04_regional/paired_comparisons.tex",
-      "sha256": "b86a6d64aa0c4ce8c0fbaf0a7fcd3d427d9f554046db17e6821e41d6ed37c6f0"
+      "sha256": "d4b3f60b8aa9b65be71d41d8900cb735d15baa7dbecdbd2df2afbacb19e838d3"
     },
     {
       "name": "predefined_region_coverage.csv",
@@ -566,17 +566,17 @@
     {
       "name": "predefined_region_coverage.tex",
       "file": "artifacts/paper/04_regional/predefined_region_coverage.tex",
-      "sha256": "9f8e852aa996b439f8e21d4c3a331fd2368d9f7c6cede7b7ef5924160b16685c"
+      "sha256": "85e6a40e6f9f2d49b010ae4c926128faaf9a3ee2ec339f7969ba2f1b45621e46"
     },
     {
       "name": "primary_scorecard.csv",
       "file": "artifacts/paper/04_regional/primary_scorecard.csv",
-      "sha256": "370869a819708000f4f1efe9b037cca53ee5f0fa81fb4d9c0c14ef5052273132"
+      "sha256": "3c608bbc471acf202d17506726f32680a6525f235915e98a55ebd76764bfe94b"
     },
     {
       "name": "primary_scorecard.tex",
       "file": "artifacts/paper/04_regional/primary_scorecard.tex",
-      "sha256": "baa4e8386193c7b164ac5caa0c2ebabbae23e26150c82d0e7c94cc216454d7d4"
+      "sha256": "95736b1736c6e4b7da3024f64e1052574a6c1301d46a768e314f7b54b582b6ef"
     },
     {
       "name": "regional_paired_improvement.pdf",
@@ -601,7 +601,7 @@
     {
       "name": "profile_membership.csv",
       "file": "artifacts/profile_membership.csv",
-      "sha256": "950a33d501159310b8bdf86475620b481162ce3a4f6314435d1565ff3fab5a81"
+      "sha256": "de05c64e78a23519aec2c9e68691e20e1ef18d811e1cbab7de28ea765f042221"
     }
   ]
 }

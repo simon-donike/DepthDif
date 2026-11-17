@@ -3,15 +3,15 @@
 (() => {
   const base = "../assets/validation/";
   const $ = (id) => document.getElementById(id);
-  const labels = { residual: "DepthDif", glorys: "GLORYS (packaged)", glorys_packaged: "GLORYS (packaged)", climatology: "Climatology", lstm: "LSTM", cnn: "CNN", unet3d: "UNet3D", unet2d: "UNet2D", baseline_oi_climatology_full: "OI · climatology", observation: "Italian XBT observation" };
+  const labels = { residual: "DepthDif", glorys: "GLORYS (packaged)", glorys_packaged: "GLORYS (packaged)", climatology: "Climatology", lstm: "LSTM", cnn: "CNN", unet3d: "UNet3D", unet2d: "UNet2D", observation: "Italian XBT observation" };
   labels.idw = "IDW";
   labels.residual_ensemble = "DepthDif · 20 samples";
   labels.residual_mean = "DepthDif · ensemble mean";
-  const colors = { residual: "#7de0bc", glorys: "#ffd166", glorys_packaged: "#ffd166", observation: "#f4fbff", climatology: "#8d9aa5", lstm: "#b39bff", cnn: "#ff8c91", unet3d: "#6ca9ff", unet2d: "#e1a4de", baseline_oi_climatology_full: "#b2ce6e" };
+  const colors = { residual: "#7de0bc", glorys: "#ffd166", glorys_packaged: "#ffd166", observation: "#f4fbff", climatology: "#8d9aa5", lstm: "#b39bff", cnn: "#ff8c91", unet3d: "#6ca9ff", unet2d: "#e1a4de" };
   colors.residual_ensemble = colors.residual;
   colors.residual_mean = "#38a5c7";
   const name = (method) => labels[method] || method;
-  const includeMethod = (method) => !/^(glorys_bias|baseline_glorys_bias|baseline_oi_glorys)/.test(method);
+  const includeMethod = (method) => !/^(glorys_bias|baseline_glorys_bias|baseline_oi_glorys|baseline_oi_climatology)/.test(method);
   const fmt = (value) => Number.isFinite(value) ? value.toFixed(4) : "—";
   const signed = (value) => Number.isFinite(value) ? `${value > 0 ? "+" : ""}${value.toFixed(4)}` : "—";
   let campaign, selected, request = 0, map, markers = new Map(), mapCohort;
@@ -37,7 +37,6 @@
     cnn: ["CNN", "A neural-network baseline that uses local patterns to reconstruct temperature. It uses its own fixed checkpoint and input setup."],
     unet3d: ["UNet3D", "A neural-network baseline that learns patterns across depth and both horizontal directions. Its trained weights are fixed during validation."],
     unet2d: ["UNet2D", "A neural-network baseline that learns horizontal patterns, with depth levels supplied as separate channels. Its trained weights are fixed during validation."],
-    baseline_oi_climatology_full: ["OI · climatology", "Optimal interpolation combines the usual seasonal temperature with nearby EN4 observations. Its settings were fixed in advance; it is not fitted to the Italian XBT measurements."],
     conditioning: ["Conditioning", "Information supplied to the prediction: retained EN4 temperature measurements and sea-surface temperature. The Italian XBT casts are used for checking predictions, not as inputs."],
     en4: ["EN4 supports", "EN4 supplies the observed temperature inputs. Markers show occupied input grid cells after quality checks and target masking. Several source profiles can share a cell."],
     xbt: ["Italian XBT", "An expendable bathythermograph measures temperature as it falls through the water. We use the corrected Italian measurements that passed the quality check."],
@@ -160,6 +159,7 @@
     if (!cohort.ensemble) return;
     const data = await fetchJSON(`${base}${cohort.id}/${cohort.ensemble}`);
     if (selected !== cohort) return;
+    for (const key of ["overall", "depth", "missions", "spatial", "spectra"]) data[key] = data[key].filter((row) => includeMethod(row.method));
     labels.residual_ensemble = `DepthDif · ${data.members} samples`;
     $("ensemble-panel").hidden = false;
     $("ensemble-note").textContent = `${data.members} samples · ${data.profiles} casts · ${data.points.toLocaleString()} measurements. Same frozen checkpoint, full conditioning and 1,000 DDPM steps. Every cast counts equally. Spatial scores compare ${data.spatial_patches}/${data.total_patches} patches with saved comparator fields against packaged GLORYS; they do not measure agreement with XBT.`;
