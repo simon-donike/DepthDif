@@ -1,0 +1,48 @@
+\begin{table}[htbp]
+\centering
+\caption{Profile balanced scores by retained sparse profile conditioning budget}
+\begin{tabular}{llllll}
+\toprule
+method & budget & variable & mae & rmse & crps \\
+\midrule
+0 & 0 & temperature & 0.5266 & 0.6142 & 0.5266 \\
+1 & 1 & temperature & 0.5052 & 0.5897 & 0.5052 \\
+2 & 2 & temperature & 0.4923 & 0.5723 & 0.4923 \\
+4 & 4 & temperature & 0.4774 & 0.5542 & 0.4774 \\
+8 & 8 & temperature & 0.4619 & 0.5377 & 0.4619 \\
+baseline\_oi\_climatology\_budget\_0 & 0 & temperature & 0.5569 & 0.6739 & 0.5569 \\
+baseline\_oi\_climatology\_budget\_1 & 1 & temperature & 0.4634 & 0.5722 & 0.4634 \\
+baseline\_oi\_climatology\_budget\_2 & 2 & temperature & 0.3954 & 0.5059 & 0.3954 \\
+baseline\_oi\_climatology\_budget\_4 & 4 & temperature & 0.3918 & 0.4956 & 0.3918 \\
+baseline\_oi\_climatology\_budget\_8 & 8 & temperature & 0.4147 & 0.5182 & 0.4147 \\
+baseline\_oi\_climatology\_full & full & temperature & 0.4142 & 0.5194 & 0.4142 \\
+baseline\_oi\_glorys\_budget\_0 & 0 & temperature & 0.4365 & 0.5179 & 0.4365 \\
+baseline\_oi\_glorys\_budget\_1 & 1 & temperature & 0.4358 & 0.5221 & 0.4358 \\
+baseline\_oi\_glorys\_budget\_2 & 2 & temperature & 0.4364 & 0.5251 & 0.4364 \\
+baseline\_oi\_glorys\_budget\_4 & 4 & temperature & 0.4964 & 0.643 & 0.4964 \\
+baseline\_oi\_glorys\_budget\_8 & 8 & temperature & 0.5003 & 0.6468 & 0.5003 \\
+baseline\_oi\_glorys\_full & full & temperature & 0.4993 & 0.6488 & 0.4993 \\
+cnn & 1 & temperature & 1.178 & 1.38 & 1.178 \\
+cnn & 2 & temperature & 1.178 & 1.38 & 1.178 \\
+cnn & 4 & temperature & 1.178 & 1.38 & 1.178 \\
+cnn & 8 & temperature & 1.178 & 1.38 & 1.178 \\
+cnn & full & temperature & 1.178 & 1.38 & 1.178 \\
+full & full & temperature & 0.4567 & 0.5312 & 0.4567 \\
+lstm & 1 & temperature & 0.5708 & 0.6743 & 0.5708 \\
+lstm & 2 & temperature & 0.5708 & 0.6743 & 0.5708 \\
+lstm & 4 & temperature & 0.5708 & 0.6743 & 0.5708 \\
+lstm & 8 & temperature & 0.5708 & 0.6743 & 0.5708 \\
+lstm & full & temperature & 0.5708 & 0.6743 & 0.5708 \\
+unet2d & 1 & temperature & 0.4829 & 0.544 & 0.4829 \\
+unet2d & 2 & temperature & 0.4311 & 0.4911 & 0.4311 \\
+unet2d & 4 & temperature & 0.463 & 0.5299 & 0.463 \\
+unet2d & 8 & temperature & 0.4485 & 0.5159 & 0.4485 \\
+unet2d & full & temperature & 0.4487 & 0.5154 & 0.4487 \\
+unet3d & 1 & temperature & 0.6114 & 0.6831 & 0.6114 \\
+unet3d & 2 & temperature & 0.5747 & 0.6483 & 0.5747 \\
+unet3d & 4 & temperature & 0.4813 & 0.5539 & 0.4813 \\
+unet3d & 8 & temperature & 0.489 & 0.5632 & 0.489 \\
+unet3d & full & temperature & 0.4803 & 0.554 & 0.4803 \\
+\bottomrule
+\end{tabular}
+\end{table}

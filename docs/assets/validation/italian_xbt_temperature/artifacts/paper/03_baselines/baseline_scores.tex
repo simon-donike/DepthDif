@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{Profile-balanced comparator scores; calibration uses a disjoint cohort.}
+\begin{tabular}{lllllllll}
+\toprule
+method & variable & n\_profiles & rmse & mae & crps & fair\_crps & coverage80 & width80 \\
+\midrule
+baseline\_oi\_climatology\_full & temperature & 88 & 0.5194 & 0.4142 & 0.4142 & -- & -- & -- \\
+baseline\_oi\_glorys\_full & temperature & 88 & 0.6488 & 0.4993 & 0.4993 & -- & -- & -- \\
+climatology & temperature & 88 & 0.6739 & 0.5569 & 0.5569 & -- & -- & -- \\
+cnn & temperature & 88 & 1.38 & 1.178 & 1.178 & -- & -- & -- \\
+glorys & temperature & 88 & 0.5179 & 0.4365 & 0.4365 & -- & -- & -- \\
+glorys\_bias\_corrected & temperature & 88 & 0.5329 & 0.4543 & 0.4543 & -- & -- & -- \\
+lstm & temperature & 88 & 0.6743 & 0.5708 & 0.5708 & -- & -- & -- \\
+residual & temperature & 88 & 0.5312 & 0.4567 & 0.4567 & -- & -- & -- \\
+unet2d & temperature & 88 & 0.5154 & 0.4487 & 0.4487 & -- & -- & -- \\
+unet3d & temperature & 88 & 0.554 & 0.4803 & 0.4803 & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}

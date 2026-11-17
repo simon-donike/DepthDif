@@ -42,6 +42,7 @@ dist
 !src/depth_recon/data/local_data/world_oceans.geojson
 *.json
 !docs/assets/figures/depthdif_paper_header_gulf_stream_20180622.json
+!docs/assets/validation/**
 *.tif
 *.tiff
 *.geotiff

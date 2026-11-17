@@ -1,0 +1,4 @@
+window,hours,n_points
+within_12h,12.0,1204
+within_24h,24.0,11252
+full_matching_window,inf,67803

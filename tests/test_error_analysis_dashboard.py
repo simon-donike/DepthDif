@@ -499,10 +499,14 @@ class TestErrorAnalysisDashboard(unittest.TestCase):
         self.assertIn('href="../temporal-globe/"', html)
         self.assertIn('href="../spatial-dashboard/"', html)
         self.assertIn('href="../temporal-dashboard/"', html)
+        self.assertIn('href="../validation/"', html)
         self.assertIn("Spatial Globe", html)
         self.assertIn("Temporal Error Dashboard", html)
         self.assertIn("overflow: hidden", css)
-        self.assertIn("height: min(100vh, 1080px)", css)
+        # Additional analysis tiles must remain reachable below the viewport.
+        self.assertIn("height: auto", css)
+        self.assertIn("min-height: 100vh", css)
+        self.assertIn("overflow: auto", css)
         self.assertIn("analysis-landing-grid", css)
         self.assertIn('href$="/analysis/"', extra_css)
 

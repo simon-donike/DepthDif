@@ -1,0 +1,347 @@
+{
+  "model": {
+    "checkpoint_sha256": "d5c5e7d49b1d4ea286c41b4ee717f112e57dc96d52d96331e654e646cb41b84a",
+    "config_sha256": "e96f0342332592fe0bfb0b4a89292be9ca08440a798aa88c66dd0fa6df8238d2",
+    "weight_variant": "ema",
+    "members": 1,
+    "seed": 20261103,
+    "bundle_sha256": {
+      "points.csv": "11034831eee811b70b44fe6045a339e2b22c621214394533767d3bcf20f9d8cc",
+      "members.npz": "1bc61151dee9dae171963d73ff37bb1818d92f504b0194a12d2c76aaffa03ea6"
+    }
+  },
+  "membership": {
+    "status": "passed",
+    "registry": "italian_en4_no_match_profiles.parquet",
+    "registry_sha256": "e6ca86ff73e0f51dc5b7d7dbc8ff1367e23cc8905301cdbd2e1c843c2a4e1b63",
+    "year": 2016,
+    "registry_profiles": 102,
+    "selected_profiles": 102,
+    "verified_profiles": 102,
+    "unlisted_profiles": 0,
+    "identity_mismatches": 0,
+    "verified_not_assimilated": false,
+    "evidence": "Membership in the documented archive-screened set; not GLORYS assimilation-log verification"
+  },
+  "baselines": [
+    {
+      "method": "idw",
+      "status": "blocked",
+      "invalid_points": 131,
+      "checkpoint_sha256": null
+    },
+    {
+      "method": "lstm",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "cead4e50a983541346dea570a620ce599f5a609a350f6dde953029d029cf7d40"
+    },
+    {
+      "method": "cnn",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "6978636ae05dc0e76b25dd4b25b414bdb1cdc33bfbbea8d48f5c79cea67ec862"
+    },
+    {
+      "method": "unet3d",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "d77791b0766773ea6e4c67197befa1afa0d21dcb5dbbc2267d65a99f384c590a"
+    },
+    {
+      "method": "unet2d",
+      "status": "available",
+      "invalid_points": 0,
+      "checkpoint_sha256": "068eb9fe4464921177864f407338569d5885445119eab2a371125e2e6cf3fb37"
+    }
+  ],
+  "stages": [
+    {
+      "name": "reference",
+      "status": "partial",
+      "summary": "Packaged precision and timing audits completed; native NetCDF is not configured."
+    },
+    {
+      "name": "comparators",
+      "status": "partial",
+      "summary": "Verified matching AI/published comparator predictions"
+    },
+    {
+      "name": "baselines",
+      "status": "partial",
+      "summary": "Scored 10 calibrated comparator groups from 14 calibration profiles."
+    },
+    {
+      "name": "regional",
+      "status": "complete",
+      "summary": "Paired regional, depth, seasonal and provenance comparisons with cluster uncertainty and evidence gates"
+    },
+    {
+      "name": "conditioning",
+      "status": "complete",
+      "summary": "Profile-conditioning budget curve computed."
+    },
+    {
+      "name": "physical",
+      "status": "partial",
+      "summary": "Computed 237 physical diagnostic groups."
+    },
+    {
+      "name": "dependence",
+      "status": "pending",
+      "summary": "Not available in this snapshot."
+    },
+    {
+      "name": "extremes",
+      "status": "pending",
+      "summary": "Not available in this snapshot."
+    },
+    {
+      "name": "selective",
+      "status": "pending",
+      "summary": "Not available in this snapshot."
+    },
+    {
+      "name": "efficiency",
+      "status": "pending",
+      "summary": "Not available in this snapshot."
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "native_reference_status.csv",
+      "file": "artifacts/paper/01_reference/native_reference_status.csv",
+      "sha256": "04a9a6e94e125810c65b28e20b0734f237554b81cd9e6d77b3e21a877de8072b"
+    },
+    {
+      "name": "native_reference_status.tex",
+      "file": "artifacts/paper/01_reference/native_reference_status.tex",
+      "sha256": "b1a9aff134dfdfcb40e16102d0b324d729d22c68a13aeb4a820bd381d0a1f261"
+    },
+    {
+      "name": "packaged_time_window_scores.csv",
+      "file": "artifacts/paper/01_reference/packaged_time_window_scores.csv",
+      "sha256": "400bfa870d0c733e46a4be289315a20b57fa3a4f5bab5c8549120dcf50fcce71"
+    },
+    {
+      "name": "packaged_time_window_scores.tex",
+      "file": "artifacts/paper/01_reference/packaged_time_window_scores.tex",
+      "sha256": "3f51aa0bd6d74e115a6486a53555aa29f9c02868b6de3939fe4f008fd8cc11e0"
+    },
+    {
+      "name": "reference_precision_audit.csv",
+      "file": "artifacts/paper/01_reference/reference_precision_audit.csv",
+      "sha256": "fc4d3dc669d1aae2572ae90f9b5e0dc8adb17f26857d87bab943fa6ecacaa8b5"
+    },
+    {
+      "name": "reference_precision_audit.tex",
+      "file": "artifacts/paper/01_reference/reference_precision_audit.tex",
+      "sha256": "e00697591dd35b9c4ff2e6afad3e92e4e6554d342f3af5d8dda342919429b1b2"
+    },
+    {
+      "name": "reference_time_windows.csv",
+      "file": "artifacts/paper/01_reference/reference_time_windows.csv",
+      "sha256": "c0c5c3aca4fe7f75b8391950c2f908783d9454b38abffb8b2735e665a99d4ab8"
+    },
+    {
+      "name": "reference_time_windows.tex",
+      "file": "artifacts/paper/01_reference/reference_time_windows.tex",
+      "sha256": "ad132127c096338cc1592843066b1c7ec9ad531077ae2d801825aaa2e09c282b"
+    },
+    {
+      "name": "comparator_availability.csv",
+      "file": "artifacts/paper/02_comparators/comparator_availability.csv",
+      "sha256": "3267ba973e7ce9d763dd0a44ddf765e54602d95fc6bb1c4cb308fa3afcf79264"
+    },
+    {
+      "name": "comparator_availability.tex",
+      "file": "artifacts/paper/02_comparators/comparator_availability.tex",
+      "sha256": "f4122312e41545ef1336d6e102a877842eed230528670d369a9478a3dd0a82ba"
+    },
+    {
+      "name": "baseline_scores.csv",
+      "file": "artifacts/paper/03_baselines/baseline_scores.csv",
+      "sha256": "c1a13ea34d264e33da641a457365a6dce1b9fbf6f9bd74e32f855c4ff59b4d90"
+    },
+    {
+      "name": "baseline_scores.tex",
+      "file": "artifacts/paper/03_baselines/baseline_scores.tex",
+      "sha256": "bc450977dde9d940dff5a46856f03b77e5da04175e19829ae45ebe4320f4dd9f"
+    },
+    {
+      "name": "depth_accuracy_temperature.pdf",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.pdf",
+      "sha256": "601b61ecb182413f56dd73d0ea82bd52592a46b5c98e8c962cabb7fda36cd289"
+    },
+    {
+      "name": "depth_accuracy_temperature.png",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.png",
+      "sha256": "f3887ff64f46c10272163c037bcfd4179c9996c2cfba5a707b4e522a7e02db1c"
+    },
+    {
+      "name": "depth_accuracy_temperature.svg",
+      "file": "artifacts/paper/04_regional/depth_accuracy_temperature.svg",
+      "sha256": "a4008aebca189aac84dc963c806de9263ceee077e1abc236907f3073575a1301"
+    },
+    {
+      "name": "depth_scores.csv",
+      "file": "artifacts/paper/04_regional/depth_scores.csv",
+      "sha256": "d18189e581a447296ca2b5dd25265d324edda1ae819eba0758ada4c17c30dc6d"
+    },
+    {
+      "name": "depth_scores.tex",
+      "file": "artifacts/paper/04_regional/depth_scores.tex",
+      "sha256": "ccfeda3173100dc50c3cff0f09e6eb41076214a46d0d4d16e7ff90211bd3bb42"
+    },
+    {
+      "name": "paired_comparisons.csv",
+      "file": "artifacts/paper/04_regional/paired_comparisons.csv",
+      "sha256": "84b051272f365544a2137ac5042df41c89cc89adbb50d0c53f4069ae62c202cb"
+    },
+    {
+      "name": "paired_comparisons.tex",
+      "file": "artifacts/paper/04_regional/paired_comparisons.tex",
+      "sha256": "8c5eb0992f6a7f0fdf40c02b5b573ac35791a791baec879eba1e0011db023df5"
+    },
+    {
+      "name": "predefined_region_coverage.csv",
+      "file": "artifacts/paper/04_regional/predefined_region_coverage.csv",
+      "sha256": "7360bdd1e4258a95232b5eb5cf8d98806dab4a1d7b1ec2988a6ef5f5801bf9b7"
+    },
+    {
+      "name": "predefined_region_coverage.tex",
+      "file": "artifacts/paper/04_regional/predefined_region_coverage.tex",
+      "sha256": "dfcb0a31f327add3dd077677c20e575745bc2d337bcbaf03ebe5d10604107011"
+    },
+    {
+      "name": "primary_scorecard.csv",
+      "file": "artifacts/paper/04_regional/primary_scorecard.csv",
+      "sha256": "a29925d91ade63a125491f5e34592465b09b980a5365f6248af5866eebc331ce"
+    },
+    {
+      "name": "primary_scorecard.tex",
+      "file": "artifacts/paper/04_regional/primary_scorecard.tex",
+      "sha256": "90ca0364eb65f2a2a70c6e87ee5be246b7009b41f2d7b854a9b43a5541266c44"
+    },
+    {
+      "name": "regional_paired_improvement.pdf",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.pdf",
+      "sha256": "d4cc06176b72be247c73ca66067a64932f02248a482c647771d63a77791ecb45"
+    },
+    {
+      "name": "regional_paired_improvement.png",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.png",
+      "sha256": "8096d04cc49a788342bf4ad83d0cdc304b0d5c77f2ecaa6e9a2ae41962c70700"
+    },
+    {
+      "name": "regional_paired_improvement.svg",
+      "file": "artifacts/paper/04_regional/regional_paired_improvement.svg",
+      "sha256": "e05c61249e11ea6b63e5b171fabceb262dcc713322475abfebd305f08fac9624"
+    },
+    {
+      "name": "conditioning_baseline_availability.csv",
+      "file": "artifacts/paper/05_conditioning/conditioning_baseline_availability.csv",
+      "sha256": "774f8c91bd30ea1243ebed120af4549e3f5f8ec65820ff08a46493ef93d90644"
+    },
+    {
+      "name": "conditioning_baseline_availability.tex",
+      "file": "artifacts/paper/05_conditioning/conditioning_baseline_availability.tex",
+      "sha256": "c686c0860914a5b747676b2d6b6d3d5de5652e260b25d6c4203e30ce99f12529"
+    },
+    {
+      "name": "conditioning_comparisons.csv",
+      "file": "artifacts/paper/05_conditioning/conditioning_comparisons.csv",
+      "sha256": "ebb9f78da0b08eb22fdefbde69510fb98af569de973fa6dfae0522a2af4f6ab9"
+    },
+    {
+      "name": "conditioning_comparisons.tex",
+      "file": "artifacts/paper/05_conditioning/conditioning_comparisons.tex",
+      "sha256": "2cc16eca2d7091392d60d8c0fd0526c0ec882767b87a01eac99cd504eea738e3"
+    },
+    {
+      "name": "conditioning_curve.pdf",
+      "file": "artifacts/paper/05_conditioning/conditioning_curve.pdf",
+      "sha256": "ac01a41cb5f0cd78e27ab7ac5a6168d669dc04aa4c2ead4b9f9768496ff43a36"
+    },
+    {
+      "name": "conditioning_curve.png",
+      "file": "artifacts/paper/05_conditioning/conditioning_curve.png",
+      "sha256": "e58947fadce6cb7704307c8c4c95a484c01b2b150e90a035dc0fb561055a48d9"
+    },
+    {
+      "name": "conditioning_curve.svg",
+      "file": "artifacts/paper/05_conditioning/conditioning_curve.svg",
+      "sha256": "708f341b16a427a93b94c1ba3bdd5efa896f1d40115c10cbb4f7daa6e40a429f"
+    },
+    {
+      "name": "conditioning_mae_by_budget.csv",
+      "file": "artifacts/paper/05_conditioning/conditioning_mae_by_budget.csv",
+      "sha256": "5f05153982ae9397b2b5d1adc02176692b5670456f9b79e25f70beb78518de67"
+    },
+    {
+      "name": "conditioning_mae_by_budget.tex",
+      "file": "artifacts/paper/05_conditioning/conditioning_mae_by_budget.tex",
+      "sha256": "35e4b1b468bb3df1f83ada5b2a87b8348334b2583a519746a2135eb68116847e"
+    },
+    {
+      "name": "conditioning_reference_scores.csv",
+      "file": "artifacts/paper/05_conditioning/conditioning_reference_scores.csv",
+      "sha256": "1be5be56a7b9cef4b464e367e7f4a311788e79ff3c551ef2107baaf2269df56a"
+    },
+    {
+      "name": "conditioning_reference_scores.tex",
+      "file": "artifacts/paper/05_conditioning/conditioning_reference_scores.tex",
+      "sha256": "c4964bd40a7930d0d83c6e00e61b4cc3fadd6c822b74cba8f93e0551bd1fff01"
+    },
+    {
+      "name": "conditioning_scores.csv",
+      "file": "artifacts/paper/05_conditioning/conditioning_scores.csv",
+      "sha256": "1af0c51e2ab6e231713dd3649db6ffb81ebb35329a5edc2afb26b6db226507d6"
+    },
+    {
+      "name": "conditioning_scores.tex",
+      "file": "artifacts/paper/05_conditioning/conditioning_scores.tex",
+      "sha256": "5d721f77dd49148e54b965c2fe96cc7c936a6e5dd269d8ce656bf52cd6805586"
+    },
+    {
+      "name": "physical_error_summary_1.pdf",
+      "file": "artifacts/paper/06_physical/physical_error_summary_1.pdf",
+      "sha256": "7440a55a5d8c817afa54ec13e5182c429404d0e7c1095cfcd97af1c9347171c4"
+    },
+    {
+      "name": "physical_error_summary_1.png",
+      "file": "artifacts/paper/06_physical/physical_error_summary_1.png",
+      "sha256": "a0ca9640ab837e81326c57721d80d373f95251df15c807e6fe86034ae70d2727"
+    },
+    {
+      "name": "physical_error_summary_1.svg",
+      "file": "artifacts/paper/06_physical/physical_error_summary_1.svg",
+      "sha256": "fafb5a1627e2479e367c356b104ed83cb8ab76167b7b9c7951fe7a8abf960dfe"
+    },
+    {
+      "name": "physical_member_diagnostics.tex",
+      "file": "artifacts/paper/06_physical/physical_member_diagnostics.tex",
+      "sha256": "bff9850955eb5198c2098964cc07e0d0d94ac28c6482786bbd53d7d003a51fe6"
+    },
+    {
+      "name": "physical_summary.csv",
+      "file": "artifacts/paper/06_physical/physical_summary.csv",
+      "sha256": "a2635d331f6be4a8a5d463fde242235170051c84e8ba06941faa8af39d9986e6"
+    },
+    {
+      "name": "physical_summary.tex",
+      "file": "artifacts/paper/06_physical/physical_summary.tex",
+      "sha256": "cbfc68f2759221d26af5c71e9882f5d4afeb40e0c8d0d20669a33f31ce409ff2"
+    },
+    {
+      "name": "partition_summary.csv",
+      "file": "artifacts/paper/partition_summary.csv",
+      "sha256": "9254b7c0e1d9c21d5d09023b386f69581d29ac928604a9ea27a82388d5321c53"
+    },
+    {
+      "name": "profile_membership.csv",
+      "file": "artifacts/profile_membership.csv",
+      "sha256": "d6c6b2a46ad07d48f262123b9d7b36b54a8782c6d9e5b722e18901042e1465f7"
+    }
+  ]
+}
