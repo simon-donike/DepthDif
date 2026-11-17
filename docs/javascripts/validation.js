@@ -23,7 +23,7 @@
     delta: ["Δ MAE vs GLORYS", "The method’s MAE minus original GLORYS MAE. Negative means a smaller error than GLORYS; positive means a larger error. Both use the same observations."],
     weighting: ["Equal profile weighting", "Every profile counts equally, even if one cast contains more depth measurements than another."],
     common: ["Common evaluation support", "Methods are compared at the same observation locations and depths. A method with missing predictions is left out of that comparison."],
-    depths: ["Depth bins", "XBT measurements are grouped into 25 m depth bands, such as 0–25 m and 25–50 m. Each point on the curve represents one band. Fewer casts reach the deepest bands."],
+    depths: ["Depth bins", "XBT measurements are grouped into 25 m depth bands, such as 0–25 m and 25–50 m. Each point on the curve represents one band. EN4 is shown at exact model depth levels. Fewer casts reach the deepest depths."],
     profiles: ["Profiles and points", "One profile is one cast measuring temperature at many depths. A mission or cruise contains many casts. Measurement counts are not counts of independent missions."],
     residual: ["DepthDif", "DepthDif predicts how temperature differs from the usual seasonal background, then adds that background back. The model weights are fixed for this comparison."],
     glorys: ["GLORYS (packaged)", "The original GLORYS ocean reanalysis, as stored in our dataset. It uses a 0.1° grid and temperature steps of about 0.15 °C. Native GLORYS keeps the original finer grid and numerical precision. No bias correction or optimal interpolation is applied to this reference."],
@@ -37,9 +37,9 @@
     conditioning: ["Conditioning", "Information supplied to the prediction: retained EN4 temperature measurements and sea-surface temperature. The Italian XBT casts are used for checking predictions, not as inputs."],
     en4: ["EN4 supports", "EN4 supplies the observed temperature inputs. Markers show occupied input grid cells after quality checks and target masking. Several source profiles can share a cell."],
     xbt: ["Italian XBT", "An expendable bathythermograph measures temperature as it falls through the water. We use the corrected Italian measurements that passed the quality check."],
-    masking: ["Holdout buffer", "The XBT target grid cells and their immediate neighbours are removed from EN4 inputs, including in overlapping patches. This helps prevent the model from receiving the answers it is being tested on."],
+    masking: ["Holdout buffer", "Evaluation target cells are removed from EN4 inputs in every overlapping patch. For Italian XBT, immediate neighbouring cells are also removed. This helps prevent the model from receiving the answers it is being tested on."],
     screening: ["Archive screening", "The profiles were checked against the documented archive-screened list. That does not prove they were never used by GLORYS; we do not have its assimilation logs."],
-    partition: ["Calibration and evaluation", "All 102 Italian casts from two missions are now evaluated. None are reserved for calibration. Previously, 14 casts from the second mission were reserved for extra correction methods; those fits are not used here. EN4 is evaluated separately."],
+    partition: ["Calibration and evaluation", "All 102 Italian casts from two missions are now evaluated. None are reserved for calibration. Previously, 14 casts from the second mission were reserved for extra correction methods; those fits are not used here. EN4 is evaluated separately on a frozen 64-patch preliminary subset, also without calibration."],
     discovery: ["Discovery campaign", "The 2016 data helped select the model checkpoint. These results describe development performance; an untouched dataset is still needed for independent confirmation."],
     ema: ["EMA weights", "The model uses weights averaged over training steps. This is a fixed trained model, not a correction fitted to the validation observations."],
     ddpm: ["DDPM and one generation", "The model starts from noise and refines it over 1,000 steps. It produces one temperature field per case. One field cannot tell us the spread of possible predictions."],
@@ -47,7 +47,7 @@
     budget: ["Conditioning budget", "The number of EN4 input locations retained per patch: 0, 1, 2, 4, 8, or all available locations. Other inputs, such as sea-surface temperature, remain available."],
     potential: ["Potential temperature / TEOS-10", "Water temperature changes with pressure. We convert the XBT measurements to the same pressure-adjusted temperature convention as the model, using standard seawater calculations and GLORYS salinity."],
     interpolation: ["Native observation depths", "Model values above and below an observation are used to estimate temperature at its exact depth. Profile curves use observation depths; spatial images use model depth levels."],
-    clusters: ["Clusters and uncertainty", "Casts from the same mission can share similar errors. The Italian set has 102 casts but only two missions. We show errors for each mission and do not claim reliable uncertainty ranges from so few missions."],
+    clusters: ["Clusters and uncertainty", "Casts from the same mission can share similar errors. The Italian set has 102 casts but only two missions. We show errors for each mission and do not claim reliable uncertainty ranges from so few missions. EN4 uses 5-degree areas within each month as statistical groups; these are not identified platforms or missions."],
     quantization: ["Quantization", "The stored GLORYS temperatures change in steps of about 0.15 °C. That storage rounding is separate from the reanalysis error. A native-data comparison is needed before claiming that a model outperforms the original GLORYS product."],
     patch: ["Patch", "A cropped area of the model grid at one date. All panels show the same area and depth. The selector lists how many XBT casts and EN4 input cells each area contains."],
     scale: ["Colour scale and missing support", "Colours represent temperature. The scale stays fixed while changing depth or model within a patch, but can change between patches. Blank pixels mean missing data, not zero temperature."],
@@ -55,7 +55,7 @@
     markers: ["Spatial markers", "Cyan circles mark EN4 temperature input cells. A filled centre means input is available at the displayed depth. Crosses mark XBT casts; red marks the selected cast. A cast need not reach every displayed depth."],
     reference: ["Reference audit", "Checks how the stored GLORYS data are rounded and matched in time. Native GLORYS files are needed for a direct comparison with the original product."],
     comparators: ["Comparator audit", "Checks which baseline predictions are available at the required observations."],
-    baselines: ["Calibrated baselines", "Optional corrections fitted to a separate calibration set. This stage is not used in the all-profile Italian comparison."],
+    baselines: ["Calibrated baselines", "Optional corrections fitted to a separate calibration set. This stage is disabled for both the Italian comparison and the preliminary EN4 subset."],
     regional: ["Regional analysis", "Reports errors by area, depth and mission using the same observations for each method."],
     physical: ["Physical diagnostics", "Checks vertical temperature structure and related ocean quantities. It is separate from the main temperature-error comparison."],
     dependence: ["Dependence diagnostics", "Checks relationships across depths, locations or variables. One generated field limits the uncertainty analysis."],
@@ -167,10 +167,12 @@
       supportLayer = null; supportMapCohort = null; missionLayers = [];
       markers.clear();
       map.fitBounds(selected.profiles.map((profile) => [profile.latitude, profile.longitude]), { padding: [24, 24], maxZoom: 7 });
-      const missions = [...new Set(selected.profiles.map((profile) => profile.mission || profile.cluster))];
+      const italian = selected.id.startsWith("italian");
+      const groupName = (profile) => italian ? profile.mission || profile.cluster : "Screened EN4 evaluation profiles";
+      const missions = [...new Set(selected.profiles.map(groupName))];
       const overlays = {};
       missions.forEach((mission, index) => {
-        const profiles = selected.profiles.filter((profile) => (profile.mission || profile.cluster) === mission);
+        const profiles = selected.profiles.filter((profile) => groupName(profile) === mission);
         const group = L.featureGroup().addTo(map);
         missionLayers.push(group);
         const color = missionColors[index % missionColors.length];
@@ -194,7 +196,9 @@
         });
       });
       layerControl = L.control.layers(null, overlays, { collapsed: false }).addTo(map);
-      $("map-summary").textContent = `${selected.profiles.length} casts across ${missions.length} missions. Each mission has a separate map layer. Click a cast to compare its temperatures.`;
+      $("map-summary").textContent = italian
+        ? `${selected.profiles.length} casts across ${missions.length} missions. Each mission has a separate map layer. Click a cast to compare its temperatures.`
+        : `${selected.profiles.length} screened EN4 evaluation profiles. Click a location to compare temperatures. Statistical groups are 5-degree areas within each month, not identified missions.`;
       mapCohort = selected.id;
     }
     if (spatial && spatialCohort === selected.id && supportMapCohort !== selected.id) {
@@ -225,7 +229,7 @@
     const cohort = selected;
     const profile = cohort.profiles.find((p) => p.id === $("profile").value);
     if (!profile) return;
-    $("profile-meta").textContent = `${profile.id} · ${profile.time} · ${profile.latitude.toFixed(3)}° N, ${profile.longitude.toFixed(3)}° E · ${profile.points.toLocaleString()} depths · mission ${profile.mission || profile.cluster} · evaluation`;
+    $("profile-meta").textContent = `${profile.id} · ${profile.time} · ${profile.latitude.toFixed(3)}° N, ${profile.longitude.toFixed(3)}° E · ${profile.points.toLocaleString()} depths · ${cohort.id.startsWith("italian") ? "mission" : "observation group"} ${profile.mission || profile.cluster} · evaluation`;
     locationMap();
     if (spatial && spatialCohort === cohort.id) {
       const patch = spatial.patches.find((item) => item.profiles.some((item) => item.profile_id === profile.id));
@@ -374,8 +378,8 @@
     $("load-error").hidden = true;
     $("results").hidden = !selected.available;
     $("pending").hidden = selected.available;
-    $("status").textContent = selected.evaluation_policy ? "All-profile comparison complete · no calibration" : selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
-    $("provenance").textContent = JSON.stringify({ campaign: campaign.campaign, snapshot_utc: campaign.updated_utc, model: selected.model || "Pending", membership: selected.membership || "Pending" }, null, 2);
+    $("status").textContent = selected.pilot ? "Preliminary EN4 subset complete · no calibration" : selected.evaluation_policy ? "All-profile comparison complete · no calibration" : selected.available ? `Accuracy available · campaign ${selected.run_status}` : `Results pending · campaign ${selected.run_status}`;
+    $("provenance").textContent = JSON.stringify({ campaign: campaign.campaign, snapshot_utc: campaign.updated_utc, model: selected.model || "Pending", membership: selected.membership || "Pending", subset: selected.pilot || null }, null, 2);
     $("stages").replaceChildren(...selected.stages.map((stage) => {
       const node = element("div", undefined, "stage");
       const heading = element("strong");
@@ -390,13 +394,20 @@
     const model = selected.overall.find((row) => row.method === "residual");
     const glorys = selected.overall.find((row) => row.method === "glorys_packaged");
     const counts = selected.counts;
+    $("profile-intro").textContent = selected.id.startsWith("italian")
+      ? `All ${counts.profiles} Italian casts from both missions are available. Mission colours and map layers show where they were collected. Click a location to select its cast; curves retain all saved observation depths.`
+      : `All ${counts.profiles} evaluated EN4 profiles in the frozen subset are shown. Click a location to compare the prediction, original GLORYS and the held-out EN4 observation at each saved model depth.`;
+    $("conditioning-panel").hidden = !selected.conditioning?.length;
+    $("spatial-description").hidden = !selected.spatial;
     $("stats").replaceChildren(...[[counts.profiles.toLocaleString(), "evaluation casts"], [counts.clusters.toLocaleString(), "missions / observation groups"], [fmt(model.mae), "DepthDif MAE · °C"], [signed(model.mae - glorys.mae), "MAE difference vs GLORYS · °C"]].map(([value, label]) => {
       const node = element("div", undefined, "stat");
       node.append(element("strong", value), explained(label, label.includes("difference") ? "delta" : label.includes("MAE") ? "mae" : "profiles"));
       return node;
     }));
     const calibration = selected.partition.find((row) => row.partition === "calibration");
-    $("interpretation").textContent = selected.evaluation_policy
+    $("interpretation").textContent = selected.pilot
+      ? `${selected.pilot.patches} of ${selected.pilot.source_patches} frozen EN4 patches were run. ${counts.patches} patches contribute ${counts.profiles} profiles and ${counts.points.toLocaleString()} measurements at ${counts.depths} depths across all 12 months. ${selected.pilot.points_before_support - counts.points} candidate measurements were excluded by time-match, reference or input-support checks before scoring. Selection used geographic and monthly coverage before inference. No calibration or corrections are fitted. These preliminary results describe this subset, not the full ocean or all EN4 candidates.`
+      : selected.evaluation_policy
       ? `${counts.profiles} casts from ${counts.clusters} missions; all ${counts.points.toLocaleString()} measurements are evaluated. No casts are reserved for calibration and no corrections are fitted. DepthDif MAE is ${Math.abs(model.mae - glorys.mae).toFixed(4)} °C ${model.mae > glorys.mae ? "higher" : "lower"} than original packaged GLORYS. Results are also shown by mission below. Two missions provide limited evidence about performance elsewhere.`
       : `${counts.profiles} profiles from ${counts.clusters} observation groups; ${calibration?.profiles ?? 0} profiles reserved for calibration. These are development results.`;
     tableRows("mission-table", (selected.mission_scores || []).map((row) => ({ highlight: row.method === "residual", cells: [row.mission, explained(name(row.method), row.method), fmt(row.mae), fmt(row.rmse)] })));
@@ -405,6 +416,11 @@
     if (missionCSV) $("mission-csv").href = `${base}${selected.id}/${missionCSV.file}`;
     tableRows("overall-table", selected.overall.map((row) => ({ highlight: row.method === "residual", cells: [explained(name(row.method), row.method), fmt(row.mae), fmt(row.rmse), fmt(row.crps), signed(row.mae - glorys.mae)] })));
     $("overall-csv").href = `${base}${selected.id}/overall_scores.csv`;
+    $("paper-download").href = `${base}${selected.id}/paper_artifacts.zip`;
+    $("provenance-download").href = `${base}${selected.id}/provenance.json`;
+    const depthCSV = selected.downloads.find((item) => item.name === "depth_scores.csv");
+    $("depth-download").hidden = !depthCSV;
+    if (depthCSV) $("depth-download").href = `${base}${selected.id}/${depthCSV.file}`;
     $("baseline-status").textContent = selected.baselines.filter((row) => row.status !== "available").map((row) => `${name(row.method)}: ${row.status}, ${row.invalid_points} invalid predictions across the full input cohort; excluded from the shared comparison.`).join(" ");
     $("depth-note").textContent = `${selected.id.startsWith("italian") ? "Measurements grouped into 25 m depth bands." : "Exact model depth levels."} Hover to see the number of casts and measurements. Click a legend label to show or hide a method.`;
     tableRows("depth-table", selected.depth.map((row) => ({ highlight: row.method === "residual", cells: [explained(name(row.method), row.method), row.depth_resolution === "bin" ? `${row.depth_lower_m}–${row.depth_upper_m}` : row.depth_m, row.n_profiles, row.n_points, fmt(row.mae), fmt(row.rmse), fmt(row.bias), fmt(row.crps)] })));
@@ -444,6 +460,8 @@
     });
     $("snapshot").textContent = `Snapshot ${new Date(campaign.updated_utc).toLocaleString()} · static snapshot`;
     $("cohort").replaceChildren(...campaign.cohorts.map((cohort) => { const option = element("option", `${cohort.label}${cohort.available ? "" : " · pending"}`); option.value = cohort.id; return option; }));
+    const requestedCohort = new URLSearchParams(location.search).get("cohort");
+    if (campaign.cohorts.some((cohort) => cohort.id === requestedCohort)) $("cohort").value = requestedCohort;
     $("cohort").disabled = false;
     $("cohort").addEventListener("change", () => render().catch(showError));
     $("metric").addEventListener("change", () => depthChart().catch(showError));

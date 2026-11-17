@@ -17,6 +17,9 @@ h2 { font-size: 1.65rem; line-height: 1.25; font-weight: 600; letter-spacing: -.
 .campaign strong { display: block; font-size: 2rem; font-weight: 400; line-height: 1.2; }
 .toolbar, .section-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .toolbar { padding: 20px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.toolbar label { min-width: 0; max-width: 100%; }
+#cohort { min-width: 0; flex: 1; }
+#profile-meta { overflow-wrap: anywhere; }
 label { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: .9rem; }
 select { border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: #102c40; font: inherit; padding: 10px 12px; max-width: 100%; }
 #status { color: var(--mint); font-size: .85rem; }
